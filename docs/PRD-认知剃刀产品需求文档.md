@@ -145,9 +145,9 @@ flowchart LR
 - **Domain**（知识边界划分）：支持**深化**，产生该领域的 **Issue**（议题）列表
 - **Issue**（领域的问题空间）：支持**深化**，产生尝试解决该议题的 **Theory**（理论）列表
 - **Theory**（议题的解决方案）：支持**深化**，提取该理论定义的 **Entity**（实体）和描述的 **Mechanism**（机制）列表
-- **Entity**: 终端叶节点，无深化操作，无合成操作
-- **Mechanism**: 终端叶节点，**无深化操作**；但支持**合成**操作——选择 ≥2 个不同的 Mechanism 合成 **Principle**
-- **Principle**: 终端叶节点，无深化操作，无合成操作；只能通过 Mechanism 的合成操作产生
+- **Entity**: 无深化操作，无合成操作
+- **Mechanism**: **无深化操作**；但支持**合成**操作——选择 ≥2 个不同的 Mechanism 合成 **Principle**
+- **Principle**: 无深化操作，无合成操作；只能通过 Mechanism 的合成操作产生
 
 系统支持从链条任意节点开始操作，但推荐的完整流程是沿上述链条展开。
 
@@ -409,7 +409,7 @@ interface TaskModelConfig {
 | **Agent C** | 理论解构者 (Deconstructor) | Theory | 生成理论型笔记，解构理论逻辑，提取实体 (Entity) 和机制 (Mechanism) |
 | **Agent D** | 实体生成器 (Entity Generator) | Entity | 生成实体型笔记，定义静态概念的本质、分类和属性 |
 | **Agent E** | 机制生成器 (Mechanism Generator) | Mechanism | 生成机制型笔记，描述动态过程的因果链和触发条件 |
-| **Agent F** | 原理合成器 (Synthesizer) | Principle | 分析多个机制，抽象出同构的原理 (Principle) |
+| **Agent F** | 原理合成者 (Synthesizer) | Principle | 分析多个机制，抽象出同构的原理 (Principle) |
 
 **映射关系**:
 所有 Agent 在执行时，均调用 `reason` 任务定义的模型配置 (默认 gemini-3.0-pro)，但加载不同的 System Prompt 和 Context。
@@ -425,8 +425,7 @@ interface TaskModelConfig {
 
 **触发时机**: Agent 执行完成，生成内容后（此时笔记仍为 Stub 状态，内容尚未持久化）
 **实现机制**: 调用 LLM Provider 的原生 Grounding 能力（如 Gemini with Google Search）或集成专用搜索工具。
-**核查范围**: 核查所有非整体理解字段，交叉验证多个来源
-**配置与成本控制**: 为避免无限制扩张成本，Grounding 的实际执行范围可配置：默认对生成内容中所有非 `holistic_understanding` 的字段执行核查；高级设置允许用户指定仅对某些字段或某些类型（如 `Theory`、`Entity`）执行 Grounding，从而在准确性与成本之间做权衡。
+**核查范围**: 核查所有非 `holistic_understanding` 字段，交叉验证多个来源。
 **核查结果展示**:
 - 在用户确认界面显示核查结果
 - 标记可能有误的字段（黄色警告），并附带 Google Search 来源链接
@@ -470,9 +469,9 @@ flowchart TD
 
 | 阶段       | 输入                  | 输出                            | 失败处理      |
 |:------- |:------------------ |:---------------------------- |:-------- |
-| 标准化 + 类型推断 | 原始用户输入 | `中文 (English)` 格式 + 推荐类型 + **完整的 5 种类型置信度分布** + 消歧义选项（Principle 仅通过合成产生，不在推断范围）| 显示"类型推断失败，已默认设为 Entity，请确认或修改" |
+| 标准化 + 类型推断 | 原始用户输入 | `中文 (English)` 格式 + 推荐类型 + **完整的 5 种类型置信度分布**| 显示"类型推断失败，已默认设为 Entity，请确认或修改" |
 | 别名/标签生成  | 标准化名称 + 类型          | aliases[], tags[]             | 返回空列表     |
-| 向量嵌入     | 标准化名称 + 别名 (Stub Signature) | 浮点数组（维度取决于 embedding 模型，如 text-embedding-004 为 768 维）| 提示 API 不可用，AI 功能受限 |
+| 向量嵌入     | 标准化名称 + 别名 (Stub Signature) | 浮点数组（维度取决于 embedding 模型）| 提示 API 不可用，AI 功能受限 |
 | 同类型相似度检索    | 向量 + Top-K + 类型   | 候选列表 (uid, similarity, title) | 返回空列表     |
 | 内容生成 | 笔记元数据 + 同类型 VectorIndex | 结构化 JSON + **wikilink 格式的引用**（在生成时就创建，非事后更新）| 重试 3 次后报错 |
 | 事实核查（可选）| 内容生成的待确认内容     | 核查结果 + 警告标记                   | 跳过核查，显示警告 |
@@ -501,7 +500,7 @@ interface VectorIndex {
   version: string;           // 索引版本号
   lastUpdated: string;       // ISO 8601 时间戳
   embeddingModel: string;    // 当前使用的 embedding 模型名称
-  embeddingDimension: number; // 向量维度（取决于模型，如 text-embedding-004 为 768）
+  embeddingDimension: number; // 向量维度（取决于 embedding 模型）
   entries: {
     [uid: string]: {
       title: string;
@@ -643,7 +642,7 @@ interface VectorIndex {
     - [确认创建] [取消] 按钮
     - [确认创建] [取消] 按钮
 7. 用户确认后：
-    - 创建 Stub 笔记（含 frontmatter），保存到对应类型目录。**Stub 笔记正文初始内容**为一个 Callout 提示块：`> [!INFO] Cognitive Razor\n> 内容生成中，请稍候...`，以便用户打开时知晓状态。
+    - 创建 Stub 笔记（含 frontmatter），保存到对应类型目录。**Stub 笔记正文初始为空**，仅包含 frontmatter。
     - 自动将内容生成任务加入队列
     - 打开新笔记
 **搜索范围**: 仅限带有 CR frontmatter (含 `uid` 和 `type` 字段) 的笔记
@@ -672,10 +671,10 @@ interface VectorIndex {
 | Principle| (仅合成)    | Agent F    | 通过合成操作触发，分析多个 Mechanism 的同构性，生成 Principle 结构 |
 
 > **内容生成与深化的职责边界**:
-> - **内容生成（Stub → Draft）**: Agent 负责填充当前笔记的**所有字段内容**，包括 `issues`、`theories`、`extracted_components` 等列表字段。此时这些列表**同时**以 `[[wikilink]]` 格式写入笔记正文（作为文本引用）和结构化元数据块（如 HTML 注释或 YAML 扩展）中，**不自动创建对应的子笔记**。
-> - **wikilink 生成时机**: Agent 在生成内容时就直接以 `[[xxx]]` 格式生成 wikilink，**而非**在创建子笔记后再回去更新父笔记。这避免了低效的二次文件操作，也利用了 Obsidian 对未创建链接的自动处理（显示为未创建链接，创建后自动变为有效链接）。
-> - **深化操作（Draft/Evergreen）**: 用户显式触发深化后，系统从**笔记正文的结构化数据块**中提取列表数据（如 `issues[]`、`theories[]`、`extracted_components[]`），为每个列表项**创建独立的子笔记（Stub）**，并建立 `parentUid` 关联。深化操作是将「结构化引用」转化为「实体笔记」的过程。
-> - **数据源说明**: 深化操作的数据源是笔记正文中的结构化数据块，而非仅从 Markdown 正文中解析 wikilink。这确保了数据的准确性和可靠性。
+> - **内容生成（Stub → Draft）**: Agent 负责填充当前笔记的**所有字段内容**，包括 `issues`、`theories`、`extracted_components` 等列表字段。Agent 在生成内容时直接以 `[[wikilink]]` 格式写入笔记正文，**不自动创建对应的子笔记**。
+> - **wikilink 生成时机**: wikilink 在 Agent 生成内容（Stub→Draft）时写入正文，**而非** Stub 创建时。这利用了 Obsidian 对未创建链接的自动处理（显示为未创建链接，创建后自动变为有效链接）。
+> - **深化操作（Draft/Evergreen）**: 用户显式触发深化后，系统从 **Markdown 笔记正文**中使用正则表达式解析 wikilink 及其上下文信息，为每个列表项**创建独立的子笔记（Stub）**，并建立 `parentUid` 关联。
+> - **数据源说明**: 深化操作的数据源是 Markdown 笔记正文。系统通过正则表达式（如 `/\[\[([^\]]+)\]\]/g`）提取 wikilink，并解析其前后的描述文本作为上下文（如列表项中的 `core_tension`、`definition` 等）。不依赖额外的结构化数据块。
 > - **设计理由**: 这种分离确保用户可以先审核 Agent 生成的列表内容质量，再决定是否展开为子笔记，符合 A3 公理（人机共生性）。
 
 **深化操作路由**（仅 Draft/Evergreen 状态可用）:
@@ -685,9 +684,9 @@ interface VectorIndex {
 | Domain   | [深化笔记]  | Issue 列表 | 生成该领域的议题列表 |
 | Issue    | [深化笔记]  | Theory 列表 | 生成尝试解决该议题的理论列表 |
 | Theory   | [深化笔记]  | Entity + Mechanism 列表 | 提取该理论定义的实体和描述的机制 |
-| Entity   | —        | — | 终端叶节点，无深化操作 |
+| Entity   | —        | — | 无深化操作 |
 | Mechanism| [合成原理]  | Principle | 多对一操作，需选择 ≥2 个 Mechanism |
-| Principle| —        | — | 终端叶节点，无深化/合成操作 |
+| Principle| —        | — | 无深化/合成操作 |
 
 **Principle 合成规格** (`cr:synthesize`):
 1. 用户通过命令 `cr:synthesize` 或侧边栏「合成原理」按钮触发
@@ -967,15 +966,15 @@ interface PluginSettings {
   // 见 4.2 节 TaskModelConfig 定义
   taskModels: {
     embedding: TaskModelConfig;
-    standardizeClassify: TaskModelConfig;  // 统一为 camelCase
+    standardizeClassify: TaskModelConfig;
     enrich: TaskModelConfig;
     reason: TaskModelConfig;
     ground: TaskModelConfig;
   };
   
   // --- 算法参数 (高级模式可见) ---
-  dedupThreshold: number;      // 去重相似度阈值，默认 0.9
-  topK: number;                // 向量检索返回的候选数量，默认 10
+  dedupThreshold: number;      // 去重相似度阈值，默认 0.9，可配置
+  topK: number;                // 向量检索返回的候选数量，默认 10，可配置
   maxConcurrency: number;      // 队列最大并发数，默认 1，范围 1-5
   
   // --- 功能开关 ---
@@ -1140,7 +1139,7 @@ stateDiagram-v2
 
 | 状态 | 含义 | 进入条件 | 可用操作 |
 |:-- |:-- |:-- |:-- |
-| **Stub** | 占位符，已写入最小 frontmatter 与占位正文（Callout），内容生成前该文件已存在于磁盘上 | 侧边栏确认创建新笔记 (Principle 除外) | 等待 Agent 填充（自动入队）|
+| **Stub** | 占位符，仅包含 frontmatter，正文初始为空，内容生成前该文件已存在于磁盘上 | 侧边栏确认创建新笔记 (Principle 除外) | 等待 Agent 填充（自动入队）|
 | **Draft** | AI 已生成内容，待审核 | Agent 完成 + 用户确认写入；或 Principle 合成确认 | 标记为 Evergreen, 增量改进, 深化（非终端类型）|
 | **Evergreen** | 用户已审核，内容稳定 | 用户点击 [标记为 Evergreen] | 降级为 Draft, 增量改进, 深化（非终端类型）|
 
