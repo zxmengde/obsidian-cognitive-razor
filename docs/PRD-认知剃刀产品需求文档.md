@@ -385,8 +385,6 @@ interface TaskModelConfig {
   params: {
     temperature: number;
     topP: number;
-    topK: number;
-    maxOutputTokens: number;
     thinkingLevel?: "low" | "medium" | "high";  // 仅适用于支持思考的模型
     thinkingBudget?: number;  // 可选，精细控制 thinking token 数量（范围 1-24576）
   };
@@ -1001,7 +999,7 @@ interface PluginSettings {
     - *说明: 提供商本质上是 API 调用格式的选择，至少配置一个才能使用插件*。
 3. **模型配置 (Model Configuration)** *[仅高级模式]*
     - 针对每个任务 (Embedding, Standardize, Reason, etc.) 提供下拉菜单选择 Provider 和 Model。
-    - 允许自定义模型参数 (Temperature, TopK)。
+    - 允许自定义模型参数 (Temperature, TopP)。
 4. **知识库管理 (Knowledge Base)**
     - 索引状态显示 (节点数, 大小)
     - [重建索引] 按钮
