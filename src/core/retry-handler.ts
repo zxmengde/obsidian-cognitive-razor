@@ -279,7 +279,7 @@ export class RetryHandler {
         return "请前往设置页面检查并更新 API Key。";
 
       case "E201":
-        return "请选择支持此功能的 Provider（如 Google Gemini 或 OpenAI）。";
+        return "请选择支持此功能的 Provider 或检查配置。";
 
       case "E102":
         return "请稍后再试，或考虑升级 API 套餐以获得更高的速率限制。";

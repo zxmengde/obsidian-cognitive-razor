@@ -412,6 +412,54 @@ export class TaskQueue {
   }
 
   /**
+   * 清空所有已完成的任务
+   */
+  async clearCompleted(): Promise<number> {
+    let clearedCount = 0;
+
+    for (const [taskId, task] of this.tasks.entries()) {
+      if (task.state === "Completed") {
+        this.tasks.delete(taskId);
+        clearedCount++;
+      }
+    }
+
+    if (clearedCount > 0) {
+      await this.saveTasks();
+    }
+
+    return clearedCount;
+  }
+
+  /**
+   * 重试所有失败的任务
+   */
+  async retryFailed(): Promise<number> {
+    let retriedCount = 0;
+
+    for (const task of this.tasks.values()) {
+      if (task.state === "Failed") {
+        task.state = "Pending";
+        task.attempt = 0; // 重置尝试次数
+        task.errors = undefined; // 清除错误历史
+        task.completedAt = undefined;
+        retriedCount++;
+      }
+    }
+
+    if (retriedCount > 0) {
+      await this.saveTasks();
+      // 触发事件通知
+      this.emitEvent({
+        type: "queue-resumed",
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    return retriedCount;
+  }
+
+  /**
    * 加载任务
    */
   private async loadTasks(): Promise<Result<void>> {

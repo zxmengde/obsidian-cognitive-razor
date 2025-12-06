@@ -1,10 +1,7 @@
 /**
- * SetupWizard - 首次配置向导
+ * SetupWizard - 首次配置向导（精简版）
  * 
- * 功能：
- * - Provider 选择界面
- * - API Key 验证
- * - 配置保存
+ * 简化的配置流程：欢迎 → 配置 → 完成
  */
 
 import { App, Modal, Setting, Notice } from "obsidian";
@@ -17,11 +14,7 @@ import { validateUrl } from "../data/validators";
  */
 enum WizardStep {
   Welcome = "welcome",
-  SelectProvider = "select-provider",
-  ConfigureGoogle = "configure-google",
-  ConfigureOpenAI = "configure-openai",
-  Verify = "verify",
-  Complete = "complete"
+  Configure = "configure"
 }
 
 /**
@@ -30,12 +23,11 @@ enum WizardStep {
 export class SetupWizard extends Modal {
   private plugin: CognitiveRazorPlugin;
   private currentStep: WizardStep = WizardStep.Welcome;
-  private selectedProvider: ProviderType | null = null;
-  private providerId: string = "";
+  private providerId: string = "my-openai";
   private apiKey: string = "";
   private baseUrl: string = "";
-  private chatModel: string = "";
-  private embedModel: string = "";
+  private chatModel: string = "gpt-4o";
+  private embedModel: string = "text-embedding-3-small";
 
   constructor(app: App, plugin: CognitiveRazorPlugin) {
     super(app);
@@ -43,12 +35,12 @@ export class SetupWizard extends Modal {
   }
 
   onOpen(): void {
+    this.modalEl.addClass("cr-setup-wizard-modal");
     this.renderStep();
   }
 
   onClose(): void {
-    const { contentEl } = this;
-    contentEl.empty();
+    this.contentEl.empty();
   }
 
   /**
@@ -63,20 +55,8 @@ export class SetupWizard extends Modal {
       case WizardStep.Welcome:
         this.renderWelcome();
         break;
-      case WizardStep.SelectProvider:
-        this.renderSelectProvider();
-        break;
-      case WizardStep.ConfigureGoogle:
-        this.renderConfigureGoogle();
-        break;
-      case WizardStep.ConfigureOpenAI:
-        this.renderConfigureOpenAI();
-        break;
-      case WizardStep.Verify:
-        this.renderVerify();
-        break;
-      case WizardStep.Complete:
-        this.renderComplete();
+      case WizardStep.Configure:
+        this.renderConfigure();
         break;
     }
   }
@@ -87,26 +67,18 @@ export class SetupWizard extends Modal {
   private renderWelcome(): void {
     const { contentEl } = this;
 
-    contentEl.createEl("h1", { text: "欢迎使用 Cognitive Razor" });
+    contentEl.createEl("h1", { text: "欢迎使用 Cognitive Razor", cls: "cr-wizard-title" });
     
-    const intro = contentEl.createDiv({ cls: "cr-wizard-intro" });
-    intro.createEl("p", {
-      text: "Cognitive Razor 是一个公理化知识管理插件，帮助您将模糊的概念转化为结构化的知识节点。"
-    });
-    intro.createEl("p", {
-      text: "在开始使用之前，我们需要配置一个 AI Provider（OpenAI 或 Google Gemini）来提供智能功能。您也可以配置自定义端点来使用兼容的 API 服务。"
+    contentEl.createEl("p", {
+      text: "公理化知识管理插件，帮助您将模糊概念转化为结构化知识。",
+      cls: "cr-wizard-intro"
     });
 
-    const features = contentEl.createDiv({ cls: "cr-wizard-features" });
-    features.createEl("h3", { text: "主要功能：" });
-    const featureList = features.createEl("ul");
-    featureList.createEl("li", { text: "概念标准化和分类" });
-    featureList.createEl("li", { text: "自动检测重复概念" });
-    featureList.createEl("li", { text: "AI 辅助内容生成" });
-    featureList.createEl("li", { text: "增量改进和合并" });
-    featureList.createEl("li", { text: "可撤销的所有操作" });
+    contentEl.createEl("p", {
+      text: "开始前需要配置一个 AI Provider。",
+      cls: "cr-wizard-hint"
+    });
 
-    // 按钮
     const buttons = contentEl.createDiv({ cls: "cr-wizard-buttons" });
     
     const nextBtn = buttons.createEl("button", {
@@ -114,491 +86,177 @@ export class SetupWizard extends Modal {
       cls: "mod-cta"
     });
     nextBtn.addEventListener("click", () => {
-      this.currentStep = WizardStep.SelectProvider;
+      this.currentStep = WizardStep.Configure;
       this.renderStep();
     });
 
     const skipBtn = buttons.createEl("button", {
-      text: "稍后配置"
+      text: "稍后配置",
+      cls: "cr-btn-secondary"
     });
-    skipBtn.addEventListener("click", () => {
-      this.close();
-    });
+    skipBtn.addEventListener("click", () => this.close());
   }
 
   /**
-   * 渲染 Provider 选择页面
+   * 渲染配置页面
    */
-  private renderSelectProvider(): void {
+  private renderConfigure(): void {
     const { contentEl } = this;
 
-    contentEl.createEl("h1", { text: "选择 AI Provider" });
-    
-    contentEl.createEl("p", {
-      text: "请选择您想要使用的 AI 服务提供商。两种 Provider 都支持自定义端点配置，可用于兼容的第三方服务。"
-    });
+    contentEl.createEl("h1", { text: "配置 AI Provider", cls: "cr-wizard-title" });
 
-    // Google Gemini
-    const googleCard = this.createProviderCard(
-      contentEl,
-      "Google Gemini",
-      "Google 的多模态 AI 模型，支持长上下文和快速响应",
-      "google",
-      [
-        "免费额度充足",
-        "支持长上下文 (32K tokens)",
-        "响应速度快",
-        "支持嵌入功能"
-      ]
-    );
-
-    // OpenAI
-    const openaiCard = this.createProviderCard(
-      contentEl,
-      "OpenAI",
-      "业界领先的 GPT 系列模型，提供高质量的文本生成",
-      "openai",
-      [
-        "模型质量高",
-        "生态系统完善",
-        "支持多种模型",
-        "支持嵌入功能"
-      ]
-    );
-
-    // 返回按钮
-    const buttons = contentEl.createDiv({ cls: "cr-wizard-buttons" });
-    const backBtn = buttons.createEl("button", { text: "返回" });
-    backBtn.addEventListener("click", () => {
-      this.currentStep = WizardStep.Welcome;
-      this.renderStep();
-    });
-  }
-
-  /**
-   * 创建 Provider 卡片
-   */
-  private createProviderCard(
-    container: HTMLElement,
-    name: string,
-    description: string,
-    type: ProviderType,
-    features: string[]
-  ): HTMLElement {
-    const card = container.createDiv({ cls: "cr-provider-card" });
-    
-    card.createEl("h3", { text: name });
-    card.createEl("p", { text: description, cls: "cr-provider-desc" });
-    
-    const featureList = card.createEl("ul", { cls: "cr-provider-features" });
-    features.forEach(feature => {
-      featureList.createEl("li", { text: feature });
-    });
-
-    const selectBtn = card.createEl("button", {
-      text: "选择",
-      cls: "mod-cta"
-    });
-    selectBtn.addEventListener("click", () => {
-      this.selectedProvider = type;
-      this.providerId = `my-${type}`;
-      
-      // 设置默认模型和端点
-      this.setDefaultModels(type);
-      
-      // 跳转到对应的配置页面
-      switch (type) {
-        case "google":
-          this.currentStep = WizardStep.ConfigureGoogle;
-          break;
-        case "openai":
-          this.currentStep = WizardStep.ConfigureOpenAI;
-          break;
-      }
-      this.renderStep();
-    });
-
-    return card;
-  }
-
-  /**
-   * 设置默认模型和端点
-   */
-  private setDefaultModels(type: ProviderType): void {
-    switch (type) {
-      case "google":
-        this.chatModel = "gemini-1.5-flash";
-        this.embedModel = "text-embedding-004";
-        this.baseUrl = "https://generativelanguage.googleapis.com/v1beta";
-        break;
-      case "openai":
-        this.chatModel = "gpt-4-turbo-preview";
-        this.embedModel = "text-embedding-3-small";
-        this.baseUrl = "https://api.openai.com/v1";
-        break;
-    }
-  }
-
-  /**
-   * 渲染 Google Gemini 配置页面
-   */
-  private renderConfigureGoogle(): void {
-    const { contentEl } = this;
-
-    contentEl.createEl("h1", { text: "配置 Google Gemini" });
-
-    // 说明
-    const instructions = contentEl.createDiv({ cls: "cr-wizard-instructions" });
-    instructions.createEl("p", { text: "请按照以下步骤获取 API Key：" });
-    const steps = instructions.createEl("ol");
-    steps.createEl("li").innerHTML = '访问 <a href="https://makersuite.google.com/app/apikey" target="_blank">Google AI Studio</a>';
-    steps.createEl("li", { text: "点击 \"Create API Key\" 按钮" });
-    steps.createEl("li", { text: "复制生成的 API Key" });
+    // API Key 获取提示
+    const hint = contentEl.createDiv({ cls: "cr-config-hint" });
+    hint.innerHTML = '从 <a href="https://platform.openai.com/api-keys" target="_blank">OpenAI</a> 或 <a href="https://openrouter.ai/keys" target="_blank">OpenRouter</a> 获取 API Key';
 
     // 配置表单
     new Setting(contentEl)
-      .setName("Provider ID")
-      .setDesc("为此 Provider 设置一个唯一标识符")
-      .addText(text => {
-        text
-          .setPlaceholder("my-google")
-          .setValue(this.providerId)
-          .onChange(value => {
-            this.providerId = value;
-          });
-      });
-
-    new Setting(contentEl)
       .setName("API Key")
-      .setDesc("输入您的 Google AI API Key")
-      .addText(text => {
-        text
-          .setPlaceholder("AIza...")
-          .setValue(this.apiKey)
-          .onChange(value => {
-            this.apiKey = value;
-          });
-        text.inputEl.type = "password";
-      });
-
-    // 自定义端点输入框
-    let urlError: HTMLElement | null = null;
-    new Setting(contentEl)
-      .setName("自定义端点（可选）")
-      .setDesc("留空使用默认端点。可用于兼容的第三方服务（如 OpenRouter）")
-      .addText(text => {
-        text
-          .setPlaceholder("https://generativelanguage.googleapis.com/v1beta")
-          .setValue(this.baseUrl)
-          .onChange(value => {
-            this.baseUrl = value;
-            // 实时验证 URL
-            if (value.trim()) {
-              const error = validateUrl(value);
-              if (error) {
-                if (!urlError) {
-                  urlError = contentEl.createDiv({ cls: "cr-url-error" });
-                  text.inputEl.parentElement?.appendChild(urlError);
-                }
-                urlError.setText(error);
-                urlError.style.color = "var(--text-error)";
-              } else if (urlError) {
-                urlError.remove();
-                urlError = null;
-              }
-            } else if (urlError) {
-              urlError.remove();
-              urlError = null;
-            }
-          });
-      });
-
-    new Setting(contentEl)
-      .setName("聊天模型")
-      .setDesc("用于文本生成的模型")
-      .addText(text => {
-        text
-          .setPlaceholder("gemini-1.5-flash")
-          .setValue(this.chatModel)
-          .onChange(value => {
-            this.chatModel = value;
-          });
-      });
-
-    new Setting(contentEl)
-      .setName("嵌入模型")
-      .setDesc("用于向量嵌入的模型")
-      .addText(text => {
-        text
-          .setPlaceholder("text-embedding-004")
-          .setValue(this.embedModel)
-          .onChange(value => {
-            this.embedModel = value;
-          });
-      });
-
-    // 按钮
-    const buttons = contentEl.createDiv({ cls: "cr-wizard-buttons" });
-    
-    const backBtn = buttons.createEl("button", { text: "返回" });
-    backBtn.addEventListener("click", () => {
-      this.currentStep = WizardStep.SelectProvider;
-      this.renderStep();
-    });
-
-    const nextBtn = buttons.createEl("button", {
-      text: "验证并保存",
-      cls: "mod-cta"
-    });
-    nextBtn.addEventListener("click", () => {
-      this.validateAndSave();
-    });
-  }
-
-  /**
-   * 渲染 OpenAI 配置页面
-   */
-  private renderConfigureOpenAI(): void {
-    const { contentEl } = this;
-
-    contentEl.createEl("h1", { text: "配置 OpenAI" });
-
-    // 说明
-    const instructions = contentEl.createDiv({ cls: "cr-wizard-instructions" });
-    instructions.createEl("p", { text: "请按照以下步骤获取 API Key：" });
-    const steps = instructions.createEl("ol");
-    steps.createEl("li").innerHTML = '访问 <a href="https://platform.openai.com/api-keys" target="_blank">OpenAI API Keys</a>';
-    steps.createEl("li", { text: "点击 \"Create new secret key\" 按钮" });
-    steps.createEl("li", { text: "复制生成的 API Key" });
-
-    // 配置表单
-    new Setting(contentEl)
-      .setName("Provider ID")
-      .setDesc("为此 Provider 设置一个唯一标识符")
-      .addText(text => {
-        text
-          .setPlaceholder("my-openai")
-          .setValue(this.providerId)
-          .onChange(value => {
-            this.providerId = value;
-          });
-      });
-
-    new Setting(contentEl)
-      .setName("API Key")
-      .setDesc("输入您的 OpenAI API Key")
+      .setDesc("您的 API Key（本地存储，不会上传）")
       .addText(text => {
         text
           .setPlaceholder("sk-...")
           .setValue(this.apiKey)
-          .onChange(value => {
-            this.apiKey = value;
-          });
+          .onChange(value => this.apiKey = value);
         text.inputEl.type = "password";
       });
 
-    // 自定义端点输入框
-    let urlError: HTMLElement | null = null;
     new Setting(contentEl)
-      .setName("自定义端点（可选）")
-      .setDesc("留空使用默认端点。可用于兼容的第三方服务（如 OpenRouter）")
+      .setName("自定义端点")
+      .setDesc("留空使用 OpenAI 默认端点")
       .addText(text => {
         text
           .setPlaceholder("https://api.openai.com/v1")
           .setValue(this.baseUrl)
-          .onChange(value => {
-            this.baseUrl = value;
-            // 实时验证 URL
-            if (value.trim()) {
-              const error = validateUrl(value);
-              if (error) {
-                if (!urlError) {
-                  urlError = contentEl.createDiv({ cls: "cr-url-error" });
-                  text.inputEl.parentElement?.appendChild(urlError);
-                }
-                urlError.setText(error);
-                urlError.style.color = "var(--text-error)";
-              } else if (urlError) {
-                urlError.remove();
-                urlError = null;
-              }
-            } else if (urlError) {
-              urlError.remove();
-              urlError = null;
-            }
-          });
+          .onChange(value => this.baseUrl = value);
       });
 
-    new Setting(contentEl)
+    // 高级选项折叠
+    const advancedToggle = contentEl.createDiv({ cls: "cr-advanced-toggle" });
+    const toggleBtn = advancedToggle.createEl("button", {
+      text: "▶ 高级选项",
+      cls: "cr-btn-link"
+    });
+    
+    const advancedSection = contentEl.createDiv({ cls: "cr-advanced-section cr-hidden" });
+    
+    toggleBtn.addEventListener("click", () => {
+      const isHidden = advancedSection.hasClass("cr-hidden");
+      advancedSection.toggleClass("cr-hidden", !isHidden);
+      toggleBtn.setText(isHidden ? "▼ 高级选项" : "▶ 高级选项");
+    });
+
+    new Setting(advancedSection)
+      .setName("Provider ID")
+      .addText(text => {
+        text
+          .setPlaceholder("my-openai")
+          .setValue(this.providerId)
+          .onChange(value => this.providerId = value);
+      });
+
+    new Setting(advancedSection)
       .setName("聊天模型")
-      .setDesc("用于文本生成的模型")
       .addText(text => {
         text
-          .setPlaceholder("gpt-4-turbo-preview")
           .setValue(this.chatModel)
-          .onChange(value => {
-            this.chatModel = value;
-          });
+          .onChange(value => this.chatModel = value);
       });
 
-    new Setting(contentEl)
+    new Setting(advancedSection)
       .setName("嵌入模型")
-      .setDesc("用于向量嵌入的模型")
       .addText(text => {
         text
-          .setPlaceholder("text-embedding-3-small")
           .setValue(this.embedModel)
-          .onChange(value => {
-            this.embedModel = value;
-          });
+          .onChange(value => this.embedModel = value);
       });
 
     // 按钮
     const buttons = contentEl.createDiv({ cls: "cr-wizard-buttons" });
     
-    const backBtn = buttons.createEl("button", { text: "返回" });
+    const backBtn = buttons.createEl("button", { 
+      text: "返回",
+      cls: "cr-btn-secondary"
+    });
     backBtn.addEventListener("click", () => {
-      this.currentStep = WizardStep.SelectProvider;
+      this.currentStep = WizardStep.Welcome;
       this.renderStep();
     });
 
-    const nextBtn = buttons.createEl("button", {
-      text: "验证并保存",
+    const saveBtn = buttons.createEl("button", {
+      text: "保存配置",
       cls: "mod-cta"
     });
-    nextBtn.addEventListener("click", () => {
-      this.validateAndSave();
-    });
+    saveBtn.addEventListener("click", () => this.saveConfig(saveBtn));
   }
 
   /**
-   * 验证并保存配置
+   * 保存配置
    */
-  private async validateAndSave(): Promise<void> {
-    // 验证输入
-    if (!this.providerId.trim()) {
-      new Notice("请输入 Provider ID");
-      return;
-    }
-
+  private async saveConfig(btn: HTMLButtonElement): Promise<void> {
+    // 验证必填项
     if (!this.apiKey.trim()) {
       new Notice("请输入 API Key");
       return;
     }
 
-    if (!this.chatModel.trim()) {
-      new Notice("请输入聊天模型");
+    if (!this.providerId.trim()) {
+      new Notice("请输入 Provider ID");
       return;
     }
 
-    if (!this.embedModel.trim()) {
-      new Notice("请输入嵌入模型");
-      return;
-    }
-
-    // 验证自定义端点（如果提供）
+    // 验证 URL（如果提供）
     if (this.baseUrl.trim()) {
       const urlError = validateUrl(this.baseUrl);
       if (urlError) {
-        new Notice(`自定义端点无效: ${urlError}`);
+        new Notice(`端点 URL 无效: ${urlError}`);
         return;
       }
     }
 
-    // 显示验证中状态
-    this.currentStep = WizardStep.Verify;
-    this.renderStep();
+    // 显示保存中状态
+    const originalText = btn.getText();
+    btn.setText("保存中...");
+    btn.disabled = true;
 
-    // 创建配置
-    const config: ProviderConfig = {
-      type: this.selectedProvider!,
-      apiKey: this.apiKey,
-      baseUrl: this.baseUrl.trim() || undefined,
-      defaultChatModel: this.chatModel,
-      defaultEmbedModel: this.embedModel,
-      enabled: true
-    };
-
-    // 保存配置
-    const result = await this.plugin.settingsStore.addProvider(this.providerId, config);
-    
-    if (!result.ok) {
-      new Notice(`保存失败: ${result.error.message}`);
-      // 返回配置页面
-      switch (this.selectedProvider) {
-        case "google":
-          this.currentStep = WizardStep.ConfigureGoogle;
-          break;
-        case "openai":
-          this.currentStep = WizardStep.ConfigureOpenAI;
-          break;
-      }
-      this.renderStep();
-      return;
-    }
-
-    // 验证 API Key（可选）
     try {
-      const checkResult = await this.plugin.getComponents().providerManager.checkAvailability(this.providerId);
-      if (!checkResult.ok) {
-        new Notice(`API Key 验证失败: ${checkResult.error.message}`);
-        // 但仍然继续，因为可能是网络问题
+      const config: ProviderConfig = {
+        type: "openai" as ProviderType,
+        apiKey: this.apiKey,
+        baseUrl: this.baseUrl.trim() || undefined,
+        defaultChatModel: this.chatModel,
+        defaultEmbedModel: this.embedModel,
+        enabled: true
+      };
+
+      const result = await this.plugin.settingsStore.addProvider(this.providerId, config);
+      
+      if (!result.ok) {
+        new Notice(`保存失败: ${result.error.message}`);
+        btn.setText(originalText);
+        btn.disabled = false;
+        return;
       }
-    } catch (error) {
-      console.error("API Key 验证失败:", error);
-      // 继续，不阻塞用户
-    }
 
-    // 显示完成页面
-    this.currentStep = WizardStep.Complete;
-    this.renderStep();
-  }
+      // 尝试验证连接（不阻塞）
+      try {
+        const checkResult = await this.plugin.getComponents().providerManager.checkAvailability(this.providerId);
+        if (!checkResult.ok) {
+          new Notice(`⚠️ 连接验证失败，请检查配置`, 5000);
+        }
+      } catch {
+        // 忽略验证错误，可能是网络问题
+      }
 
-  /**
-   * 渲染验证页面
-   */
-  private renderVerify(): void {
-    const { contentEl } = this;
-
-    contentEl.createEl("h1", { text: "验证配置" });
-    
-    const loading = contentEl.createDiv({ cls: "cr-wizard-loading" });
-    loading.createEl("p", { text: "正在验证 API Key..." });
-    loading.createEl("div", { cls: "cr-spinner" });
-  }
-
-  /**
-   * 渲染完成页面
-   */
-  private renderComplete(): void {
-    const { contentEl } = this;
-
-    contentEl.createEl("h1", { text: "配置完成！" });
-    
-    const success = contentEl.createDiv({ cls: "cr-wizard-success" });
-    success.createEl("p", {
-      text: "✅ Provider 配置成功！您现在可以开始使用 Cognitive Razor 了。"
-    });
-
-    const nextSteps = contentEl.createDiv({ cls: "cr-wizard-next-steps" });
-    nextSteps.createEl("h3", { text: "下一步：" });
-    const stepsList = nextSteps.createEl("ul");
-    stepsList.createEl("li", { text: "使用 Ctrl/Cmd + Shift + W 打开工作台" });
-    stepsList.createEl("li", { text: "在工作台中输入概念描述，创建您的第一个概念" });
-    stepsList.createEl("li", { text: "查看任务队列了解处理进度" });
-    stepsList.createEl("li", { text: "在设置中调整插件参数" });
-
-    // 按钮
-    const buttons = contentEl.createDiv({ cls: "cr-wizard-buttons" });
-    
-    const closeBtn = buttons.createEl("button", {
-      text: "开始使用",
-      cls: "mod-cta"
-    });
-    closeBtn.addEventListener("click", () => {
+      // 配置成功，关闭向导并自动打开工作台
+      new Notice("✓ 配置完成");
       this.close();
-      // 打开工作台
       this.app.workspace.trigger("cognitive-razor:open-workbench");
-    });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      new Notice(`保存出错: ${msg}`);
+      btn.setText(originalText);
+      btn.disabled = false;
+    }
   }
 }

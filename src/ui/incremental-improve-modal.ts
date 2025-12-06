@@ -44,9 +44,9 @@ export class IncrementalImproveModal extends Modal {
     });
 
     // 说明文本
-    contentEl.createEl("p", {
+    const description = contentEl.createDiv({ cls: "cr-description" });
+    description.createEl("p", {
       text: "请描述您希望如何改进这篇笔记。AI 将根据您的意图生成改进后的内容。",
-      cls: "cr-description"
     });
 
     // 意图输入框
@@ -60,8 +60,8 @@ export class IncrementalImproveModal extends Modal {
       cls: "cr-intent-input",
       attr: {
         id: "intent-input",
-        placeholder: "例如：\n- 添加更多示例\n- 扩展理论部分\n- 改进语言表达\n- 补充相关链接",
-        rows: "6",
+        placeholder: "例如：\n- 添加更多实际应用示例\n- 扩展理论背景和历史发展\n- 改进语言表达，使其更易理解\n- 补充相关研究和参考链接\n- 添加图表或可视化说明\n- 增加与其他概念的关联",
+        rows: "8",
         "aria-label": "改进意图输入框"
       }
     });
@@ -70,9 +70,40 @@ export class IncrementalImproveModal extends Modal {
     this.intentInput.focus();
 
     // 提示信息
-    contentEl.createEl("div", {
+    const hints = contentEl.createDiv({ cls: "cr-hints-section" });
+    
+    hints.createEl("div", {
       text: "💡 提示：描述越具体，AI 生成的改进内容越符合您的期望。",
-      cls: "cr-hint"
+      cls: "cr-hint cr-hint-primary"
+    });
+
+    // 示例建议
+    const examples = hints.createDiv({ cls: "cr-examples" });
+    examples.createEl("div", {
+      text: "常见改进方向：",
+      cls: "cr-examples-title"
+    });
+
+    const examplesList = examples.createEl("ul", { cls: "cr-examples-list" });
+    
+    const exampleItems = [
+      { icon: "📝", text: "内容扩展：添加更多细节、案例或数据支持" },
+      { icon: "🔗", text: "关联补充：建立与其他概念的联系和引用" },
+      { icon: "✨", text: "表达优化：改进语言流畅度和可读性" },
+      { icon: "📊", text: "结构调整：重新组织内容层次和逻辑" },
+      { icon: "🎯", text: "重点突出：强调核心观点和关键信息" },
+    ];
+
+    exampleItems.forEach(item => {
+      const li = examplesList.createEl("li");
+      li.createSpan({ text: item.icon, cls: "cr-example-icon" });
+      li.createSpan({ text: item.text, cls: "cr-example-text" });
+    });
+
+    // 快捷键提示
+    hints.createEl("div", {
+      text: "⌨️ 快捷键：Ctrl/Cmd + Enter 提交",
+      cls: "cr-hint cr-hint-secondary"
     });
 
     // 操作按钮

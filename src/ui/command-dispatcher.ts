@@ -443,24 +443,45 @@ export class CommandDispatcher {
    * 切换队列状态
    */
   private async toggleQueue(): Promise<void> {
-    // TODO: 调用 TaskQueue 切换暂停/恢复
-    new Notice("切换队列状态功能待实现");
+    if (!this.taskQueue) {
+      new Notice("任务队列未初始化");
+      return;
+    }
+
+    const status = this.taskQueue.getStatus();
+    if (status.paused) {
+      this.taskQueue.resume();
+      new Notice("队列已恢复运行");
+    } else {
+      this.taskQueue.pause();
+      new Notice("队列已暂停");
+    }
   }
 
   /**
    * 清空已完成任务
    */
   private async clearCompletedTasks(): Promise<void> {
-    // TODO: 调用 TaskQueue 清空已完成任务
-    new Notice("清空已完成任务功能待实现");
+    if (!this.taskQueue) {
+      new Notice("任务队列未初始化");
+      return;
+    }
+
+    const cleared = await this.taskQueue.clearCompleted();
+    new Notice(`已清空 ${cleared} 个已完成任务`);
   }
 
   /**
    * 重试失败任务
    */
   private async retryFailedTasks(): Promise<void> {
-    // TODO: 调用 TaskQueue 重试失败任务
-    new Notice("重试失败任务功能待实现");
+    if (!this.taskQueue) {
+      new Notice("任务队列未初始化");
+      return;
+    }
+
+    const retried = await this.taskQueue.retryFailed();
+    new Notice(`已重新排队 ${retried} 个失败任务`);
   }
 
   /**

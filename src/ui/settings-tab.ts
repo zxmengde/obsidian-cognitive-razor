@@ -54,17 +54,10 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
     // 添加 Provider 按钮
     new Setting(containerEl)
       .setName("添加 Provider")
-      .setDesc("配置 AI 服务提供商")
+      .setDesc("配置 AI 服务提供商（支持 OpenAI 标准格式，可通过自定义端点兼容其他服务）")
       .addButton(button => {
         button
-          .setButtonText("添加 Google Gemini")
-          .onClick(() => {
-            this.showAddProviderModal("google");
-          });
-      })
-      .addButton(button => {
-        button
-          .setButtonText("添加 OpenAI")
+          .setButtonText("添加 Provider")
           .onClick(() => {
             this.showAddProviderModal("openai");
           });
@@ -112,7 +105,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
   ): void {
     const setting = new Setting(containerEl)
       .setName(id)
-      .setDesc(`类型: ${config.type} | 状态: ${config.enabled ? "启用" : "禁用"}`);
+      .setDesc(`模型: ${config.defaultChatModel} | 状态: ${config.enabled ? "启用" : "禁用"}`);
 
     // 启用/禁用切换
     setting.addToggle(toggle => {
@@ -246,9 +239,10 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
           .addOption("warn", "警告")
           .addOption("error", "错误")
           .setValue(this.plugin.settings.logLevel)
-          .onChange(async (value: any) => {
-            await this.plugin.settingsStore.update({ logLevel: value });
-            new Notice(`日志级别已设置为: ${value}（将在下次启动时生效）`);
+          .onChange(async (value: string) => {
+            const logLevel = value as "debug" | "info" | "warn" | "error";
+            await this.plugin.settingsStore.update({ logLevel });
+            new Notice(`日志级别已设置为: ${logLevel}（将在下次启动时生效）`);
           });
       });
 

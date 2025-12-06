@@ -76,7 +76,7 @@
 5. 系统会自动验证 Key 的有效性
 6. 配置完成后即可开始使用
 
-> **注意**：从 v2.0.0 开始，插件不再单独支持 OpenRouter。如需使用 OpenRouter，请选择 OpenAI Provider 并设置自定义端点为 `https://openrouter.ai/api/v1`。详见[配置迁移指南](docs/配置迁移指南.md)。
+> **重要提示**：从 v2.0.0 开始，插件简化了 Provider 配置，仅保留 OpenAI 和 Gemini 两种类型。通过自定义端点功能，你可以使用任何兼容的服务（包括 OpenRouter、本地模型等）。详见[配置迁移指南](docs/配置迁移指南.md)。
 
 ### 创建第一个概念
 
@@ -185,20 +185,37 @@ Cognitive Razor 支持五种知识类型：
 
 两种 Provider 都支持自定义端点配置，允许你使用兼容的第三方服务：
 
-- **OpenRouter**：设置 OpenAI Provider 的自定义端点为 `https://openrouter.ai/api/v1`
-- **本地模型**：设置自定义端点为本地服务地址（如 `http://localhost:8080/v1`）
-- **其他兼容服务**：任何实现了 OpenAI 或 Gemini API 接口的服务
+**常用配置示例**：
 
-**配置方法**：
+| 服务类型 | Provider 选择 | 自定义端点 URL | 说明 |
+|---------|--------------|---------------|------|
+| OpenRouter | OpenAI | `https://openrouter.ai/api/v1` | 访问多种 AI 模型 |
+| Ollama (本地) | OpenAI | `http://localhost:11434/v1` | 本地运行开源模型 |
+| LM Studio (本地) | OpenAI | `http://localhost:1234/v1` | 本地模型服务 |
+| Azure OpenAI | OpenAI | `https://your-resource.openai.azure.com/openai/deployments/your-deployment` | 企业级 OpenAI 服务 |
+| Vertex AI | Gemini | `https://your-region-aiplatform.googleapis.com/v1` | Google Cloud AI 服务 |
+
+**配置步骤**：
 1. 打开插件设置 → Provider 配置
-2. 添加或编辑 Provider
-3. 在"自定义端点"字段中输入 URL
-4. 留空则使用默认端点
+2. 点击"添加 Provider"或编辑现有 Provider
+3. 选择 Provider 类型（OpenAI 或 Gemini）
+4. 输入 API Key（本地服务可以输入任意值）
+5. 在"自定义端点"字段中输入 URL
+6. 留空则使用默认端点
+7. 点击"测试连接"验证配置
+8. 保存配置
 
 **URL 验证规则**：
 - 必须以 `http://` 或 `https://` 开头
 - 必须是有效的 URL 格式
-- 建议使用 HTTPS 以确保安全性
+- 建议使用 HTTPS 以确保安全性（本地服务除外）
+- 系统会在保存前自动验证 URL 格式
+
+**故障排除**：
+- 如果连接失败，检查端点 URL 是否正确
+- 本地服务确保服务已启动并监听正确端口
+- 检查防火墙设置是否阻止连接
+- 查看日志文件了解详细错误信息
 
 ### 高级设置
 
@@ -341,13 +358,61 @@ src/
 - 🐛 [问题反馈](https://github.com/your-username/obsidian-cognitive-razor/issues)
 - 💬 [讨论区](https://github.com/your-username/obsidian-cognitive-razor/discussions)
 
-## 🔄 版本迁移
+## 🔄 从旧版本升级
 
-如果你从旧版本升级，请查看[配置迁移指南](docs/配置迁移指南.md)了解：
+### v2.0.0 重大变更
 
-- OpenRouter 配置迁移方法
-- 自定义端点配置说明
-- 常见迁移问题解决
+从 v2.0.0 开始，插件进行了重大简化和改进：
+
+#### Provider 简化
+
+**变更内容**：
+- ✅ 保留：OpenAI Provider
+- ✅ 保留：Gemini Provider  
+- ❌ 移除：OpenRouter Provider（作为独立类型）
+- ✨ 新增：自定义端点支持
+
+**为什么这样改？**
+- 简化配置流程，减少用户困惑
+- 通过自定义端点提供更大灵活性
+- 支持任何兼容 OpenAI/Gemini API 的服务
+- 更容易支持本地模型和私有部署
+
+#### 如何迁移 OpenRouter 配置
+
+如果你之前使用 OpenRouter，有两种迁移方式：
+
+**方式 1：继续使用 OpenRouter（推荐）**
+
+1. 打开插件设置 → Provider 配置
+2. 添加新的 OpenAI Provider
+3. 输入你的 OpenRouter API Key
+4. 在"自定义端点"中输入：`https://openrouter.ai/api/v1`
+5. 选择 OpenRouter 支持的模型
+6. 保存配置
+
+**方式 2：切换到官方 API**
+
+1. 获取 OpenAI 或 Google Gemini 的 API Key
+2. 在插件设置中配置新的 Provider
+3. 删除旧的 OpenRouter 配置
+
+#### 自动迁移
+
+插件会在启动时自动检测旧配置：
+
+- 如果检测到 OpenRouter 配置，会显示迁移向导
+- 你可以选择自动迁移或手动配置
+- 所有 API Key 和模型配置都会被保留
+
+详细迁移指南请查看：[配置迁移指南](docs/配置迁移指南.md)
+
+### 其他重要变更
+
+- 所有 Modal 组件替代了 `prompt()` 调用，解决了 Electron 兼容性问题
+- 完整实现了所有待实现功能（创建概念、队列详情、重复管理等）
+- 改进了 UI 样式和暗色主题支持
+- 增强了错误处理和用户反馈
 
 ---
 

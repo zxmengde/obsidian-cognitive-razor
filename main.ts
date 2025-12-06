@@ -8,8 +8,6 @@ import { CognitiveRazorSettings } from './src/types';
 import { SettingsStore, DEFAULT_SETTINGS } from './src/data/settings-store';
 import { FileStorage } from './src/data/file-storage';
 import { Logger } from './src/data/logger';
-import { MigrationRunner } from './src/data/migration-runner';
-import { MigrationManager } from './src/core/migration-manager';
 import { VectorIndex } from './src/core/vector-index';
 import { TaskQueue } from './src/core/task-queue';
 import { LockManager } from './src/core/lock-manager';
@@ -37,8 +35,6 @@ export default class CognitiveRazorPlugin extends Plugin {
 	// 数据层组件
 	private fileStorage!: FileStorage;
 	private logger!: Logger;
-	private migrationRunner!: MigrationRunner;
-	private migrationManager!: MigrationManager;
 
 	// 核心组件
 	private vectorIndex!: VectorIndex;
@@ -73,10 +69,7 @@ export default class CognitiveRazorPlugin extends Plugin {
 			// 3. 加载设置
 			await this.loadSettings();
 
-			// 4. 运行数据迁移
-			await this.runMigrations();
-
-			// 5. 检查是否需要首次配置向导
+			// 4. 检查是否需要首次配置向导
 			const needsSetup = await this.checkNeedsSetup();
 			if (needsSetup) {
 				// 延迟显示配置向导，等待 workspace 准备就绪
@@ -85,22 +78,22 @@ export default class CognitiveRazorPlugin extends Plugin {
 				});
 			}
 
-			// 6. 初始化核心组件
+			// 5. 初始化核心组件
 			await this.initializeCoreComponents();
 
-			// 7. 注册视图
+			// 6. 注册视图
 			this.registerViews();
 
-			// 8. 初始化 UI 组件
+			// 7. 初始化 UI 组件
 			this.initializeUIComponents();
 
-			// 9. 注册命令
+			// 8. 注册命令
 			this.registerCommands();
 
-			// 10. 添加设置面板
+			// 9. 添加设置面板
 			this.addSettingTab(new CognitiveRazorSettingTab(this.app, this));
 
-			// 11. 订阅队列事件，更新 UI
+			// 10. 订阅队列事件，更新 UI
 			this.subscribeToQueueEvents();
 
 			console.log('Cognitive Razor 插件加载完成');
@@ -108,6 +101,25 @@ export default class CognitiveRazorPlugin extends Plugin {
 			console.error('Cognitive Razor 插件加载失败:', error);
 			const errorMessage = error instanceof Error ? error.message : String(error);
 			new Notice(`插件加载失败: ${errorMessage}`);
+		}
+	}
+
+	/**
+	 * 外部设置变更回调 (Obsidian 1.5.7+)
+	 * 当 data.json 被外部修改时触发（如 Obsidian Sync）
+	 */
+	async onExternalSettingsChange(): Promise<void> {
+		console.log('检测到外部设置变更，重新加载设置');
+		
+		try {
+			const loadResult = await this.settingsStore.load();
+			if (loadResult.ok) {
+				this.settings = loadResult.value;
+				// 同步 Provider 配置
+				this.syncProvidersToManager(this.settings);
+			}
+		} catch (error) {
+			console.error('重新加载设置失败:', error);
 		}
 	}
 
@@ -163,9 +175,10 @@ export default class CognitiveRazorPlugin extends Plugin {
 	 * 初始化数据层组件
 	 */
 	private async initializeDataLayer(): Promise<void> {
-		// FileStorage
+		// FileStorage（使用 Obsidian Vault Adapter）
 		this.fileStorage = new FileStorage({
 			dataDir: this.dataDir,
+			adapter: this.app.vault.adapter,
 		});
 
 		// Logger
@@ -176,18 +189,16 @@ export default class CognitiveRazorPlugin extends Plugin {
 			maxSize: 1024 * 1024, // 1MB
 		});
 
-		// MigrationRunner 将在加载设置后初始化
 	}
 
 	/**
 	 * 加载设置
 	 */
 	private async loadSettings(): Promise<void> {
-		// 创建 SettingsStore
+		// 创建 SettingsStore（使用 Obsidian 标准 data.json）
 		this.settingsStore = new SettingsStore({
-			storage: this.fileStorage,
+			plugin: this,
 			logger: this.logger,
-			settingsFilePath: 'settings.json',
 		});
 
 		// 加载设置
@@ -200,40 +211,6 @@ export default class CognitiveRazorPlugin extends Plugin {
 			this.settings = loadResult.value;
 		}
 
-		// 初始化 MigrationManager（需要 settingsStore）
-		this.migrationManager = new MigrationManager({
-			app: this.app,
-			settingsStore: this.settingsStore,
-			storage: this.fileStorage,
-			logger: this.logger,
-		});
-
-		// 初始化迁移管理器
-		const initResult = await this.migrationManager.initialize();
-		if (!initResult.ok) {
-			this.logger.error('初始化迁移管理器失败', { error: initResult.error });
-		}
-	}
-
-	/**
-	 * 运行数据迁移
-	 */
-	private async runMigrations(): Promise<void> {
-		const targetVersion = "2.0.0"; // 目标版本
-		
-		// 使用 MigrationManager 检查并执行迁移
-		const migrateResult = await this.migrationManager.checkAndMigrate(targetVersion);
-		
-		if (!migrateResult.ok) {
-			this.logger.error('数据迁移失败', { error: migrateResult.error });
-			
-			// 如果不是用户取消，显示错误通知
-			if (migrateResult.error.code !== 'MIGRATION_CANCELLED') {
-				new Notice('数据迁移失败，请查看日志');
-			}
-		} else {
-			this.logger.info('数据迁移完成');
-		}
 	}
 
 	/**
@@ -297,6 +274,9 @@ export default class CognitiveRazorPlugin extends Plugin {
 			}
 		});
 
+		// 加载提示词模板
+		await this.loadPromptTemplates();
+
 		// IncrementalImproveHandler
 		this.incrementalImproveHandler = new IncrementalImproveHandler({
 			app: this.app,
@@ -307,6 +287,53 @@ export default class CognitiveRazorPlugin extends Plugin {
 		this.incrementalImproveHandler.start();
 
 		this.logger.info('核心组件初始化完成');
+	}
+
+	/**
+	 * 加载提示词模板
+	 */
+	private async loadPromptTemplates(): Promise<void> {
+		const promptsDir = `${this.manifest.dir}/prompts`;
+		const adapter = this.app.vault.adapter;
+
+		try {
+			// 检查 prompts 目录是否存在
+			const exists = await adapter.exists(promptsDir);
+			if (!exists) {
+				this.logger.warn('prompts 目录不存在', { path: promptsDir });
+				return;
+			}
+
+			// 列出所有 .md 文件
+			const files = await adapter.list(promptsDir);
+			const mdFiles = files.files.filter(f => f.endsWith('.md'));
+
+			// 加载每个模板
+			for (const filePath of mdFiles) {
+				const fileName = filePath.split('/').pop() || '';
+				const templateId = fileName.replace('.md', '');
+				
+				try {
+					const content = await adapter.read(filePath);
+					const result = this.promptManager.loadTemplate(templateId, content);
+					
+					if (result.ok) {
+						this.logger.debug('模板加载成功', { templateId });
+					} else {
+						this.logger.error('模板加载失败', { templateId, error: result.error });
+					}
+				} catch (error) {
+					this.logger.error('读取模板文件失败', { filePath, error });
+				}
+			}
+
+			this.logger.info('提示词模板加载完成', { 
+				count: this.promptManager.listTemplates().length,
+				templates: this.promptManager.listTemplates()
+			});
+		} catch (error) {
+			this.logger.error('加载提示词模板失败', { error });
+		}
 	}
 
 	/**
@@ -397,6 +424,51 @@ export default class CognitiveRazorPlugin extends Plugin {
 			// 记录事件
 			this.logger.debug('队列事件', { event });
 		});
+
+		// 订阅设置变更，同步更新 ProviderManager 和 Logger
+		this.settingsStore.subscribe((newSettings) => {
+			this.settings = newSettings;
+			
+			// 同步 Provider 配置到 ProviderManager
+			this.syncProvidersToManager(newSettings);
+			
+			// 同步日志级别到 Logger
+			this.logger.setMinLevel(newSettings.logLevel);
+			
+			this.logger.debug('设置已更新');
+		});
+	}
+
+	/**
+	 * 同步 Provider 配置到 ProviderManager
+	 */
+	private syncProvidersToManager(settings: CognitiveRazorSettings): void {
+		// 获取当前 ProviderManager 中的 provider IDs
+		const currentProviders = new Set(
+			this.providerManager.getConfiguredProviders().map(p => p.id)
+		);
+		
+		// 获取设置中的 provider IDs
+		const settingsProviders = new Set(Object.keys(settings.providers));
+		
+		// 移除不再存在的 providers
+		for (const id of currentProviders) {
+			if (!settingsProviders.has(id)) {
+				this.providerManager.removeProvider(id);
+			}
+		}
+		
+		// 添加或更新 providers
+		for (const [id, config] of Object.entries(settings.providers)) {
+			if (config.enabled) {
+				this.providerManager.setProvider(id, config);
+			} else {
+				// 如果禁用了，从 manager 中移除
+				if (currentProviders.has(id)) {
+					this.providerManager.removeProvider(id);
+				}
+			}
+		}
 	}
 
 	/**

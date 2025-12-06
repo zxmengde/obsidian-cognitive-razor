@@ -246,12 +246,165 @@
   border-radius: 10px;
 }
 
+/* 重复概念控制栏 */
+.cr-header-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--cr-spacing-sm);
+}
+
+.cr-duplicates-controls {
+  display: flex;
+  gap: var(--cr-spacing-md);
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: var(--cr-spacing-sm);
+}
+
+.cr-sort-container,
+.cr-filter-container {
+  display: flex;
+  align-items: center;
+  gap: var(--cr-spacing-xs);
+}
+
+.cr-control-label {
+  font-size: 0.85em;
+  color: var(--cr-text-muted);
+  font-weight: 500;
+}
+
+.cr-sort-select,
+.cr-filter-select {
+  padding: 4px 8px;
+  font-size: 0.85em;
+  border: 1px solid var(--cr-bg-modifier);
+  border-radius: var(--cr-radius-sm);
+  background: var(--cr-bg-primary);
+  color: var(--cr-text-normal);
+  cursor: pointer;
+}
+
+.cr-sort-select:focus,
+.cr-filter-select:focus {
+  outline: none;
+  border-color: var(--cr-primary);
+}
+
+.cr-batch-actions {
+  display: flex;
+  gap: var(--cr-spacing-xs);
+  margin-left: auto;
+}
+
+.cr-btn-small {
+  padding: 4px 12px;
+  font-size: 0.85em;
+}
+
+/* 重复概念列表 - 卡片样式 */
 .cr-duplicates-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cr-spacing-md);
+}
+
+.cr-duplicate-card {
+  display: flex;
+  gap: var(--cr-spacing-sm);
+  padding: var(--cr-spacing-md);
+  background: var(--cr-bg-primary);
+  border: 2px solid var(--cr-bg-modifier);
+  border-radius: var(--cr-radius-md);
+  transition: all 0.2s ease;
+  box-shadow: var(--cr-shadow-sm);
+}
+
+.cr-duplicate-card:hover {
+  border-color: var(--cr-primary-light);
+  box-shadow: var(--cr-shadow-md);
+  transform: translateY(-2px);
+}
+
+.cr-duplicate-checkbox {
+  margin-top: 4px;
+  cursor: pointer;
+}
+
+.cr-duplicate-content {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: var(--cr-spacing-sm);
 }
 
+.cr-duplicate-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.cr-duplicate-names {
+  font-weight: 600;
+  font-size: 1em;
+  color: var(--cr-text-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cr-duplicate-meta-row {
+  display: flex;
+  align-items: center;
+  gap: var(--cr-spacing-md);
+  flex-wrap: wrap;
+}
+
+.cr-similarity-bar {
+  flex: 1;
+  min-width: 100px;
+  height: 8px;
+  background: var(--cr-bg-modifier);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.cr-similarity-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--cr-error) 0%, var(--cr-warning) 50%, var(--cr-success) 100%);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.cr-similarity-text {
+  font-size: 0.9em;
+  font-weight: 600;
+  color: var(--cr-warning);
+  min-width: 45px;
+}
+
+.cr-type-tag {
+  padding: 3px 10px;
+  background: var(--cr-primary);
+  color: white;
+  border-radius: var(--cr-radius-sm);
+  font-size: 0.85em;
+  font-weight: 500;
+}
+
+.cr-time-text {
+  font-size: 0.85em;
+  color: var(--cr-text-muted);
+}
+
+.cr-duplicate-card-actions {
+  display: flex;
+  gap: var(--cr-spacing-xs);
+  align-items: flex-start;
+}
+
+/* 旧样式保留以兼容 */
 .cr-duplicate-item {
   display: flex;
   align-items: center;
@@ -271,15 +424,6 @@
 .cr-duplicate-info {
   flex: 1;
   min-width: 0;
-}
-
-.cr-duplicate-names {
-  font-weight: 500;
-  color: var(--cr-text-normal);
-  margin-bottom: var(--cr-spacing-xs);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .cr-duplicate-meta {
@@ -1771,12 +1915,14 @@ input[type="checkbox"] {
    12. Modal 组件样式
    ======================================== */
 
-/* Modal 容器 */
-.modal {
+/* Modal 容器 - 使用插件特定前缀避免影响 Obsidian 原生界面 */
+.cr-modal {
   padding: var(--cr-spacing-lg);
 }
 
-.modal-content {
+/* 注意：不要使用全局 .modal-content 样式，会影响 Obsidian 设置界面 */
+/* 插件的 modal 样式应该使用特定的类名前缀 */
+.cr-modal .modal-content {
   max-width: 600px;
   margin: 0 auto;
 }
@@ -1939,13 +2085,13 @@ input[type="checkbox"] {
   background: rgba(239, 68, 68, 0.1);
 }
 
-/* Modal 响应式布局 */
+/* Modal 响应式布局 - 使用插件特定前缀 */
 @media (max-width: 768px) {
-  .modal {
+  .cr-modal {
     padding: var(--cr-spacing-md);
   }
 
-  .modal-content {
+  .cr-modal .modal-content {
     max-width: 100%;
   }
 
@@ -2071,119 +2217,146 @@ input[type="checkbox"] {
 }
 
 /* ========================================
-   14. MigrationWizard 样式
+   14. SetupWizard 样式（精简版）
    ======================================== */
 
-/* 迁移描述 */
-.migration-description {
+/* SetupWizard modal 容器 */
+.cr-setup-wizard-modal {
+  width: 90vw;
+  max-width: 500px;
+}
+
+.cr-setup-wizard-modal .modal-content {
+  width: 100%;
+  max-width: none;
+}
+
+.cr-setup-wizard {
+  max-width: 450px;
+  margin: 0 auto;
+  padding: var(--cr-spacing-lg);
+}
+
+/* 标题 */
+.cr-wizard-title {
+  text-align: center;
+  margin-bottom: var(--cr-spacing-md);
+  color: var(--cr-text-normal);
+  font-size: 1.4em;
+}
+
+/* 欢迎页面 */
+.cr-wizard-intro {
+  text-align: center;
+  color: var(--cr-text-normal);
+  line-height: 1.6;
+  margin-bottom: var(--cr-spacing-sm);
+}
+
+.cr-wizard-hint {
+  text-align: center;
+  color: var(--cr-text-muted);
+  font-size: 0.9em;
   margin-bottom: var(--cr-spacing-lg);
-  padding: var(--cr-spacing-md);
-  background: var(--cr-bg-secondary);
-  border-radius: var(--cr-radius-sm);
-  border-left: 3px solid var(--cr-warning);
 }
 
-.migration-description p {
-  margin: 0;
-  color: var(--cr-text-normal);
-  line-height: 1.6;
-}
-
-/* 迁移选项 */
-.migration-option {
-  margin-bottom: var(--cr-spacing-md);
-  padding: var(--cr-spacing-md);
-  background: var(--cr-bg-secondary);
-  border: 2px solid var(--cr-bg-modifier);
+/* 配置提示 */
+.cr-config-hint {
+  margin-bottom: var(--cr-spacing-lg);
+  padding: var(--cr-spacing-sm) var(--cr-spacing-md);
+  background: rgba(99, 102, 241, 0.05);
   border-radius: var(--cr-radius-md);
-  transition: all 0.2s ease;
+  border-left: 3px solid var(--cr-info);
+  font-size: 0.9em;
+  color: var(--cr-text-muted);
+  text-align: center;
 }
 
-.migration-option:hover {
-  border-color: var(--cr-primary-light);
-  box-shadow: var(--cr-shadow-sm);
+.cr-config-hint a {
+  color: var(--cr-primary);
+  text-decoration: none;
 }
 
-.migration-option h3 {
-  margin: 0 0 var(--cr-spacing-sm) 0;
+.cr-config-hint a:hover {
+  text-decoration: underline;
+}
+
+/* 高级选项折叠 */
+.cr-advanced-toggle {
+  margin: var(--cr-spacing-md) 0;
+  text-align: center;
+}
+
+.cr-btn-link {
+  background: none;
+  border: none;
+  color: var(--cr-text-muted);
+  cursor: pointer;
+  font-size: 0.85em;
+  padding: var(--cr-spacing-xs) var(--cr-spacing-sm);
+}
+
+.cr-btn-link:hover {
+  color: var(--cr-primary);
+}
+
+.cr-advanced-section {
+  margin-top: var(--cr-spacing-sm);
+  padding-top: var(--cr-spacing-sm);
+  border-top: 1px solid var(--cr-bg-modifier);
+}
+
+.cr-hidden {
+  display: none;
+}
+
+/* 完成页面 */
+.cr-wizard-success {
+  text-align: center;
+  color: var(--cr-success);
   font-size: 1.1em;
-  font-weight: 600;
-  color: var(--cr-text-normal);
-}
-
-.migration-option-desc {
   margin-bottom: var(--cr-spacing-md);
 }
 
-.migration-option-desc p {
-  margin: 0 0 var(--cr-spacing-xs) 0;
-  color: var(--cr-text-muted);
-  line-height: 1.6;
+/* 按钮 */
+.cr-wizard-buttons {
+  display: flex;
+  gap: var(--cr-spacing-sm);
+  justify-content: center;
+  margin-top: var(--cr-spacing-lg);
 }
 
-.migration-option-desc ul {
-  margin: var(--cr-spacing-xs) 0;
-  padding-left: var(--cr-spacing-lg);
-  color: var(--cr-text-muted);
-}
-
-.migration-option-desc li {
-  margin-bottom: var(--cr-spacing-xs);
-}
-
-.migration-option button {
-  padding: 8px 20px;
-  font-size: 0.9em;
-}
-
-/* 迁移消息 */
-.migration-message {
-  margin-bottom: var(--cr-spacing-md);
-  padding: var(--cr-spacing-md);
-  background: var(--cr-bg-secondary);
-  border-radius: var(--cr-radius-sm);
-  color: var(--cr-text-normal);
-  line-height: 1.6;
-}
-
-/* 迁移详情 */
-.migration-details {
-  margin-bottom: var(--cr-spacing-md);
-  padding: var(--cr-spacing-md);
-  background: var(--cr-bg-primary);
+.cr-btn-secondary {
+  background: transparent;
   border: 1px solid var(--cr-bg-modifier);
-  border-radius: var(--cr-radius-sm);
-}
-
-.migration-details ul {
-  margin: 0;
-  padding-left: var(--cr-spacing-lg);
   color: var(--cr-text-muted);
 }
 
-.migration-details li {
-  margin-bottom: var(--cr-spacing-xs);
-  font-family: var(--font-monospace);
-  font-size: 0.9em;
+.cr-btn-secondary:hover {
+  background: var(--cr-bg-secondary);
+  border-color: var(--cr-primary-light);
+  color: var(--cr-text-normal);
+}
+
+/* 响应式布局 */
+@media (max-width: 768px) {
+  .cr-setup-wizard {
+    padding: var(--cr-spacing-md);
+  }
+
+  .cr-wizard-buttons {
+    flex-direction: column;
+  }
+
+  .cr-wizard-buttons button {
+    width: 100%;
+  }
 }
 
 /* 暗色主题适配 */
-.theme-dark .migration-description {
-  background: var(--background-primary-alt);
+.theme-dark .cr-config-hint {
+  background: rgba(99, 102, 241, 0.1);
 }
-
-.theme-dark .migration-option {
-  background: var(--background-primary-alt);
-}
-
-.theme-dark .migration-message {
-  background: var(--background-primary-alt);
-}
-
-.theme-dark .migration-details {
-  background: var(--background-primary-alt);
-}
-
 
 /* ========================================
    撤销通知样式
@@ -2364,4 +2537,1682 @@ input[type="checkbox"] {
 
 .theme-dark .snapshot-detail-row {
   background-color: var(--background-primary-alt);
+}
+
+/* ========================================
+   重复概念预览 Modal（改进版）
+   ======================================== */
+
+.cr-duplicate-preview-modal .modal-content {
+  max-width: 1200px;
+  max-height: 85vh;
+}
+
+.cr-preview-header {
+  margin-bottom: var(--cr-spacing-lg);
+  padding-bottom: var(--cr-spacing-md);
+  border-bottom: 2px solid var(--cr-bg-modifier);
+}
+
+.cr-preview-meta-card {
+  margin-bottom: var(--cr-spacing-lg);
+  padding: var(--cr-spacing-md);
+  background: var(--cr-bg-secondary);
+  border-radius: var(--cr-radius-md);
+  border-left: 3px solid var(--cr-primary);
+}
+
+.cr-meta-row {
+  display: flex;
+  align-items: center;
+  gap: var(--cr-spacing-md);
+  margin-bottom: var(--cr-spacing-sm);
+}
+
+.cr-meta-row:last-child {
+  margin-bottom: 0;
+}
+
+.cr-meta-label {
+  min-width: 80px;
+  font-weight: 600;
+  font-size: 0.9em;
+  color: var(--cr-text-muted);
+}
+
+.cr-meta-value {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--cr-spacing-sm);
+  color: var(--cr-text-normal);
+}
+
+.cr-similarity-bar-large {
+  flex: 1;
+  height: 12px;
+  background: var(--cr-bg-modifier);
+  border-radius: 6px;
+  overflow: hidden;
+  max-width: 300px;
+}
+
+.cr-similarity-percentage {
+  font-weight: 600;
+  color: var(--cr-warning);
+  min-width: 50px;
+}
+
+.cr-type-tag-large {
+  padding: 4px 12px;
+  background: var(--cr-primary);
+  color: white;
+  border-radius: var(--cr-radius-sm);
+  font-size: 0.9em;
+  font-weight: 500;
+}
+
+.cr-preview-tabs {
+  display: flex;
+  gap: var(--cr-spacing-xs);
+  margin-bottom: var(--cr-spacing-md);
+  border-bottom: 2px solid var(--cr-bg-modifier);
+}
+
+.cr-tab-button {
+  padding: var(--cr-spacing-sm) var(--cr-spacing-md);
+  font-size: 0.9em;
+  color: var(--cr-text-muted);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-bottom: -2px;
+}
+
+.cr-tab-button:hover {
+  color: var(--cr-text-normal);
+}
+
+.cr-tab-button.cr-tab-active {
+  color: var(--cr-primary);
+  border-bottom-color: var(--cr-primary);
+  font-weight: 600;
+}
+
+.cr-side-by-side-view {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--cr-spacing-md);
+  margin-bottom: var(--cr-spacing-lg);
+}
+
+.cr-preview-panel {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--cr-bg-modifier);
+  border-radius: var(--cr-radius-md);
+  overflow: hidden;
+  background: var(--cr-bg-secondary);
+}
+
+.cr-panel-header {
+  padding: var(--cr-spacing-md);
+  background: var(--cr-bg-modifier);
+  border-bottom: 1px solid var(--cr-bg-modifier);
+}
+
+.cr-panel-title {
+  margin: 0 0 var(--cr-spacing-xs) 0;
+  font-size: 1em;
+  font-weight: 600;
+  color: var(--cr-text-normal);
+}
+
+.cr-panel-path {
+  font-size: 0.85em;
+  color: var(--cr-text-muted);
+  font-family: var(--font-monospace);
+}
+
+.cr-panel-content {
+  flex: 1;
+  margin: 0;
+  padding: var(--cr-spacing-md);
+  font-family: var(--font-monospace);
+  font-size: 0.85em;
+  line-height: 1.6;
+  color: var(--cr-text-normal);
+  background: var(--cr-bg-primary);
+  overflow: auto;
+  max-height: 400px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.cr-diff-view {
+  padding: var(--cr-spacing-lg);
+  background: var(--cr-bg-secondary);
+  border: 1px solid var(--cr-bg-modifier);
+  border-radius: var(--cr-radius-md);
+  min-height: 200px;
+  margin-bottom: var(--cr-spacing-lg);
+}
+
+.cr-placeholder-text {
+  text-align: center;
+  color: var(--cr-text-muted);
+  font-style: italic;
+  padding: var(--cr-spacing-xl);
+}
+
+/* 确认对话框样式 */
+.cr-confirm-dialog .modal-content {
+  max-width: 500px;
+}
+
+.cr-confirm-message {
+  margin: var(--cr-spacing-md) 0;
+  line-height: 1.6;
+  color: var(--cr-text-normal);
+}
+
+/* 合并历史 Modal 样式 */
+.cr-merge-history-modal .modal-content {
+  max-width: 800px;
+  max-height: 80vh;
+}
+
+.cr-history-container {
+  margin-bottom: var(--cr-spacing-lg);
+}
+
+.cr-history-tabs {
+  display: flex;
+  gap: var(--cr-spacing-xs);
+  margin-bottom: var(--cr-spacing-md);
+  border-bottom: 2px solid var(--cr-bg-modifier);
+}
+
+.cr-history-list {
+  min-height: 300px;
+  max-height: 500px;
+  overflow-y: auto;
+  padding: var(--cr-spacing-md);
+  background: var(--cr-bg-secondary);
+  border: 1px solid var(--cr-bg-modifier);
+  border-radius: var(--cr-radius-md);
+}
+
+.cr-error-text {
+  color: var(--cr-error);
+  text-align: center;
+  padding: var(--cr-spacing-lg);
+}
+
+/* 响应式布局 */
+@media (max-width: 768px) {
+  .cr-duplicates-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .cr-batch-actions {
+    margin-left: 0;
+    justify-content: stretch;
+  }
+
+  .cr-batch-actions button {
+    flex: 1;
+  }
+
+  .cr-duplicate-card {
+    flex-direction: column;
+  }
+
+  .cr-duplicate-card-actions {
+    justify-content: stretch;
+  }
+
+  .cr-duplicate-card-actions button {
+    flex: 1;
+  }
+
+  .cr-side-by-side-view {
+    grid-template-columns: 1fr;
+  }
+
+  .cr-meta-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .cr-meta-label {
+    min-width: auto;
+  }
+}
+
+/* 暗色主题适配 */
+.theme-dark .cr-duplicate-card {
+  background: var(--background-primary-alt);
+}
+
+.theme-dark .cr-preview-meta-card {
+  background: var(--background-primary-alt);
+}
+
+.theme-dark .cr-preview-panel {
+  background: var(--background-primary-alt);
+}
+
+.theme-dark .cr-panel-content {
+  background: var(--background-primary);
+}
+
+.theme-dark .cr-diff-view {
+  background: var(--background-primary-alt);
+}
+
+.theme-dark .cr-history-list {
+  background: var(--background-primary-alt);
+}
+
+/* 历史项样式 */
+.cr-history-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--cr-spacing-md);
+  background: var(--cr-bg-primary);
+  border: 1px solid var(--cr-bg-modifier);
+  border-radius: var(--cr-radius-md);
+  margin-bottom: var(--cr-spacing-sm);
+  transition: all 0.2s ease;
+}
+
+.cr-history-item:hover {
+  border-color: var(--cr-primary-light);
+  box-shadow: var(--cr-shadow-sm);
+}
+
+.cr-history-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.cr-history-names {
+  font-weight: 600;
+  color: var(--cr-text-normal);
+  margin-bottom: var(--cr-spacing-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cr-history-meta {
+  display: flex;
+  gap: var(--cr-spacing-md);
+  flex-wrap: wrap;
+  font-size: 0.85em;
+}
+
+.cr-history-similarity {
+  color: var(--cr-warning);
+  font-weight: 500;
+}
+
+.cr-history-type {
+  padding: 2px 8px;
+  background: var(--cr-bg-modifier);
+  border-radius: var(--cr-radius-sm);
+  color: var(--cr-text-muted);
+}
+
+.cr-history-time {
+  color: var(--cr-text-muted);
+}
+
+.cr-history-actions {
+  display: flex;
+  gap: var(--cr-spacing-xs);
+  margin-left: var(--cr-spacing-md);
+}
+
+/* 暗色主题适配 */
+.theme-dark .cr-history-item {
+  background: var(--background-primary-alt);
+}
+
+
+/* ========================================
+   16. DiffView 增强样式 - 行号和语法高亮
+   ======================================== */
+
+/* 内容包装器 */
+.cr-panel-content-wrapper {
+  display: flex;
+  flex: 1;
+  overflow: auto;
+  background: var(--cr-bg-secondary);
+}
+
+/* 行号列 */
+.cr-line-numbers {
+  display: flex;
+  flex-direction: column;
+  background: var(--cr-bg-modifier);
+  border-right: 1px solid var(--cr-bg-modifier);
+  padding: var(--cr-spacing-sm) var(--cr-spacing-xs);
+  user-select: none;
+  min-width: 40px;
+}
+
+.cr-line-number {
+  font-family: var(--font-monospace);
+  font-size: 0.8em;
+  color: var(--cr-text-faint);
+  text-align: right;
+  line-height: 1.6;
+  padding: 0 var(--cr-spacing-xs);
+}
+
+/* 内容行列 */
+.cr-content-lines {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  padding: var(--cr-spacing-sm);
+  overflow-x: auto;
+}
+
+.cr-content-line {
+  font-family: var(--font-monospace);
+  font-size: 0.85em;
+  line-height: 1.6;
+  color: var(--cr-text-normal);
+  white-space: pre;
+  min-height: 1.6em;
+}
+
+/* 语法高亮 */
+.cr-syntax-heading {
+  color: var(--cr-primary);
+  font-weight: 600;
+}
+
+.cr-syntax-list {
+  color: var(--cr-text-normal);
+}
+
+.cr-syntax-code-fence {
+  color: var(--cr-text-muted);
+  background: rgba(99, 102, 241, 0.05);
+}
+
+.cr-syntax-quote {
+  color: var(--cr-text-muted);
+  border-left: 3px solid var(--cr-primary);
+  padding-left: var(--cr-spacing-xs);
+}
+
+.cr-syntax-link {
+  color: var(--cr-info);
+}
+
+/* 暗色主题适配 */
+.theme-dark .cr-panel-content-wrapper {
+  background: var(--background-primary-alt);
+}
+
+.theme-dark .cr-line-numbers {
+  background: var(--background-modifier-border);
+}
+
+.theme-dark .cr-syntax-code-fence {
+  background: rgba(99, 102, 241, 0.1);
+}
+
+/* ========================================
+   17. 撤销通知增强样式
+   ======================================== */
+
+.cr-undo-notification {
+  min-width: 350px;
+  max-width: 500px;
+}
+
+.undo-notification-container {
+  display: flex;
+  align-items: center;
+  gap: var(--cr-spacing-md);
+  padding: var(--cr-spacing-sm);
+}
+
+.undo-notification-icon {
+  font-size: 2em;
+  color: var(--cr-primary);
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.undo-notification-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.undo-notification-message {
+  font-weight: 500;
+  color: var(--cr-text-normal);
+  margin-bottom: var(--cr-spacing-xs);
+}
+
+.undo-notification-file {
+  font-size: 0.85em;
+  color: var(--cr-text-muted);
+  font-family: var(--font-monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.undo-notification-button {
+  padding: 6px 16px;
+  font-size: 0.9em;
+  font-weight: 500;
+  color: white;
+  background: var(--cr-primary);
+  border: none;
+  border-radius: var(--cr-radius-sm);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.undo-notification-button:hover {
+  background: var(--cr-primary-hover);
+  transform: translateY(-1px);
+}
+
+.undo-notification-button:active {
+  transform: translateY(0);
+}
+
+.undo-notification-progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--cr-bg-modifier);
+  overflow: hidden;
+}
+
+.undo-notification-progress-fill {
+  height: 100%;
+  width: 100%;
+  background: var(--cr-primary);
+  transition: width linear;
+}
+
+/* ========================================
+   18. 撤销历史视图增强样式
+   ======================================== */
+
+.undo-history-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cr-spacing-md);
+  margin-bottom: var(--cr-spacing-lg);
+  padding-bottom: var(--cr-spacing-md);
+  border-bottom: 2px solid var(--cr-bg-modifier);
+}
+
+.undo-history-header h4 {
+  margin: 0;
+  font-size: 1.2em;
+  font-weight: 600;
+  color: var(--cr-text-normal);
+}
+
+.undo-history-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--cr-spacing-sm);
+  flex-wrap: wrap;
+}
+
+.undo-history-batch-btn,
+.undo-history-clear-btn {
+  padding: 6px 12px;
+  font-size: 0.85em;
+}
+
+.undo-history-clear-btn {
+  color: var(--cr-error);
+  border-color: var(--cr-error);
+}
+
+.undo-history-clear-btn:hover {
+  background: var(--cr-error);
+  color: white;
+}
+
+.undo-history-stats {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--cr-spacing-sm);
+}
+
+.undo-history-count {
+  font-size: 0.9em;
+  color: var(--cr-text-muted);
+  padding: 4px 12px;
+  background: var(--cr-bg-secondary);
+  border-radius: var(--cr-radius-sm);
+}
+
+.undo-history-checkbox {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.undo-history-item {
+  display: flex;
+  align-items: center;
+  gap: var(--cr-spacing-sm);
+}
+
+/* 确认对话框样式 */
+.undo-confirm-warning {
+  margin-bottom: var(--cr-spacing-lg);
+  padding: var(--cr-spacing-md);
+  background: rgba(245, 158, 11, 0.05);
+  border-left: 3px solid var(--cr-warning);
+  border-radius: var(--cr-radius-sm);
+}
+
+.undo-confirm-warning p {
+  margin: 0 0 var(--cr-spacing-sm) 0;
+  color: var(--cr-text-normal);
+  line-height: 1.6;
+}
+
+.undo-confirm-danger {
+  color: var(--cr-error) !important;
+  font-weight: 600;
+}
+
+.undo-confirm-info {
+  margin-bottom: var(--cr-spacing-lg);
+  padding: var(--cr-spacing-md);
+  background: var(--cr-bg-secondary);
+  border-radius: var(--cr-radius-sm);
+}
+
+.undo-confirm-detail {
+  margin-bottom: var(--cr-spacing-xs);
+  font-size: 0.9em;
+  color: var(--cr-text-muted);
+  font-family: var(--font-monospace);
+}
+
+.undo-confirm-detail:last-child {
+  margin-bottom: 0;
+}
+
+.mod-warning {
+  background: var(--cr-warning);
+  border-color: var(--cr-warning);
+  color: white;
+}
+
+.mod-warning:hover {
+  background: var(--cr-error);
+  border-color: var(--cr-error);
+}
+
+/* 暗色主题适配 */
+.theme-dark .undo-confirm-warning {
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.theme-dark .undo-confirm-info {
+  background: var(--background-primary-alt);
+}
+
+.theme-dark .undo-history-count {
+  background: var(--background-primary-alt);
+}
+
+/* ========================================
+   19. IncrementalImproveModal 增强样式
+   ======================================== */
+
+.cr-hints-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cr-spacing-md);
+  margin-bottom: var(--cr-spacing-md);
+}
+
+.cr-hint-primary {
+  padding: var(--cr-spacing-sm);
+  background: rgba(99, 102, 241, 0.05);
+  border-left: 3px solid var(--cr-primary);
+  border-radius: var(--cr-radius-sm);
+  font-size: 0.9em;
+  color: var(--cr-text-muted);
+  line-height: 1.6;
+}
+
+.cr-hint-secondary {
+  padding: var(--cr-spacing-xs) var(--cr-spacing-sm);
+  background: var(--cr-bg-secondary);
+  border-radius: var(--cr-radius-sm);
+  font-size: 0.85em;
+  color: var(--cr-text-faint);
+  text-align: center;
+}
+
+.cr-examples {
+  padding: var(--cr-spacing-md);
+  background: var(--cr-bg-secondary);
+  border-radius: var(--cr-radius-md);
+  border: 1px solid var(--cr-bg-modifier);
+}
+
+.cr-examples-title {
+  margin-bottom: var(--cr-spacing-sm);
+  font-weight: 600;
+  font-size: 0.9em;
+  color: var(--cr-text-normal);
+}
+
+.cr-examples-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cr-examples-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--cr-spacing-sm);
+  margin-bottom: var(--cr-spacing-sm);
+  padding: var(--cr-spacing-xs);
+  border-radius: var(--cr-radius-sm);
+  transition: background 0.2s ease;
+}
+
+.cr-examples-list li:hover {
+  background: var(--cr-bg-primary);
+}
+
+.cr-examples-list li:last-child {
+  margin-bottom: 0;
+}
+
+.cr-example-icon {
+  font-size: 1.2em;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.cr-example-text {
+  flex: 1;
+  font-size: 0.85em;
+  color: var(--cr-text-muted);
+  line-height: 1.5;
+}
+
+/* 暗色主题适配 */
+.theme-dark .cr-hint-primary {
+  background: rgba(99, 102, 241, 0.1);
+}
+
+.theme-dark .cr-examples {
+  background: var(--background-primary-alt);
+}
+
+.theme-dark .cr-examples-list li:hover {
+  background: var(--background-primary);
+}
+
+/* ========================================
+   20. 移动端优化
+   ======================================== */
+
+/* 触摸友好的按钮尺寸 */
+@media (max-width: 768px) {
+  button {
+    min-height: 44px;
+    padding: 8px 16px;
+  }
+
+  .cr-btn-small {
+    min-height: 36px;
+    padding: 6px 12px;
+  }
+
+  /* 增大触摸目标 */
+  .cr-task-actions button,
+  .cr-duplicate-actions button,
+  .cr-duplicate-card-actions button {
+    min-height: 44px;
+  }
+
+  /* 优化输入框 */
+  input[type="text"],
+  input[type="number"],
+  textarea,
+  .cr-concept-input,
+  .cr-intent-input {
+    font-size: 16px; /* 防止 iOS 自动缩放 */
+  }
+
+  /* 优化复选框 */
+  input[type="checkbox"],
+  .cr-duplicate-checkbox,
+  .cr-diff-checkbox,
+  .cr-undo-history-checkbox {
+    width: 20px;
+    height: 20px;
+  }
+
+  /* 优化滚动区域 */
+  .cr-workbench-panel,
+  .cr-queue-view,
+  .cr-diffs-container,
+  .cr-preview-content,
+  .cr-panel-content {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* 优化模态框 - 使用插件特定前缀 */
+  .cr-modal {
+    padding: var(--cr-spacing-sm);
+  }
+
+  .cr-modal .modal-content {
+    max-width: 100%;
+    padding: var(--cr-spacing-md);
+  }
+
+  /* 优化表格和网格 */
+  .cr-queue-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .cr-feature-grid,
+  .cr-preset-grid,
+  .cr-provider-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* 优化并排视图 */
+  .cr-side-by-side-view,
+  .cr-diff-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* 优化进度指示器 */
+  .cr-progress-indicator {
+    overflow-x: auto;
+    padding-bottom: var(--cr-spacing-sm);
+  }
+
+  /* 优化标签页 */
+  .cr-preview-tabs,
+  .cr-history-tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* 优化工具栏 */
+  .cr-duplicates-controls,
+  .cr-undo-history-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .cr-batch-actions,
+  .cr-undo-history-stats {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  /* 优化卡片 */
+  .cr-duplicate-card,
+  .cr-task-item,
+  .cr-recent-op-item,
+  .cr-undo-history-item {
+    padding: var(--cr-spacing-sm);
+  }
+
+  /* 优化元数据行 */
+  .cr-duplicate-meta-row,
+  .cr-task-meta,
+  .cr-meta-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--cr-spacing-xs);
+  }
+
+  /* 优化按钮组 */
+  .cr-button-container,
+  .cr-queue-actions,
+  .cr-diff-actions,
+  .cr-modal-actions,
+  .cr-wizard-buttons {
+    flex-direction: column;
+  }
+
+  .cr-button-container button,
+  .cr-queue-actions button,
+  .cr-diff-actions button,
+  .cr-modal-actions button,
+  .cr-wizard-buttons button {
+    width: 100%;
+  }
+}
+
+/* 横屏模式优化 */
+@media (max-width: 768px) and (orientation: landscape) {
+  .cr-workbench-panel,
+  .cr-queue-view {
+    padding: var(--cr-spacing-xs);
+  }
+
+  .cr-section {
+    padding: var(--cr-spacing-xs);
+    margin-bottom: var(--cr-spacing-md);
+  }
+
+  .cr-modal {
+    padding: var(--cr-spacing-xs);
+  }
+
+  .cr-modal .modal-content {
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+}
+
+/* 平板优化 (768px - 1024px) */
+@media (min-width: 768px) and (max-width: 1024px) {
+  .cr-queue-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .cr-feature-grid,
+  .cr-preset-grid,
+  .cr-provider-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .cr-side-by-side-view,
+  .cr-diff-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* ========================================
+   21. 性能优化
+   ======================================== */
+
+/* 使用 GPU 加速的动画 */
+.cr-task-item,
+.cr-duplicate-card,
+.cr-duplicate-item,
+.cr-recent-op-item,
+.cr-undo-history-item,
+.cr-feature-card,
+.cr-provider-card,
+.cr-preset-card {
+  will-change: transform;
+}
+
+/* 减少重绘 */
+.cr-confidence-fill,
+.cr-similarity-fill,
+.cr-progress-fill {
+  will-change: width;
+}
+
+/* 优化滚动性能 */
+.cr-workbench-panel,
+.cr-queue-view,
+.cr-diffs-container,
+.cr-preview-content,
+.cr-panel-content,
+.cr-history-list {
+  contain: layout style paint;
+}
+
+/* 延迟加载图片 */
+img[loading="lazy"] {
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+img[loading="lazy"].loaded {
+  opacity: 1;
+}
+
+/* ========================================
+   22. 打印优化
+   ======================================== */
+
+@media print {
+  /* 隐藏交互元素 */
+  .cr-task-actions,
+  .cr-duplicate-actions,
+  .cr-duplicate-card-actions,
+  .cr-queue-actions,
+  .cr-diff-actions,
+  .cr-modal-actions,
+  .cr-wizard-buttons,
+  .cr-undo-btn,
+  .cr-undo-notification-button,
+  .cr-undo-history-item-actions,
+  button {
+    display: none !important;
+  }
+
+  /* 优化布局 */
+  .cr-workbench-panel,
+  .cr-queue-view {
+    padding: 0;
+  }
+
+  .cr-section,
+  .cr-task-item,
+  .cr-duplicate-card,
+  .cr-duplicate-item {
+    page-break-inside: avoid;
+    border: 1px solid #000;
+    margin-bottom: 10px;
+  }
+
+  /* 优化颜色 */
+  .cr-state-badge,
+  .cr-type-badge,
+  .cr-type-tag {
+    border: 1px solid #000;
+    background: white !important;
+    color: #000 !important;
+  }
+
+  /* 显示链接 */
+  a[href]:after {
+    content: " (" attr(href) ")";
+    font-size: 0.8em;
+    color: #666;
+  }
+
+  /* 优化并排视图 */
+  .cr-side-by-side-view,
+  .cr-diff-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  /* 隐藏装饰性元素 */
+  .cr-loading,
+  .cr-spinner-large,
+  .cr-progress-bar,
+  .cr-undo-notification-progress {
+    display: none !important;
+  }
+}
+
+/* ========================================
+   23. 辅助功能增强
+   ======================================== */
+
+/* 键盘焦点指示器 */
+*:focus-visible {
+  outline: 2px solid var(--cr-primary);
+  outline-offset: 2px;
+  border-radius: var(--cr-radius-sm);
+}
+
+/* 跳过导航链接 */
+.skip-to-content {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  background: var(--cr-primary);
+  color: white;
+  padding: 8px 16px;
+  text-decoration: none;
+  z-index: 1000;
+  border-radius: var(--cr-radius-sm);
+}
+
+.skip-to-content:focus {
+  top: 10px;
+  left: 10px;
+}
+
+/* 屏幕阅读器专用文本 */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+/* 高对比度模式 */
+@media (prefers-contrast: high) {
+  .cr-section,
+  .cr-task-item,
+  .cr-duplicate-card,
+  .cr-duplicate-item,
+  .cr-recent-op-item,
+  .cr-undo-history-item,
+  .cr-standardized-result,
+  .modal-option-item,
+  .cr-feature-card,
+  .cr-provider-card {
+    border-width: 2px;
+    border-color: currentColor;
+  }
+
+  button {
+    border-width: 2px;
+    border-color: currentColor;
+  }
+
+  .cr-concept-input,
+  .cr-intent-input,
+  .modal-input,
+  input[type="text"],
+  input[type="number"],
+  textarea {
+    border-width: 2px;
+    border-color: currentColor;
+  }
+
+  .cr-confidence-bar,
+  .cr-similarity-bar,
+  .cr-progress-bar {
+    border: 1px solid currentColor;
+  }
+
+  /* 增强颜色对比 */
+  .cr-state-badge,
+  .cr-type-badge,
+  .cr-type-tag {
+    border: 1px solid currentColor;
+  }
+}
+
+/* 减少动画（尊重用户偏好） */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .cr-task-item,
+  .cr-duplicate-card,
+  .cr-duplicate-item,
+  .cr-recent-op-item,
+  .cr-undo-history-item {
+    animation: none !important;
+  }
+}
+
+/* 强制颜色模式（Windows 高对比度） */
+@media (forced-colors: active) {
+  .cr-section,
+  .cr-task-item,
+  .cr-duplicate-card,
+  .cr-duplicate-item,
+  .cr-recent-op-item,
+  .cr-undo-history-item {
+    border: 1px solid CanvasText;
+  }
+
+  button {
+    border: 1px solid ButtonText;
+  }
+
+  .cr-state-badge,
+  .cr-type-badge,
+  .cr-type-tag {
+    border: 1px solid CanvasText;
+    forced-color-adjust: none;
+  }
+}
+
+/* ========================================
+   24. 浏览器兼容性修复
+   ======================================== */
+
+/* Safari 修复 */
+@supports (-webkit-appearance: none) {
+  /* 修复 Safari 的 flex 布局问题 */
+  .cr-task-item,
+  .cr-duplicate-card,
+  .cr-duplicate-item {
+    -webkit-box-orient: horizontal;
+    -webkit-box-direction: normal;
+  }
+
+  /* 修复 Safari 的滚动问题 */
+  .cr-workbench-panel,
+  .cr-queue-view,
+  .cr-diffs-container,
+  .cr-preview-content,
+  .cr-panel-content {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* 修复 Safari 的输入框样式 */
+  input[type="text"],
+  input[type="number"],
+  textarea {
+    -webkit-appearance: none;
+    appearance: none;
+  }
+}
+
+/* Firefox 修复 */
+@-moz-document url-prefix() {
+  /* 修复 Firefox 的滚动条样式 */
+  .cr-workbench-panel,
+  .cr-queue-view,
+  .cr-diffs-container,
+  .cr-preview-content,
+  .cr-panel-content {
+    scrollbar-width: thin;
+    scrollbar-color: var(--cr-bg-modifier) var(--cr-bg-secondary);
+  }
+}
+
+/* Edge 修复 */
+@supports (-ms-ime-align: auto) {
+  /* 修复 Edge 的 grid 布局问题 */
+  .cr-queue-grid,
+  .cr-feature-grid,
+  .cr-preset-grid,
+  .cr-provider-grid {
+    display: -ms-grid;
+  }
+}
+
+/* ========================================
+   25. 实用工具类补充
+   ======================================== */
+
+/* 显示/隐藏工具类 */
+.cr-show-mobile {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .cr-hide-mobile {
+    display: none !important;
+  }
+
+  .cr-show-mobile {
+    display: block;
+  }
+}
+
+.cr-show-tablet {
+  display: none;
+}
+
+@media (min-width: 768px) and (max-width: 1024px) {
+  .cr-hide-tablet {
+    display: none !important;
+  }
+
+  .cr-show-tablet {
+    display: block;
+  }
+}
+
+.cr-show-desktop {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  .cr-hide-desktop {
+    display: none !important;
+  }
+
+  .cr-show-desktop {
+    display: block;
+  }
+}
+
+/* 位置工具类 */
+.cr-relative {
+  position: relative;
+}
+
+.cr-absolute {
+  position: absolute;
+}
+
+.cr-fixed {
+  position: fixed;
+}
+
+.cr-sticky {
+  position: sticky;
+  top: 0;
+}
+
+/* Z-index 工具类 */
+.cr-z-0 {
+  z-index: 0;
+}
+
+.cr-z-10 {
+  z-index: 10;
+}
+
+.cr-z-20 {
+  z-index: 20;
+}
+
+.cr-z-30 {
+  z-index: 30;
+}
+
+.cr-z-40 {
+  z-index: 40;
+}
+
+.cr-z-50 {
+  z-index: 50;
+}
+
+/* 宽度工具类 */
+.cr-w-full {
+  width: 100%;
+}
+
+.cr-w-auto {
+  width: auto;
+}
+
+.cr-w-fit {
+  width: fit-content;
+}
+
+/* 高度工具类 */
+.cr-h-full {
+  height: 100%;
+}
+
+.cr-h-auto {
+  height: auto;
+}
+
+.cr-h-fit {
+  height: fit-content;
+}
+
+/* 最小/最大宽度 */
+.cr-min-w-0 {
+  min-width: 0;
+}
+
+.cr-max-w-full {
+  max-width: 100%;
+}
+
+/* 最小/最大高度 */
+.cr-min-h-0 {
+  min-height: 0;
+}
+
+.cr-max-h-full {
+  max-height: 100%;
+}
+
+/* 光标工具类 */
+.cr-cursor-pointer {
+  cursor: pointer;
+}
+
+.cr-cursor-not-allowed {
+  cursor: not-allowed;
+}
+
+.cr-cursor-default {
+  cursor: default;
+}
+
+/* 用户选择工具类 */
+.cr-select-none {
+  user-select: none;
+}
+
+.cr-select-text {
+  user-select: text;
+}
+
+.cr-select-all {
+  user-select: all;
+}
+
+/* 指针事件工具类 */
+.cr-pointer-events-none {
+  pointer-events: none;
+}
+
+.cr-pointer-events-auto {
+  pointer-events: auto;
+}
+
+/* 透明度工具类 */
+.cr-opacity-0 {
+  opacity: 0;
+}
+
+.cr-opacity-50 {
+  opacity: 0.5;
+}
+
+.cr-opacity-75 {
+  opacity: 0.75;
+}
+
+.cr-opacity-100 {
+  opacity: 1;
+}
+
+/* 过渡工具类 */
+.cr-transition {
+  transition: all 0.2s ease;
+}
+
+.cr-transition-fast {
+  transition: all 0.1s ease;
+}
+
+.cr-transition-slow {
+  transition: all 0.3s ease;
+}
+
+.cr-transition-none {
+  transition: none;
+}
+
+/* ========================================
+   26. 主题变量扩展（暗色主题）
+   ======================================== */
+
+.theme-dark {
+  /* 调整暗色主题下的阴影 */
+  --cr-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --cr-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
+  --cr-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+
+  /* 调整暗色主题下的主色调 */
+  --cr-primary: #818cf8;
+  --cr-primary-hover: #6366f1;
+  --cr-primary-light: #a5b4fc;
+}
+
+/* 暗色主题下的全局调整 */
+.theme-dark .cr-concept-input,
+.theme-dark .cr-intent-input,
+.theme-dark .cr-concurrency-input,
+.theme-dark .modal-input,
+.theme-dark input[type="text"],
+.theme-dark input[type="number"],
+.theme-dark textarea {
+  background: var(--background-primary-alt);
+}
+
+.theme-dark .cr-duplicate-item:hover,
+.theme-dark .cr-task-item:hover,
+.theme-dark .cr-recent-op-item:hover,
+.theme-dark .cr-undo-history-item:hover,
+.theme-dark .cr-history-item:hover {
+  background: var(--background-primary-alt);
+}
+
+.theme-dark .cr-task-error {
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.theme-dark .cr-old-value {
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.theme-dark .cr-new-value {
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.theme-dark button {
+  background: var(--background-modifier-form-field);
+}
+
+.theme-dark button:hover {
+  background: var(--background-modifier-form-field-highlighted);
+}
+
+.theme-dark button.mod-cta {
+  background: var(--cr-primary);
+}
+
+.theme-dark button.mod-cta:hover {
+  background: var(--cr-primary-hover);
+}
+
+/* 暗色主题下的状态徽章 */
+.theme-dark .cr-state-pending {
+  background: rgba(59, 130, 246, 0.15);
+}
+
+.theme-dark .cr-state-running {
+  background: rgba(99, 102, 241, 0.15);
+}
+
+.theme-dark .cr-state-completed {
+  background: rgba(16, 185, 129, 0.15);
+}
+
+.theme-dark .cr-state-failed {
+  background: rgba(239, 68, 68, 0.15);
+}
+
+.theme-dark .cr-state-cancelled {
+  background: rgba(128, 128, 128, 0.15);
+}
+
+.theme-dark .cr-type-add {
+  background: rgba(16, 185, 129, 0.15);
+}
+
+.theme-dark .cr-type-remove {
+  background: rgba(239, 68, 68, 0.15);
+}
+
+.theme-dark .cr-type-modify {
+  background: rgba(245, 158, 11, 0.15);
+}
+
+/* ========================================
+   27. 最终优化和修复
+   ======================================== */
+
+/* 确保所有交互元素都有合适的光标 */
+button,
+.cr-clickable,
+.cr-task-item,
+.cr-duplicate-card,
+.cr-duplicate-item,
+.cr-recent-op-item,
+.cr-undo-history-item,
+.cr-history-item,
+.cr-modal-option-button,
+.cr-tab-button,
+.cr-filter-button {
+  cursor: pointer;
+}
+
+/* 确保禁用状态正确显示 */
+button:disabled,
+.cr-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* 确保加载状态正确显示 */
+.cr-loading-container,
+.cr-wizard-loading {
+  min-height: 200px;
+}
+
+/* 确保空状态正确显示 */
+.cr-empty-state,
+.cr-empty-text {
+  min-height: 100px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 确保错误状态正确显示 */
+.cr-error-text,
+.cr-validation-error,
+.modal-error {
+  color: var(--cr-error);
+}
+
+/* 确保成功状态正确显示 */
+.cr-validation-success {
+  color: var(--cr-success);
+}
+
+/* 确保所有圆角一致 */
+.cr-section,
+.cr-task-item,
+.cr-duplicate-card,
+.cr-duplicate-item,
+.cr-recent-op-item,
+.cr-undo-history-item,
+.cr-history-item,
+.cr-standardized-result,
+.modal-option-item,
+.cr-feature-card,
+.cr-provider-card,
+.cr-preset-card,
+.cr-preview-panel,
+.cr-diff-view {
+  border-radius: var(--cr-radius-md);
+}
+
+/* 确保所有间距一致 */
+.cr-section,
+.cr-task-item,
+.cr-duplicate-card,
+.cr-recent-op-item,
+.cr-undo-history-item,
+.cr-history-item {
+  margin-bottom: var(--cr-spacing-md);
+}
+
+/* 最后的清理 */
+* {
+  box-sizing: border-box;
+}
+
+/* 确保滚动条在所有浏览器中一致 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--cr-bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--cr-bg-modifier);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--cr-primary-light);
+}a(99, 102, 241, 0.1);
+}
+
+.theme-dark .cr-hint-secondary {
+  background: var(--background-primary-alt);
+}
+
+.theme-dark .cr-examples {
+  background: var(--background-primary-alt);
+}
+
+.theme-dark .cr-examples-list li:hover {
+  background: var(--background-modifier-hover);
+}
+
+/* ========================================
+   20. 响应式布局优化
+   ======================================== */
+
+@media (max-width: 768px) {
+  .cr-undo-notification {
+    min-width: 280px;
+    max-width: 100%;
+  }
+
+  .undo-notification-container {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .undo-notification-button {
+    width: 100%;
+  }
+
+  .undo-history-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .undo-history-batch-btn,
+  .undo-history-clear-btn {
+    width: 100%;
+  }
+
+  .undo-history-stats {
+    margin-left: 0;
+    justify-content: center;
+  }
+
+  .cr-diff-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cr-panel-content-wrapper {
+    max-height: 300px;
+  }
 }

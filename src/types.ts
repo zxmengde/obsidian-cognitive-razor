@@ -222,9 +222,9 @@ export interface IndexStats {
 // ============================================================================
 
 /**
- * Provider 类型（简化后仅支持 OpenAI 和 Google）
+ * Provider 类型（仅支持 OpenAI 标准格式，可通过自定义端点兼容其他服务）
  */
-export type ProviderType = "openai" | "google";
+export type ProviderType = "openai";
 
 /**
  * Provider 能力
@@ -344,8 +344,7 @@ export interface ProviderConfig {
  * 默认端点配置
  */
 export const DEFAULT_ENDPOINTS: Record<ProviderType, string> = {
-  openai: "https://api.openai.com/v1",
-  google: "https://generativelanguage.googleapis.com/v1beta"
+  openai: "https://api.openai.com/v1"
 };
 
 /**

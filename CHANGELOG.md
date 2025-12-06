@@ -72,12 +72,10 @@
   - 支持多个 AI Provider
   - 配置导入导出
   - 配置验证
-  - 版本迁移支持
 
 #### AI Provider 支持
-- **Google Gemini**：支持 Gemini Pro 模型
-- **OpenAI**：支持 GPT-4 和 GPT-3.5-turbo
-- **OpenRouter**：支持多种模型
+- **OpenAI 标准格式**：支持 GPT-4 和 GPT-3.5-turbo
+- **自定义端点**：可通过自定义端点兼容 OpenRouter、Azure OpenAI 等第三方服务
 
 #### 用户界面
 - **WorkbenchPanel**：统一工作台

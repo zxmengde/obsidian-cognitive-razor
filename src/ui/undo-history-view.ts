@@ -99,8 +99,41 @@ export class UndoHistoryView extends ItemView {
     const container = this.containerEl.children[1];
     container.empty();
 
-    // 添加标题
-    container.createEl("h4", { text: "操作历史" });
+    // 添加标题和工具栏
+    const header = container.createDiv({ cls: "undo-history-header" });
+    header.createEl("h4", { text: "操作历史" });
+
+    // 如果有历史记录，显示工具栏
+    if (this.snapshots.length > 0) {
+      const toolbar = header.createDiv({ cls: "undo-history-toolbar" });
+
+      // 批量操作按钮
+      const batchBtn = toolbar.createEl("button", {
+        text: "批量撤销",
+        cls: "undo-history-batch-btn",
+        attr: { "aria-label": "批量撤销选中的操作" },
+      });
+      batchBtn.addEventListener("click", () => {
+        this.handleBatchUndo();
+      });
+
+      // 清理按钮
+      const clearBtn = toolbar.createEl("button", {
+        text: "清理全部",
+        cls: "undo-history-clear-btn",
+        attr: { "aria-label": "清理所有快照" },
+      });
+      clearBtn.addEventListener("click", () => {
+        this.handleClearAll();
+      });
+
+      // 显示统计信息
+      const stats = toolbar.createDiv({ cls: "undo-history-stats" });
+      stats.createSpan({
+        text: `共 ${this.snapshots.length} 个快照`,
+        cls: "undo-history-count",
+      });
+    }
 
     // 如果没有历史记录
     if (this.snapshots.length === 0) {
@@ -131,6 +164,14 @@ export class UndoHistoryView extends ItemView {
   ): void {
     const item = container.createDiv({
       cls: "undo-history-item",
+      attr: { "data-snapshot-id": snapshot.id },
+    });
+
+    // 添加复选框用于批量操作
+    const checkbox = item.createEl("input", {
+      type: "checkbox",
+      cls: "undo-history-checkbox",
+      attr: { "aria-label": `选择快照: ${snapshot.id}` },
     });
 
     // 创建信息区域
@@ -166,21 +207,38 @@ export class UndoHistoryView extends ItemView {
     const undoButton = actionsContainer.createEl("button", {
       text: "撤销",
       cls: "undo-history-item-button",
+      attr: { "aria-label": `撤销操作: ${this.getOperationDisplayName(snapshot.operation)}` },
     });
 
     undoButton.addEventListener("click", async () => {
-      await this.handleUndo(snapshot);
+      await this.handleUndoWithConfirm(snapshot);
     });
 
     // 查看详情按钮
     const detailsButton = actionsContainer.createEl("button", {
       text: "详情",
       cls: "undo-history-item-button-secondary",
+      attr: { "aria-label": "查看快照详情" },
     });
 
     detailsButton.addEventListener("click", () => {
       this.showSnapshotDetails(snapshot);
     });
+  }
+
+  /**
+   * 处理撤销操作（带确认）
+   */
+  private async handleUndoWithConfirm(snapshot: SnapshotMetadata): Promise<void> {
+    // 显示确认对话框
+    const modal = new UndoConfirmModal(
+      this.app,
+      snapshot,
+      async () => {
+        await this.handleUndo(snapshot);
+      }
+    );
+    modal.open();
   }
 
   /**
@@ -231,6 +289,116 @@ export class UndoHistoryView extends ItemView {
         error instanceof Error ? error.message : String(error);
       new Notice(`撤销失败: ${errorMessage}`);
     }
+  }
+
+  /**
+   * 处理批量撤销
+   */
+  private async handleBatchUndo(): Promise<void> {
+    if (!this.undoManager) {
+      new Notice("系统未初始化");
+      return;
+    }
+
+    // 获取选中的快照
+    const checkboxes = this.containerEl.querySelectorAll<HTMLInputElement>(
+      ".undo-history-checkbox:checked"
+    );
+
+    if (checkboxes.length === 0) {
+      new Notice("请至少选择一个操作");
+      return;
+    }
+
+    const selectedIds: string[] = [];
+    checkboxes.forEach((checkbox) => {
+      const item = checkbox.closest(".undo-history-item");
+      if (item) {
+        const snapshotId = item.getAttribute("data-snapshot-id");
+        if (snapshotId) {
+          selectedIds.push(snapshotId);
+        }
+      }
+    });
+
+    // 显示确认对话框
+    const modal = new BatchUndoConfirmModal(
+      this.app,
+      selectedIds.length,
+      async () => {
+        await this.performBatchUndo(selectedIds);
+      }
+    );
+    modal.open();
+  }
+
+  /**
+   * 执行批量撤销
+   */
+  private async performBatchUndo(snapshotIds: string[]): Promise<void> {
+    if (!this.undoManager) {
+      return;
+    }
+
+    let succeeded = 0;
+    let failed = 0;
+
+    for (const snapshotId of snapshotIds) {
+      const snapshot = this.snapshots.find((s) => s.id === snapshotId);
+      if (!snapshot) {
+        failed++;
+        continue;
+      }
+
+      try {
+        await this.handleUndo(snapshot);
+        succeeded++;
+      } catch (error) {
+        console.error(`批量撤销失败: ${snapshotId}`, error);
+        failed++;
+      }
+    }
+
+    new Notice(`批量撤销完成: 成功 ${succeeded} 个，失败 ${failed} 个`);
+    await this.refresh();
+  }
+
+  /**
+   * 处理清理全部
+   */
+  private async handleClearAll(): Promise<void> {
+    if (!this.undoManager) {
+      new Notice("系统未初始化");
+      return;
+    }
+
+    // 显示确认对话框
+    const modal = new ClearAllConfirmModal(
+      this.app,
+      this.snapshots.length,
+      async () => {
+        await this.performClearAll();
+      }
+    );
+    modal.open();
+  }
+
+  /**
+   * 执行清理全部
+   */
+  private async performClearAll(): Promise<void> {
+    if (!this.undoManager) {
+      return;
+    }
+
+    const clearResult = await this.undoManager.clearAllSnapshots();
+    if (!clearResult.ok) {
+      new Notice(`清理失败: ${clearResult.error.message}`);
+      return;
+    }
+
+    new Notice(`已清理 ${clearResult.value} 个快照`);
+    await this.refresh();
   }
 
   /**
@@ -341,6 +509,189 @@ class SnapshotDetailsModal extends Modal {
     });
     const closeButton = buttonContainer.createEl("button", { text: "关闭" });
     closeButton.addEventListener("click", () => {
+      this.close();
+    });
+  }
+
+  onClose(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+  }
+}
+
+/**
+ * 撤销确认对话框
+ */
+class UndoConfirmModal extends Modal {
+  private snapshot: SnapshotMetadata;
+  private onConfirm: () => void;
+
+  constructor(app: App, snapshot: SnapshotMetadata, onConfirm: () => void) {
+    super(app);
+    this.snapshot = snapshot;
+    this.onConfirm = onConfirm;
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+
+    contentEl.createEl("h2", { text: "确认撤销操作" });
+
+    // 警告消息
+    const warning = contentEl.createDiv({ cls: "undo-confirm-warning" });
+    warning.createEl("p", {
+      text: "您确定要撤销此操作吗？此操作将恢复文件到之前的状态。",
+    });
+
+    // 快照信息
+    const info = contentEl.createDiv({ cls: "undo-confirm-info" });
+    info.createEl("div", {
+      text: `操作类型: ${this.snapshot.operation}`,
+      cls: "undo-confirm-detail",
+    });
+    info.createEl("div", {
+      text: `文件路径: ${this.snapshot.filePath}`,
+      cls: "undo-confirm-detail",
+    });
+
+    const date = new Date(this.snapshot.created);
+    info.createEl("div", {
+      text: `创建时间: ${date.toLocaleString("zh-CN")}`,
+      cls: "undo-confirm-detail",
+    });
+
+    // 按钮
+    const buttonContainer = contentEl.createDiv({
+      cls: "modal-button-container",
+    });
+
+    const confirmButton = buttonContainer.createEl("button", {
+      text: "确认撤销",
+      cls: "mod-warning",
+    });
+    confirmButton.addEventListener("click", () => {
+      this.onConfirm();
+      this.close();
+    });
+
+    const cancelButton = buttonContainer.createEl("button", {
+      text: "取消",
+    });
+    cancelButton.addEventListener("click", () => {
+      this.close();
+    });
+  }
+
+  onClose(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+  }
+}
+
+/**
+ * 批量撤销确认对话框
+ */
+class BatchUndoConfirmModal extends Modal {
+  private count: number;
+  private onConfirm: () => void;
+
+  constructor(app: App, count: number, onConfirm: () => void) {
+    super(app);
+    this.count = count;
+    this.onConfirm = onConfirm;
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+
+    contentEl.createEl("h2", { text: "确认批量撤销" });
+
+    // 警告消息
+    const warning = contentEl.createDiv({ cls: "undo-confirm-warning" });
+    warning.createEl("p", {
+      text: `您确定要批量撤销 ${this.count} 个操作吗？此操作将恢复多个文件到之前的状态。`,
+    });
+
+    warning.createEl("p", {
+      text: "⚠️ 此操作无法撤销，请谨慎操作。",
+      cls: "undo-confirm-danger",
+    });
+
+    // 按钮
+    const buttonContainer = contentEl.createDiv({
+      cls: "modal-button-container",
+    });
+
+    const confirmButton = buttonContainer.createEl("button", {
+      text: `确认撤销 ${this.count} 个操作`,
+      cls: "mod-warning",
+    });
+    confirmButton.addEventListener("click", () => {
+      this.onConfirm();
+      this.close();
+    });
+
+    const cancelButton = buttonContainer.createEl("button", {
+      text: "取消",
+    });
+    cancelButton.addEventListener("click", () => {
+      this.close();
+    });
+  }
+
+  onClose(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+  }
+}
+
+/**
+ * 清理全部确认对话框
+ */
+class ClearAllConfirmModal extends Modal {
+  private count: number;
+  private onConfirm: () => void;
+
+  constructor(app: App, count: number, onConfirm: () => void) {
+    super(app);
+    this.count = count;
+    this.onConfirm = onConfirm;
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+
+    contentEl.createEl("h2", { text: "确认清理全部快照" });
+
+    // 警告消息
+    const warning = contentEl.createDiv({ cls: "undo-confirm-warning" });
+    warning.createEl("p", {
+      text: `您确定要清理全部 ${this.count} 个快照吗？清理后将无法撤销任何操作。`,
+    });
+
+    warning.createEl("p", {
+      text: "⚠️ 此操作无法撤销，所有快照将被永久删除。",
+      cls: "undo-confirm-danger",
+    });
+
+    // 按钮
+    const buttonContainer = contentEl.createDiv({
+      cls: "modal-button-container",
+    });
+
+    const confirmButton = buttonContainer.createEl("button", {
+      text: "确认清理",
+      cls: "mod-warning",
+    });
+    confirmButton.addEventListener("click", () => {
+      this.onConfirm();
+      this.close();
+    });
+
+    const cancelButton = buttonContainer.createEl("button", {
+      text: "取消",
+    });
+    cancelButton.addEventListener("click", () => {
       this.close();
     });
   }

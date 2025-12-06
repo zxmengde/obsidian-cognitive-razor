@@ -21,6 +21,16 @@ import { SimpleDiffView } from "../ui/diff-view";
 import { Result, ok, err, TaskRecord, DuplicatePair, CRFrontmatter } from "../types";
 
 /**
+ * 合并笔记数据结构
+ */
+interface MergeNoteData {
+  nodeId: string;
+  name: string;
+  path: string;
+  content: string;
+}
+
+/**
  * MergeHandler 配置
  */
 export interface MergeHandlerConfig {
@@ -249,7 +259,7 @@ export class MergeHandler {
    */
   private buildMergedContent(
     mergeResult: Record<string, unknown>,
-    noteA: any,
+    noteA: MergeNoteData,
     type: string
   ): Result<string> {
     try {
@@ -260,7 +270,7 @@ export class MergeHandler {
       }
 
       // 获取合并后的名称
-      const mergedName = mergeResult.merged_name as any;
+      const mergedName = mergeResult.merged_name as { chinese?: string; english?: string } | undefined;
       if (!mergedName || !mergedName.chinese) {
         return err("MISSING_NAME", "合并结果缺少名称信息");
       }
@@ -284,7 +294,7 @@ export class MergeHandler {
       // 构建 Markdown 内容
       const bodyContent = this.buildMarkdownBody(
         mergedName.chinese,
-        mergedName.english,
+        mergedName.english ?? "",
         content,
         type,
         mergeResult
@@ -479,8 +489,8 @@ export class MergeHandler {
    */
   private async applyMerge(
     mainFile: TFile,
-    noteA: any,
-    noteB: any,
+    noteA: MergeNoteData,
+    noteB: MergeNoteData,
     mergedContent: string,
     pairId: string
   ): Promise<void> {

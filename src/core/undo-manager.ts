@@ -224,6 +224,114 @@ export class UndoManager {
   }
 
   /**
+   * 批量删除快照
+   * @param snapshotIds 要删除的快照 ID 列表
+   * @returns 删除结果，包含成功和失败的 ID
+   */
+  async batchDeleteSnapshots(
+    snapshotIds: string[]
+  ): Promise<Result<{ succeeded: string[]; failed: string[] }>> {
+    const succeeded: string[] = [];
+    const failed: string[] = [];
+
+    for (const snapshotId of snapshotIds) {
+      const deleteResult = await this.deleteSnapshot(snapshotId);
+      if (deleteResult.ok) {
+        succeeded.push(snapshotId);
+      } else {
+        failed.push(snapshotId);
+        console.error(`删除快照失败: ${snapshotId}`, deleteResult.error);
+      }
+    }
+
+    return ok({ succeeded, failed });
+  }
+
+  /**
+   * 清理过期快照
+   * @param maxAgeMs 最大保留时间（毫秒）
+   * @returns 清理的快照数量
+   */
+  async cleanupExpiredSnapshots(maxAgeMs: number): Promise<Result<number>> {
+    const listResult = await this.listSnapshots();
+    if (!listResult.ok) {
+      return listResult;
+    }
+
+    const now = Date.now();
+    const expiredSnapshots = listResult.value.filter((snapshot) => {
+      const created = new Date(snapshot.created).getTime();
+      return now - created > maxAgeMs;
+    });
+
+    if (expiredSnapshots.length === 0) {
+      return ok(0);
+    }
+
+    const snapshotIds = expiredSnapshots.map((s) => s.id);
+    const batchResult = await this.batchDeleteSnapshots(snapshotIds);
+
+    if (!batchResult.ok) {
+      return err(
+        "CLEANUP_ERROR",
+        "清理过期快照失败",
+        batchResult.error
+      );
+    }
+
+    return ok(batchResult.value.succeeded.length);
+  }
+
+  /**
+   * 手动清理所有快照
+   * @returns 清理的快照数量
+   */
+  async clearAllSnapshots(): Promise<Result<number>> {
+    const listResult = await this.listSnapshots();
+    if (!listResult.ok) {
+      return listResult;
+    }
+
+    const snapshotIds = listResult.value.map((s) => s.id);
+    const batchResult = await this.batchDeleteSnapshots(snapshotIds);
+
+    if (!batchResult.ok) {
+      return err(
+        "CLEAR_ERROR",
+        "清理所有快照失败",
+        batchResult.error
+      );
+    }
+
+    return ok(batchResult.value.succeeded.length);
+  }
+
+  /**
+   * 获取快照大小统计
+   * @returns 快照总大小（字节）
+   */
+  async getSnapshotsSize(): Promise<Result<number>> {
+    const listResult = await this.listSnapshots();
+    if (!listResult.ok) {
+      return listResult;
+    }
+
+    let totalSize = 0;
+
+    for (const metadata of listResult.value) {
+      const snapshotPath = `${this.snapshotsDir}/${metadata.id}.json`;
+      const readResult = await this.storage.readJSON<Snapshot>(snapshotPath);
+      if (readResult.ok) {
+        // 估算大小（JSON 字符串长度）
+        const size = JSON.stringify(readResult.value).length;
+        totalSize += size;
+      }
+    }
+
+    return ok(totalSize);
+  }
+
+  /**
    * 清理旧快照
    * 当快照数量超过上限时，删除最旧的快照
    */

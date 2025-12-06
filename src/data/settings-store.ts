@@ -4,6 +4,7 @@
  * 验证需求：8.5, 9.5
  */
 
+import { Plugin } from "obsidian";
 import { FileStorage } from "./file-storage";
 import { Logger } from "./logger";
 import { Result, ok, err, CognitiveRazorSettings, ProviderConfig, ProviderType } from "../types";
@@ -26,12 +27,14 @@ export const DEFAULT_SETTINGS: CognitiveRazorSettings = {
  * SettingsStore 配置
  */
 export interface SettingsStoreConfig {
-  /** 文件存储 */
-  storage: FileStorage;
+  /** Obsidian Plugin 实例（用于标准 data.json 存储） */
+  plugin?: Plugin;
+  /** 文件存储（用于自定义文件存储，可选） */
+  storage?: FileStorage;
   /** 日志记录器 */
   logger: Logger;
-  /** 设置文件路径 */
-  settingsFilePath: string;
+  /** 设置文件路径（仅在使用 FileStorage 时需要） */
+  settingsFilePath?: string;
 }
 
 /**
@@ -48,13 +51,15 @@ export interface ValidationError {
  * SettingsStore 组件
  */
 export class SettingsStore {
-  private storage: FileStorage;
+  private plugin?: Plugin;
+  private storage?: FileStorage;
   private logger: Logger;
-  private settingsFilePath: string;
+  private settingsFilePath?: string;
   private settings: CognitiveRazorSettings;
   private listeners: Array<(settings: CognitiveRazorSettings) => void> = [];
 
   constructor(config: SettingsStoreConfig) {
+    this.plugin = config.plugin;
     this.storage = config.storage;
     this.logger = config.logger;
     this.settingsFilePath = config.settingsFilePath;
@@ -65,49 +70,68 @@ export class SettingsStore {
    * 加载设置
    */
   async load(): Promise<Result<CognitiveRazorSettings>> {
-    this.logger.info("加载设置", { path: this.settingsFilePath });
+    this.logger.info("加载设置");
 
-    // 检查文件是否存在
-    const exists = await this.storage.exists(this.settingsFilePath);
-    if (!exists) {
-      this.logger.info("设置文件不存在，使用默认设置");
-      this.settings = { ...DEFAULT_SETTINGS };
-      
-      // 创建默认设置文件
-      const saveResult = await this.save();
-      if (!saveResult.ok) {
-        return saveResult;
+    try {
+      let loadedData: CognitiveRazorSettings | null = null;
+
+      // 优先使用 Obsidian Plugin API（标准 data.json）
+      if (this.plugin) {
+        const data = await this.plugin.loadData();
+        if (data) {
+          loadedData = data as CognitiveRazorSettings;
+        }
+      } 
+      // 回退到 FileStorage
+      else if (this.storage && this.settingsFilePath) {
+        const exists = await this.storage.exists(this.settingsFilePath);
+        if (exists) {
+          const readResult = await this.storage.readJSON<CognitiveRazorSettings>(this.settingsFilePath);
+          if (readResult.ok) {
+            loadedData = readResult.value;
+          } else {
+            this.logger.error("读取设置文件失败", { error: readResult.error });
+            return readResult;
+          }
+        }
       }
-      
+
+      if (!loadedData) {
+        this.logger.info("设置不存在，使用默认设置");
+        this.settings = { ...DEFAULT_SETTINGS };
+        
+        // 创建默认设置
+        const saveResult = await this.save();
+        if (!saveResult.ok) {
+          return saveResult;
+        }
+        
+        return ok(this.settings);
+      }
+
+      // 合并默认设置（处理新增字段）
+      this.settings = this.mergeWithDefaults(loadedData);
+
+      // 验证设置
+      const validationResult = this.validate(this.settings);
+      if (!validationResult.ok) {
+        this.logger.error("设置验证失败", { errors: validationResult.error });
+        return validationResult;
+      }
+
+      this.logger.info("设置加载成功");
       return ok(this.settings);
+    } catch (error) {
+      this.logger.error("加载设置异常", { error });
+      return err("LOAD_ERROR", `加载设置失败: ${error instanceof Error ? error.message : String(error)}`);
     }
-
-    // 读取设置文件
-    const readResult = await this.storage.readJSON<CognitiveRazorSettings>(this.settingsFilePath);
-    if (!readResult.ok) {
-      this.logger.error("读取设置文件失败", { error: readResult.error });
-      return readResult;
-    }
-
-    // 合并默认设置（处理新增字段）
-    this.settings = this.mergeWithDefaults(readResult.value);
-
-    // 验证设置
-    const validationResult = this.validate(this.settings);
-    if (!validationResult.ok) {
-      this.logger.error("设置验证失败", { errors: validationResult.error });
-      return validationResult;
-    }
-
-    this.logger.info("设置加载成功");
-    return ok(this.settings);
   }
 
   /**
    * 保存设置
    */
   async save(): Promise<Result<void>> {
-    this.logger.info("保存设置", { path: this.settingsFilePath });
+    this.logger.info("保存设置");
 
     // 验证设置
     const validationResult = this.validate(this.settings);
@@ -116,19 +140,30 @@ export class SettingsStore {
       return validationResult;
     }
 
-    // 写入文件
-    const writeResult = await this.storage.writeJSON(this.settingsFilePath, this.settings);
-    if (!writeResult.ok) {
-      this.logger.error("保存设置文件失败", { error: writeResult.error });
-      return writeResult;
-    }
+    try {
+      // 优先使用 Obsidian Plugin API（标准 data.json）
+      if (this.plugin) {
+        await this.plugin.saveData(this.settings);
+      } 
+      // 回退到 FileStorage
+      else if (this.storage && this.settingsFilePath) {
+        const writeResult = await this.storage.writeJSON(this.settingsFilePath, this.settings);
+        if (!writeResult.ok) {
+          this.logger.error("保存设置文件失败", { error: writeResult.error });
+          return writeResult;
+        }
+      }
 
-    this.logger.info("设置保存成功");
-    
-    // 通知监听器
-    this.notifyListeners();
-    
-    return ok(undefined);
+      this.logger.info("设置保存成功");
+      
+      // 通知监听器
+      this.notifyListeners();
+      
+      return ok(undefined);
+    } catch (error) {
+      this.logger.error("保存设置异常", { error });
+      return err("SAVE_ERROR", `保存设置失败: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   /**
@@ -230,7 +265,7 @@ export class SettingsStore {
     const prefix = `providers.${providerId}`;
 
     // 验证类型
-    const validTypes: ProviderType[] = ["google", "openai"];
+    const validTypes: ProviderType[] = ["openai"];
     if (!validTypes.includes(config.type)) {
       errors.push({
         field: `${prefix}.type`,

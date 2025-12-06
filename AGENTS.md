@@ -8,9 +8,11 @@
 
 ## Environment & tooling
 
-- Node.js: use current LTS (Node 18+ recommended).
+- Node.js: use current LTS (Node 22+ recommended, Node 18 已于 2025 年 EOL).
 - **Package manager: npm** (required for this sample - `package.json` defines npm scripts and dependencies).
 - **Bundler: esbuild** (required for this sample - `esbuild.config.mjs` and build scripts depend on it). Alternative bundlers like Rollup or webpack are acceptable for other projects if they bundle all external dependencies into `main.js`.
+- **TypeScript**: 5.7+ recommended (支持最新的类型检查和 ES2022+ 特性).
+- **ESLint**: 9.x with Flat Config (`eslint.config.js`), 旧版 `.eslintrc` 格式已弃用.
 - Types: `obsidian` type definitions.
 
 **Note**: This sample project has specific technical dependencies on npm and esbuild. If you're creating a plugin from scratch, you can choose different tools, but you'll need to replace the build configuration accordingly.
@@ -35,10 +37,27 @@ npm run build
 
 ## Linting
 
-- To use eslint install eslint from terminal: `npm install -g eslint`
-- To use eslint to analyze this project use this command: `eslint main.ts`
-- eslint will then create a report with suggestions for code improvement by file and line number.
-- If your source code is in a folder, such as `src`, you can use eslint with this command to analyze all files in that folder: `eslint ./src/`
+本项目使用 ESLint 9.x Flat Config 格式 (`eslint.config.js`)。
+
+### 安装和运行
+
+```bash
+# ESLint 已作为开发依赖安装，无需全局安装
+npm install
+
+# 检查代码
+npx eslint main.ts
+npx eslint ./src/
+
+# 自动修复
+npx eslint ./src/ --fix
+```
+
+### ESLint 配置说明
+
+- 配置文件: `eslint.config.js` (Flat Config 格式)
+- 使用 `typescript-eslint` v8 进行 TypeScript 支持
+- 忽略规则已合并到配置文件的 `ignores` 字段中
 
 ## File & folder conventions
 

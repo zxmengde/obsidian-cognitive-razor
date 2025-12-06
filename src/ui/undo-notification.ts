@@ -40,7 +40,7 @@ export class UndoNotification {
   }
 
   /**
-   * 显示通知
+   * 显示通知（增强版）
    */
   show(): void {
     // 创建通知
@@ -48,33 +48,80 @@ export class UndoNotification {
 
     // 清空通知内容
     this.notice.noticeEl.empty();
+    
+    // 添加自定义类（如果支持）
+    if (this.notice.noticeEl.classList) {
+      this.notice.noticeEl.classList.add("cr-undo-notification");
+    }
 
     // 创建通知容器
     const container = this.notice.noticeEl.createDiv({
       cls: "undo-notification-container",
     });
 
+    // 添加图标（如果支持 innerHTML）
+    const icon = container.createDiv({
+      cls: "undo-notification-icon",
+    });
+    if (icon && typeof icon.innerHTML !== 'undefined') {
+      icon.innerHTML = "↶"; // 撤销图标
+    }
+
+    // 内容区域
+    const content = container.createDiv({
+      cls: "undo-notification-content",
+    });
+
     // 添加消息文本
-    container.createSpan({
+    content.createDiv({
       text: this.options.message,
       cls: "undo-notification-message",
+    });
+
+    // 添加文件路径（简化显示）
+    const fileName = this.options.filePath.split("/").pop() || this.options.filePath;
+    content.createDiv({
+      text: `文件: ${fileName}`,
+      cls: "undo-notification-file",
     });
 
     // 添加撤销按钮
     const undoButton = container.createEl("button", {
       text: "撤销",
       cls: "undo-notification-button",
+      attr: {
+        "aria-label": `撤销操作: ${this.options.message}`,
+      },
     });
 
     undoButton.addEventListener("click", () => {
       this.triggerUndo();
     });
 
+    // 添加进度条
+    const progressBar = container.createDiv({
+      cls: "undo-notification-progress",
+    });
+    const progressFill = progressBar.createDiv({
+      cls: "undo-notification-progress-fill",
+    });
+
+    // 动画进度条（如果支持 style）
+    const duration = this.options.timeout || 5000;
+    if (progressFill && progressFill.style) {
+      progressFill.style.transition = `width ${duration}ms linear`;
+      setTimeout(() => {
+        if (progressFill && progressFill.style) {
+          progressFill.style.width = "0%";
+        }
+      }, 10);
+    }
+
     // 设置超时
     this.timeoutHandle = setTimeout(() => {
       this.expired = true;
       this.dismiss();
-    }, this.options.timeout);
+    }, duration);
   }
 
   /**

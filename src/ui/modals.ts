@@ -279,13 +279,6 @@ export class ProviderConfigModal extends Modal {
     // 表单容器
     const formEl = contentEl.createDiv({ cls: "modal-form" });
 
-    // Provider 类型 (仅添加模式显示)
-    if (this.options.mode === "add") {
-      const typeSetting = new Setting(formEl)
-        .setName("Provider 类型")
-        .setDesc(this.getProviderTypeLabel(this.options.providerType!));
-    }
-
     // Provider ID
     const idSetting = new Setting(formEl)
       .setName("Provider ID")
@@ -460,48 +453,16 @@ export class ProviderConfigModal extends Modal {
     }
   }
 
-  private getProviderTypeLabel(type: ProviderType): string {
-    switch (type) {
-      case "openai":
-        return "OpenAI";
-      case "google":
-        return "Google Gemini";
-      default:
-        return type;
-    }
-  }
-
   private getDefaultEndpoint(type: ProviderType): string {
-    switch (type) {
-      case "openai":
-        return "https://api.openai.com/v1";
-      case "google":
-        return "https://generativelanguage.googleapis.com/v1beta";
-      default:
-        return "";
-    }
+    return "https://api.openai.com/v1";
   }
 
   private getDefaultChatModel(type: ProviderType): string {
-    switch (type) {
-      case "openai":
-        return "gpt-4-turbo-preview";
-      case "google":
-        return "gemini-1.5-flash";
-      default:
-        return "";
-    }
+    return "gpt-4-turbo-preview";
   }
 
   private getDefaultEmbedModel(type: ProviderType): string {
-    switch (type) {
-      case "openai":
-        return "text-embedding-3-small";
-      case "google":
-        return "text-embedding-004";
-      default:
-        return "";
-    }
+    return "text-embedding-3-small";
   }
 
   onClose(): void {

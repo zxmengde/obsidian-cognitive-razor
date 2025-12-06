@@ -41,14 +41,34 @@ export interface ValidationResult {
 export class Validator {
   /**
    * 验证 JSON 字符串
+   * 支持从 markdown 代码块中提取 JSON
    */
   validateJSON(input: string): Result<unknown> {
     try {
-      const data = JSON.parse(input);
+      // 尝试从 markdown 代码块中提取 JSON
+      const jsonContent = this.extractJSONFromMarkdown(input);
+      const data = JSON.parse(jsonContent);
       return ok(data);
     } catch (error) {
       return err("E001", `JSON 解析失败: ${error}`, { input });
     }
+  }
+
+  /**
+   * 从 markdown 代码块中提取 JSON 内容
+   * 支持 ```json ... ``` 和 ``` ... ``` 格式
+   */
+  private extractJSONFromMarkdown(input: string): string {
+    // 尝试匹配 ```json ... ``` 或 ``` ... ``` 代码块
+    const codeBlockPattern = /```(?:json)?\s*\n?([\s\S]*?)\n?```/;
+    const match = input.match(codeBlockPattern);
+    
+    if (match && match[1]) {
+      return match[1].trim();
+    }
+    
+    // 如果没有代码块，返回原始输入（去除首尾空白）
+    return input.trim();
   }
 
   /**
@@ -152,10 +172,36 @@ export class Validator {
       });
     }
 
+    // 如果验证通过，转换为驼峰格式
+    if (errors.length === 0) {
+      const converted = this.convertStandardizeOutput(obj);
+      return { valid: true, errors, data: converted };
+    }
+
+    return { valid: false, errors };
+  }
+
+  /**
+   * 将 AI 返回的下划线格式转换为驼峰格式
+   */
+  private convertStandardizeOutput(obj: Record<string, unknown>): Record<string, unknown> {
+    const standardName = obj.standard_name as Record<string, string>;
+    const typeConfidences = obj.type_confidences as Record<string, number>;
+
     return {
-      valid: errors.length === 0,
-      errors,
-      data: errors.length === 0 ? data : undefined,
+      standardName: {
+        chinese: standardName.chinese,
+        english: standardName.english,
+      },
+      aliases: obj.aliases,
+      typeConfidences: {
+        Domain: typeConfidences.Domain,
+        Issue: typeConfidences.Issue,
+        Theory: typeConfidences.Theory,
+        Entity: typeConfidences.Entity,
+        Mechanism: typeConfidences.Mechanism,
+      },
+      coreDefinition: obj.core_definition,
     };
   }
 

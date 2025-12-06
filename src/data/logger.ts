@@ -1,6 +1,7 @@
 /**
  * Logger 组件
  * 实现循环日志（1MB 上限）和日志级别过滤
+ * 同时输出到控制台和文件
  */
 
 import { FileStorage } from "./file-storage";
@@ -47,6 +48,8 @@ export interface LoggerConfig {
   minLevel: LogLevel;
   /** 最大日志文件大小（字节），默认 1MB */
   maxSize?: number;
+  /** 是否输出到控制台，默认 true */
+  consoleOutput?: boolean;
 }
 
 /**
@@ -57,6 +60,7 @@ export class Logger {
   private logFilePath: string;
   private minLevel: LogLevel;
   private maxSize: number;
+  private consoleOutput: boolean;
   private buffer: LogEntry[] = [];
   private flushTimer: NodeJS.Timeout | null = null;
 
@@ -65,6 +69,7 @@ export class Logger {
     this.logFilePath = config.logFilePath;
     this.minLevel = config.minLevel;
     this.maxSize = config.maxSize || 1024 * 1024; // 默认 1MB
+    this.consoleOutput = config.consoleOutput ?? true; // 默认输出到控制台
   }
 
   /**
@@ -112,6 +117,11 @@ export class Logger {
       context,
     };
 
+    // 输出到控制台
+    if (this.consoleOutput) {
+      this.logToConsole(entry);
+    }
+
     // 添加到缓冲区
     this.buffer.push(entry);
 
@@ -121,6 +131,45 @@ export class Logger {
     } else {
       // 否则延迟刷新
       this.scheduleFlush();
+    }
+  }
+
+  /**
+   * 输出日志到控制台
+   */
+  private logToConsole(entry: LogEntry): void {
+    const prefix = `[CR][${entry.level.toUpperCase()}]`;
+    const message = `${prefix} ${entry.message}`;
+
+    switch (entry.level) {
+      case "debug":
+        if (entry.context) {
+          console.debug(message, entry.context);
+        } else {
+          console.debug(message);
+        }
+        break;
+      case "info":
+        if (entry.context) {
+          console.info(message, entry.context);
+        } else {
+          console.info(message);
+        }
+        break;
+      case "warn":
+        if (entry.context) {
+          console.warn(message, entry.context);
+        } else {
+          console.warn(message);
+        }
+        break;
+      case "error":
+        if (entry.context) {
+          console.error(message, entry.context);
+        } else {
+          console.error(message);
+        }
+        break;
     }
   }
 

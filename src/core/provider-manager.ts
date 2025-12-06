@@ -2,7 +2,7 @@
  * ProviderManager - AI Provider 管理和 API 调用
  * 
  * 负责：
- * - 管理多个 AI Provider（Google Gemini、OpenAI）
+ * - 管理 AI Provider（OpenAI 标准格式，可通过自定义端点兼容其他服务）
  * - 统一的聊天和嵌入接口
  * - Provider 能力检测
  * - API 调用和错误处理
@@ -63,177 +63,6 @@ interface IProvider {
 }
 
 // ============================================================================
-// Google Gemini Provider
-// ============================================================================
-
-/**
- * Google Gemini Provider 实现
- */
-class GoogleGeminiProvider implements IProvider {
-  readonly id: string;
-  readonly type: ProviderType = "google";
-  readonly name = "Google Gemini";
-
-  private apiKey: string;
-  private baseUrl: string;
-
-  constructor(id: string, config: ProviderConfig) {
-    this.id = id;
-    this.apiKey = config.apiKey;
-    this.baseUrl = config.baseUrl || "https://generativelanguage.googleapis.com/v1beta";
-  }
-
-  async chat(request: ChatRequest): Promise<Result<ChatResponse>> {
-    try {
-      // 转换消息格式为 Gemini 格式
-      const contents = this.convertMessages(request.messages);
-
-      const response = await fetch(
-        `${this.baseUrl}/models/${request.model}:generateContent?key=${this.apiKey}`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            contents,
-            generationConfig: {
-              temperature: request.temperature ?? 0.7,
-              topP: request.topP ?? 0.95,
-              maxOutputTokens: request.maxTokens ?? 2048,
-            },
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        return this.handleError(response.status, errorData);
-      }
-
-      const data = await response.json();
-
-      // 提取生成的内容
-      const content = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      const finishReason = data.candidates?.[0]?.finishReason || "STOP";
-      const tokensUsed = data.usageMetadata?.totalTokenCount;
-
-      return ok({
-        content,
-        finishReason,
-        tokensUsed,
-      });
-    } catch (error) {
-      return err("E100", `API 调用失败: ${getErrorMessage(error)}`, error);
-    }
-  }
-
-  async embed(request: EmbedRequest): Promise<Result<EmbedResponse>> {
-    try {
-      const response = await fetch(
-        `${this.baseUrl}/models/${request.model}:embedContent?key=${this.apiKey}`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            content: {
-              parts: [{ text: request.input }],
-            },
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        return this.handleError(response.status, errorData);
-      }
-
-      const data = await response.json();
-      const embedding = data.embedding?.values || [];
-
-      return ok({
-        embedding,
-        tokensUsed: undefined, // Gemini 不返回 token 使用量
-      });
-    } catch (error) {
-      return err("E100", `嵌入生成失败: ${getErrorMessage(error)}`, error);
-    }
-  }
-
-  async checkCapabilities(): Promise<Result<ProviderCapabilities>> {
-    try {
-      // 尝试列出可用模型
-      const response = await fetch(
-        `${this.baseUrl}/models?key=${this.apiKey}`,
-        {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-          },
-        }
-      );
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        return this.handleError(response.status, errorData);
-      }
-
-      const data = await response.json();
-      const models = data.models?.map((m: any) => m.name.replace("models/", "")) || [];
-
-      return ok({
-        chat: true,
-        embedding: true,
-        maxContextLength: 32768, // Gemini 1.5 默认上下文长度
-        models,
-      });
-    } catch (error) {
-      return err("E100", `能力检测失败: ${getErrorMessage(error)}`, error);
-    }
-  }
-
-  /**
-   * 转换消息格式为 Gemini 格式
-   */
-  private convertMessages(messages: ChatRequest["messages"]) {
-    const contents: any[] = [];
-    let systemInstruction = "";
-
-    for (const msg of messages) {
-      if (msg.role === "system") {
-        // Gemini 使用 systemInstruction 字段
-        systemInstruction += msg.content + "\n";
-      } else {
-        contents.push({
-          role: msg.role === "assistant" ? "model" : "user",
-          parts: [{ text: msg.content }],
-        });
-      }
-    }
-
-    return contents;
-  }
-
-  /**
-   * 处理 API 错误
-   */
-  private handleError(status: number, errorData: any): Err {
-    if (status === 401 || status === 403) {
-      return err("E103", "认证失败，请检查 API Key", { status, errorData });
-    }
-    if (status === 429) {
-      return err("E102", "速率限制，请稍后重试", { status, errorData });
-    }
-    if (status >= 500) {
-      return err("E100", `服务器错误 (${status})`, { status, errorData });
-    }
-    return err("E100", `API 错误 (${status})`, { status, errorData });
-  }
-}
-
-// ============================================================================
 // OpenAI Provider
 // ============================================================================
 
@@ -247,11 +76,14 @@ class OpenAIProvider implements IProvider {
 
   private apiKey: string;
   private baseUrl: string;
+  private defaultChatModel: string;
 
   constructor(id: string, config: ProviderConfig) {
     this.id = id;
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl || "https://api.openai.com/v1";
+    // 2025年更新: 默认使用 gpt-4o，性价比最高的多模态模型
+    this.defaultChatModel = config.defaultChatModel || "gpt-4o";
   }
 
   async chat(request: ChatRequest): Promise<Result<ChatResponse>> {
@@ -325,28 +157,51 @@ class OpenAIProvider implements IProvider {
 
   async checkCapabilities(): Promise<Result<ProviderCapabilities>> {
     try {
-      // 尝试列出可用模型
-      const response = await fetch(`${this.baseUrl}/models`, {
+      // 首先尝试列出可用模型（官方 API）
+      const modelsResponse = await fetch(`${this.baseUrl}/models`, {
         method: "GET",
         headers: {
           Authorization: `Bearer ${this.apiKey}`,
         },
       });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        return this.handleError(response.status, errorData);
+      if (modelsResponse.ok) {
+        const data = await modelsResponse.json();
+        const models = data.data?.map((m: { id: string }) => m.id) || [];
+
+        return ok({
+          chat: true,
+          embedding: true,
+          maxContextLength: 128000,
+          models,
+        });
       }
 
-      const data = await response.json();
-      const models = data.data?.map((m: any) => m.id) || [];
-
-      return ok({
-        chat: true,
-        embedding: true,
-        maxContextLength: 128000, // GPT-4 Turbo 默认上下文长度
-        models,
+      // 如果 /models 端点不可用（第三方 API），尝试发送一个简单的测试请求
+      console.log("OpenAI /models 端点不可用，尝试测试聊天请求...");
+      
+      const testResult = await this.chat({
+        providerId: this.id,
+        model: this.defaultChatModel,
+        messages: [{ role: "user", content: "Hi" }],
+        maxTokens: 10,
       });
+
+      if (testResult.ok) {
+        return ok({
+          chat: true,
+          embedding: true,
+          maxContextLength: 128000,
+          models: [], // 无法获取模型列表
+        });
+      }
+
+      // 测试请求也失败了，保留原始错误码
+      return err(
+        testResult.error.code,
+        `连接测试失败: ${testResult.error.message}`,
+        testResult.error.details
+      );
     } catch (error) {
       return err("E100", `能力检测失败: ${getErrorMessage(error)}`, error);
     }
@@ -355,7 +210,7 @@ class OpenAIProvider implements IProvider {
   /**
    * 处理 API 错误
    */
-  private handleError(status: number, errorData: any): Err {
+  private handleError(status: number, errorData: unknown): Err {
     if (status === 401) {
       return err("E103", "认证失败，请检查 API Key", { status, errorData });
     }
@@ -378,7 +233,6 @@ class OpenAIProvider implements IProvider {
  */
 export const DEFAULT_ENDPOINTS: Record<ProviderType, string> = {
   openai: "https://api.openai.com/v1",
-  google: "https://generativelanguage.googleapis.com/v1beta",
 };
 
 // ============================================================================
@@ -491,19 +345,11 @@ export class ProviderManager implements IProviderManager {
   }
 
   setProvider(id: string, config: ProviderConfig): void {
-    let provider: IProvider;
-
-    switch (config.type) {
-      case "google":
-        provider = new GoogleGeminiProvider(id, config);
-        break;
-      case "openai":
-        provider = new OpenAIProvider(id, config);
-        break;
-      default:
-        throw new Error(`不支持的 Provider 类型: ${config.type}`);
+    if (config.type !== "openai") {
+      throw new Error(`不支持的 Provider 类型: ${config.type}`);
     }
 
+    const provider = new OpenAIProvider(id, config);
     this.providers.set(id, provider);
   }
 

@@ -35,6 +35,12 @@ export interface IDuplicateManager {
   getPair(id: string): Promise<Result<DuplicatePair | null>>;
   /** 获取所有待处理的重复对 */
   getPendingPairs(): Promise<Result<DuplicatePair[]>>;
+  /** 获取已忽略的重复对 */
+  getDismissedPairs(): Promise<Result<DuplicatePair[]>>;
+  /** 获取已合并的重复对 */
+  getMergedPairs(): Promise<Result<DuplicatePair[]>>;
+  /** 获取所有重复对 */
+  getAllPairs(): Promise<Result<DuplicatePair[]>>;
   /** 获取指定类型的重复对 */
   getPairsByType(type: CRType): Promise<Result<DuplicatePair[]>>;
   /** 更新重复对状态 */
@@ -192,6 +198,29 @@ export class DuplicateManager implements IDuplicateManager {
   async getPendingPairs(): Promise<Result<DuplicatePair[]>> {
     const pendingPairs = this.data.pairs.filter((p) => p.status === "pending");
     return ok(pendingPairs);
+  }
+
+  /**
+   * 获取已忽略的重复对
+   */
+  async getDismissedPairs(): Promise<Result<DuplicatePair[]>> {
+    const dismissedPairs = this.data.pairs.filter((p) => p.status === "dismissed");
+    return ok(dismissedPairs);
+  }
+
+  /**
+   * 获取已合并的重复对
+   */
+  async getMergedPairs(): Promise<Result<DuplicatePair[]>> {
+    const mergedPairs = this.data.pairs.filter((p) => p.status === "merged");
+    return ok(mergedPairs);
+  }
+
+  /**
+   * 获取所有重复对（包括所有状态）
+   */
+  async getAllPairs(): Promise<Result<DuplicatePair[]>> {
+    return ok([...this.data.pairs]);
   }
 
   /**
