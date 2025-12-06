@@ -230,7 +230,7 @@ export class SettingsStore {
     const prefix = `providers.${providerId}`;
 
     // 验证类型
-    const validTypes: ProviderType[] = ["google", "openai", "openrouter"];
+    const validTypes: ProviderType[] = ["google", "openai"];
     if (!validTypes.includes(config.type)) {
       errors.push({
         field: `${prefix}.type`,

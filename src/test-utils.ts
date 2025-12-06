@@ -45,7 +45,7 @@ export const arbTaskState = (): fc.Arbitrary<TaskState> =>
  * 生成 Provider 类型
  */
 export const arbProviderType = (): fc.Arbitrary<ProviderType> =>
-  fc.constantFrom<ProviderType>("google", "openai", "openrouter");
+  fc.constantFrom<ProviderType>("google", "openai");
 
 /**
  * 生成 UUID v4

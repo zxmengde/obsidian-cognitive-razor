@@ -222,9 +222,9 @@ export interface IndexStats {
 // ============================================================================
 
 /**
- * Provider 类型
+ * Provider 类型（简化后仅支持 OpenAI 和 Google）
  */
-export type ProviderType = "google" | "openai" | "openrouter";
+export type ProviderType = "openai" | "google";
 
 /**
  * Provider 能力
@@ -330,7 +330,7 @@ export interface ProviderConfig {
   type: ProviderType;
   /** API Key */
   apiKey: string;
-  /** 基础 URL (可选) */
+  /** 自定义端点 URL (可选，用于支持 OpenRouter 等第三方服务) */
   baseUrl?: string;
   /** 默认聊天模型 */
   defaultChatModel: string;
@@ -339,6 +339,14 @@ export interface ProviderConfig {
   /** 是否启用 */
   enabled: boolean;
 }
+
+/**
+ * 默认端点配置
+ */
+export const DEFAULT_ENDPOINTS: Record<ProviderType, string> = {
+  openai: "https://api.openai.com/v1",
+  google: "https://generativelanguage.googleapis.com/v1beta"
+};
 
 /**
  * 插件设置
@@ -360,6 +368,51 @@ export interface CognitiveRazorSettings {
   advancedMode: boolean;
   /** 日志级别 */
   logLevel: "debug" | "info" | "warn" | "error";
+}
+
+// ============================================================================
+// 标准化概念
+// ============================================================================
+
+/**
+ * 标准化概念结果
+ */
+export interface StandardizedConcept {
+  /** 标准名称 */
+  standardName: {
+    /** 中文名 */
+    chinese: string;
+    /** 英文名 */
+    english: string;
+  };
+  /** 别名列表 */
+  aliases: string[];
+  /** 类型置信度 */
+  typeConfidences: {
+    Domain: number;
+    Issue: number;
+    Theory: number;
+    Entity: number;
+    Mechanism: number;
+  };
+  /** 核心定义 */
+  coreDefinition: string;
+}
+
+// ============================================================================
+// 任务详情（扩展）
+// ============================================================================
+
+/**
+ * 任务详情（用于 UI 显示）
+ */
+export interface TaskDetails extends TaskRecord {
+  /** Provider 名称 */
+  providerName?: string;
+  /** 已用时间（毫秒） */
+  elapsedTime?: number;
+  /** 预计时间（毫秒） */
+  estimatedTime?: number;
 }
 
 // ============================================================================
@@ -439,6 +492,92 @@ export interface Err {
  * Result 类型：表示可能成功或失败的操作
  */
 export type Result<T> = Ok<T> | Err;
+
+// ============================================================================
+// Modal 组件类型
+// ============================================================================
+
+/**
+ * 文本输入 Modal 选项
+ */
+export interface TextInputModalOptions {
+  /** 标题 */
+  title: string;
+  /** 占位符 */
+  placeholder?: string;
+  /** 默认值 */
+  defaultValue?: string;
+  /** 验证函数 - 返回错误消息或 null */
+  validator?: (value: string) => string | null;
+  /** 提交回调 */
+  onSubmit: (value: string) => void;
+  /** 取消回调 */
+  onCancel?: () => void;
+}
+
+/**
+ * 选择选项
+ */
+export interface SelectOption {
+  /** 值 */
+  value: string;
+  /** 标签 */
+  label: string;
+  /** 描述 */
+  description?: string;
+}
+
+/**
+ * 选择 Modal 选项
+ */
+export interface SelectModalOptions {
+  /** 标题 */
+  title: string;
+  /** 选项列表 */
+  options: SelectOption[];
+  /** 选择回调 */
+  onSelect: (value: string) => void;
+  /** 取消回调 */
+  onCancel?: () => void;
+}
+
+/**
+ * 确认 Modal 选项
+ */
+export interface ConfirmModalOptions {
+  /** 标题 */
+  title: string;
+  /** 消息 */
+  message: string;
+  /** 确认按钮文本 */
+  confirmText?: string;
+  /** 取消按钮文本 */
+  cancelText?: string;
+  /** 是否为危险操作 */
+  danger?: boolean;
+  /** 确认回调 */
+  onConfirm: () => void;
+  /** 取消回调 */
+  onCancel?: () => void;
+}
+
+/**
+ * Provider 配置 Modal 选项
+ */
+export interface ProviderConfigModalOptions {
+  /** 模式：添加或编辑 */
+  mode: "add" | "edit";
+  /** Provider ID (编辑模式) */
+  providerId?: string;
+  /** Provider 类型 (添加模式) */
+  providerType?: ProviderType;
+  /** 当前配置 (编辑模式) */
+  currentConfig?: ProviderConfig;
+  /** 保存回调 */
+  onSave: (id: string, config: ProviderConfig) => Promise<void>;
+  /** 取消回调 */
+  onCancel?: () => void;
+}
 
 // ============================================================================
 // 工具函数类型

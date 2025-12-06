@@ -9,6 +9,7 @@ import { SettingsStore, DEFAULT_SETTINGS } from './src/data/settings-store';
 import { FileStorage } from './src/data/file-storage';
 import { Logger } from './src/data/logger';
 import { MigrationRunner } from './src/data/migration-runner';
+import { MigrationManager } from './src/core/migration-manager';
 import { VectorIndex } from './src/core/vector-index';
 import { TaskQueue } from './src/core/task-queue';
 import { LockManager } from './src/core/lock-manager';
@@ -19,6 +20,7 @@ import { PromptManager } from './src/core/prompt-manager';
 import { IncrementalImproveHandler } from './src/core/incremental-improve-handler';
 import { WorkbenchPanel, WORKBENCH_VIEW_TYPE } from './src/ui/workbench-panel';
 import { QueueView, QUEUE_VIEW_TYPE } from './src/ui/queue-view';
+import { UndoHistoryView, UNDO_HISTORY_VIEW_TYPE } from './src/ui/undo-history-view';
 import { StatusBadge } from './src/ui/status-badge';
 import { CommandDispatcher } from './src/ui/command-dispatcher';
 import { CognitiveRazorSettingTab } from './src/ui/settings-tab';
@@ -36,6 +38,7 @@ export default class CognitiveRazorPlugin extends Plugin {
 	private fileStorage!: FileStorage;
 	private logger!: Logger;
 	private migrationRunner!: MigrationRunner;
+	private migrationManager!: MigrationManager;
 
 	// 核心组件
 	private vectorIndex!: VectorIndex;
@@ -133,6 +136,7 @@ export default class CognitiveRazorPlugin extends Plugin {
 			// 4. 卸载视图
 			this.app.workspace.detachLeavesOfType(WORKBENCH_VIEW_TYPE);
 			this.app.workspace.detachLeavesOfType(QUEUE_VIEW_TYPE);
+			this.app.workspace.detachLeavesOfType(UNDO_HISTORY_VIEW_TYPE);
 
 			console.log('Cognitive Razor 插件卸载完成');
 		} catch (error) {
@@ -196,26 +200,37 @@ export default class CognitiveRazorPlugin extends Plugin {
 			this.settings = loadResult.value;
 		}
 
-		// 初始化 MigrationRunner（需要 settingsStore）
-		this.migrationRunner = new MigrationRunner({
+		// 初始化 MigrationManager（需要 settingsStore）
+		this.migrationManager = new MigrationManager({
+			app: this.app,
+			settingsStore: this.settingsStore,
 			storage: this.fileStorage,
 			logger: this.logger,
-			settingsStore: this.settingsStore,
-			historyFilePath: 'migrations/history.json',
-			migrations: [], // 暂时没有迁移脚本
 		});
+
+		// 初始化迁移管理器
+		const initResult = await this.migrationManager.initialize();
+		if (!initResult.ok) {
+			this.logger.error('初始化迁移管理器失败', { error: initResult.error });
+		}
 	}
 
 	/**
 	 * 运行数据迁移
 	 */
 	private async runMigrations(): Promise<void> {
-		const currentVersion = this.manifest.version;
-		const migrateResult = await this.migrationRunner.migrate(currentVersion);
+		const targetVersion = "2.0.0"; // 目标版本
+		
+		// 使用 MigrationManager 检查并执行迁移
+		const migrateResult = await this.migrationManager.checkAndMigrate(targetVersion);
 		
 		if (!migrateResult.ok) {
 			this.logger.error('数据迁移失败', { error: migrateResult.error });
-			new Notice('数据迁移失败，请查看日志');
+			
+			// 如果不是用户取消，显示错误通知
+			if (migrateResult.error.code !== 'MIGRATION_CANCELLED') {
+				new Notice('数据迁移失败，请查看日志');
+			}
 		} else {
 			this.logger.info('数据迁移完成');
 		}
@@ -301,13 +316,31 @@ export default class CognitiveRazorPlugin extends Plugin {
 		// 注册工作台视图
 		this.registerView(
 			WORKBENCH_VIEW_TYPE,
-			(leaf) => new WorkbenchPanel(leaf)
+			(leaf) => {
+				const panel = new WorkbenchPanel(leaf);
+				panel.setPlugin(this);
+				return panel;
+			}
 		);
 
 		// 注册队列视图
 		this.registerView(
 			QUEUE_VIEW_TYPE,
-			(leaf) => new QueueView(leaf)
+			(leaf) => {
+				const view = new QueueView(leaf);
+				view.setPlugin(this);
+				return view;
+			}
+		);
+
+		// 注册撤销历史视图
+		this.registerView(
+			UNDO_HISTORY_VIEW_TYPE,
+			(leaf) => {
+				const view = new UndoHistoryView(leaf);
+				view.setPlugin(this);
+				return view;
+			}
 		);
 
 		this.logger.info('视图注册完成');

@@ -265,6 +265,18 @@ export class CommandDispatcher {
         await this.toggleQueueView();
       }
     });
+
+    this.registerCommand({
+      id: "open-undo-history",
+      name: "打开操作历史",
+      icon: "history",
+      hotkeys: [
+        { modifiers: ["Mod", "Shift"], key: "h" }
+      ],
+      handler: async () => {
+        await this.openUndoHistory();
+      }
+    });
   }
 
   /**
@@ -553,6 +565,30 @@ export class CommandDispatcher {
     } else {
       // 未打开，打开它
       await this.openQueue();
+    }
+  }
+
+  /**
+   * 打开撤销历史视图
+   */
+  private async openUndoHistory(): Promise<void> {
+    const { workspace } = this.plugin.app;
+    
+    // 检查是否已经打开
+    const existing = workspace.getLeavesOfType("cognitive-razor-undo-history");
+    if (existing.length > 0) {
+      workspace.revealLeaf(existing[0]);
+      return;
+    }
+
+    // 在右侧边栏打开
+    const leaf = workspace.getRightLeaf(false);
+    if (leaf) {
+      await leaf.setViewState({
+        type: "cognitive-razor-undo-history",
+        active: true
+      });
+      workspace.revealLeaf(leaf);
     }
   }
 }

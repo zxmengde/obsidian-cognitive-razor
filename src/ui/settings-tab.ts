@@ -10,6 +10,7 @@
 import { App, PluginSettingTab, Setting, Notice } from "obsidian";
 import type CognitiveRazorPlugin from "../../main";
 import type { ProviderType, ProviderConfig } from "../types";
+import { ProviderConfigModal, ConfirmModal } from "./modals";
 
 /**
  * 设置面板
@@ -66,13 +67,6 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
           .setButtonText("添加 OpenAI")
           .onClick(() => {
             this.showAddProviderModal("openai");
-          });
-      })
-      .addButton(button => {
-        button
-          .setButtonText("添加 OpenRouter")
-          .onClick(() => {
-            this.showAddProviderModal("openrouter");
           });
       });
 
@@ -131,6 +125,15 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
         });
     });
 
+    // 测试连接按钮
+    setting.addButton(button => {
+      button
+        .setButtonText("测试连接")
+        .onClick(async () => {
+          await this.testProviderConnection(id);
+        });
+    });
+
     // 编辑按钮
     setting.addButton(button => {
       button
@@ -140,18 +143,22 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
         });
     });
 
+    // 设为默认按钮
+    setting.addButton(button => {
+      button
+        .setButtonText("设为默认")
+        .onClick(async () => {
+          await this.setDefaultProvider(id);
+        });
+    });
+
     // 删除按钮
     setting.addButton(button => {
       button
         .setButtonText("删除")
         .setWarning()
-        .onClick(async () => {
-          const confirmed = confirm(`确定要删除 Provider "${id}" 吗？`);
-          if (confirmed) {
-            await this.plugin.settingsStore.removeProvider(id);
-            new Notice(`Provider ${id} 已删除`);
-            this.display();
-          }
+        .onClick(() => {
+          this.showDeleteProviderConfirm(id);
         });
     });
   }
@@ -244,6 +251,19 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
             new Notice(`日志级别已设置为: ${value}（将在下次启动时生效）`);
           });
       });
+
+    // 清除日志按钮
+    new Setting(containerEl)
+      .setName("清除日志")
+      .setDesc("清空所有日志文件")
+      .addButton(button => {
+        button
+          .setButtonText("清除日志")
+          .setWarning()
+          .onClick(async () => {
+            await this.clearLogs();
+          });
+      });
   }
 
   /**
@@ -313,13 +333,8 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
         button
           .setButtonText("重置")
           .setWarning()
-          .onClick(async () => {
-            const confirmed = confirm("确定要重置所有设置吗？此操作不可撤销。");
-            if (confirmed) {
-              await this.plugin.settingsStore.reset();
-              new Notice("配置已重置");
-              this.display();
-            }
+          .onClick(() => {
+            this.showResetSettingsConfirm();
           });
       });
   }
@@ -328,75 +343,148 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
    * 显示添加 Provider 模态框
    */
   private showAddProviderModal(type: ProviderType): void {
-    // TODO: 实现添加 Provider 的模态框
-    // 这里暂时使用简单的 prompt
-    const id = prompt(`请输入 Provider ID (例如: my-${type}):`);
-    if (!id) return;
-
-    const apiKey = prompt("请输入 API Key:");
-    if (!apiKey) return;
-
-    const defaultModels = this.getDefaultModels(type);
-
-    const config: ProviderConfig = {
-      type,
-      apiKey,
-      defaultChatModel: defaultModels.chat,
-      defaultEmbedModel: defaultModels.embed,
-      enabled: true,
-    };
-
-    this.plugin.settingsStore.addProvider(id, config).then(result => {
-      if (result.ok) {
-        new Notice(`Provider ${id} 已添加`);
-        this.display();
-      } else {
-        new Notice(`添加失败: ${result.error.message}`);
+    new ProviderConfigModal(this.app, {
+      mode: "add",
+      providerType: type,
+      onSave: async (id, config) => {
+        const result = await this.plugin.settingsStore.addProvider(id, config);
+        if (result.ok) {
+          new Notice(`Provider ${id} 已添加`);
+          this.display();
+        } else {
+          new Notice(`添加失败: ${result.error.message}`);
+          throw new Error(result.error.message);
+        }
+      },
+      onCancel: () => {
+        // 用户取消，不做任何操作
       }
-    });
+    }).open();
   }
 
   /**
    * 显示编辑 Provider 模态框
    */
   private showEditProviderModal(id: string, config: ProviderConfig): void {
-    // TODO: 实现编辑 Provider 的模态框
-    // 这里暂时使用简单的 prompt
-    const apiKey = prompt("请输入新的 API Key (留空保持不变):");
-    if (apiKey) {
-      this.plugin.settingsStore.updateProvider(id, { apiKey }).then(result => {
+    new ProviderConfigModal(this.app, {
+      mode: "edit",
+      providerId: id,
+      currentConfig: config,
+      onSave: async (providerId, newConfig) => {
+        const result = await this.plugin.settingsStore.updateProvider(providerId, newConfig);
         if (result.ok) {
-          new Notice(`Provider ${id} 已更新`);
+          new Notice(`Provider ${providerId} 已更新`);
           this.display();
         } else {
           new Notice(`更新失败: ${result.error.message}`);
+          throw new Error(result.error.message);
         }
-      });
+      },
+      onCancel: () => {
+        // 用户取消，不做任何操作
+      }
+    }).open();
+  }
+
+  /**
+   * 显示删除 Provider 确认对话框
+   */
+  private showDeleteProviderConfirm(id: string): void {
+    new ConfirmModal(this.app, {
+      title: "删除 Provider",
+      message: `确定要删除 Provider "${id}" 吗？此操作不可撤销。`,
+      confirmText: "删除",
+      cancelText: "取消",
+      danger: true,
+      onConfirm: async () => {
+        await this.plugin.settingsStore.removeProvider(id);
+        new Notice(`Provider ${id} 已删除`);
+        this.display();
+      },
+      onCancel: () => {
+        // 用户取消，不做任何操作
+      }
+    }).open();
+  }
+
+  /**
+   * 显示重置设置确认对话框
+   */
+  private showResetSettingsConfirm(): void {
+    new ConfirmModal(this.app, {
+      title: "重置设置",
+      message: "确定要重置所有设置吗？此操作不可撤销。",
+      confirmText: "重置",
+      cancelText: "取消",
+      danger: true,
+      onConfirm: async () => {
+        await this.plugin.settingsStore.reset();
+        new Notice("配置已重置");
+        this.display();
+      },
+      onCancel: () => {
+        // 用户取消，不做任何操作
+      }
+    }).open();
+  }
+
+  /**
+   * 测试 Provider 连接
+   */
+  private async testProviderConnection(id: string): Promise<void> {
+    new Notice(`正在测试 Provider ${id} 的连接...`);
+    
+    try {
+      const result = await this.plugin.getComponents().providerManager.checkAvailability(id);
+      
+      if (result.ok) {
+        const capabilities = result.value;
+        new Notice(
+          `连接成功！\n` +
+          `聊天: ${capabilities.chat ? "✓" : "✗"}\n` +
+          `嵌入: ${capabilities.embedding ? "✓" : "✗"}\n` +
+          `可用模型: ${capabilities.models.length} 个`,
+          5000
+        );
+      } else {
+        new Notice(`连接失败: ${result.error.message}`, 5000);
+      }
+    } catch (error) {
+      new Notice(`连接测试出错: ${error instanceof Error ? error.message : String(error)}`, 5000);
     }
   }
 
   /**
-   * 获取默认模型
+   * 设置默认 Provider
    */
-  private getDefaultModels(type: ProviderType): { chat: string; embed: string } {
-    switch (type) {
-      case "google":
-        return {
-          chat: "gemini-1.5-flash",
-          embed: "text-embedding-004"
-        };
-      case "openai":
-        return {
-          chat: "gpt-4-turbo-preview",
-          embed: "text-embedding-3-small"
-        };
-      case "openrouter":
-        return {
-          chat: "anthropic/claude-3-sonnet",
-          embed: "" // OpenRouter 不支持嵌入
-        };
-      default:
-        return { chat: "", embed: "" };
+  private async setDefaultProvider(id: string): Promise<void> {
+    await this.plugin.settingsStore.setDefaultProvider(id);
+    new Notice(`默认 Provider 已设置为: ${id}`);
+    this.display();
+  }
+
+  /**
+   * 清除日志
+   */
+  private async clearLogs(): Promise<void> {
+    try {
+      // 获取日志文件路径
+      const logPath = `${this.plugin.manifest.dir}/logs`;
+      
+      // 检查日志目录是否存在
+      const adapter = this.app.vault.adapter;
+      const exists = await adapter.exists(logPath);
+      
+      if (exists) {
+        // 删除日志目录
+        await adapter.rmdir(logPath, true);
+        new Notice("日志已清除");
+      } else {
+        new Notice("没有日志文件需要清除");
+      }
+    } catch (error) {
+      new Notice(`清除日志失败: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
+
 }

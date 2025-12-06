@@ -5,6 +5,9 @@
 export { WorkbenchPanel, WORKBENCH_VIEW_TYPE } from "./workbench-panel";
 export type { RecentOperation } from "./workbench-panel";
 
+// StandardizedConcept 类型从 types.ts 导出
+export type { StandardizedConcept } from "../types";
+
 export { QueueView, QUEUE_VIEW_TYPE } from "./queue-view";
 
 export { DiffView, SimpleDiffView } from "./diff-view";
@@ -14,3 +17,19 @@ export { StatusBadge } from "./status-badge";
 
 export { CommandDispatcher } from "./command-dispatcher";
 export type { CommandHandler, CommandDefinition } from "./command-dispatcher";
+
+export {
+  TextInputModal,
+  SelectModal,
+  ConfirmModal,
+  ProviderConfigModal
+} from "./modals";
+
+// Modal 类型从 types.ts 导出
+export type {
+  TextInputModalOptions,
+  SelectOption,
+  SelectModalOptions,
+  ConfirmModalOptions,
+  ProviderConfigModalOptions
+} from "../types";

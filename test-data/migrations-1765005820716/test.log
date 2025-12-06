@@ -1,0 +1,1 @@
+2025-12-06T07:23:40.716Z [ERROR] 设置验证失败，无法保存 {"errors":{"code":"VALIDATION_ERROR","message":"设置验证失败","details":[{"field":"providers.test-openrouter.type","message":"Provider 类型必须是 google, openai 之一"}]}}

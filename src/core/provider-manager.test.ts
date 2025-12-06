@@ -94,21 +94,19 @@ describe("ProviderManager", () => {
       expect(providers[0].type).toBe("openai");
     });
 
-    it("应该添加 OpenRouter Provider", () => {
+    it("应该拒绝不支持的 Provider 类型", () => {
       const manager = new ProviderManager();
-      const config: ProviderConfig = {
-        type: "openrouter",
+      const config: any = {
+        type: "unsupported",
         apiKey: "test-key",
-        defaultChatModel: "anthropic/claude-3-opus",
-        defaultEmbedModel: "",
+        defaultChatModel: "test-model",
+        defaultEmbedModel: "test-embed",
         enabled: true,
       };
 
-      manager.setProvider("openrouter", config);
-      const providers = manager.getConfiguredProviders();
-
-      expect(providers).toHaveLength(1);
-      expect(providers[0].type).toBe("openrouter");
+      expect(() => {
+        manager.setProvider("unsupported", config);
+      }).toThrow("不支持的 Provider 类型");
     });
 
     it("应该更新已存在的 Provider", () => {
@@ -362,31 +360,7 @@ describe("ProviderManager", () => {
       }
     });
 
-    it("应该返回错误当 OpenRouter 不支持嵌入", async () => {
-      const manager = new ProviderManager();
-      const config: ProviderConfig = {
-        type: "openrouter",
-        apiKey: "test-key",
-        defaultChatModel: "anthropic/claude-3-opus",
-        defaultEmbedModel: "",
-        enabled: true,
-      };
 
-      manager.setProvider("openrouter", config);
-
-      const request: EmbedRequest = {
-        providerId: "openrouter",
-        model: "any-model",
-        input: "Hello",
-      };
-
-      const result = await manager.embed(request);
-
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error.code).toBe("E201");
-      }
-    });
   });
 
   describe("checkAvailability", () => {

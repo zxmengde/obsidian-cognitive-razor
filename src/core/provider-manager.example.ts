@@ -63,21 +63,12 @@ async function example2_manageProviders() {
     enabled: true,
   });
 
-  // 添加 OpenRouter Provider
-  manager.setProvider("openrouter", {
-    type: "openrouter",
-    apiKey: "your-openrouter-api-key",
-    defaultChatModel: "anthropic/claude-3-opus",
-    defaultEmbedModel: "",
-    enabled: true,
-  });
-
   // 查看所有 Provider
   const providers = manager.getConfiguredProviders();
   console.log("所有 Provider:", providers);
 
-  // 移除 Provider
-  manager.removeProvider("openrouter");
+  // 移除 Provider（如果需要）
+  // manager.removeProvider("google");
 }
 
 // ============================================================================

@@ -1,0 +1,19 @@
+{
+  "version": "2.0.0",
+  "providers": {
+    "test-openai": {
+      "type": "openai",
+      "apiKey": "test-key",
+      "defaultChatModel": "gpt-4",
+      "defaultEmbedModel": "text-embedding-3-small",
+      "enabled": true,
+      "baseUrl": "https://api.openai.com/v1"
+    }
+  },
+  "defaultProviderId": "",
+  "similarityThreshold": 0.9,
+  "maxSnapshots": 100,
+  "concurrency": 3,
+  "advancedMode": false,
+  "logLevel": "info"
+}

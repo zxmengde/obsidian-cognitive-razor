@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cognitive Razor - 样式测试</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    .test-section {
+      margin-bottom: 40px;
+      padding: 20px;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .test-section h2 {
+      margin-top: 0;
+      color: #333;
+      border-bottom: 2px solid #6366f1;
+      padding-bottom: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Cognitive Razor 样式测试</h1>
+    
+    <!-- Modal 样式测试 -->
+    <div class="test-section">
+      <h2>1. Modal 组件样式</h2>
+      <div class="modal-input-container">
+        <input type="text" class="modal-input" placeholder="测试输入框">
+        <div class="modal-error" style="display: block;">这是一个错误消息示例</div>
+      </div>
+      <div class="modal-button-container">
+        <button>取消</button>
+        <button class="mod-cta">确认</button>
+      </div>
+    </div>
+
+    <!-- WorkbenchPanel 创建概念样式测试 -->
+    <div class="test-section">
+      <h2>2. 创建概念区域</h2>
+      <div class="cr-section cr-create-concept">
+        <h3>创建概念</h3>
+        <div class="cr-input-container">
+          <textarea class="cr-concept-input" placeholder="输入概念描述..."></textarea>
+        </div>
+        <div class="cr-button-container">
+          <button>标准化</button>
+          <button class="mod-cta">创建</button>
+        </div>
+        
+        <!-- 标准化结果 -->
+        <div class="cr-standardized-result">
+          <h4>标准化结果</h4>
+          <div class="cr-result-row">
+            <span class="cr-result-label">中文名:</span>
+            <span class="cr-result-value cr-chinese">人工智能</span>
+          </div>
+          <div class="cr-result-row">
+            <span class="cr-result-label">英文名:</span>
+            <span class="cr-result-value cr-english">Artificial Intelligence</span>
+          </div>
+          <div class="cr-result-row">
+            <span class="cr-result-label">别名:</span>
+            <div class="cr-aliases-list">
+              <span class="cr-alias-tag">AI</span>
+              <span class="cr-alias-tag">机器智能</span>
+              <span class="cr-alias-tag">智能系统</span>
+            </div>
+          </div>
+          <div class="cr-result-row">
+            <span class="cr-result-label">类型:</span>
+            <div class="cr-type-confidences">
+              <div class="cr-confidence-item">
+                <span class="cr-confidence-label">Entity</span>
+                <div class="cr-confidence-bar">
+                  <div class="cr-confidence-fill" style="width: 85%"></div>
+                </div>
+                <span class="cr-confidence-value">0.85</span>
+              </div>
+              <div class="cr-confidence-item">
+                <span class="cr-confidence-label">Domain</span>
+                <div class="cr-confidence-bar">
+                  <div class="cr-confidence-fill" style="width: 60%"></div>
+                </div>
+                <span class="cr-confidence-value">0.60</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 重复概念面板样式测试 -->
+    <div class="test-section">
+      <h2>3. 重复概念管理</h2>
+      <div class="cr-section">
+        <div class="cr-section-header">
+          <h3>重复概念 <span class="cr-badge">3</span></h3>
+        </div>
+        <div class="cr-duplicates-list">
+          <div class="cr-duplicate-item">
+            <div class="cr-duplicate-info">
+              <div class="cr-duplicate-names">人工智能 ↔ AI技术</div>
+              <div class="cr-duplicate-meta">
+                <span class="cr-similarity">相似度: 0.92</span>
+                <span class="cr-type-badge">Entity</span>
+              </div>
+            </div>
+            <div class="cr-duplicate-actions">
+              <button>合并</button>
+              <button>忽略</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- QueueView 样式测试 -->
+    <div class="test-section">
+      <h2>4. 任务队列视图</h2>
+      <div class="cr-queue-view">
+        <div class="cr-task-group">
+          <h3 class="cr-group-title">进行中 (2)</h3>
+          <div class="cr-task-list">
+            <div class="cr-task-item cr-task-running">
+              <div class="cr-task-info">
+                <div class="cr-task-header">
+                  <span class="cr-task-type">standardizeClassify</span>
+                  <span class="cr-task-id">abc123</span>
+                </div>
+                <div class="cr-task-node">人工智能</div>
+                <div class="cr-task-meta">
+                  <span class="cr-state-badge cr-state-running">运行中</span>
+                  <span class="cr-task-time">5秒前</span>
+                </div>
+              </div>
+              <div class="cr-task-actions">
+                <button class="cr-btn-cancel">取消</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- IncrementalImproveModal 样式测试 -->
+    <div class="test-section">
+      <h2>5. 增量改进 Modal</h2>
+      <div class="cr-incremental-improve-modal">
+        <div class="cr-file-info">
+          <div class="cr-file-name">笔记: 人工智能</div>
+          <div class="cr-file-path">路径: concepts/人工智能.md</div>
+        </div>
+        <p class="cr-description">请描述您希望如何改进这篇笔记。AI 将根据您的意图生成改进后的内容。</p>
+        <div class="cr-input-container">
+          <label>改进意图:</label>
+          <textarea class="cr-intent-input" placeholder="例如：添加更多示例..." rows="6"></textarea>
+        </div>
+        <div class="cr-hint">💡 提示：描述越具体，AI 生成的改进内容越符合您的期望。</div>
+        <div class="cr-modal-actions">
+          <button>取消</button>
+          <button class="mod-cta">生成改进</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 加载状态测试 -->
+    <div class="test-section">
+      <h2>6. 加载状态</h2>
+      <div class="cr-loading-container">
+        <div class="cr-loading cr-loading-large"></div>
+        <div class="cr-loading-text">正在处理...</div>
+      </div>
+      <div class="cr-progress-bar">
+        <div class="cr-progress-fill" style="width: 60%"></div>
+      </div>
+    </div>
+
+    <!-- 暗色主题测试 -->
+    <div class="test-section">
+      <h2>7. 暗色主题预览</h2>
+      <p>在 Obsidian 中，暗色主题会自动应用 .theme-dark 类。</p>
+      <button onclick="document.body.classList.toggle('theme-dark')">切换暗色主题</button>
+    </div>
+  </div>
+
+  <script>
+    // 简单的主题切换
+    const themeToggle = document.querySelector('button[onclick]');
+    if (themeToggle) {
+      themeToggle.addEventListener('click', () => {
+        document.body.classList.toggle('theme-dark');
+        if (document.body.classList.contains('theme-dark')) {
+          document.body.style.background = '#1e1e1e';
+          document.body.style.color = '#e0e0e0';
+        } else {
+          document.body.style.background = '#f5f5f5';
+          document.body.style.color = '#333';
+        }
+      });
+    }
+  </script>
+</body>
+</html>

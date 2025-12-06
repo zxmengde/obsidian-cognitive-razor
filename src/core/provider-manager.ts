@@ -2,10 +2,11 @@
  * ProviderManager - AI Provider 管理和 API 调用
  * 
  * 负责：
- * - 管理多个 AI Provider（Google Gemini、OpenAI、OpenRouter）
+ * - 管理多个 AI Provider（Google Gemini、OpenAI）
  * - 统一的聊天和嵌入接口
  * - Provider 能力检测
  * - API 调用和错误处理
+ * - 支持自定义 API 端点配置
  */
 
 import {
@@ -369,120 +370,16 @@ class OpenAIProvider implements IProvider {
 }
 
 // ============================================================================
-// OpenRouter Provider
+// 默认端点配置
 // ============================================================================
 
 /**
- * OpenRouter Provider 实现
+ * 默认 API 端点配置
  */
-class OpenRouterProvider implements IProvider {
-  readonly id: string;
-  readonly type: ProviderType = "openrouter";
-  readonly name = "OpenRouter";
-
-  private apiKey: string;
-  private baseUrl: string;
-
-  constructor(id: string, config: ProviderConfig) {
-    this.id = id;
-    this.apiKey = config.apiKey;
-    this.baseUrl = config.baseUrl || "https://openrouter.ai/api/v1";
-  }
-
-  async chat(request: ChatRequest): Promise<Result<ChatResponse>> {
-    try {
-      const response = await fetch(`${this.baseUrl}/chat/completions`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.apiKey}`,
-          "HTTP-Referer": "https://github.com/obsidian-cognitive-razor",
-          "X-Title": "Cognitive Razor",
-        },
-        body: JSON.stringify({
-          model: request.model,
-          messages: request.messages,
-          temperature: request.temperature ?? 0.7,
-          top_p: request.topP ?? 1.0,
-          max_tokens: request.maxTokens ?? 2048,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        return this.handleError(response.status, errorData);
-      }
-
-      const data = await response.json();
-      const content = data.choices?.[0]?.message?.content || "";
-      const finishReason = data.choices?.[0]?.finish_reason || "stop";
-      const tokensUsed = data.usage?.total_tokens;
-
-      return ok({
-        content,
-        finishReason,
-        tokensUsed,
-      });
-    } catch (error) {
-      return err("E100", `API 调用失败: ${getErrorMessage(error)}`, error);
-    }
-  }
-
-  async embed(request: EmbedRequest): Promise<Result<EmbedResponse>> {
-    // OpenRouter 不直接支持嵌入，但可以通过特定模型实现
-    // 这里返回不支持的错误
-    return err(
-      "E201",
-      "OpenRouter 不支持嵌入功能，请使用 Google 或 OpenAI Provider",
-      { providerId: this.id }
-    );
-  }
-
-  async checkCapabilities(): Promise<Result<ProviderCapabilities>> {
-    try {
-      // 尝试列出可用模型
-      const response = await fetch(`${this.baseUrl}/models`, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-        },
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        return this.handleError(response.status, errorData);
-      }
-
-      const data = await response.json();
-      const models = data.data?.map((m: any) => m.id) || [];
-
-      return ok({
-        chat: true,
-        embedding: false, // OpenRouter 不支持嵌入
-        maxContextLength: 200000, // 取决于具体模型
-        models,
-      });
-    } catch (error) {
-      return err("E100", `能力检测失败: ${getErrorMessage(error)}`, error);
-    }
-  }
-
-  /**
-   * 处理 API 错误
-   */
-  private handleError(status: number, errorData: any): Err {
-    if (status === 401) {
-      return err("E103", "认证失败，请检查 API Key", { status, errorData });
-    }
-    if (status === 429) {
-      return err("E102", "速率限制，请稍后重试", { status, errorData });
-    }
-    if (status >= 500) {
-      return err("E100", `服务器错误 (${status})`, { status, errorData });
-    }
-    return err("E100", `API 错误 (${status})`, { status, errorData });
-  }
-}
+export const DEFAULT_ENDPOINTS: Record<ProviderType, string> = {
+  openai: "https://api.openai.com/v1",
+  google: "https://generativelanguage.googleapis.com/v1beta",
+};
 
 // ============================================================================
 // ProviderManager 主类
@@ -602,9 +499,6 @@ export class ProviderManager implements IProviderManager {
         break;
       case "openai":
         provider = new OpenAIProvider(id, config);
-        break;
-      case "openrouter":
-        provider = new OpenRouterProvider(id, config);
         break;
       default:
         throw new Error(`不支持的 Provider 类型: ${config.type}`);

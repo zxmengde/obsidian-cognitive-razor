@@ -336,3 +336,51 @@ export function validateDuplicatePair(data: unknown): Result<DuplicatePair> {
 
   return ok(pair as DuplicatePair);
 }
+
+// ============================================================================
+// URL 验证
+// ============================================================================
+
+/**
+ * 验证 URL 格式
+ * 
+ * @param url - 要验证的 URL 字符串
+ * @returns 如果 URL 有效则返回 null，否则返回错误消息
+ */
+export function validateUrl(url: string): string | null {
+  // 检查是否为空
+  if (!url || typeof url !== "string") {
+    return "URL 不能为空";
+  }
+
+  // 去除首尾空格
+  const trimmedUrl = url.trim();
+
+  if (trimmedUrl.length === 0) {
+    return "URL 不能为空";
+  }
+
+  // 必须以 http:// 或 https:// 开头
+  if (!/^https?:\/\/.+/.test(trimmedUrl)) {
+    return "URL 必须以 http:// 或 https:// 开头";
+  }
+
+  // 尝试解析 URL
+  try {
+    const parsedUrl = new URL(trimmedUrl);
+    
+    // 验证协议
+    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+      return "URL 必须使用 HTTP 或 HTTPS 协议";
+    }
+
+    // 验证主机名
+    if (!parsedUrl.hostname || parsedUrl.hostname.length === 0) {
+      return "URL 必须包含有效的主机名";
+    }
+
+    return null; // 有效
+  } catch (error) {
+    return "无效的 URL 格式";
+  }
+}

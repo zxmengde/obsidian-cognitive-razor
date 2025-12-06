@@ -9,6 +9,7 @@
 
 import { ItemView, WorkspaceLeaf, Notice } from "obsidian";
 import type { TaskRecord, TaskState, QueueStatus } from "../types";
+import type CognitiveRazorPlugin from "../../main";
 
 export const QUEUE_VIEW_TYPE = "cognitive-razor-queue";
 
@@ -16,12 +17,22 @@ export const QUEUE_VIEW_TYPE = "cognitive-razor-queue";
  * QueueView 组件
  */
 export class QueueView extends ItemView {
+  private plugin: CognitiveRazorPlugin | null = null;
   private tasksContainer: HTMLElement | null = null;
   private filterState: TaskState | "all" = "all";
   private concurrencyInput: HTMLInputElement | null = null;
+  private pauseBtn: HTMLButtonElement | null = null;
+  private expandedTaskIds: Set<string> = new Set();
 
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
+  }
+
+  /**
+   * 设置插件实例
+   */
+  setPlugin(plugin: CognitiveRazorPlugin): void {
+    this.plugin = plugin;
   }
 
   getViewType(): string {
@@ -75,6 +86,7 @@ export class QueueView extends ItemView {
       attr: { for: "cr-concurrency-input" }
     });
 
+    const currentConcurrency = this.plugin?.getComponents().settings.concurrency || 3;
     this.concurrencyInput = concurrencySection.createEl("input", {
       type: "number",
       cls: "cr-concurrency-input",
@@ -82,7 +94,7 @@ export class QueueView extends ItemView {
         id: "cr-concurrency-input",
         min: "1",
         max: "10",
-        value: "3",
+        value: String(currentConcurrency),
         "aria-label": "并发任务数"
       }
     });
@@ -94,11 +106,14 @@ export class QueueView extends ItemView {
     // 全局操作按钮
     const actions = header.createDiv({ cls: "cr-header-actions" });
 
-    const pauseBtn = actions.createEl("button", {
-      text: "暂停队列",
-      attr: { "aria-label": "暂停队列" }
+    const status = this.plugin?.getComponents().taskQueue.getStatus();
+    const isPaused = status?.paused || false;
+
+    this.pauseBtn = actions.createEl("button", {
+      text: isPaused ? "恢复队列" : "暂停队列",
+      attr: { "aria-label": isPaused ? "恢复队列" : "暂停队列" }
     });
-    pauseBtn.addEventListener("click", () => {
+    this.pauseBtn.addEventListener("click", () => {
       this.handlePauseQueue();
     });
 
@@ -204,6 +219,8 @@ export class QueueView extends ItemView {
    * 渲染单个任务项
    */
   private renderTaskItem(container: HTMLElement, task: TaskRecord): void {
+    const isExpanded = this.expandedTaskIds.has(task.id);
+    
     const item = container.createDiv({
       cls: `cr-task-item cr-task-${task.state.toLowerCase()}`
     });
@@ -211,8 +228,15 @@ export class QueueView extends ItemView {
     // 任务信息
     const info = item.createDiv({ cls: "cr-task-info" });
     
-    // 任务类型和 ID
+    // 任务类型和 ID（可点击展开）
     const header = info.createDiv({ cls: "cr-task-header" });
+    header.style.cursor = "pointer";
+    
+    const expandIcon = header.createEl("span", {
+      text: isExpanded ? "▼" : "▶",
+      cls: "cr-expand-icon"
+    });
+    
     header.createEl("span", {
       text: this.getTaskTypeLabel(task.taskType),
       cls: "cr-task-type"
@@ -220,6 +244,11 @@ export class QueueView extends ItemView {
     header.createEl("span", {
       text: task.id.substring(0, 8),
       cls: "cr-task-id"
+    });
+
+    // 点击展开/收起
+    header.addEventListener("click", () => {
+      this.handleTaskClick(task.id);
     });
 
     // 节点信息
@@ -234,6 +263,13 @@ export class QueueView extends ItemView {
       text: this.getStateLabel(task.state),
       cls: `cr-state-badge cr-state-${task.state.toLowerCase()}`
     });
+
+    if (task.created) {
+      meta.createEl("span", {
+        text: `创建: ${this.formatTimestamp(task.created)}`,
+        cls: "cr-task-time"
+      });
+    }
 
     if (task.startedAt) {
       meta.createEl("span", {
@@ -268,6 +304,42 @@ export class QueueView extends ItemView {
       });
     }
 
+    // 展开的详情
+    if (isExpanded) {
+      const details = info.createDiv({ cls: "cr-task-details" });
+      
+      // Payload
+      if (task.payload && Object.keys(task.payload).length > 0) {
+        details.createEl("h4", { text: "任务载荷" });
+        const payloadPre = details.createEl("pre", { cls: "cr-task-payload" });
+        payloadPre.textContent = JSON.stringify(task.payload, null, 2);
+      }
+
+      // Result
+      if (task.result && Object.keys(task.result).length > 0) {
+        details.createEl("h4", { text: "任务结果" });
+        const resultPre = details.createEl("pre", { cls: "cr-task-result" });
+        resultPre.textContent = JSON.stringify(task.result, null, 2);
+      }
+
+      // 错误历史
+      if (task.errors && task.errors.length > 0) {
+        details.createEl("h4", { text: "错误历史" });
+        const errorsList = details.createEl("ul", { cls: "cr-error-history" });
+        task.errors.forEach(error => {
+          const errorItem = errorsList.createEl("li");
+          errorItem.createEl("span", {
+            text: `[${error.code}] ${error.message}`,
+            cls: "cr-error-text"
+          });
+          errorItem.createEl("span", {
+            text: ` (尝试 ${error.attempt}, ${this.formatTimestamp(error.timestamp)})`,
+            cls: "cr-error-meta"
+          });
+        });
+      }
+    }
+
     // 操作按钮
     const actions = item.createDiv({ cls: "cr-task-actions" });
 
@@ -277,7 +349,8 @@ export class QueueView extends ItemView {
         cls: "cr-btn-cancel",
         attr: { "aria-label": `取消任务 ${task.id}` }
       });
-      cancelBtn.addEventListener("click", () => {
+      cancelBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
         this.handleCancelTask(task.id);
       });
     }
@@ -288,19 +361,11 @@ export class QueueView extends ItemView {
         cls: "cr-btn-retry mod-cta",
         attr: { "aria-label": `重试任务 ${task.id}` }
       });
-      retryBtn.addEventListener("click", () => {
+      retryBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
         this.handleRetryTask(task.id);
       });
     }
-
-    // 详情按钮
-    const detailsBtn = actions.createEl("button", {
-      text: "详情",
-      attr: { "aria-label": `查看任务详情 ${task.id}` }
-    });
-    detailsBtn.addEventListener("click", () => {
-      this.handleViewTaskDetails(task);
-    });
   }
 
   /**
@@ -385,72 +450,154 @@ export class QueueView extends ItemView {
    * 处理并发数变更
    */
   private handleConcurrencyChange(): void {
-    if (!this.concurrencyInput) return;
+    if (!this.concurrencyInput || !this.plugin) return;
 
     const value = parseInt(this.concurrencyInput.value);
     if (isNaN(value) || value < 1 || value > 10) {
       new Notice("并发数必须在 1-10 之间");
-      this.concurrencyInput.value = "3";
+      const currentConcurrency = this.plugin.getComponents().settings.concurrency;
+      this.concurrencyInput.value = String(currentConcurrency);
       return;
     }
 
-    // TODO: 调用 TaskQueue 更新并发数
+    // 更新设置
+    const components = this.plugin.getComponents();
+    components.settings.concurrency = value;
+    components.settingsStore.save();
+
     new Notice(`并发数已设置为 ${value}`);
   }
 
   /**
-   * 处理暂停队列
+   * 处理暂停/恢复队列
    */
   private handlePauseQueue(): void {
-    // TODO: 调用 TaskQueue 暂停/恢复
-    new Notice("暂停队列功能待实现");
+    if (!this.plugin) return;
+
+    const taskQueue = this.plugin.getComponents().taskQueue;
+    const status = taskQueue.getStatus();
+
+    if (status.paused) {
+      taskQueue.resume();
+      new Notice("队列已恢复");
+      if (this.pauseBtn) {
+        this.pauseBtn.textContent = "暂停队列";
+        this.pauseBtn.setAttribute("aria-label", "暂停队列");
+      }
+    } else {
+      taskQueue.pause();
+      new Notice("队列已暂停");
+      if (this.pauseBtn) {
+        this.pauseBtn.textContent = "恢复队列";
+        this.pauseBtn.setAttribute("aria-label", "恢复队列");
+      }
+    }
   }
 
   /**
    * 处理清空已完成任务
    */
-  private handleClearCompleted(): void {
-    // TODO: 调用 TaskQueue 清空已完成任务
-    new Notice("清空已完成任务功能待实现");
+  private async handleClearCompleted(): Promise<void> {
+    if (!this.plugin) return;
+
+    const taskQueue = this.plugin.getComponents().taskQueue;
+    
+    // 清理 7 天前完成的任务
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    
+    const result = await taskQueue.cleanupCompletedTasks(sevenDaysAgo);
+    
+    if (result.ok) {
+      new Notice(`已清理 ${result.value} 个已完成任务`);
+      this.refresh();
+    } else {
+      new Notice(`清理失败: ${result.error.message}`);
+    }
   }
 
   /**
    * 处理过滤变更
    */
   private handleFilterChange(): void {
-    // TODO: 重新获取并显示任务列表
-    new Notice(`筛选: ${this.filterState}`);
+    if (!this.plugin) return;
+    
+    // 重新获取并显示任务列表
+    this.refresh();
   }
 
   /**
    * 处理取消任务
    */
-  private handleCancelTask(taskId: string): void {
-    // TODO: 调用 TaskQueue 取消任务
-    new Notice(`取消任务功能待实现: ${taskId}`);
+  private async handleCancelTask(taskId: string): Promise<void> {
+    if (!this.plugin) return;
+
+    const taskQueue = this.plugin.getComponents().taskQueue;
+    const result = await taskQueue.cancel(taskId);
+
+    if (result.ok) {
+      new Notice("任务已取消");
+      this.refresh();
+    } else {
+      new Notice(`取消失败: ${result.error.message}`);
+    }
   }
 
   /**
    * 处理重试任务
    */
-  private handleRetryTask(taskId: string): void {
-    // TODO: 调用 TaskQueue 重试任务
-    new Notice(`重试任务功能待实现: ${taskId}`);
+  private async handleRetryTask(taskId: string): Promise<void> {
+    if (!this.plugin) return;
+
+    const taskQueue = this.plugin.getComponents().taskQueue;
+    const task = taskQueue.getTask(taskId);
+    
+    if (!task) {
+      new Notice("任务不存在");
+      return;
+    }
+
+    // 创建新任务（相同 payload）
+    const result = await taskQueue.enqueue({
+      nodeId: task.nodeId,
+      taskType: task.taskType,
+      providerRef: task.providerRef,
+      promptRef: task.promptRef,
+      maxAttempts: task.maxAttempts,
+      payload: task.payload,
+    });
+
+    if (result.ok) {
+      new Notice("任务已重新入队");
+      this.refresh();
+    } else {
+      new Notice(`重试失败: ${result.error.message}`);
+    }
   }
 
   /**
-   * 处理查看任务详情
+   * 处理任务点击（展开/收起详情）
    */
-  private handleViewTaskDetails(task: TaskRecord): void {
-    // TODO: 打开任务详情模态框
-    new Notice(`查看任务详情功能待实现: ${task.id}`);
+  private handleTaskClick(taskId: string): void {
+    if (this.expandedTaskIds.has(taskId)) {
+      this.expandedTaskIds.delete(taskId);
+    } else {
+      this.expandedTaskIds.add(taskId);
+    }
+    
+    // 刷新显示
+    this.refresh();
   }
 
   /**
    * 刷新视图
    */
   public refresh(): void {
-    // TODO: 从 TaskQueue 获取最新任务列表并更新显示
-    // 这个方法会被 main.ts 中的队列事件监听器调用
+    if (!this.plugin) return;
+
+    const taskQueue = this.plugin.getComponents().taskQueue;
+    const tasks = taskQueue.getAllTasks();
+    
+    this.updateTasks(tasks);
   }
 }

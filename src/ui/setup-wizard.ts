@@ -10,6 +10,7 @@
 import { App, Modal, Setting, Notice } from "obsidian";
 import type CognitiveRazorPlugin from "../../main";
 import type { ProviderType, ProviderConfig } from "../types";
+import { validateUrl } from "../data/validators";
 
 /**
  * 配置向导步骤
@@ -19,7 +20,6 @@ enum WizardStep {
   SelectProvider = "select-provider",
   ConfigureGoogle = "configure-google",
   ConfigureOpenAI = "configure-openai",
-  ConfigureOpenRouter = "configure-openrouter",
   Verify = "verify",
   Complete = "complete"
 }
@@ -72,9 +72,6 @@ export class SetupWizard extends Modal {
       case WizardStep.ConfigureOpenAI:
         this.renderConfigureOpenAI();
         break;
-      case WizardStep.ConfigureOpenRouter:
-        this.renderConfigureOpenRouter();
-        break;
       case WizardStep.Verify:
         this.renderVerify();
         break;
@@ -97,7 +94,7 @@ export class SetupWizard extends Modal {
       text: "Cognitive Razor 是一个公理化知识管理插件，帮助您将模糊的概念转化为结构化的知识节点。"
     });
     intro.createEl("p", {
-      text: "在开始使用之前，我们需要配置一个 AI Provider 来提供智能功能。"
+      text: "在开始使用之前，我们需要配置一个 AI Provider（OpenAI 或 Google Gemini）来提供智能功能。您也可以配置自定义端点来使用兼容的 API 服务。"
     });
 
     const features = contentEl.createDiv({ cls: "cr-wizard-features" });
@@ -138,7 +135,7 @@ export class SetupWizard extends Modal {
     contentEl.createEl("h1", { text: "选择 AI Provider" });
     
     contentEl.createEl("p", {
-      text: "请选择您想要使用的 AI 服务提供商："
+      text: "请选择您想要使用的 AI 服务提供商。两种 Provider 都支持自定义端点配置，可用于兼容的第三方服务。"
     });
 
     // Google Gemini
@@ -166,20 +163,6 @@ export class SetupWizard extends Modal {
         "生态系统完善",
         "支持多种模型",
         "支持嵌入功能"
-      ]
-    );
-
-    // OpenRouter
-    const openrouterCard = this.createProviderCard(
-      contentEl,
-      "OpenRouter",
-      "统一的 AI 模型访问平台，支持多种模型",
-      "openrouter",
-      [
-        "支持多种模型",
-        "按需付费",
-        "统一接口",
-        "不支持嵌入（需配合其他 Provider）"
       ]
     );
 
@@ -220,7 +203,7 @@ export class SetupWizard extends Modal {
       this.selectedProvider = type;
       this.providerId = `my-${type}`;
       
-      // 设置默认模型
+      // 设置默认模型和端点
       this.setDefaultModels(type);
       
       // 跳转到对应的配置页面
@@ -231,9 +214,6 @@ export class SetupWizard extends Modal {
         case "openai":
           this.currentStep = WizardStep.ConfigureOpenAI;
           break;
-        case "openrouter":
-          this.currentStep = WizardStep.ConfigureOpenRouter;
-          break;
       }
       this.renderStep();
     });
@@ -242,21 +222,19 @@ export class SetupWizard extends Modal {
   }
 
   /**
-   * 设置默认模型
+   * 设置默认模型和端点
    */
   private setDefaultModels(type: ProviderType): void {
     switch (type) {
       case "google":
         this.chatModel = "gemini-1.5-flash";
         this.embedModel = "text-embedding-004";
+        this.baseUrl = "https://generativelanguage.googleapis.com/v1beta";
         break;
       case "openai":
         this.chatModel = "gpt-4-turbo-preview";
         this.embedModel = "text-embedding-3-small";
-        break;
-      case "openrouter":
-        this.chatModel = "anthropic/claude-3-sonnet";
-        this.embedModel = "";
+        this.baseUrl = "https://api.openai.com/v1";
         break;
     }
   }
@@ -301,6 +279,38 @@ export class SetupWizard extends Modal {
             this.apiKey = value;
           });
         text.inputEl.type = "password";
+      });
+
+    // 自定义端点输入框
+    let urlError: HTMLElement | null = null;
+    new Setting(contentEl)
+      .setName("自定义端点（可选）")
+      .setDesc("留空使用默认端点。可用于兼容的第三方服务（如 OpenRouter）")
+      .addText(text => {
+        text
+          .setPlaceholder("https://generativelanguage.googleapis.com/v1beta")
+          .setValue(this.baseUrl)
+          .onChange(value => {
+            this.baseUrl = value;
+            // 实时验证 URL
+            if (value.trim()) {
+              const error = validateUrl(value);
+              if (error) {
+                if (!urlError) {
+                  urlError = contentEl.createDiv({ cls: "cr-url-error" });
+                  text.inputEl.parentElement?.appendChild(urlError);
+                }
+                urlError.setText(error);
+                urlError.style.color = "var(--text-error)";
+              } else if (urlError) {
+                urlError.remove();
+                urlError = null;
+              }
+            } else if (urlError) {
+              urlError.remove();
+              urlError = null;
+            }
+          });
       });
 
     new Setting(contentEl)
@@ -387,6 +397,38 @@ export class SetupWizard extends Modal {
         text.inputEl.type = "password";
       });
 
+    // 自定义端点输入框
+    let urlError: HTMLElement | null = null;
+    new Setting(contentEl)
+      .setName("自定义端点（可选）")
+      .setDesc("留空使用默认端点。可用于兼容的第三方服务（如 OpenRouter）")
+      .addText(text => {
+        text
+          .setPlaceholder("https://api.openai.com/v1")
+          .setValue(this.baseUrl)
+          .onChange(value => {
+            this.baseUrl = value;
+            // 实时验证 URL
+            if (value.trim()) {
+              const error = validateUrl(value);
+              if (error) {
+                if (!urlError) {
+                  urlError = contentEl.createDiv({ cls: "cr-url-error" });
+                  text.inputEl.parentElement?.appendChild(urlError);
+                }
+                urlError.setText(error);
+                urlError.style.color = "var(--text-error)";
+              } else if (urlError) {
+                urlError.remove();
+                urlError = null;
+              }
+            } else if (urlError) {
+              urlError.remove();
+              urlError = null;
+            }
+          });
+      });
+
     new Setting(contentEl)
       .setName("聊天模型")
       .setDesc("用于文本生成的模型")
@@ -430,83 +472,6 @@ export class SetupWizard extends Modal {
   }
 
   /**
-   * 渲染 OpenRouter 配置页面
-   */
-  private renderConfigureOpenRouter(): void {
-    const { contentEl } = this;
-
-    contentEl.createEl("h1", { text: "配置 OpenRouter" });
-
-    // 说明
-    const instructions = contentEl.createDiv({ cls: "cr-wizard-instructions" });
-    instructions.createEl("p", { text: "请按照以下步骤获取 API Key：" });
-    const steps = instructions.createEl("ol");
-    steps.createEl("li").innerHTML = '访问 <a href="https://openrouter.ai/keys" target="_blank">OpenRouter Keys</a>';
-    steps.createEl("li", { text: "点击 \"Create Key\" 按钮" });
-    steps.createEl("li", { text: "复制生成的 API Key" });
-
-    const warning = contentEl.createDiv({ cls: "cr-wizard-warning" });
-    warning.createEl("p", {
-      text: "⚠️ 注意：OpenRouter 不支持嵌入功能。如需使用语义去重功能，请额外配置 Google 或 OpenAI Provider。"
-    });
-
-    // 配置表单
-    new Setting(contentEl)
-      .setName("Provider ID")
-      .setDesc("为此 Provider 设置一个唯一标识符")
-      .addText(text => {
-        text
-          .setPlaceholder("my-openrouter")
-          .setValue(this.providerId)
-          .onChange(value => {
-            this.providerId = value;
-          });
-      });
-
-    new Setting(contentEl)
-      .setName("API Key")
-      .setDesc("输入您的 OpenRouter API Key")
-      .addText(text => {
-        text
-          .setPlaceholder("sk-or-...")
-          .setValue(this.apiKey)
-          .onChange(value => {
-            this.apiKey = value;
-          });
-        text.inputEl.type = "password";
-      });
-
-    new Setting(contentEl)
-      .setName("聊天模型")
-      .setDesc("用于文本生成的模型")
-      .addText(text => {
-        text
-          .setPlaceholder("anthropic/claude-3-sonnet")
-          .setValue(this.chatModel)
-          .onChange(value => {
-            this.chatModel = value;
-          });
-      });
-
-    // 按钮
-    const buttons = contentEl.createDiv({ cls: "cr-wizard-buttons" });
-    
-    const backBtn = buttons.createEl("button", { text: "返回" });
-    backBtn.addEventListener("click", () => {
-      this.currentStep = WizardStep.SelectProvider;
-      this.renderStep();
-    });
-
-    const nextBtn = buttons.createEl("button", {
-      text: "验证并保存",
-      cls: "mod-cta"
-    });
-    nextBtn.addEventListener("click", () => {
-      this.validateAndSave();
-    });
-  }
-
-  /**
    * 验证并保存配置
    */
   private async validateAndSave(): Promise<void> {
@@ -526,9 +491,18 @@ export class SetupWizard extends Modal {
       return;
     }
 
-    if (this.selectedProvider !== "openrouter" && !this.embedModel.trim()) {
+    if (!this.embedModel.trim()) {
       new Notice("请输入嵌入模型");
       return;
+    }
+
+    // 验证自定义端点（如果提供）
+    if (this.baseUrl.trim()) {
+      const urlError = validateUrl(this.baseUrl);
+      if (urlError) {
+        new Notice(`自定义端点无效: ${urlError}`);
+        return;
+      }
     }
 
     // 显示验证中状态
@@ -539,7 +513,7 @@ export class SetupWizard extends Modal {
     const config: ProviderConfig = {
       type: this.selectedProvider!,
       apiKey: this.apiKey,
-      baseUrl: this.baseUrl || undefined,
+      baseUrl: this.baseUrl.trim() || undefined,
       defaultChatModel: this.chatModel,
       defaultEmbedModel: this.embedModel,
       enabled: true
@@ -557,9 +531,6 @@ export class SetupWizard extends Modal {
           break;
         case "openai":
           this.currentStep = WizardStep.ConfigureOpenAI;
-          break;
-        case "openrouter":
-          this.currentStep = WizardStep.ConfigureOpenRouter;
           break;
       }
       this.renderStep();

@@ -359,3 +359,97 @@ describe('时间戳生成和验证', () => {
     expect(new Date(ts2).getTime()).toBeGreaterThan(new Date(ts1).getTime());
   });
 });
+
+// ============================================================================
+// Unit Tests: URL Validation
+// ============================================================================
+
+import { validateUrl } from './validators';
+
+describe('URL 验证', () => {
+  describe('有效的 URL', () => {
+    test('接受标准的 HTTPS URL', () => {
+      expect(validateUrl('https://api.openai.com/v1')).toBeNull();
+      expect(validateUrl('https://example.com')).toBeNull();
+      expect(validateUrl('https://sub.example.com')).toBeNull();
+    });
+
+    test('接受标准的 HTTP URL', () => {
+      expect(validateUrl('http://localhost:8080')).toBeNull();
+      expect(validateUrl('http://example.com')).toBeNull();
+    });
+
+    test('接受带端口的 URL', () => {
+      expect(validateUrl('https://example.com:443')).toBeNull();
+      expect(validateUrl('http://localhost:3000')).toBeNull();
+    });
+
+    test('接受带路径的 URL', () => {
+      expect(validateUrl('https://api.example.com/v1/chat')).toBeNull();
+      expect(validateUrl('http://example.com/path/to/resource')).toBeNull();
+    });
+
+    test('接受带查询参数的 URL', () => {
+      expect(validateUrl('https://example.com?key=value')).toBeNull();
+      expect(validateUrl('https://example.com/path?foo=bar&baz=qux')).toBeNull();
+    });
+
+    test('正确处理前后空格', () => {
+      expect(validateUrl('  https://example.com  ')).toBeNull();
+      expect(validateUrl('\thttps://example.com\n')).toBeNull();
+    });
+  });
+
+  describe('无效的 URL', () => {
+    test('拒绝空字符串', () => {
+      const result = validateUrl('');
+      expect(result).not.toBeNull();
+      expect(result).toContain('不能为空');
+    });
+
+    test('拒绝仅包含空格的字符串', () => {
+      const result = validateUrl('   ');
+      expect(result).not.toBeNull();
+      expect(result).toContain('不能为空');
+    });
+
+    test('拒绝不以 http:// 或 https:// 开头的字符串', () => {
+      expect(validateUrl('example.com')).not.toBeNull();
+      expect(validateUrl('www.example.com')).not.toBeNull();
+      expect(validateUrl('ftp://example.com')).not.toBeNull();
+    });
+
+    test('拒绝缺少主机名的 URL', () => {
+      expect(validateUrl('https://')).not.toBeNull();
+      expect(validateUrl('http://')).not.toBeNull();
+    });
+
+    test('拒绝使用非 HTTP/HTTPS 协议的 URL', () => {
+      expect(validateUrl('ftp://example.com')).not.toBeNull();
+      expect(validateUrl('file:///path/to/file')).not.toBeNull();
+      expect(validateUrl('ws://example.com')).not.toBeNull();
+    });
+
+    test('拒绝格式错误的 URL', () => {
+      expect(validateUrl('https://exam ple.com')).not.toBeNull();
+      expect(validateUrl('https://<invalid>')).not.toBeNull();
+    });
+  });
+
+  describe('错误消息', () => {
+    test('空 URL 返回友好的错误消息', () => {
+      const result = validateUrl('');
+      expect(result).toBe('URL 不能为空');
+    });
+
+    test('缺少协议返回友好的错误消息', () => {
+      const result = validateUrl('example.com');
+      expect(result).toContain('必须以 http:// 或 https:// 开头');
+    });
+
+    test('无效格式返回友好的错误消息', () => {
+      const result = validateUrl('https://exam ple.com');
+      expect(result).toBe('无效的 URL 格式');
+    });
+  });
+});
