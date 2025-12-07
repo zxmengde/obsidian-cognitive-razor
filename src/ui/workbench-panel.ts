@@ -2,31 +2,40 @@
  * WorkbenchPanel - 统一工作台面板
  * 
  * 功能：
- * - 创建概念区域
- * - 重复概念面板
- * - 队列状态区域
- * - 最近操作区域
+ * - 创建概念区域（可折叠）
+ * - 重复概念面板（可折叠）
+ * - 队列状态区域（可折叠）
+ * - 最近操作区域（可折叠）
+ * 
+ * 遵循设计文档 section 8.5.1 的四区域布局规范
+ * Requirements: 5.1
  */
 
 import { ItemView, WorkspaceLeaf, Notice, TFile, App, Modal } from "obsidian";
 import type {
   DuplicatePair,
   QueueStatus,
-  CRType,
-  CRFrontmatter,
-  NoteState,
-  StandardizedConcept,
-  ChatRequest
+  CRType
 } from "../types";
 import type { MergeHandler } from "../core/merge-handler";
 import type { TaskQueue } from "../core/task-queue";
-import type { ProviderManager } from "../core/provider-manager";
-import type { PromptManager } from "../core/prompt-manager";
+import type { PipelineContext, PipelineEvent } from "../core/pipeline-orchestrator";
 import type CognitiveRazorPlugin from "../../main";
 import { QUEUE_VIEW_TYPE } from "./queue-view";
-import { Validator } from "../data/validator";
+import { UndoNotification } from "./undo-notification";
+import { SimpleDiffView, buildLineDiff } from "./diff-view";
 
 export const WORKBENCH_VIEW_TYPE = "cognitive-razor-workbench";
+
+/**
+ * 区域折叠状态
+ */
+interface SectionCollapseState {
+  createConcept: boolean;
+  duplicates: boolean;
+  queueStatus: boolean;
+  recentOps: boolean;
+}
 
 /**
  * 重复对排序顺序
@@ -40,21 +49,32 @@ type DuplicateSortOrder =
 
 /**
  * WorkbenchPanel 组件
+ * 
+ * 实现四区域可折叠布局：
+ * 1. 创建概念 - 输入框 + 创建/深化按钮
+ * 2. 重复概念 - 重复对列表 + 操作按钮
+ * 3. 队列状态 - 运行统计 + 快捷操作
+ * 4. 最近操作 - 可撤销操作列表
+ * 
+ * Requirements: 5.1
  */
 export class WorkbenchPanel extends ItemView {
   private conceptInput: HTMLTextAreaElement | null = null;
   private duplicatesContainer: HTMLElement | null = null;
   private queueStatusContainer: HTMLElement | null = null;
   private recentOpsContainer: HTMLElement | null = null;
+  private pipelineStatusContainer: HTMLElement | null = null;
   private mergeHandler: MergeHandler | null = null;
   private plugin: CognitiveRazorPlugin | null = null;
   private taskQueue: TaskQueue | null = null;
+  private pipelineUnsubscribe: (() => void) | null = null;
   
   // 标准化相关
   private standardizeBtn: HTMLButtonElement | null = null;
   private standardizedResultContainer: HTMLElement | null = null;
-  private standardizedData: StandardizedConcept | null = null;
-  private createBtn: HTMLButtonElement | null = null;
+  private conceptTypeSelect: HTMLSelectElement | null = null;
+  private currentPipelineId: string | null = null;
+  private pipelineContexts: Map<string, PipelineContext> = new Map();
 
   // 重复对管理相关
   private selectedDuplicates: Set<string> = new Set();
@@ -62,21 +82,37 @@ export class WorkbenchPanel extends ItemView {
   private currentTypeFilter: CRType | "all" = "all";
   private allDuplicates: DuplicatePair[] = [];
 
+  // 区域折叠状态（默认全部展开）
+  private collapseState: SectionCollapseState = {
+    createConcept: false,
+    duplicates: false,
+    queueStatus: false,
+    recentOps: false,
+  };
+
+  // 区域内容容器引用（用于折叠/展开）
+  private sectionContents: Map<keyof SectionCollapseState, HTMLElement> = new Map();
+
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
   }
   
   /**
    * 设置插件引用
+   * 自动从插件组件中获取 TaskQueue 和 MergeHandler
    */
   public setPlugin(plugin: CognitiveRazorPlugin): void {
     this.plugin = plugin;
     const components = plugin.getComponents();
     this.taskQueue = components.taskQueue;
+    // 自动设置 MergeHandler
+    if (components.mergeHandler) {
+      this.mergeHandler = components.mergeHandler;
+    }
   }
 
   /**
-   * 设置 MergeHandler
+   * 设置 MergeHandler（用于手动设置或测试）
    */
   public setMergeHandler(handler: MergeHandler): void {
     this.mergeHandler = handler;
@@ -110,6 +146,9 @@ export class WorkbenchPanel extends ItemView {
 
     // 最近操作区域
     this.renderRecentOpsSection(container);
+
+    // 订阅管线事件以更新状态/确认按钮
+    this.subscribePipelineEvents();
   }
 
   async onClose(): Promise<void> {
@@ -118,19 +157,38 @@ export class WorkbenchPanel extends ItemView {
     this.duplicatesContainer = null;
     this.queueStatusContainer = null;
     this.recentOpsContainer = null;
+    this.pipelineStatusContainer = null;
+    if (this.pipelineUnsubscribe) {
+      this.pipelineUnsubscribe();
+      this.pipelineUnsubscribe = null;
+    }
   }
 
   /**
-   * 渲染创建概念区域
+   * 渲染创建概念区域（可折叠）
+   * Requirements: 5.1
    */
   private renderCreateConceptSection(container: HTMLElement): void {
     const section = container.createDiv({ cls: "cr-section cr-create-concept" });
     
-    // 标题
-    section.createEl("h3", { text: "创建概念" });
+    // 可折叠标题
+    const header = this.createCollapsibleHeader(
+      section,
+      "创建概念",
+      "createConcept"
+    );
+
+    // 内容容器（可折叠）
+    const content = section.createDiv({ cls: "cr-section-content" });
+    this.sectionContents.set("createConcept", content);
+    
+    // 根据折叠状态设置显示
+    if (this.collapseState.createConcept) {
+      content.addClass("cr-collapsed");
+    }
 
     // 输入区域
-    const inputContainer = section.createDiv({ cls: "cr-input-container" });
+    const inputContainer = content.createDiv({ cls: "cr-input-container" });
     
     this.conceptInput = inputContainer.createEl("textarea", {
       cls: "cr-concept-input",
@@ -141,14 +199,25 @@ export class WorkbenchPanel extends ItemView {
       }
     });
 
+    // 类型选择（解决类型歧义入口）
+    const typeContainer = content.createDiv({ cls: "cr-type-select" });
+    typeContainer.createEl("label", { text: "指定类型（可选）", cls: "cr-control-label" });
+    this.conceptTypeSelect = typeContainer.createEl("select", { cls: "cr-select" });
+    this.conceptTypeSelect.createEl("option", { text: "自动判断", value: "" });
+    this.conceptTypeSelect.createEl("option", { text: "Domain", value: "Domain" });
+    this.conceptTypeSelect.createEl("option", { text: "Issue", value: "Issue" });
+    this.conceptTypeSelect.createEl("option", { text: "Theory", value: "Theory" });
+    this.conceptTypeSelect.createEl("option", { text: "Entity", value: "Entity" });
+    this.conceptTypeSelect.createEl("option", { text: "Mechanism", value: "Mechanism" });
+
     // 按钮区域
-    const buttonContainer = section.createDiv({ cls: "cr-button-container" });
+    const buttonContainer = content.createDiv({ cls: "cr-button-container" });
     
     this.standardizeBtn = buttonContainer.createEl("button", {
-      text: "标准化",
+      text: "启动标准化",
       cls: "mod-cta",
       attr: {
-        "aria-label": "标准化概念"
+        "aria-label": "标准化概念并启动管线"
       }
     });
 
@@ -157,7 +226,7 @@ export class WorkbenchPanel extends ItemView {
     });
 
     // 标准化结果容器
-    this.standardizedResultContainer = section.createDiv({ cls: "cr-standardized-result" });
+    this.standardizedResultContainer = content.createDiv({ cls: "cr-standardized-result" });
     this.standardizedResultContainer.style.display = "none";
 
     // 支持 Ctrl+Enter 键触发标准化
@@ -170,24 +239,33 @@ export class WorkbenchPanel extends ItemView {
   }
 
   /**
-   * 渲染重复概念面板
+   * 渲染重复概念面板（可折叠）
+   * Requirements: 5.1, 5.2
    */
   private renderDuplicatesSection(container: HTMLElement): void {
     const section = container.createDiv({ cls: "cr-section cr-duplicates" });
     
-    // 标题和控制栏
-    const header = section.createDiv({ cls: "cr-section-header" });
-    const titleRow = header.createDiv({ cls: "cr-header-title-row" });
-    titleRow.createEl("h3", { text: "重复概念" });
+    // 可折叠标题（带徽章）
+    const header = this.createCollapsibleHeader(
+      section,
+      "重复概念",
+      "duplicates",
+      true // 显示徽章
+    );
     
-    const badge = titleRow.createEl("span", {
-      cls: "cr-badge",
-      attr: { "aria-label": "重复概念数量" }
-    });
-    badge.textContent = "0";
+    // 徽章已在 createCollapsibleHeader 中创建
+
+    // 内容容器（可折叠）
+    const content = section.createDiv({ cls: "cr-section-content" });
+    this.sectionContents.set("duplicates", content);
+    
+    // 根据折叠状态设置显示
+    if (this.collapseState.duplicates) {
+      content.addClass("cr-collapsed");
+    }
 
     // 控制按钮组
-    const controls = header.createDiv({ cls: "cr-duplicates-controls" });
+    const controls = content.createDiv({ cls: "cr-duplicates-controls" });
     
     // 排序选择器
     const sortContainer = controls.createDiv({ cls: "cr-sort-container" });
@@ -219,7 +297,7 @@ export class WorkbenchPanel extends ItemView {
     });
 
     // 批量操作按钮
-    const batchActions = header.createDiv({ cls: "cr-batch-actions" });
+    const batchActions = content.createDiv({ cls: "cr-batch-actions" });
     
     const selectAllBtn = batchActions.createEl("button", {
       text: "全选",
@@ -250,22 +328,36 @@ export class WorkbenchPanel extends ItemView {
     viewHistoryBtn.addEventListener("click", () => this.handleViewMergeHistory());
 
     // 内容容器
-    this.duplicatesContainer = section.createDiv({ cls: "cr-duplicates-list" });
+    this.duplicatesContainer = content.createDiv({ cls: "cr-duplicates-list" });
     this.renderEmptyDuplicates();
   }
 
   /**
-   * 渲染队列状态区域
+   * 渲染队列状态区域（可折叠）
+   * Requirements: 5.1
    */
   private renderQueueStatusSection(container: HTMLElement): void {
     const section = container.createDiv({ cls: "cr-section cr-queue-status" });
     
-    // 标题
-    const header = section.createDiv({ cls: "cr-section-header" });
-    header.createEl("h3", { text: "队列状态" });
+    // 可折叠标题
+    this.createCollapsibleHeader(
+      section,
+      "队列状态",
+      "queueStatus"
+    );
+
+    // 内容容器（可折叠）
+    const content = section.createDiv({ cls: "cr-section-content" });
+    this.sectionContents.set("queueStatus", content);
+    
+    // 根据折叠状态设置显示
+    if (this.collapseState.queueStatus) {
+      content.addClass("cr-collapsed");
+    }
 
     // 状态容器
-    this.queueStatusContainer = section.createDiv({ cls: "cr-queue-status-content" });
+    this.queueStatusContainer = content.createDiv({ cls: "cr-queue-status-content" });
+    this.queueStatusContainer.setAttr("aria-live", "polite");
     this.renderQueueStatus({
       paused: false,
       pending: 0,
@@ -273,20 +365,132 @@ export class WorkbenchPanel extends ItemView {
       completed: 0,
       failed: 0
     });
+
+    // 管线状态容器
+    this.pipelineStatusContainer = content.createDiv({ cls: "cr-pipeline-status" });
+    this.pipelineStatusContainer.setAttr("aria-live", "polite");
+    this.pipelineStatusContainer.createEl("h4", { text: "当前管线" });
+    this.pipelineStatusContainer.createDiv({ cls: "cr-pipeline-list" });
   }
 
   /**
-   * 渲染最近操作区域
+   * 渲染最近操作区域（可折叠）
+   * Requirements: 5.1
    */
   private renderRecentOpsSection(container: HTMLElement): void {
     const section = container.createDiv({ cls: "cr-section cr-recent-ops" });
     
-    // 标题
-    section.createEl("h3", { text: "最近操作" });
+    // 可折叠标题
+    this.createCollapsibleHeader(
+      section,
+      "最近操作",
+      "recentOps"
+    );
+
+    // 内容容器（可折叠）
+    const content = section.createDiv({ cls: "cr-section-content" });
+    this.sectionContents.set("recentOps", content);
+    
+    // 根据折叠状态设置显示
+    if (this.collapseState.recentOps) {
+      content.addClass("cr-collapsed");
+    }
 
     // 操作列表容器
-    this.recentOpsContainer = section.createDiv({ cls: "cr-recent-ops-list" });
+    this.recentOpsContainer = content.createDiv({ cls: "cr-recent-ops-list" });
     this.renderEmptyRecentOps();
+  }
+
+  /**
+   * 创建可折叠标题
+   * @param section 区域容器
+   * @param title 标题文本
+   * @param sectionKey 区域键名
+   * @param showBadge 是否显示徽章
+   * @returns 标题元素
+   */
+  private createCollapsibleHeader(
+    section: HTMLElement,
+    title: string,
+    sectionKey: keyof SectionCollapseState,
+    showBadge: boolean = false
+  ): HTMLElement {
+    const header = section.createDiv({ cls: "cr-section-header cr-collapsible-header" });
+    header.setAttr("role", "button");
+    header.setAttr("tabindex", "0");
+    header.setAttr("aria-expanded", String(!this.collapseState[sectionKey]));
+    
+    // 折叠图标
+    const collapseIcon = header.createEl("span", {
+      cls: "cr-collapse-icon",
+      attr: { "aria-hidden": "true" }
+    });
+    collapseIcon.textContent = this.collapseState[sectionKey] ? "▶" : "▼";
+    
+    // 标题
+    const titleEl = header.createEl("h3", { 
+      text: title,
+      cls: "cr-section-title"
+    });
+    
+    // 徽章（可选）
+    if (showBadge) {
+      const badge = header.createEl("span", {
+        cls: "cr-badge",
+        attr: { "aria-label": `${title}数量` }
+      });
+      badge.textContent = "0";
+    }
+    
+    // 点击切换折叠状态
+    header.addEventListener("click", (e) => {
+      // 防止点击徽章时触发折叠
+      if ((e.target as HTMLElement).classList.contains("cr-badge")) {
+        return;
+      }
+      this.toggleSection(sectionKey, collapseIcon);
+      header.setAttr("aria-expanded", String(!this.collapseState[sectionKey]));
+    });
+
+    // 键盘支持
+    header.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        this.toggleSection(sectionKey, collapseIcon);
+        header.setAttr("aria-expanded", String(!this.collapseState[sectionKey]));
+      }
+    });
+    
+    // 添加可点击样式
+    header.addClass("cr-clickable");
+    
+    return header;
+  }
+
+  /**
+   * 切换区域折叠状态
+   * @param sectionKey 区域键名
+   * @param icon 折叠图标元素
+   */
+  private toggleSection(
+    sectionKey: keyof SectionCollapseState,
+    icon: HTMLElement
+  ): void {
+    // 切换状态
+    this.collapseState[sectionKey] = !this.collapseState[sectionKey];
+    
+    // 更新图标
+    icon.textContent = this.collapseState[sectionKey] ? "▶" : "▼";
+    
+    // 更新内容显示
+    const content = this.sectionContents.get(sectionKey);
+    if (content) {
+      if (this.collapseState[sectionKey]) {
+        content.addClass("cr-collapsed");
+      } else {
+        content.removeClass("cr-collapsed");
+      }
+    }
   }
 
   /**
@@ -304,138 +508,37 @@ export class WorkbenchPanel extends ItemView {
       return;
     }
 
+    const selectedType = this.conceptTypeSelect?.value as CRType | "";
+
     // 禁用按钮，防止重复点击
     if (this.standardizeBtn) {
       this.standardizeBtn.disabled = true;
-      this.standardizeBtn.textContent = "标准化中...";
+      this.standardizeBtn.textContent = "启动中...";
     }
 
     try {
       const components = this.plugin.getComponents();
-      const { providerManager, promptManager, settings } = components;
-
-      // 渲染提示词
-      const promptResult = promptManager.render("standardizeClassify", {
-        concept_description: description,
-        error_history: "",
-      });
-
-      if (!promptResult.ok) {
-        new Notice(`提示词渲染失败: ${promptResult.error.message}`);
-        this.resetStandardizeButton();
+      const po = components.pipelineOrchestrator;
+      const result = po.startCreatePipeline(description, selectedType ? selectedType as CRType : undefined);
+      if (!result.ok) {
+        new Notice(`启动失败: ${result.error.message}`);
         return;
       }
 
-      // 获取默认模型
-      const providerConfig = settings.providers[settings.defaultProviderId];
-      const model = providerConfig?.defaultChatModel || "gpt-4o";
+      this.currentPipelineId = result.value;
+      new Notice(`标准化已启动 (管线 ${result.value})`);
 
-      // 调用 API
-      const chatRequest: ChatRequest = {
-        providerId: settings.defaultProviderId,
-        model,
-        messages: [{ role: "user", content: promptResult.value }],
-        temperature: 0.7,
-      };
-
-      const chatResult = await providerManager.chat(chatRequest);
-      if (!chatResult.ok) {
-        new Notice(`API 调用失败: ${chatResult.error.message}`);
-        this.resetStandardizeButton();
-        return;
+      if (this.standardizedResultContainer) {
+        this.standardizedResultContainer.style.display = "block";
+        this.standardizedResultContainer.empty();
+        this.standardizedResultContainer.createEl("p", {
+          text: "等待标准化结果...",
+          cls: "cr-muted"
+        });
       }
-
-      // 验证 JSON
-      const validator = new Validator();
-      const jsonResult = validator.validateJSON(chatResult.value.content);
-      if (!jsonResult.ok) {
-        new Notice(`JSON 解析失败: ${jsonResult.error.message}`);
-        this.resetStandardizeButton();
-        return;
-      }
-
-      // 验证标准化输出
-      const validationResult = validator.validateStandardizeOutput(jsonResult.value);
-      if (!validationResult.valid) {
-        const firstError = validationResult.errors[0];
-        new Notice(`验证失败: ${firstError.message}`);
-        this.resetStandardizeButton();
-        return;
-      }
-
-      // 保存结果
-      this.standardizedData = validationResult.data as StandardizedConcept;
-
-      // 显示标准化结果
-      this.renderStandardizedResult();
-
-      // 重置标准化按钮
-      this.resetStandardizeButton();
-
-      new Notice("标准化完成");
-    } catch (error) {
-      new Notice(`标准化失败: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
       this.resetStandardizeButton();
     }
-  }
-
-  /**
-   * 渲染标准化结果
-   */
-  private renderStandardizedResult(): void {
-    if (!this.standardizedResultContainer || !this.standardizedData) return;
-
-    this.standardizedResultContainer.empty();
-    this.standardizedResultContainer.style.display = "block";
-
-    // 分隔线
-    this.standardizedResultContainer.createEl("hr", { cls: "cr-divider" });
-
-    // 标题
-    this.standardizedResultContainer.createEl("h4", { text: "标准化结果" });
-
-    // 中文名
-    const chineseRow = this.standardizedResultContainer.createDiv({ cls: "cr-result-row" });
-    chineseRow.createEl("span", { text: "中文名:", cls: "cr-result-label" });
-    chineseRow.createEl("span", { text: this.standardizedData.standardName.chinese, cls: "cr-result-value" });
-
-    // 英文名
-    const englishRow = this.standardizedResultContainer.createDiv({ cls: "cr-result-row" });
-    englishRow.createEl("span", { text: "英文名:", cls: "cr-result-label" });
-    englishRow.createEl("span", { text: this.standardizedData.standardName.english, cls: "cr-result-value" });
-
-    // 别名
-    if (this.standardizedData.aliases.length > 0) {
-      const aliasRow = this.standardizedResultContainer.createDiv({ cls: "cr-result-row" });
-      aliasRow.createEl("span", { text: "别名:", cls: "cr-result-label" });
-      aliasRow.createEl("span", { text: this.standardizedData.aliases.join(", "), cls: "cr-result-value" });
-    }
-
-    // 类型置信度
-    const typeRow = this.standardizedResultContainer.createDiv({ cls: "cr-result-row" });
-    typeRow.createEl("span", { text: "类型:", cls: "cr-result-label" });
-    
-    const typeContainer = typeRow.createDiv({ cls: "cr-type-confidences" });
-    const sortedTypes = Object.entries(this.standardizedData.typeConfidences)
-      .sort(([, a], [, b]) => b - a);
-    
-    sortedTypes.forEach(([type, confidence]) => {
-      const typeItem = typeContainer.createDiv({ cls: "cr-type-item" });
-      typeItem.createEl("span", { text: type, cls: "cr-type-name" });
-      typeItem.createEl("span", { text: `(${(confidence * 100).toFixed(1)}%)`, cls: "cr-type-confidence" });
-    });
-
-    // 创建按钮
-    const createBtnContainer = this.standardizedResultContainer.createDiv({ cls: "cr-button-container" });
-    this.createBtn = createBtnContainer.createEl("button", {
-      text: "创建",
-      cls: "mod-cta",
-      attr: { "aria-label": "创建笔记" }
-    });
-
-    this.createBtn.addEventListener("click", () => {
-      this.handleCreate();
-    });
   }
 
   /**
@@ -444,161 +547,235 @@ export class WorkbenchPanel extends ItemView {
   private resetStandardizeButton(): void {
     if (this.standardizeBtn) {
       this.standardizeBtn.disabled = false;
-      this.standardizeBtn.textContent = "标准化";
+      this.standardizeBtn.textContent = "启动标准化";
     }
   }
 
   /**
-   * 处理创建笔记
+   * 渲染当前管线的标准化/确认视图
+   * 覆盖标准化结果展示、类型歧义选择和写入前预览
    */
-  private async handleCreate(): Promise<void> {
-    if (!this.standardizedData || !this.plugin || !this.taskQueue) {
-      new Notice("系统未初始化或缺少标准化数据");
+  private renderPipelinePreview(): void {
+    if (!this.standardizedResultContainer) return;
+
+    const ctx = this.currentPipelineId
+      ? this.pipelineContexts.get(this.currentPipelineId)
+      : undefined;
+
+    this.standardizedResultContainer.empty();
+
+    if (!ctx) {
+      this.standardizedResultContainer.style.display = "none";
       return;
     }
 
-    // 禁用创建按钮
-    if (this.createBtn) {
-      this.createBtn.disabled = true;
-      this.createBtn.textContent = "创建中...";
-    }
+    this.standardizedResultContainer.style.display = "block";
 
-    try {
-      // 确定主要类型（置信度最高的）
-      const primaryType = Object.entries(this.standardizedData.typeConfidences)
-        .sort(([, a], [, b]) => b - a)[0][0] as CRType;
+    const stageLabel: Record<PipelineContext["stage"], string> = {
+      idle: "空闲",
+      standardizing: "标准化",
+      enriching: "丰富中",
+      embedding: "向量嵌入",
+      awaiting_create_confirm: "等待创建确认",
+      reasoning: "内容生成",
+      grounding: "Ground 校验",
+      awaiting_write_confirm: "等待写入确认",
+      writing: "写入中",
+      deduplicating: "去重中",
+      completed: "已完成",
+      failed: "失败"
+    };
 
-      // 生成 UID
-      const uid = this.generateUID();
+    // 非创建管线：直接提供预览/确认入口
+    if (ctx.kind && ctx.kind !== "create") {
+      const summary = this.standardizedResultContainer.createDiv({ cls: "cr-pipeline-summary" });
+      summary.createEl("div", { text: `管线类型：${ctx.kind === "incremental" ? "增量改进" : "合并"}` });
+      summary.createEl("div", { text: `阶段：${stageLabel[ctx.stage] || ctx.stage}` });
+      if (ctx.groundingResult) {
+        const ground = summary.createDiv({ cls: "cr-grounding" });
+        ground.setAttr("aria-live", "polite");
+        ground.createEl("div", { text: "Ground 结果：", cls: "cr-muted" });
+        ground.createEl("div", { text: `${ctx.groundingResult.overall_assessment ?? "unknown"}` });
+      }
 
-      // 创建 Frontmatter
-      const now = new Date().toISOString();
-      const frontmatter: CRFrontmatter = {
-        uid,
-        type: primaryType,
-        status: "Stub" as NoteState,
-        created: now,
-        updated: now,
-        aliases: this.standardizedData.aliases,
-      };
-
-      // 创建笔记文件名（使用中文名）
-      const fileName = this.sanitizeFileName(this.standardizedData.standardName.chinese);
-      const filePath = `${fileName}.md`;
-
-      // 创建 Stub 笔记内容
-      const content = this.createStubContent(frontmatter, this.standardizedData);
-
-      // 写入文件
-      const file = await this.app.vault.create(filePath, content);
-
-      new Notice(`笔记已创建: ${fileName}`);
-
-      // 创建 enrich 任务
-      const enrichResult = await this.taskQueue.enqueue({
-        nodeId: uid,
-        taskType: "enrich",
-        payload: {
-          filePath,
-          type: primaryType,
-          standardizedData: this.standardizedData,
-        },
+      const actions = summary.createDiv({ cls: "cr-pipeline-actions" });
+      const previewBtn = actions.createEl("button", {
+        text: "预览并确认写入",
+        cls: "mod-cta",
+        attr: { "aria-label": "预览并确认写入" }
+      });
+      previewBtn.addEventListener("click", () => {
+        this.showWritePreview(ctx);
       });
 
-      if (!enrichResult.ok) {
-        new Notice(`创建内容生成任务失败: ${enrichResult.error.message}`);
-      } else {
-        new Notice("内容生成任务已创建");
-      }
-
-      // 在编辑器中打开新笔记
-      const leaf = this.app.workspace.getLeaf(false);
-      await leaf.openFile(file);
-
-      // 清空输入和结果
-      if (this.conceptInput) {
-        this.conceptInput.value = "";
-      }
-      if (this.standardizedResultContainer) {
-        this.standardizedResultContainer.style.display = "none";
-      }
-      this.standardizedData = null;
-
-    } catch (error) {
-      new Notice(`创建笔记失败: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      // 重置创建按钮
-      if (this.createBtn) {
-        this.createBtn.disabled = false;
-        this.createBtn.textContent = "创建";
-      }
+      return;
     }
-  }
 
-  /**
-   * 生成 UUID v4
-   */
-  private generateUID(): string {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-      const r = Math.random() * 16 | 0;
-      const v = c === 'x' ? r : (r & 0x3 | 0x8);
-      return v.toString(16);
+    this.standardizedResultContainer.createEl("h4", {
+      text: `管线 ${ctx.pipelineId}`
     });
-  }
+    this.standardizedResultContainer.createEl("div", {
+      text: `阶段：${stageLabel[ctx.stage] || ctx.stage}`,
+      cls: "cr-pipeline-stage"
+    });
 
-  /**
-   * 清理文件名（移除非法字符）
-   */
-  private sanitizeFileName(name: string): string {
-    return name.replace(/[\\/:*?"<>|]/g, '-');
-  }
+    // 标准化结果编辑区
+    if (ctx.standardizedData) {
+      const form = this.standardizedResultContainer.createDiv({ cls: "cr-standardize-preview" });
 
-  /**
-   * 创建 Stub 笔记内容
-   */
-  private createStubContent(frontmatter: CRFrontmatter, data: StandardizedConcept): string {
-    const yamlLines = [
-      '---',
-      `uid: ${frontmatter.uid}`,
-      `type: ${frontmatter.type}`,
-      `status: ${frontmatter.status}`,
-      `created: ${frontmatter.created}`,
-      `updated: ${frontmatter.updated}`,
-    ];
-
-    if (frontmatter.aliases && frontmatter.aliases.length > 0) {
-      yamlLines.push(`aliases:`);
-      frontmatter.aliases.forEach(alias => {
-        yamlLines.push(`  - ${alias}`);
+      const nameCnInput = form.createEl("input", {
+        type: "text",
+        value: ctx.standardizedData.standardName.chinese,
+        cls: "cr-input"
       });
+      const nameEnInput = form.createEl("input", {
+        type: "text",
+        value: ctx.standardizedData.standardName.english,
+        cls: "cr-input"
+      });
+
+      const aliasInput = form.createEl("textarea", {
+        cls: "cr-input",
+        attr: {
+          rows: "2",
+          placeholder: "别名以逗号分隔"
+        }
+      });
+      aliasInput.value = (ctx.standardizedData.aliases || []).join(", ");
+
+      const typeSelect = form.createEl("select", { cls: "cr-select" });
+      const typeOptions = Object.keys(ctx.standardizedData.typeConfidences || {});
+      const types = typeOptions.length > 0
+        ? typeOptions
+        : ["Domain", "Issue", "Theory", "Entity", "Mechanism"];
+      typeSelect.createEl("option", { text: "自动选择", value: "" });
+      types.forEach((type) => {
+        typeSelect.createEl("option", { text: type, value: type });
+      });
+      typeSelect.value = ctx.type || ctx.standardizedData.primaryType || "";
+
+      const saveBtn = form.createEl("button", { text: "保存编辑", cls: "cr-btn-small" });
+      saveBtn.addEventListener("click", async () => {
+        const aliases = aliasInput.value
+          .split(/[,，]/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+        await this.applyStandardizationEdits(ctx.pipelineId, {
+          standardName: {
+            chinese: nameCnInput.value.trim() || ctx.standardizedData!.standardName.chinese,
+            english: nameEnInput.value.trim() || ctx.standardizedData!.standardName.english
+          },
+          aliases,
+          primaryType: typeSelect.value ? typeSelect.value as CRType : undefined
+        });
+      });
+
+      // 类型置信度显示
+      const typeRow = form.createDiv({ cls: "cr-type-confidences" });
+      const sortedTypes = Object.entries(ctx.standardizedData.typeConfidences || {})
+        .sort(([, a], [, b]) => b - a);
+      if (sortedTypes.length > 0) {
+        sortedTypes.forEach(([type, score]) => {
+          const pill = typeRow.createDiv({ cls: "cr-type-item" });
+          pill.createSpan({ text: type });
+          pill.createSpan({ text: `${(score * 100).toFixed(1)}%`, cls: "cr-type-confidence" });
+        });
+      }
     }
 
-    yamlLines.push('---');
-    yamlLines.push('');
-
-    // 添加标题
-    yamlLines.push(`# ${data.standardName.chinese}`);
-    yamlLines.push('');
-
-    // 添加英文名
-    yamlLines.push(`**English**: ${data.standardName.english}`);
-    yamlLines.push('');
-
-    // 添加核心定义（如果有）
-    if (data.coreDefinition) {
-      yamlLines.push(`## 核心定义`);
-      yamlLines.push('');
-      yamlLines.push(data.coreDefinition);
-      yamlLines.push('');
+    // 内容预览（生成后）
+    if (ctx.generatedContent) {
+      const preview = this.standardizedResultContainer.createDiv({ cls: "cr-generated-preview" });
+      preview.createEl("h5", { text: "生成内容预览（写入前）" });
+      const text = typeof ctx.generatedContent === "string"
+        ? ctx.generatedContent
+        : JSON.stringify(ctx.generatedContent, null, 2);
+      preview.createEl("pre", { text });
     }
 
-    // 添加占位符
-    yamlLines.push(`## 详细说明`);
-    yamlLines.push('');
-    yamlLines.push('_内容生成中..._');
-    yamlLines.push('');
+    const actions = this.standardizedResultContainer.createDiv({ cls: "cr-button-container" });
 
-    return yamlLines.join('\n');
+    if (ctx.stage === "awaiting_create_confirm") {
+      const confirmBtn = actions.createEl("button", { text: "确认创建 Stub", cls: "mod-cta cr-btn-small" });
+      confirmBtn.addEventListener("click", async () => {
+        const po = this.plugin?.getComponents().pipelineOrchestrator;
+        if (!po) return;
+        const result = await po.confirmCreate(ctx.pipelineId);
+        if (!result.ok) {
+          new Notice(`确认创建失败: ${result.error.message}`);
+        } else {
+          new Notice("已确认创建，等待内容生成");
+        }
+      });
+    } else if (ctx.stage === "awaiting_write_confirm") {
+      const previewBtn = actions.createEl("button", { text: "预览并确认写入", cls: "mod-cta cr-btn-small" });
+      previewBtn.addEventListener("click", () => this.showWritePreview(ctx));
+    } else if (ctx.stage === "failed" && ctx.error) {
+      actions.createEl("div", {
+        text: `失败: ${ctx.error.message}`,
+        cls: "cr-error-text"
+      });
+    } else if (ctx.stage === "completed") {
+      if (ctx.snapshotId) {
+        const undoBtn = actions.createEl("button", { text: "撤销写入", cls: "cr-btn-small" });
+        undoBtn.addEventListener("click", () => this.handleUndo(ctx.snapshotId!));
+        actions.createEl("span", { text: `快照: ${ctx.snapshotId}`, cls: "cr-muted" });
+      } else {
+        actions.createEl("span", { text: "已完成", cls: "cr-muted" });
+      }
+    }
+  }
+
+  /**
+   * 更新标准化结果（用户编辑）
+   */
+  private async applyStandardizationEdits(
+    pipelineId: string,
+    updates: Partial<PipelineContext["standardizedData"]>
+  ): Promise<void> {
+    if (!this.plugin) return;
+    const po = this.plugin.getComponents().pipelineOrchestrator;
+    const result = po.updateStandardizedData(pipelineId, updates);
+    if (result.ok) {
+      new Notice("已更新标准化结果");
+      this.renderPipelinePreview();
+    } else {
+      new Notice(`更新失败: ${result.error.message}`);
+    }
+  }
+
+  /**
+   * 写入前预览（Diff + 撤销提示）
+   */
+  private async showWritePreview(ctx: PipelineContext): Promise<void> {
+    if (!this.plugin) return;
+    const po = this.plugin.getComponents().pipelineOrchestrator;
+    const preview = await po.buildWritePreview(ctx.pipelineId);
+    if (!preview.ok) {
+      new Notice(`无法生成写入预览: ${preview.error.message}`);
+      return;
+    }
+
+    const { previousContent, newContent, targetPath } = preview.value;
+    const diffView = new SimpleDiffView(
+      this.app,
+      `写入预览：${targetPath}`,
+      previousContent,
+      newContent,
+      async () => {
+        const result = await po.confirmWrite(ctx.pipelineId);
+        if (!result.ok) {
+          new Notice(`写入失败: ${result.error.message}`);
+        } else {
+          new Notice("已写入，支持撤销");
+        }
+      },
+      () => {
+        new Notice("已取消写入");
+      }
+    );
+
+    diffView.open();
   }
 
   /**
@@ -669,17 +846,17 @@ export class WorkbenchPanel extends ItemView {
       const similarityFill = similarityBar.createDiv({ cls: "cr-similarity-fill" });
       similarityFill.style.width = `${pair.similarity * 100}%`;
       
-      const similarityText = metaRow.createEl("span", {
+      metaRow.createEl("span", {
         text: `${(pair.similarity * 100).toFixed(1)}%`,
         cls: "cr-similarity-text"
       });
 
-      const typeTag = metaRow.createEl("span", {
+      metaRow.createEl("span", {
         text: pair.type,
         cls: "cr-type-tag"
       });
 
-      const timeText = metaRow.createEl("span", {
+      metaRow.createEl("span", {
         text: this.formatTime(pair.detectedAt),
         cls: "cr-time-text"
       });
@@ -787,10 +964,11 @@ export class WorkbenchPanel extends ItemView {
     let successCount = 0;
     let failCount = 0;
 
+    const po = this.plugin?.getComponents().pipelineOrchestrator;
     for (const pairId of this.selectedDuplicates) {
       const pair = this.allDuplicates.find(p => p.id === pairId);
-      if (pair && this.mergeHandler) {
-        const result = await this.mergeHandler.createMergeTask(pair);
+      if (pair && po) {
+        const result = await po.startMergePipeline(pair);
         if (result.ok) {
           successCount++;
         } else {
@@ -940,23 +1118,31 @@ export class WorkbenchPanel extends ItemView {
 
   /**
    * 渲染队列状态
+   * 遵循 A-NF-04：添加 aria-label 和键盘支持
    */
   private renderQueueStatus(status: QueueStatus): void {
     if (!this.queueStatusContainer) return;
 
     this.queueStatusContainer.empty();
 
-    const grid = this.queueStatusContainer.createDiv({ cls: "cr-queue-grid" });
+    const grid = this.queueStatusContainer.createDiv({ 
+      cls: "cr-queue-grid",
+      attr: { role: "region", "aria-label": "队列统计信息" }
+    });
 
     // 状态指示器
     const statusIndicator = grid.createDiv({ cls: "cr-queue-indicator" });
     const statusIcon = statusIndicator.createEl("span", {
       cls: status.paused ? "cr-status-paused" : "cr-status-active",
-      attr: { "aria-label": status.paused ? "队列已暂停" : "队列运行中" }
+      attr: { 
+        "aria-label": status.paused ? "队列已暂停" : "队列运行中",
+        role: "status"
+      }
     });
     statusIcon.textContent = status.paused ? "⏸" : "▶";
     statusIndicator.createEl("span", {
-      text: status.paused ? "已暂停" : "运行中"
+      text: status.paused ? "已暂停" : "运行中",
+      attr: { "aria-hidden": "true" }
     });
 
     // 统计信息
@@ -966,27 +1152,51 @@ export class WorkbenchPanel extends ItemView {
     this.createStatItem(grid, "失败", status.failed, "cr-stat-failed");
 
     // 操作按钮
-    const actions = this.queueStatusContainer.createDiv({ cls: "cr-queue-actions" });
+    const actions = this.queueStatusContainer.createDiv({ 
+      cls: "cr-queue-actions",
+      attr: { role: "group", "aria-label": "队列操作" }
+    });
     
     const toggleBtn = actions.createEl("button", {
       text: status.paused ? "恢复" : "暂停",
-      attr: { "aria-label": status.paused ? "恢复队列" : "暂停队列" }
+      attr: { 
+        "aria-label": status.paused ? "恢复队列执行" : "暂停队列执行",
+        tabindex: "0"
+      }
     });
     toggleBtn.addEventListener("click", () => {
       this.handleToggleQueue();
     });
+    // 键盘支持
+    toggleBtn.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        this.handleToggleQueue();
+      }
+    });
 
     const viewBtn = actions.createEl("button", {
       text: "查看详情",
-      attr: { "aria-label": "查看队列详情" }
+      attr: { 
+        "aria-label": "打开队列详情视图",
+        tabindex: "0"
+      }
     });
     viewBtn.addEventListener("click", () => {
       this.handleViewQueue();
+    });
+    // 键盘支持
+    viewBtn.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        this.handleViewQueue();
+      }
     });
   }
 
   /**
    * 创建统计项
+   * 遵循 A-NF-04：添加 aria-label 支持屏幕阅读器
    */
   private createStatItem(
     container: HTMLElement,
@@ -994,9 +1204,23 @@ export class WorkbenchPanel extends ItemView {
     value: number,
     className: string
   ): void {
-    const item = container.createDiv({ cls: `cr-stat-item ${className}` });
-    item.createEl("div", { text: value.toString(), cls: "cr-stat-value" });
-    item.createEl("div", { text: label, cls: "cr-stat-label" });
+    const item = container.createDiv({ 
+      cls: `cr-stat-item ${className}`,
+      attr: { 
+        role: "group",
+        "aria-label": `${label}: ${value}`
+      }
+    });
+    item.createEl("div", { 
+      text: value.toString(), 
+      cls: "cr-stat-value",
+      attr: { "aria-hidden": "true" }
+    });
+    item.createEl("div", { 
+      text: label, 
+      cls: "cr-stat-label",
+      attr: { "aria-hidden": "true" }
+    });
   }
 
   /**
@@ -1064,16 +1288,156 @@ export class WorkbenchPanel extends ItemView {
   }
 
   /**
-   * 处理合并重复概念
+   * 显示撤销 Toast 通知
+   * 写入完成后显示 5 秒可撤销提示
+   * Requirements: 5.4
+   * 
+   * @param message 通知消息
+   * @param snapshotId 快照 ID
+   * @param filePath 文件路径
    */
-  private async handleMergeDuplicate(pair: DuplicatePair): Promise<void> {
-    if (!this.mergeHandler) {
-      new Notice("合并处理器未初始化");
+  public showUndoToast(
+    message: string,
+    snapshotId: string,
+    filePath: string
+  ): void {
+    if (!this.plugin) {
       return;
     }
 
-    // 调用 MergeHandler 创建合并任务
-    const result = await this.mergeHandler.createMergeTask(pair);
+    const undoManager = this.plugin.getComponents().undoManager;
+
+    const notification = new UndoNotification({
+      message,
+      snapshotId,
+      filePath,
+      onUndo: async (id: string) => {
+        await this.handleUndoFromToast(id);
+      },
+      timeout: 5000, // 5 秒超时
+    });
+
+    notification.show();
+  }
+
+  /**
+   * 处理来自 Toast 的撤销操作
+   * @param snapshotId 快照 ID
+   */
+  private async handleUndoFromToast(snapshotId: string): Promise<void> {
+    if (!this.plugin) {
+      new Notice("插件未初始化");
+      return;
+    }
+
+    const undoManager = this.plugin.getComponents().undoManager;
+    
+    try {
+      // 恢复快照
+      const restoreResult = await undoManager.restoreSnapshot(snapshotId);
+      if (!restoreResult.ok) {
+        new Notice(`撤销失败: ${restoreResult.error.message}`);
+        return;
+      }
+
+      const snapshot = restoreResult.value;
+
+      // 写入文件
+      const file = this.app.vault.getAbstractFileByPath(snapshot.path);
+      if (file && file instanceof TFile) {
+        await this.app.vault.modify(file, snapshot.content);
+        new Notice("撤销成功");
+      } else {
+        // 文件不存在，创建文件
+        await this.app.vault.create(snapshot.path, snapshot.content);
+        new Notice("撤销成功（文件已恢复）");
+      }
+
+      // 删除快照
+      await undoManager.deleteSnapshot(snapshotId);
+    } catch (error) {
+      console.error("撤销操作失败:", error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      new Notice(`撤销失败: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * 处理合并重复概念
+   * 点击合并时先显示 DiffView 预览
+   * Requirements: 5.3
+   */
+  private async handleMergeDuplicate(pair: DuplicatePair): Promise<void> {
+    if (!this.plugin) {
+      new Notice("插件未初始化");
+      return;
+    }
+
+    try {
+      // 读取两个笔记的内容
+      const fileA = this.app.vault.getAbstractFileByPath(pair.noteA.path);
+      const fileB = this.app.vault.getAbstractFileByPath(pair.noteB.path);
+
+      if (!fileA || !(fileA instanceof TFile)) {
+        new Notice(`文件不存在: ${pair.noteA.path}`);
+        return;
+      }
+
+      if (!fileB || !(fileB instanceof TFile)) {
+        new Notice(`文件不存在: ${pair.noteB.path}`);
+        return;
+      }
+
+      const contentA = await this.app.vault.read(fileA);
+      const contentB = await this.app.vault.read(fileB);
+
+      // 显示合并预览 DiffView
+      this.showMergePreviewDiffView(pair, contentA, contentB);
+    } catch (error) {
+      console.error("显示合并预览失败:", error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      new Notice(`显示合并预览失败: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * 显示合并预览 DiffView
+   * Requirements: 5.3
+   */
+  private showMergePreviewDiffView(
+    pair: DuplicatePair,
+    contentA: string,
+    contentB: string
+  ): void {
+    const diffView = new SimpleDiffView(
+      this.app,
+      `合并预览: ${pair.noteA.name} ↔ ${pair.noteB.name}`,
+      contentA,
+      contentB,
+      async () => {
+        // 用户确认合并 - 创建合并任务
+        await this.confirmMerge(pair);
+      },
+      () => {
+        // 用户取消合并
+        new Notice("已取消合并");
+      }
+    );
+
+    diffView.open();
+  }
+
+  /**
+   * 确认合并 - 创建合并任务
+   */
+  private async confirmMerge(pair: DuplicatePair): Promise<void> {
+    if (!this.plugin) {
+      new Notice("插件未初始化");
+      return;
+    }
+
+    const po = this.plugin.getComponents().pipelineOrchestrator;
+    const result = await po.startMergePipeline(pair);
     if (!result.ok) {
       new Notice(`创建合并任务失败: ${result.error.message}`);
       return;
@@ -1126,7 +1490,7 @@ export class WorkbenchPanel extends ItemView {
   /**
    * 刷新重复列表
    */
-  private async refreshDuplicates(): Promise<void> {
+  private refreshDuplicates(): void {
     if (!this.plugin) return;
 
     try {
@@ -1135,12 +1499,9 @@ export class WorkbenchPanel extends ItemView {
 
       if (!duplicateManager) return;
 
-      // 获取待处理的重复对
-      const result = await duplicateManager.getPendingPairs();
-      
-      if (result.ok) {
-        this.updateDuplicates(result.value);
-      }
+      // 获取待处理的重复对（同步方法）
+      const pairs = duplicateManager.getPendingPairs();
+      this.updateDuplicates(pairs);
     } catch (error) {
       console.error("刷新重复列表失败:", error);
     }
@@ -1168,6 +1529,111 @@ export class WorkbenchPanel extends ItemView {
     
     // 刷新显示
     this.updateQueueStatus(taskQueue.getStatus());
+  }
+
+  /**
+  * 订阅管线事件
+  * 遵循 A-UCD-03：写入完成后显示撤销入口
+  */
+  private subscribePipelineEvents(): void {
+    if (!this.plugin) return;
+    const po = this.plugin.getComponents().pipelineOrchestrator;
+    if (!po) return;
+
+    // 先渲染当前活跃管线
+    this.updatePipelineContexts(po.getActivePipelines());
+
+    // 注册订阅
+    this.pipelineUnsubscribe = po.subscribe((event) => {
+      // A-UCD-03: 写入完成后显示撤销通知
+      if (event.type === "pipeline_completed" && event.context.snapshotId && event.context.filePath) {
+        const kindLabel = event.context.kind === "create" ? "创建" 
+          : event.context.kind === "incremental" ? "增量改进" 
+          : "合并";
+        this.showUndoToast(
+          `${kindLabel}完成: ${event.context.filePath.split("/").pop()}`,
+          event.context.snapshotId,
+          event.context.filePath
+        );
+      }
+      this.updatePipelineContexts(po.getActivePipelines());
+    });
+  }
+
+  /**
+   * 更新管线列表（用于订阅 PipelineOrchestrator 事件）
+   */
+  public updatePipelineContexts(contexts: PipelineContext[]): void {
+    if (!this.pipelineStatusContainer) return;
+    const list = this.pipelineStatusContainer.querySelector(".cr-pipeline-list");
+    if (!list) return;
+
+    const stageLabel: Record<PipelineContext["stage"], string> = {
+      idle: "空闲",
+      standardizing: "标准化",
+      enriching: "丰富中",
+      embedding: "向量嵌入",
+      awaiting_create_confirm: "等待创建确认",
+      reasoning: "内容生成",
+      grounding: "Ground 校验",
+      awaiting_write_confirm: "等待写入确认",
+      writing: "写入中",
+      deduplicating: "去重中",
+      completed: "已完成",
+      failed: "失败"
+    };
+
+    this.pipelineContexts = new Map(contexts.map((c) => [c.pipelineId, c]));
+
+    // 维持当前选中的管线
+    if (!this.currentPipelineId && contexts.length > 0) {
+      this.currentPipelineId = contexts[0].pipelineId;
+    }
+    if (this.currentPipelineId && !this.pipelineContexts.has(this.currentPipelineId)) {
+      this.currentPipelineId = contexts[0]?.pipelineId ?? null;
+    }
+
+    list.empty();
+
+    if (contexts.length === 0) {
+      list.createEl("div", { text: "暂无活动管线", cls: "cr-empty-text" });
+      this.currentPipelineId = null;
+      this.renderPipelinePreview();
+      return;
+    }
+
+    contexts.forEach((ctx) => {
+      const item = list.createDiv({ cls: "cr-pipeline-item" });
+      item.createEl("div", { text: `ID: ${ctx.pipelineId}`, cls: "cr-pipeline-id" });
+      item.createEl("div", { text: `类型: ${ctx.type}`, cls: "cr-pipeline-type" });
+      item.createEl("div", { text: `阶段: ${stageLabel[ctx.stage] || ctx.stage}`, cls: "cr-pipeline-stage" });
+
+      const actions = item.createDiv({ cls: "cr-pipeline-actions" });
+      const viewBtn = actions.createEl("button", { text: "查看", cls: "cr-btn-small" });
+      viewBtn.addEventListener("click", () => {
+        this.currentPipelineId = ctx.pipelineId;
+        this.renderPipelinePreview();
+      });
+
+      if (ctx.stage === "awaiting_create_confirm") {
+        const btn = actions.createEl("button", { text: "确认创建", cls: "mod-cta cr-btn-small" });
+        btn.addEventListener("click", async () => {
+          const po = this.plugin?.getComponents().pipelineOrchestrator;
+          if (!po) return;
+          const result = await po.confirmCreate(ctx.pipelineId);
+          if (!result.ok) {
+            new Notice(`确认创建失败: ${result.error.message}`);
+          }
+        });
+      } else if (ctx.stage === "awaiting_write_confirm") {
+        const btn = actions.createEl("button", { text: "预览写入", cls: "mod-cta cr-btn-small" });
+        btn.addEventListener("click", () => this.showWritePreview(ctx));
+      } else if (ctx.stage === "failed" && ctx.error) {
+        actions.createEl("span", { text: ctx.error.message, cls: "cr-error-text" });
+      }
+    });
+
+    this.renderPipelinePreview();
   }
 
   /**
@@ -1199,10 +1665,10 @@ export class WorkbenchPanel extends ItemView {
     const result = await undoManager.restoreSnapshot(operationId);
     
     if (result.ok) {
-      // 恢复快照内容到文件
+      // 恢复快照内容到文件（使用 path 而不是 filePath）
       const snapshot = result.value;
       try {
-        const file = this.plugin.app.vault.getAbstractFileByPath(snapshot.filePath);
+        const file = this.plugin.app.vault.getAbstractFileByPath(snapshot.path);
         if (file instanceof TFile) {
           await this.plugin.app.vault.modify(file, snapshot.content);
           new Notice("撤销成功");
@@ -1339,9 +1805,19 @@ class DuplicatePreviewModal extends Modal {
 
     // 差异视图（初始隐藏）
     const diffView = previewContainer.createDiv({ cls: "cr-diff-view cr-hidden" });
-    diffView.createEl("div", {
-      text: "差异高亮功能开发中...",
-      cls: "cr-placeholder-text"
+    const diffLines = buildLineDiff(this.contentA, this.contentB);
+    const diffList = diffView.createDiv({ cls: "cr-unified-diff" });
+    diffLines.forEach((line, idx) => {
+      const row = diffList.createDiv({ cls: `cr-diff-row cr-${line.type}` });
+      row.createSpan({
+        text: line.type === "add" ? "+" : line.type === "remove" ? "-" : " ",
+        cls: "cr-diff-prefix"
+      });
+      row.createSpan({
+        text: line.text || " ",
+        cls: "cr-diff-text",
+        attr: { "data-line": `${idx + 1}` }
+      });
     });
 
     // 标签页切换逻辑
@@ -1552,22 +2028,12 @@ class MergeHistoryModal extends Modal {
 
     if (!duplicateManager) return;
 
-    let pairsResult;
+    let pairs: DuplicatePair[];
     if (this.currentTab === "merged") {
-      pairsResult = await duplicateManager.getMergedPairs();
+      pairs = duplicateManager.getMergedPairs();
     } else {
-      pairsResult = await duplicateManager.getDismissedPairs();
+      pairs = duplicateManager.getDismissedPairs();
     }
-
-    if (!pairsResult.ok) {
-      this.listContainer.createEl("p", {
-        text: `加载失败: ${pairsResult.error.message}`,
-        cls: "cr-error-text"
-      });
-      return;
-    }
-
-    const pairs = pairsResult.value;
 
     if (pairs.length === 0) {
       this.listContainer.createEl("p", {

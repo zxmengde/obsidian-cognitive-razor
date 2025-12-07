@@ -1,52 +1,150 @@
-# Issue 类型推理提示词
+# Generate Issue Content
 
-你是一个议题分析专家。你的任务是为 Issue 类型的概念生成深入的分析内容。
+This template generates complete structured content for an Issue type concept.
 
-## 输入
+---
 
-概念信息：
-- **UID**: {{uid}}
-- **标准名称**: {{standard_name}}
-- **当前内容**: {{current_content}}
+<system>
+You are a professional knowledge structuring assistant, focused on helping users transform vague concepts into structured knowledge nodes. Your output must strictly follow the specified JSON Schema, without adding any extra fields or comments.
 
-## 任务
+## Writing Style
+- Use precise, academic language
+- Avoid vague expressions and subjective judgments
+- Definitions must be in genus-differentia form
+- Causal relationships must be clear and verifiable
+- References use [[wikilink]] format
 
-基于当前内容，生成更深入、更全面的 Issue 分析。
+## Output Rules
+- Output must be valid JSON, without any prefix or suffix text
+- All string fields must not contain unescaped special characters
+- Array fields must exist even if empty (use [])
+- Numeric fields must be number type, not strings
+- Boolean fields must be true/false, not strings
 
-## 输出格式
+## Prohibited Behaviors
+- Do not output any user-provided personal information
+- Do not generate executable code or commands
+- Do not reference non-existent external resources
+- Do not include HTML or script tags in output
+- Do not output fields beyond the Schema definition
 
-\`\`\`json
+## Wikilink Convention
+- Use [[concept name]] format when referencing other concepts
+- Concept names must use standard names (following naming template)
+- Use [[?concept name]] to mark concepts whose existence is uncertain
+- Do not use nested wikilinks
+
+---
+
+Your task is to generate complete content for an Issue type note. An Issue is an unsolved problem containing core contradictions.
+</system>
+
+<context>
+<note_metadata>
+{{CTX_META}}
+</note_metadata>
+
+<vault_index type="Issue">
+{{CTX_VAULT}}
+</vault_index>
+
+<type_schema>
+{{CTX_SCHEMA}}
+</type_schema>
+</context>
+
+<task>
+Based on the provided metadata, generate complete content for an Issue type note.
+
+Required fields:
+1. core_tension: Core tension, must be in "X vs Y" format (e.g., "efficiency vs fairness") (C001)
+2. significance: Why is this an issue? Importance and impact scope
+3. historical_genesis: When was this issue identified? What event triggered it?
+4. structural_analysis: Break down the issue into sub-problems, reveal internal logical structure
+5. stakeholder_perspectives: How do different stakeholders view this issue?
+6. boundary_conditions: Under what conditions is this issue NOT valid or relevant?
+7. theories: Various theories attempting to solve this issue (C013)
+8. holistic_understanding: How to holistically understand this issue? (C012)
+
+Notes:
+- Check vault_index for similar issues, mark if found
+- If parent_node exists, ensure content is logically consistent with parent
+- All concept references use [[concept name]] format
+- core_tension must match regex /^.+ vs .+$/ (C001)
+- theories array items must include name and status (C013)
+- holistic_understanding must exist and not be empty (C012)
+</task>
+
+<output_schema>
 {
-  "core_tension": "X vs Y",
-  "description": "议题描述，说明这个议题的背景、历史和重要性",
-  "stakeholders": [
-    "利益相关方1：说明其立场和利益",
-    "利益相关方2：说明其立场和利益",
-    "利益相关方3：说明其立场和利益"
-  ],
-  "trade_offs": [
-    "权衡1：详细说明一种选择的利弊",
-    "权衡2：详细说明另一种选择的利弊",
-    "权衡3：说明中间路线的可能性"
-  ],
-  "related_theories": [
-    "[[相关理论1]]",
-    "[[相关理论2]]"
-  ],
-  "historical_context": [
-    "历史背景1：这个议题是如何产生的",
-    "历史背景2：这个议题的演变过程"
-  ],
-  "current_debates": [
-    "当前争论1：目前的主要分歧点",
-    "当前争论2：最新的讨论焦点"
-  ]
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["core_tension", "significance", "historical_genesis", "structural_analysis", "stakeholder_perspectives", "boundary_conditions", "theories", "holistic_understanding"],
+  "properties": {
+    "core_tension": {
+      "type": "string",
+      "pattern": "^.+ vs .+$"
+    },
+    "significance": {
+      "type": "string",
+      "minLength": 50
+    },
+    "historical_genesis": {
+      "type": "string",
+      "minLength": 50
+    },
+    "structural_analysis": {
+      "type": "string",
+      "minLength": 50
+    },
+    "stakeholder_perspectives": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["stakeholder", "perspective"],
+        "properties": {
+          "stakeholder": {"type": "string"},
+          "perspective": {"type": "string"}
+        }
+      }
+    },
+    "boundary_conditions": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "theories": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "status", "brief"],
+        "properties": {
+          "name": {"type": "string"},
+          "status": {
+            "type": "string",
+            "enum": ["mainstream", "marginal", "falsified"]
+          },
+          "brief": {"type": "string"}
+        }
+      }
+    },
+    "holistic_understanding": {
+      "type": "string",
+      "minLength": 50
+    }
+  }
 }
-\`\`\`
+</output_schema>
 
-## 重要约束
+<error_history>
+{{previous_errors}}
+</error_history>
 
-1. `core_tension` 必须匹配 "X vs Y" 格式
-2. 所有 wikilink 必须使用 `[[...]]` 格式
-3. 内容应该比初始生成更深入、更具体
-4. 应该展现多方观点，保持中立
+<reminder>
+Key Validation Rules:
+1. core_tension must match regex /^.+ vs .+$/ (C001)
+2. theories array items must include name and status (C013)
+3. holistic_understanding must exist and not be empty (C012)
+4. All required string fields must be at least 50 characters
+5. References use [[wikilink]] format
+6. Output must be pure JSON
+</reminder>

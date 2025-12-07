@@ -2,14 +2,32 @@
  * CommandDispatcher - 命令统一分发器
  * 
  * 功能：
- * - 注册所有命令
- * - 实现快捷键绑定
+ * - 注册所有命令（遵循 A-FUNC-09 UI 注册规范）
+ * - 实现快捷键绑定（遵循 A-UCD-05 多输入一致）
  * - 实现命令分发
+ * 
+ * 命令 ID 格式：cognitive-razor:<action>-<target>
+ * 
+ * 核心命令（Requirements 9.1-9.4）：
+ * - cognitive-razor:create-concept (Ctrl/Cmd + Shift + N)
+ * - cognitive-razor:open-queue (Ctrl/Cmd + Shift + Q)
+ * - cognitive-razor:pause-queue (Ctrl/Cmd + Shift + P)
  */
 
 import { Plugin, Notice, MarkdownView, TFile, Menu } from "obsidian";
 import { IncrementalImproveModal } from "./incremental-improve-modal";
 import { TaskQueue } from "../core/task-queue";
+import { 
+  COMMAND_PREFIX, 
+  COMMAND_IDS, 
+  getCoreCommandIds, 
+  isValidCommandId 
+} from "./command-utils";
+import type CognitiveRazorPlugin from "../../main";
+import type { DuplicatePair, SnapshotMetadata } from "../types";
+
+// 重新导出常量，保持向后兼容
+export { COMMAND_PREFIX, COMMAND_IDS };
 
 /**
  * 命令处理器类型
@@ -20,7 +38,7 @@ export type CommandHandler = () => void | Promise<void>;
  * 命令定义
  */
 export interface CommandDefinition {
-  /** 命令 ID */
+  /** 命令 ID（格式：cognitive-razor:<action>-<target>） */
   id: string;
   /** 命令名称 */
   name: string;
@@ -43,11 +61,11 @@ export interface CommandDefinition {
  * CommandDispatcher 组件
  */
 export class CommandDispatcher {
-  private plugin: Plugin;
+  private plugin: CognitiveRazorPlugin;
   private commands: Map<string, CommandDefinition> = new Map();
   private taskQueue: TaskQueue | null = null;
 
-  constructor(plugin: Plugin, taskQueue?: TaskQueue) {
+  constructor(plugin: CognitiveRazorPlugin, taskQueue?: TaskQueue) {
     this.plugin = plugin;
     this.taskQueue = taskQueue || null;
   }
@@ -114,7 +132,7 @@ export class CommandDispatcher {
    */
   private registerWorkbenchCommands(): void {
     this.registerCommand({
-      id: "open-workbench",
+      id: COMMAND_IDS.OPEN_WORKBENCH,
       name: "打开工作台",
       icon: "brain",
       hotkeys: [
@@ -128,10 +146,14 @@ export class CommandDispatcher {
 
   /**
    * 注册概念创建命令
+   * 
+   * Requirements 9.2: cognitive-razor:create-concept (Ctrl/Cmd + Shift + N)
    */
   private registerConceptCommands(): void {
+    // 核心命令：创建概念
+    // Requirements 9.2: ID = cognitive-razor:create-concept, 快捷键 = Ctrl/Cmd + Shift + N
     this.registerCommand({
-      id: "create-concept",
+      id: COMMAND_IDS.CREATE_CONCEPT,
       name: "创建概念",
       icon: "plus",
       hotkeys: [
@@ -143,7 +165,7 @@ export class CommandDispatcher {
     });
 
     this.registerCommand({
-      id: "create-concept-from-selection",
+      id: COMMAND_IDS.CREATE_CONCEPT_FROM_SELECTION,
       name: "从选中文本创建概念",
       icon: "plus-circle",
       editorRequired: true,
@@ -155,10 +177,15 @@ export class CommandDispatcher {
 
   /**
    * 注册队列管理命令
+   * 
+   * Requirements 9.3: cognitive-razor:open-queue (Ctrl/Cmd + Shift + Q)
+   * Requirements 9.4: cognitive-razor:pause-queue (Ctrl/Cmd + Shift + P)
    */
   private registerQueueCommands(): void {
+    // 核心命令：打开队列
+    // Requirements 9.3: ID = cognitive-razor:open-queue, 快捷键 = Ctrl/Cmd + Shift + Q
     this.registerCommand({
-      id: "open-queue",
+      id: COMMAND_IDS.OPEN_QUEUE,
       name: "打开任务队列",
       icon: "list-checks",
       hotkeys: [
@@ -169,17 +196,22 @@ export class CommandDispatcher {
       }
     });
 
+    // 核心命令：暂停队列
+    // Requirements 9.4: ID = cognitive-razor:pause-queue, 快捷键 = Ctrl/Cmd + Shift + P
     this.registerCommand({
-      id: "toggle-queue",
+      id: COMMAND_IDS.PAUSE_QUEUE,
       name: "暂停/恢复队列",
       icon: "pause",
+      hotkeys: [
+        { modifiers: ["Mod", "Shift"], key: "p" }
+      ],
       handler: async () => {
         await this.toggleQueue();
       }
     });
 
     this.registerCommand({
-      id: "clear-completed-tasks",
+      id: COMMAND_IDS.CLEAR_COMPLETED_TASKS,
       name: "清空已完成任务",
       icon: "trash",
       handler: async () => {
@@ -188,7 +220,7 @@ export class CommandDispatcher {
     });
 
     this.registerCommand({
-      id: "retry-failed-tasks",
+      id: COMMAND_IDS.RETRY_FAILED_TASKS,
       name: "重试失败任务",
       icon: "refresh-cw",
       handler: async () => {
@@ -202,7 +234,7 @@ export class CommandDispatcher {
    */
   private registerNoteCommands(): void {
     this.registerCommand({
-      id: "enrich-note",
+      id: COMMAND_IDS.ENRICH_NOTE,
       name: "生成笔记内容",
       icon: "wand",
       editorRequired: true,
@@ -212,7 +244,7 @@ export class CommandDispatcher {
     });
 
     this.registerCommand({
-      id: "improve-note",
+      id: COMMAND_IDS.IMPROVE_NOTE,
       name: "增量改进笔记",
       icon: "edit",
       editorRequired: true,
@@ -222,7 +254,7 @@ export class CommandDispatcher {
     });
 
     this.registerCommand({
-      id: "check-duplicates",
+      id: COMMAND_IDS.CHECK_DUPLICATES,
       name: "检查重复概念",
       icon: "copy",
       editorRequired: true,
@@ -232,7 +264,7 @@ export class CommandDispatcher {
     });
 
     this.registerCommand({
-      id: "undo-last-operation",
+      id: COMMAND_IDS.UNDO_LAST_OPERATION,
       name: "撤销上次操作",
       icon: "undo",
       hotkeys: [
@@ -249,7 +281,7 @@ export class CommandDispatcher {
    */
   private registerViewCommands(): void {
     this.registerCommand({
-      id: "toggle-workbench",
+      id: COMMAND_IDS.TOGGLE_WORKBENCH,
       name: "切换工作台显示",
       icon: "layout-sidebar",
       handler: async () => {
@@ -258,7 +290,7 @@ export class CommandDispatcher {
     });
 
     this.registerCommand({
-      id: "toggle-queue-view",
+      id: COMMAND_IDS.TOGGLE_QUEUE_VIEW,
       name: "切换队列视图显示",
       icon: "layout-list",
       handler: async () => {
@@ -267,7 +299,7 @@ export class CommandDispatcher {
     });
 
     this.registerCommand({
-      id: "open-undo-history",
+      id: COMMAND_IDS.OPEN_UNDO_HISTORY,
       name: "打开操作历史",
       icon: "history",
       hotkeys: [
@@ -357,6 +389,42 @@ export class CommandDispatcher {
     return Array.from(this.commands.values());
   }
 
+  /**
+   * 获取命令定义
+   * @param commandId 命令 ID
+   * @returns 命令定义或 undefined
+   */
+  public getCommand(commandId: string): CommandDefinition | undefined {
+    return this.commands.get(commandId);
+  }
+
+  /**
+   * 检查命令是否已注册
+   * @param commandId 命令 ID
+   * @returns 是否已注册
+   */
+  public hasCommand(commandId: string): boolean {
+    return this.commands.has(commandId);
+  }
+
+  /**
+   * 获取核心命令 ID 列表
+   * 返回 Requirements 9.1-9.4 定义的核心命令
+   */
+  public static getCoreCommandIds(): string[] {
+    return getCoreCommandIds();
+  }
+
+  /**
+   * 验证命令 ID 格式
+   * 遵循 Requirements 9.1：命令 ID 格式为 cognitive-razor:<action>-<target>
+   * @param commandId 命令 ID
+   * @returns 是否符合格式
+   */
+  public static isValidCommandId(commandId: string): boolean {
+    return isValidCommandId(commandId);
+  }
+
   // ========================================================================
   // 命令实现
   // ========================================================================
@@ -387,14 +455,49 @@ export class CommandDispatcher {
 
   /**
    * 创建概念
+   * 
+   * 遵循设计文档 A-FUNC-05：启动创建管线
+   * 遵循设计文档 A-UCD-01：三步完成核心任务
    */
   private async createConcept(): Promise<void> {
-    // TODO: 打开创建概念对话框
-    new Notice("创建概念功能待实现");
+    // 动态导入 Modal 和 PipelineOrchestrator
+    const { CreateConceptModal } = await import("./create-concept-modal");
+    const components = (this.plugin as any).getComponents?.();
+    
+    if (!components?.pipelineOrchestrator) {
+      new Notice("系统未初始化，请稍后再试");
+      return;
+    }
+
+    const pipelineOrchestrator = components.pipelineOrchestrator;
+
+    // 打开创建概念对话框
+    const modal = new CreateConceptModal(this.plugin.app, {
+      onSubmit: (input, type) => {
+        // 启动创建管线
+        const result = pipelineOrchestrator.startCreatePipeline(input, type);
+        
+        if (result.ok) {
+          new Notice(`创建管线已启动: ${result.value}`);
+          
+          // 打开工作台以查看进度
+          this.openWorkbench();
+        } else {
+          new Notice(`启动失败: ${result.error.message}`);
+        }
+      },
+      onCancel: () => {
+        // 用户取消，不做任何操作
+      }
+    });
+
+    modal.open();
   }
 
   /**
    * 从选中文本创建概念
+   * 
+   * 遵循设计文档 A-FUNC-05：启动创建管线
    */
   private async createConceptFromSelection(): Promise<void> {
     const view = this.plugin.app.workspace.getActiveViewOfType(MarkdownView);
@@ -406,13 +509,41 @@ export class CommandDispatcher {
     const editor = view.editor;
     const selection = editor.getSelection();
     
-    if (!selection) {
+    if (!selection || !selection.trim()) {
       new Notice("请先选择文本");
       return;
     }
 
-    // TODO: 使用选中文本创建概念
-    new Notice(`从选中文本创建概念: ${selection.substring(0, 50)}...`);
+    // 动态导入 Modal 和 PipelineOrchestrator
+    const { CreateConceptModal } = await import("./create-concept-modal");
+    const components = (this.plugin as any).getComponents?.();
+    
+    if (!components?.pipelineOrchestrator) {
+      new Notice("系统未初始化，请稍后再试");
+      return;
+    }
+
+    const pipelineOrchestrator = components.pipelineOrchestrator;
+
+    // 打开创建概念对话框，预填选中文本
+    const modal = new CreateConceptModal(this.plugin.app, {
+      defaultValue: selection.trim(),
+      onSubmit: (input, type) => {
+        // 启动创建管线
+        const result = pipelineOrchestrator.startCreatePipeline(input, type);
+        
+        if (result.ok) {
+          new Notice(`创建管线已启动: ${result.value}`);
+          
+          // 打开工作台以查看进度
+          this.openWorkbench();
+        } else {
+          new Notice(`启动失败: ${result.error.message}`);
+        }
+      }
+    });
+
+    modal.open();
   }
 
   /**
@@ -467,8 +598,12 @@ export class CommandDispatcher {
       return;
     }
 
-    const cleared = await this.taskQueue.clearCompleted();
-    new Notice(`已清空 ${cleared} 个已完成任务`);
+    const result = await this.taskQueue.clearCompleted();
+    if (result.ok) {
+      new Notice(`已清空 ${result.value} 个已完成任务`);
+    } else {
+      new Notice(`清空失败: ${result.error.message}`);
+    }
   }
 
   /**
@@ -480,8 +615,12 @@ export class CommandDispatcher {
       return;
     }
 
-    const retried = await this.taskQueue.retryFailed();
-    new Notice(`已重新排队 ${retried} 个失败任务`);
+    const result = await this.taskQueue.retryFailed();
+    if (result.ok) {
+      new Notice(`已重新排队 ${result.value} 个失败任务`);
+    } else {
+      new Notice(`重试失败: ${result.error.message}`);
+    }
   }
 
   /**
@@ -494,8 +633,14 @@ export class CommandDispatcher {
       return;
     }
 
-    // TODO: 调用 TaskRunner 生成内容
-    new Notice("生成笔记内容功能待实现");
+    const file = view.file;
+    if (!file) {
+      new Notice("无法获取当前文件");
+      return;
+    }
+
+    // 复用增量改进流程，引导用户输入生成意图
+    await this.improveNoteFromFile(file);
   }
 
   /**
@@ -521,8 +666,9 @@ export class CommandDispatcher {
    * 从文件触发增量改进
    */
   private async improveNoteFromFile(file: TFile): Promise<void> {
-    if (!this.taskQueue) {
-      new Notice("任务队列未初始化");
+    const components = this.plugin.getComponents();
+    if (!components.pipelineOrchestrator) {
+      new Notice("管线编排器未初始化");
       return;
     }
 
@@ -530,7 +676,7 @@ export class CommandDispatcher {
     const modal = new IncrementalImproveModal(
       this.plugin.app,
       file,
-      this.taskQueue
+      components.pipelineOrchestrator
     );
     modal.open();
   }
@@ -545,16 +691,61 @@ export class CommandDispatcher {
       return;
     }
 
-    // TODO: 调用 DuplicateManager 检查重复
-    new Notice("检查重复概念功能待实现");
+    const file = view.file;
+    if (!file) {
+      new Notice("无法获取当前文件");
+      return;
+    }
+
+    const components = this.plugin.getComponents();
+    const duplicateManager = components.duplicateManager;
+    if (!duplicateManager) {
+      new Notice("重复管理器未初始化");
+      return;
+    }
+
+    // 直接从待处理列表中过滤当前文件
+    const pending = duplicateManager.getPendingPairs();
+    const related = pending.filter(
+      (p: DuplicatePair) => p.noteA.path === file.path || p.noteB.path === file.path
+    );
+
+    if (related.length > 0) {
+      new Notice(`发现 ${related.length} 个待处理重复对，已在工作台显示`);
+      // 刷新工作台重复列表
+      const workbenchLeaves = this.plugin.app.workspace.getLeavesOfType("cognitive-razor-workbench");
+      if (workbenchLeaves.length > 0) {
+        (workbenchLeaves[0].view as any).updateDuplicates(pending);
+      }
+    } else {
+      new Notice("当前笔记未检测到待处理重复对（如需，先运行创建/合并流程以生成索引）");
+    }
   }
 
   /**
    * 撤销上次操作
    */
   private async undoLastOperation(): Promise<void> {
-    // TODO: 调用 UndoManager 执行撤销
-    new Notice("撤销上次操作功能待实现");
+    const undoManager = this.plugin.getComponents().undoManager;
+    const snapshotsResult = await undoManager.listSnapshots();
+    if (!snapshotsResult.ok || snapshotsResult.value.length === 0) {
+      new Notice("暂无可撤销的快照");
+      return;
+    }
+
+    // 按时间排序，取最新
+    const snapshots = snapshotsResult.value.sort(
+      (a: SnapshotMetadata, b: SnapshotMetadata) => new Date(b.created).getTime() - new Date(a.created).getTime()
+    );
+    const latest = snapshots[0];
+
+    const restoreResult = await undoManager.restoreSnapshotToFile(latest.id);
+    if (!restoreResult.ok) {
+      new Notice(`撤销失败: ${restoreResult.error.message}`);
+      return;
+    }
+
+    new Notice(`已撤销到快照 ${latest.id}`);
   }
 
   /**

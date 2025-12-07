@@ -7,21 +7,21 @@
  */
 
 import { Modal, App, Notice, TFile } from "obsidian";
-import { TaskQueue } from "../core/task-queue";
-import { Result } from "../types";
+import { PipelineOrchestrator } from "../core/pipeline-orchestrator";
+import { CRType, NoteState, Result } from "../types";
 
 /**
  * 增量改进模态框
  */
 export class IncrementalImproveModal extends Modal {
   private file: TFile;
-  private taskQueue: TaskQueue;
+  private pipeline: PipelineOrchestrator;
   private intentInput: HTMLTextAreaElement | null = null;
 
-  constructor(app: App, file: TFile, taskQueue: TaskQueue) {
+  constructor(app: App, file: TFile, pipeline: PipelineOrchestrator) {
     super(app);
     this.file = file;
-    this.taskQueue = taskQueue;
+    this.pipeline = pipeline;
   }
 
   onOpen(): void {
@@ -151,18 +151,20 @@ export class IncrementalImproveModal extends Modal {
     }
 
     try {
-      // 读取笔记内容
       const content = await this.app.vault.read(this.file);
-
-      // 解析 frontmatter 获取 UID
-      const uid = this.extractUid(content);
-      if (!uid) {
-        new Notice("无法从笔记中提取 UID，请确保笔记包含有效的 frontmatter");
+      const fm = this.extractFrontmatter(content);
+      if (!fm) {
+        new Notice("无法从笔记中提取 UID/类型，请确保 frontmatter 完整");
         return;
       }
 
-      // 创建任务
-      const taskResult = await this.createIncrementalTask(uid, intent, content);
+      const taskResult = this.createIncrementalTask(
+        fm.uid,
+        fm.type,
+        fm.status,
+        intent,
+        content
+      );
 
       if (!taskResult.ok) {
         new Notice(`创建任务失败: ${taskResult.error.message}`);
@@ -178,33 +180,48 @@ export class IncrementalImproveModal extends Modal {
     }
   }
 
-  /**
-   * 从内容中提取 UID
-   */
-  private extractUid(content: string): string | null {
-    // 匹配 frontmatter 中的 uid 字段
-    const uidMatch = content.match(/^---\s*\n(?:.*\n)*?uid:\s*([a-f0-9-]+)\s*\n/m);
-    return uidMatch ? uidMatch[1] : null;
+  private extractFrontmatter(content: string): { uid: string; type: CRType; status?: NoteState } | null {
+    const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
+    if (!match) return null;
+    const text = match[1];
+    const lines = text.split("\n");
+    let uid: string | null = null;
+    let type: CRType | null = null;
+    let status: NoteState | undefined;
+
+    lines.forEach((line) => {
+      const idx = line.indexOf(":");
+      if (idx === -1) return;
+      const key = line.substring(0, idx).trim();
+      const value = line.substring(idx + 1).trim();
+      if (key === "uid") uid = value;
+      if (key === "type") type = value as CRType;
+      if (key === "status") status = value as NoteState;
+    });
+
+    if (uid && type) {
+      return { uid, type, status };
+    }
+    return null;
   }
 
   /**
    * 创建增量改进任务
    */
-  private async createIncrementalTask(
+  private createIncrementalTask(
     uid: string,
+    noteType: CRType,
+    status: NoteState | undefined,
     intent: string,
     currentContent: string
-  ): Promise<Result<string>> {
-    // 入队任务
-    return await this.taskQueue.enqueue({
+  ): Result<string> {
+    return this.pipeline.startIncrementalPipeline({
       nodeId: uid,
-      taskType: "reason:incremental",
-      maxAttempts: 3,
-      payload: {
-        intent,
-        currentContent,
-        filePath: this.file.path,
-      },
+      filePath: this.file.path,
+      noteType,
+      currentContent,
+      userIntent: intent,
+      currentStatus: status
     });
   }
 

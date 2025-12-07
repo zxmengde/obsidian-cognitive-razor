@@ -116,6 +116,8 @@ export interface TaskRecord {
   undoPointer?: string;
   /** 锁键 */
   lockKey?: string;
+  /** 类型锁键 */
+  typeLockKey?: string;
   /** 创建时间 */
   created: string;
   /** 更新时间 */
@@ -341,6 +343,40 @@ export interface ProviderConfig {
 }
 
 /**
+ * 任务模型配置
+ * 允许为每种任务类型指定不同的模型和参数
+ */
+export interface TaskModelConfig {
+  /** Provider ID（引用 providers 中的配置） */
+  providerId: string;
+  /** 模型名称 */
+  model: string;
+  /** 温度参数（0-1） */
+  temperature?: number;
+  /** TopP 参数（0-1） */
+  topP?: number;
+  /** 最大 token 数 */
+  maxTokens?: number;
+}
+
+/**
+ * 目录方案
+ * 按知识类型组织笔记目录
+ */
+export interface DirectoryScheme {
+  /** Domain 目录，默认 "1-领域" */
+  Domain: string;
+  /** Issue 目录，默认 "2-议题" */
+  Issue: string;
+  /** Theory 目录，默认 "3-理论" */
+  Theory: string;
+  /** Entity 目录，默认 "4-实体" */
+  Entity: string;
+  /** Mechanism 目录，默认 "5-机制" */
+  Mechanism: string;
+}
+
+/**
  * 默认端点配置
  */
 export const DEFAULT_ENDPOINTS: Record<ProviderType, string> = {
@@ -350,23 +386,177 @@ export const DEFAULT_ENDPOINTS: Record<ProviderType, string> = {
 /**
  * 插件设置
  */
-export interface CognitiveRazorSettings {
+export interface PluginSettings {
   /** 插件版本 */
   version: string;
+  
+  /** 基础设置 */
+  language: "zh" | "en";
+  advancedMode: boolean;
+  /** 是否处于演示模式（关闭 API 调用，仅展示示例数据） */
+  demoMode?: boolean;
+  
+  /** 命名设置 */
+  namingTemplate: string;
+  
+  /** 存储设置 */
+  directoryScheme: DirectoryScheme;
+  
+  /** 去重设置 */
+  similarityThreshold: number;
+  topK: number;
+  
+  /** 队列设置 */
+  concurrency: number;
+  autoRetry: boolean;
+  maxRetryAttempts: number;
+  
+  /** 快照设置 */
+  maxSnapshots: number;
+  /** 快照最大保留天数（A-FUNC-02 可配置快照保留策略） */
+  maxSnapshotAgeDays: number;
+  
+  /** 功能开关 */
+  enableGrounding: boolean;
+  
   /** Provider 配置 */
   providers: Record<string, ProviderConfig>;
-  /** 默认 Provider ID */
   defaultProviderId: string;
-  /** 相似度阈值 (0-1) */
-  similarityThreshold: number;
-  /** 最大快照数量 */
-  maxSnapshots: number;
-  /** 并发任务数 */
-  concurrency: number;
-  /** 高级模式 */
-  advancedMode: boolean;
+  
+  /** 任务模型配置 */
+  taskModels: Record<TaskType, TaskModelConfig>;
+  
   /** 日志级别 */
   logLevel: "debug" | "info" | "warn" | "error";
+}
+
+/**
+ * 向量索引文件结构
+ */
+export interface VectorIndexFile {
+  /** 索引版本 */
+  version: string;
+  /** 嵌入模型标识 */
+  model: string;
+  /** 向量维度 */
+  dimension: number;
+  /** 按类型分桶 */
+  buckets: Record<CRType, VectorEntry[]>;
+  /** 元数据 */
+  metadata: {
+    totalCount: number;
+    lastUpdated: string;
+  };
+}
+
+/**
+ * 快照记录
+ */
+export interface SnapshotRecord {
+  /** 快照 ID（UUID） */
+  id: string;
+  /** 关联的概念 UID */
+  nodeId: string;
+  /** 关联的任务 ID */
+  taskId: string;
+  /** 原文件路径 */
+  path: string;
+  /** 原始 Markdown 内容 */
+  content: string;
+  /** 创建时间 */
+  created: string;
+  /** 文件大小（字节） */
+  fileSize: number;
+  /** 内容校验和（MD5） */
+  checksum: string;
+}
+
+/**
+ * 快照索引
+ */
+export interface SnapshotIndex {
+  /** 版本 */
+  version: string;
+  /** 快照列表 */
+  snapshots: SnapshotRecord[];
+  /** 保留策略 */
+  retentionPolicy: {
+    maxCount: number;
+    maxAgeDays: number;
+  };
+}
+
+/**
+ * 快照元数据（用于列表显示）
+ */
+export interface SnapshotMetadata {
+  /** 快照 ID */
+  id: string;
+  /** 关联的概念 UID */
+  nodeId: string;
+  /** 关联的任务 ID */
+  taskId: string;
+  /** 原文件路径 */
+  path: string;
+  /** 创建时间 */
+  created: string;
+  /** 文件大小（字节） */
+  fileSize: number;
+}
+
+/**
+ * 快照（完整内容）
+ * 与 SnapshotRecord 相同，用于语义区分
+ */
+export type Snapshot = SnapshotRecord;
+
+/**
+ * 重复对存储
+ */
+export interface DuplicatePairsStore {
+  /** 版本 */
+  version: string;
+  /** 重复对列表 */
+  pairs: DuplicatePair[];
+  /** 被标记为非重复的 pair ID 列表（历史记录） */
+  dismissedPairs: string[];
+}
+
+/**
+ * 队列状态文件
+ */
+export interface QueueStateFile {
+  /** 队列状态版本 */
+  version: string;
+  /** 任务列表 */
+  tasks: TaskRecord[];
+  /** 当前并发数 */
+  concurrency: number;
+  /** 是否暂停 */
+  paused: boolean;
+  /** 统计信息 */
+  stats: {
+    totalProcessed: number;
+    totalFailed: number;
+    totalCancelled: number;
+    lastProcessedAt?: string;
+  };
+  /** 锁状态 */
+  locks: LockRecord[];
+}
+
+/**
+ * 锁记录
+ */
+export interface LockRecord {
+  /** 锁键（nodeId 或 type） */
+  key: string;
+  /** 锁类型 */
+  type: "node" | "type";
+  /** 持有锁的任务 ID */
+  taskId: string;
+  /** 获取时间 */
+  acquiredAt: string;
 }
 
 // ============================================================================
@@ -394,8 +584,28 @@ export interface StandardizedConcept {
     Entity: number;
     Mechanism: number;
   };
+  /** 主要类型 */
+  primaryType?: CRType;
   /** 核心定义 */
   coreDefinition: string;
+}
+
+// ============================================================================
+// 任务结果
+// ============================================================================
+
+/**
+ * 任务结果
+ */
+export interface TaskResult {
+  /** 任务 ID */
+  taskId: string;
+  /** 任务状态 */
+  state: TaskState;
+  /** 结果数据 */
+  data?: Record<string, unknown>;
+  /** 错误信息 */
+  error?: TaskError;
 }
 
 // ============================================================================
@@ -579,6 +789,56 @@ export interface ProviderConfigModalOptions {
 }
 
 // ============================================================================
+// 验证系统
+// ============================================================================
+
+/**
+ * 验证上下文
+ */
+export interface ValidationContext {
+  /** 知识类型 */
+  type?: CRType;
+  /** 向量嵌入（用于语义去重） */
+  embedding?: number[];
+  /** 向量索引（用于语义去重） */
+  vectorIndex?: unknown;
+  /** 相似度阈值 */
+  similarityThreshold?: number;
+}
+
+/**
+ * 验证结果
+ */
+export interface ValidationResult {
+  /** 是否通过验证 */
+  valid: boolean;
+  /** 解析后的数据（验证通过时） */
+  data?: Record<string, unknown>;
+  /** 错误列表 */
+  errors?: ValidationError[];
+  /** 检测到的重复对（语义去重阶段） */
+  duplicates?: SearchResult[];
+}
+
+/**
+ * 验证错误
+ */
+export interface ValidationError {
+  /** 错误码 */
+  code: string;
+  /** 错误类型 */
+  type: string;
+  /** 错误消息 */
+  message: string;
+  /** 错误位置（字段路径） */
+  location?: string;
+  /** 原始输出（用于调试） */
+  rawOutput?: string;
+  /** 修复建议 */
+  fixInstruction?: string;
+}
+
+// ============================================================================
 // 工具函数类型
 // ============================================================================
 
@@ -594,4 +854,539 @@ export function ok<T>(value: T): Ok<T> {
  */
 export function err(code: string, message: string, details?: unknown): Err {
   return { ok: false, error: { code, message, details } };
+}
+
+// ============================================================================
+// 核心接口定义
+// ============================================================================
+
+/**
+ * 任务队列接口
+ */
+export interface ITaskQueue {
+  /**
+   * 将任务加入队列
+   * @param task 任务记录（不含 id、created、updated）
+   * @returns 任务 ID 或错误
+   */
+  enqueue(task: Omit<TaskRecord, 'id' | 'created' | 'updated'>): Result<string>;
+  
+  /**
+   * 取消任务
+   * @param taskId 任务 ID
+   * @returns 是否成功取消
+   */
+  cancel(taskId: string): Result<boolean>;
+  
+  /**
+   * 暂停队列
+   */
+  pause(): void;
+  
+  /**
+   * 恢复队列
+   */
+  resume(): void;
+  
+  /**
+   * 获取队列状态
+   */
+  getStatus(): QueueStatus;
+  
+  /**
+   * 订阅队列事件
+   * @param listener 事件监听器
+   * @returns 取消订阅函数
+   */
+  subscribe(listener: QueueEventListener): () => void;
+  
+  /**
+   * 获取任务
+   * @param taskId 任务 ID
+   * @returns 任务记录或 undefined
+   */
+  getTask(taskId: string): TaskRecord | undefined;
+}
+
+/**
+ * 任务执行器接口
+ */
+export interface ITaskRunner {
+  /**
+   * 执行任务
+   * @param task 任务记录
+   * @returns 任务结果
+   */
+  run(task: TaskRecord): Promise<Result<TaskResult>>;
+  
+  /**
+   * 中断任务执行
+   * @param taskId 任务 ID
+   */
+  abort(taskId: string): void;
+}
+
+/**
+ * 锁管理器接口
+ */
+export interface ILockManager {
+  /**
+   * 获取锁
+   * @param key 锁键（nodeId 或 type）
+   * @param type 锁类型
+   * @param taskId 任务 ID
+   * @returns 锁 ID 或错误
+   */
+  acquire(key: string, type: 'node' | 'type', taskId: string): Result<string>;
+  
+  /**
+   * 释放锁
+   * @param lockId 锁 ID
+   */
+  release(lockId: string): void;
+  
+  /**
+   * 检查是否被锁定
+   * @param key 锁键
+   */
+  isLocked(key: string): boolean;
+  
+  /**
+   * 获取所有活跃锁
+   */
+  getActiveLocks(): LockRecord[];
+
+  /**
+   * 按任务释放锁（用于恢复/清理）
+   */
+  releaseByTaskId(taskId: string): void;
+
+  /**
+   * 从持久化记录恢复锁状态
+   */
+  restoreLocks(locks: LockRecord[]): void;
+
+  /**
+   * 清空所有锁
+   */
+  clear(): void;
+}
+
+/**
+ * Provider 管理器接口
+ */
+export interface IProviderManager {
+  /**
+   * 调用聊天 API
+   * @param request 聊天请求
+   * @returns 聊天响应
+   */
+  chat(request: ChatRequest): Promise<Result<ChatResponse>>;
+  
+  /**
+   * 调用嵌入 API
+   * @param request 嵌入请求
+   * @returns 嵌入响应
+   */
+  embed(request: EmbedRequest): Promise<Result<EmbedResponse>>;
+  
+  /**
+   * 检查 Provider 可用性
+   * @param providerId Provider ID
+   * @param forceRefresh 是否强制刷新缓存
+   * @returns Provider 能力
+   */
+  checkAvailability(providerId: string, forceRefresh?: boolean): Promise<Result<ProviderCapabilities>>;
+  
+  /**
+   * 清除可用性缓存
+   * @param providerId 可选，指定 Provider ID；不指定则清除所有
+   */
+  clearAvailabilityCache(providerId?: string): void;
+  
+  /**
+   * 获取已配置的 Provider 列表
+   */
+  getConfiguredProviders(): ProviderInfo[];
+  
+  /**
+   * 设置 Provider 配置
+   * @param id Provider ID
+   * @param config Provider 配置
+   */
+  setProvider(id: string, config: ProviderConfig): void;
+  
+  /**
+   * 移除 Provider
+   * @param id Provider ID
+   */
+  removeProvider(id: string): void;
+}
+
+/**
+ * 向量索引接口
+ */
+export interface IVectorIndex {
+  /**
+   * 添加或更新向量条目
+   * @param entry 向量条目
+   */
+  upsert(entry: VectorEntry): Promise<Result<void>>;
+  
+  /**
+   * 删除向量条目
+   * @param uid 概念 UID
+   */
+  delete(uid: string): Promise<Result<void>>;
+  
+  /**
+   * 搜索相似概念
+   * @param type 知识类型
+   * @param embedding 向量嵌入
+   * @param topK 返回数量
+   * @returns 搜索结果列表
+   */
+  search(type: CRType, embedding: number[], topK: number): Promise<Result<SearchResult[]>>;
+  
+  /**
+   * 获取索引统计信息
+   */
+  getStats(): IndexStats;
+
+  /**
+   * 根据 UID 获取条目（用于增量/合并写入后更新索引）
+   */
+  getEntry(uid: string): VectorEntry | undefined;
+}
+
+/**
+ * 撤销管理器接口
+ */
+export interface IUndoManager {
+  /**
+   * 初始化撤销管理器
+   */
+  initialize(): Promise<Result<void>>;
+  
+  /**
+   * 创建快照
+   * 遵循 Requirements 2.7：快照包含 id, nodeId, taskId, path, content, created, fileSize, checksum
+   * 
+   * @param filePath 文件路径
+   * @param content 文件内容
+   * @param taskId 关联的任务 ID
+   * @param nodeId 可选的节点 ID，如果不提供则从文件路径提取
+   * @returns 快照 ID
+   */
+  createSnapshot(filePath: string, content: string, taskId: string, nodeId?: string): Promise<Result<string>>;
+  
+  /**
+   * 恢复快照（仅读取快照内容，不写入文件）
+   * @param snapshotId 快照 ID
+   * @returns 快照内容
+   */
+  restoreSnapshot(snapshotId: string): Promise<Result<Snapshot>>;
+  
+  /**
+   * 恢复快照到文件
+   * 遵循 Requirements 2.8：使用原子写入（temp file + rename）确保数据完整性
+   * @param snapshotId 快照 ID
+   * @returns 恢复的快照内容
+   */
+  restoreSnapshotToFile(snapshotId: string): Promise<Result<Snapshot>>;
+  
+  /**
+   * 删除快照
+   * @param snapshotId 快照 ID
+   */
+  deleteSnapshot(snapshotId: string): Promise<Result<void>>;
+  
+  /**
+   * 列出所有快照
+   * @returns 快照元数据列表
+   */
+  listSnapshots(): Promise<Result<SnapshotMetadata[]>>;
+  
+  /**
+   * 清理过期快照
+   * @param maxAgeMs 最大保留时间（毫秒）
+   * @returns 清理的快照数量
+   */
+  cleanupExpiredSnapshots(maxAgeMs: number): Promise<Result<number>>;
+}
+
+/**
+ * 重复管理器接口
+ */
+export interface IDuplicateManager {
+  /**
+   * 检测重复概念
+   * @param nodeId 概念 UID
+   * @param type 知识类型
+   * @param embedding 向量嵌入
+   * @returns 重复对列表
+   */
+  detect(nodeId: string, type: CRType, embedding: number[]): Promise<Result<DuplicatePair[]>>;
+  
+  /**
+   * 获取待处理的重复对
+   */
+  getPendingPairs(): DuplicatePair[];
+
+  /**
+   * 更新重复对状态
+   */
+  updateStatus(pairId: string, status: DuplicatePairStatus): Promise<Result<void>>;
+  
+  /**
+   * 移除重复对
+   */
+  removePair(pairId: string): Promise<Result<void>>;
+  
+  /**
+   * 标记为非重复
+   * @param pairId 重复对 ID
+   */
+  markAsNonDuplicate(pairId: string): Promise<Result<void>>;
+  
+  /**
+   * 开始合并
+   * @param pairId 重复对 ID
+   * @returns 合并任务 ID
+   */
+  startMerge(pairId: string): Promise<Result<string>>;
+  
+  /**
+   * 完成合并
+   * @param pairId 重复对 ID
+   * @param keepNodeId 保留的概念 UID
+   */
+  completeMerge(pairId: string, keepNodeId: string): Promise<Result<void>>;
+  
+  /**
+   * 订阅重复对变更
+   * @param listener 监听器
+   * @returns 取消订阅函数
+   */
+  subscribe(listener: (pairs: DuplicatePair[]) => void): () => void;
+}
+
+/**
+ * 提示词管理器接口
+ */
+export interface IPromptManager {
+  /**
+   * 构建 prompt
+   * @param taskType 任务类型
+   * @param slots 上下文槽位
+   * @param conceptType 知识类型（可选，用于 reason:new 任务选择正确的模板）
+   * @returns 完整的 prompt
+   */
+  build(taskType: TaskType, slots: Record<string, string>, conceptType?: string): Result<string>;
+  
+  /**
+   * 验证模板
+   * @param templateId 模板 ID
+   * @returns 是否有效
+   */
+  validateTemplate(templateId: string): Result<boolean>;
+  
+  /**
+   * 获取必需槽位
+   * @param taskType 任务类型
+   * @returns 必需槽位列表
+   */
+  getRequiredSlots(taskType: TaskType): string[];
+  
+  /**
+   * 获取可选槽位
+   * @param taskType 任务类型
+   * @returns 可选槽位列表
+   */
+  getOptionalSlots(taskType: TaskType): string[];
+
+  /**
+   * 解析模板 ID
+   * 遵循 A-FUNC-03：用于入队前硬校验
+   * @param taskType 任务类型
+   * @param conceptType 知识类型（可选）
+   * @returns 模板 ID
+   */
+  resolveTemplateId(taskType: TaskType, conceptType?: string): string;
+
+  /**
+   * 检查模板是否已加载
+   * 遵循 A-FUNC-03：用于入队前硬校验
+   * @param templateId 模板 ID
+   * @returns 是否已加载
+   */
+  hasTemplate(templateId: string): boolean;
+}
+
+/**
+ * 验证器接口
+ */
+export interface IValidator {
+  /**
+   * 验证输出
+   * @param output 输出字符串
+   * @param schema JSON Schema
+   * @param rules 业务规则列表
+   * @param context 验证上下文
+   * @returns 验证结果
+   */
+  validate(
+    output: string,
+    schema: object,
+    rules: string[],
+    context?: ValidationContext
+  ): Promise<ValidationResult>;
+}
+
+/**
+ * 设置存储接口
+ */
+export interface ISettingsStore {
+  /**
+   * 获取设置
+   */
+  getSettings(): PluginSettings;
+  
+  /**
+   * 更新设置
+   * @param partial 部分设置
+   */
+  updateSettings(partial: Partial<PluginSettings>): Promise<Result<void>>;
+  
+  /**
+   * 导出设置
+   * @returns JSON 字符串
+   */
+  exportSettings(): string;
+  
+  /**
+   * 导入设置
+   * @param json JSON 字符串
+   */
+  importSettings(json: string): Promise<Result<void>>;
+  
+  /**
+   * 重置为默认值
+   */
+  resetToDefaults(): Promise<Result<void>>;
+  
+  /**
+   * 订阅设置变更
+   * @param listener 监听器
+   * @returns 取消订阅函数
+   */
+  subscribe(listener: (settings: PluginSettings) => void): () => void;
+}
+
+/**
+ * 文件存储接口
+ */
+export interface IFileStorage {
+  /**
+   * 初始化目录结构
+   * 创建 data/, data/snapshots/ 目录
+   * 初始化 queue-state.json, vector-index.json, duplicate-pairs.json, snapshots/index.json
+   * @returns 初始化结果
+   */
+  initialize(): Promise<Result<void>>;
+  
+  /**
+   * 检查是否已初始化
+   */
+  isInitialized(): boolean;
+  
+  /**
+   * 读取文件
+   * @param path 文件路径
+   * @returns 文件内容
+   */
+  read(path: string): Promise<Result<string>>;
+  
+  /**
+   * 写入文件（普通写入）
+   * @param path 文件路径
+   * @param content 文件内容
+   */
+  write(path: string, content: string): Promise<Result<void>>;
+  
+  /**
+   * 原子写入文件
+   * 写入临时文件 .tmp → 校验完整性 → 重命名为目标文件
+   * 用于关键数据写入（如快照恢复），确保数据完整性
+   * @param path 文件路径
+   * @param content 文件内容
+   */
+  atomicWrite(path: string, content: string): Promise<Result<void>>;
+  
+  /**
+   * 删除文件
+   * @param path 文件路径
+   */
+  delete(path: string): Promise<Result<void>>;
+  
+  /**
+   * 检查文件是否存在
+   * @param path 文件路径
+   */
+  exists(path: string): Promise<boolean>;
+  
+  /**
+   * 确保目录存在
+   * @param path 目录路径
+   */
+  ensureDir(path: string): Promise<Result<void>>;
+}
+
+/**
+ * 日志记录器接口
+ */
+export interface ILogger {
+  /**
+   * 调试日志
+   * @param module 模块名称
+   * @param message 消息
+   * @param context 上下文数据
+   */
+  debug(module: string, message: string, context?: Record<string, unknown>): void;
+  
+  /**
+   * 信息日志
+   * @param module 模块名称
+   * @param message 消息
+   * @param context 上下文数据
+   */
+  info(module: string, message: string, context?: Record<string, unknown>): void;
+  
+  /**
+   * 警告日志
+   * @param module 模块名称
+   * @param message 消息
+   * @param context 上下文数据
+   */
+  warn(module: string, message: string, context?: Record<string, unknown>): void;
+  
+  /**
+   * 错误日志
+   * @param module 模块名称
+   * @param message 消息
+   * @param error 错误对象
+   * @param context 上下文数据
+   */
+  error(module: string, message: string, error?: Error, context?: Record<string, unknown>): void;
+  
+  /**
+   * 获取日志内容
+   * @returns 日志内容
+   */
+  getLogContent(): string;
+  
+  /**
+   * 清空日志
+   */
+  clear(): void;
 }

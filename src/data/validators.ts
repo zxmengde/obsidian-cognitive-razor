@@ -380,7 +380,7 @@ export function validateUrl(url: string): string | null {
     }
 
     return null; // 有效
-  } catch (error) {
+  } catch {
     return "无效的 URL 格式";
   }
 }

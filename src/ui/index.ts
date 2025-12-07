@@ -15,6 +15,9 @@ export type { DiffType, DiffItem, DiffData } from "./diff-view";
 
 export { StatusBadge } from "./status-badge";
 
+export { UndoNotification } from "./undo-notification";
+export type { UndoNotificationOptions } from "./undo-notification";
+
 export { CommandDispatcher } from "./command-dispatcher";
 export type { CommandHandler, CommandDefinition } from "./command-dispatcher";
 

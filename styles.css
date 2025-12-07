@@ -93,6 +93,54 @@
   margin: 0;
 }
 
+/* 可折叠标题样式 */
+.cr-collapsible-header {
+  cursor: pointer;
+  user-select: none;
+  padding: var(--cr-spacing-sm);
+  margin: calc(-1 * var(--cr-spacing-md));
+  margin-bottom: var(--cr-spacing-md);
+  border-radius: var(--cr-radius-md) var(--cr-radius-md) 0 0;
+  transition: background-color 0.2s ease;
+}
+
+.cr-collapsible-header:hover {
+  background-color: var(--cr-bg-modifier);
+}
+
+.cr-collapse-icon {
+  margin-right: var(--cr-spacing-sm);
+  font-size: 0.8em;
+  color: var(--cr-text-muted);
+  transition: transform 0.2s ease;
+}
+
+.cr-section-title {
+  flex: 1;
+  margin: 0 !important;
+}
+
+/* 折叠内容样式 */
+.cr-section-content {
+  overflow: hidden;
+  transition: max-height 0.3s ease, opacity 0.2s ease;
+  max-height: 2000px;
+  opacity: 1;
+}
+
+.cr-section-content.cr-collapsed {
+  max-height: 0;
+  opacity: 0;
+  margin: 0;
+  padding: 0;
+}
+
+/* 折叠状态下的标题样式 */
+.cr-collapsible-header.cr-header-collapsed {
+  margin-bottom: 0;
+  border-radius: var(--cr-radius-md);
+}
+
 /* 创建概念区域 */
 .cr-create-concept .cr-input-container {
   margin-bottom: var(--cr-spacing-md);
@@ -4215,4 +4263,45 @@ button:disabled,
   .cr-panel-content-wrapper {
     max-height: 300px;
   }
+}
+
+/* 统一 Diff 视图（用于写入预览、合并、增量改进等） */
+.cr-unified-diff {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 8px;
+  background-color: var(--background-secondary);
+  font-family: var(--font-monospace);
+  max-height: 320px;
+  overflow: auto;
+}
+
+.cr-diff-row {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  gap: 8px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  align-items: center;
+}
+
+.cr-diff-row.cr-add {
+  background: rgba(46, 160, 67, 0.12);
+}
+
+.cr-diff-row.cr-remove {
+  background: rgba(215, 58, 73, 0.12);
+}
+
+.cr-diff-row.cr-context {
+  background: transparent;
+}
+
+.cr-diff-prefix {
+  font-weight: bold;
+  color: var(--text-muted);
+}
+
+.cr-diff-text {
+  white-space: pre-wrap;
 }

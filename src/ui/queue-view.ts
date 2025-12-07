@@ -8,7 +8,7 @@
  */
 
 import { ItemView, WorkspaceLeaf, Notice } from "obsidian";
-import type { TaskRecord, TaskState, QueueStatus } from "../types";
+import type { TaskRecord, TaskState } from "../types";
 import type CognitiveRazorPlugin from "../../main";
 
 export const QUEUE_VIEW_TYPE = "cognitive-razor-queue";
@@ -23,6 +23,7 @@ export class QueueView extends ItemView {
   private concurrencyInput: HTMLInputElement | null = null;
   private pauseBtn: HTMLButtonElement | null = null;
   private expandedTaskIds: Set<string> = new Set();
+  private queueUnsubscribe: (() => void) | null = null;
 
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
@@ -33,6 +34,8 @@ export class QueueView extends ItemView {
    */
   setPlugin(plugin: CognitiveRazorPlugin): void {
     this.plugin = plugin;
+    const taskQueue = this.plugin.getComponents().taskQueue;
+    this.queueUnsubscribe = taskQueue.subscribe(() => this.refresh());
   }
 
   getViewType(): string {
@@ -61,12 +64,19 @@ export class QueueView extends ItemView {
     // 渲染任务列表
     this.tasksContainer = container.createDiv({ cls: "cr-tasks-container" });
     this.renderEmptyState();
+
+    // 初次加载刷新
+    this.refresh();
   }
 
   async onClose(): Promise<void> {
     // 清理资源
     this.tasksContainer = null;
     this.concurrencyInput = null;
+    if (this.queueUnsubscribe) {
+      this.queueUnsubscribe();
+      this.queueUnsubscribe = null;
+    }
   }
 
   /**
@@ -179,6 +189,10 @@ export class QueueView extends ItemView {
 
   /**
    * 更新任务列表
+   * 
+   * 按状态分组显示任务，顺序为：Running, Pending, Completed, Failed
+   * 符合 Requirements 5.6: WHEN the QueueView renders THEN the QueueView SHALL 
+   * show tasks grouped by state: Running, Pending, Completed, Failed
    */
   public updateTasks(tasks: TaskRecord[]): void {
     if (!this.tasksContainer) return;
@@ -198,13 +212,17 @@ export class QueueView extends ItemView {
     // 按状态分组
     const groups = this.groupTasksByState(filteredTasks);
 
-    // 渲染每个分组
-    Object.entries(groups).forEach(([state, stateTasks]) => {
-      if (stateTasks.length === 0) return;
+    // 按照 Requirements 5.6 定义的顺序渲染分组: Running, Pending, Completed, Failed
+    // Cancelled 状态放在最后（不在规范中明确要求，但保留以完整显示）
+    const stateOrder: TaskState[] = ["Running", "Pending", "Completed", "Failed", "Cancelled"];
+
+    stateOrder.forEach(state => {
+      const stateTasks = groups[state];
+      if (!stateTasks || stateTasks.length === 0) return;
 
       const group = this.tasksContainer!.createDiv({ cls: "cr-task-group" });
       group.createEl("h3", {
-        text: `${this.getStateLabel(state as TaskState)} (${stateTasks.length})`,
+        text: `${this.getStateLabel(state)} (${stateTasks.length})`,
         cls: "cr-group-title"
       });
 
@@ -232,7 +250,7 @@ export class QueueView extends ItemView {
     const header = info.createDiv({ cls: "cr-task-header" });
     header.style.cursor = "pointer";
     
-    const expandIcon = header.createEl("span", {
+    header.createEl("span", {
       text: isExpanded ? "▼" : "▶",
       cls: "cr-expand-icon"
     });
@@ -462,8 +480,7 @@ export class QueueView extends ItemView {
 
     // 更新设置
     const components = this.plugin.getComponents();
-    components.settings.concurrency = value;
-    components.settingsStore.save();
+    components.settingsStore.updateSettings({ concurrency: value });
 
     new Notice(`并发数已设置为 ${value}`);
   }
@@ -558,9 +575,11 @@ export class QueueView extends ItemView {
     }
 
     // 创建新任务（相同 payload）
-    const result = await taskQueue.enqueue({
+    const result = taskQueue.enqueue({
       nodeId: task.nodeId,
       taskType: task.taskType,
+      state: "Pending",
+      attempt: 0,
       providerRef: task.providerRef,
       promptRef: task.promptRef,
       maxAttempts: task.maxAttempts,

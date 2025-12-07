@@ -1,250 +1,432 @@
 /**
- * UndoManager 组件
- * 负责快照创建、恢复和清理策略
- * 验证需求：5.1, 5.3, 5.4
+ * 撤销管理器
+ * 负责快照的创建、恢复和管理
  */
 
-import { Result, ok, err } from "../types";
-import { FileStorage } from "../data/file-storage";
+import {
+  IUndoManager,
+  IFileStorage,
+  ILogger,
+  SnapshotRecord,
+  SnapshotIndex,
+  Snapshot,
+  SnapshotMetadata,
+  Result,
+  ok,
+  err
+} from "../types";
+import { createHash } from "crypto";
 
-/**
- * 快照记录
- */
-export interface Snapshot {
-  /** 快照 ID */
-  id: string;
-  /** 原始文件路径（相对于 vault 根目录） */
-  filePath: string;
-  /** 快照内容 */
-  content: string;
-  /** 创建时间 */
-  created: string;
-  /** 操作描述 */
-  operation: string;
-}
-
-/**
- * 快照元数据（用于索引）
- */
-export interface SnapshotMetadata {
-  /** 快照 ID */
-  id: string;
-  /** 原始文件路径 */
-  filePath: string;
-  /** 创建时间 */
-  created: string;
-  /** 操作描述 */
-  operation: string;
-}
-
-/**
- * UndoManager 配置
- */
-export interface UndoManagerConfig {
-  /** FileStorage 实例 */
-  storage: FileStorage;
-  /** 最大快照数量 */
-  maxSnapshots: number;
-  /** 快照存储目录 */
-  snapshotsDir?: string;
-}
-
-/**
- * UndoManager 组件
- */
-export class UndoManager {
-  private storage: FileStorage;
-  private maxSnapshots: number;
+export class UndoManager implements IUndoManager {
+  private fileStorage: IFileStorage;
+  private logger: ILogger;
   private snapshotsDir: string;
-  private metadataFile: string;
+  private indexPath: string;
+  private maxSnapshots: number;
+  private maxAgeDays: number;
+  private index: SnapshotIndex | null;
 
-  constructor(config: UndoManagerConfig) {
-    this.storage = config.storage;
-    this.maxSnapshots = config.maxSnapshots;
-    this.snapshotsDir = config.snapshotsDir || "snapshots";
-    this.metadataFile = `${this.snapshotsDir}/index.json`;
+  constructor(
+    fileStorage: IFileStorage,
+    logger: ILogger,
+    snapshotsDir: string = "data/snapshots",
+    maxSnapshots: number = 100,
+    maxAgeDays: number = 30
+  ) {
+    this.fileStorage = fileStorage;
+    this.logger = logger;
+    this.snapshotsDir = snapshotsDir;
+    this.indexPath = `${snapshotsDir}/index.json`;
+    this.maxSnapshots = maxSnapshots;
+    this.maxAgeDays = maxAgeDays;
+    this.index = null;
+
+    this.logger.debug("UndoManager", "UndoManager 初始化完成", {
+      snapshotsDir,
+      maxSnapshots,
+      maxAgeDays
+    });
   }
 
   /**
-   * 初始化快照目录
+   * 更新保留策略配置
+   * 遵循 A-FUNC-02：快照保留策略配置化
+   */
+  updateRetentionPolicy(maxSnapshots?: number, maxAgeDays?: number): void {
+    if (maxSnapshots !== undefined) {
+      this.maxSnapshots = maxSnapshots;
+    }
+    if (maxAgeDays !== undefined) {
+      this.maxAgeDays = maxAgeDays;
+    }
+    
+    // 更新索引中的保留策略
+    if (this.index) {
+      this.index.retentionPolicy = {
+        maxCount: this.maxSnapshots,
+        maxAgeDays: this.maxAgeDays
+      };
+      // 异步保存索引
+      this.saveIndex().catch(err => {
+        this.logger.error("UndoManager", "保存保留策略失败", err as Error);
+      });
+    }
+    
+    this.logger.info("UndoManager", "保留策略已更新", {
+      maxSnapshots: this.maxSnapshots,
+      maxAgeDays: this.maxAgeDays
+    });
+  }
+
+  /**
+   * 初始化撤销管理器
    */
   async initialize(): Promise<Result<void>> {
-    // 确保快照目录存在
-    const dirResult = await this.storage.ensureDir(this.snapshotsDir);
-    if (!dirResult.ok) {
-      return dirResult;
-    }
-
-    // 如果元数据文件不存在，创建空索引
-    const exists = await this.storage.exists(this.metadataFile);
-    if (!exists) {
-      const initResult = await this.storage.writeJSON(this.metadataFile, []);
-      if (!initResult.ok) {
-        return initResult;
+    try {
+      // 确保快照目录存在
+      const dirResult = await this.fileStorage.ensureDir(this.snapshotsDir);
+      if (!dirResult.ok) {
+        return dirResult;
       }
-    }
 
-    return ok(undefined);
+      // 尝试加载索引文件
+      const indexExists = await this.fileStorage.exists(this.indexPath);
+      
+      if (indexExists) {
+        const readResult = await this.fileStorage.read(this.indexPath);
+        if (!readResult.ok) {
+          this.logger.error("UndoManager", "读取快照索引失败", undefined, {
+            error: readResult.error
+          });
+          return readResult;
+        }
+
+        try {
+          this.index = JSON.parse(readResult.value);
+          this.logger.info("UndoManager", "快照索引加载成功", {
+            snapshotCount: this.index!.snapshots.length
+          });
+        } catch (parseError) {
+          this.logger.error("UndoManager", "解析快照索引失败", parseError as Error);
+          // 创建新索引
+          this.index = this.createEmptyIndex();
+        }
+      } else {
+        // 创建新索引
+        this.index = this.createEmptyIndex();
+        const writeResult = await this.saveIndex();
+        if (!writeResult.ok) {
+          return writeResult;
+        }
+        this.logger.info("UndoManager", "创建新的快照索引");
+      }
+
+      return ok(undefined);
+    } catch (error) {
+      this.logger.error("UndoManager", "初始化失败", error as Error);
+      return err("E303", "初始化撤销管理器失败", error);
+    }
   }
 
   /**
    * 创建快照
-   * 在写入操作前调用，保存文件当前状态
+   * 遵循 Requirements 2.7：快照包含 id, nodeId, taskId, path, content, created, fileSize, checksum
+   * 
+   * @param filePath 文件路径
+   * @param content 文件内容
+   * @param taskId 关联的任务 ID
+   * @param nodeId 可选的节点 ID，如果不提供则从文件路径提取
+   * @returns 快照 ID
    */
   async createSnapshot(
     filePath: string,
     content: string,
-    operation: string
+    taskId: string,
+    nodeId?: string
   ): Promise<Result<string>> {
-    // 生成快照 ID
-    const snapshotId = this.generateSnapshotId();
-    const timestamp = new Date().toISOString();
+    try {
+      if (!this.index) {
+        return err("E303", "撤销管理器未初始化");
+      }
 
-    // 创建快照对象
-    const snapshot: Snapshot = {
-      id: snapshotId,
-      filePath,
-      content,
-      created: timestamp,
-      operation,
-    };
+      // 验证必需参数
+      if (!filePath || typeof filePath !== 'string') {
+        return err("E303", "文件路径不能为空");
+      }
+      if (content === undefined || content === null) {
+        return err("E303", "文件内容不能为空");
+      }
+      if (!taskId || typeof taskId !== 'string') {
+        return err("E303", "任务 ID 不能为空");
+      }
 
-    // 保存快照内容
-    const snapshotPath = `${this.snapshotsDir}/${snapshotId}.json`;
-    const saveResult = await this.storage.writeJSON(snapshotPath, snapshot);
-    if (!saveResult.ok) {
-      return err(
-        "SNAPSHOT_CREATE_ERROR",
-        `创建快照失败: ${snapshotId}`,
-        saveResult.error
+      // 生成快照 ID
+      const snapshotId = this.generateSnapshotId();
+      
+      // 计算校验和
+      const checksum = this.calculateChecksum(content);
+      
+      // 确定 nodeId：优先使用传入的值，否则从路径提取
+      const resolvedNodeId = nodeId || this.extractNodeIdFromPath(filePath);
+      
+      // 计算文件大小（字节）
+      const fileSize = Buffer.byteLength(content, 'utf8');
+      
+      // 创建快照记录 - 确保包含所有必需字段
+      // Property 11: Snapshot Record Completeness
+      // 快照记录必须包含: id, nodeId, taskId, path, content, created, fileSize, checksum
+      const snapshot: SnapshotRecord = {
+        id: snapshotId,
+        nodeId: resolvedNodeId,
+        taskId: taskId,
+        path: filePath,
+        content,
+        created: new Date().toISOString(),
+        fileSize,
+        checksum
+      };
+      
+      // 验证快照记录完整性
+      const validationResult = this.validateSnapshotRecord(snapshot);
+      if (!validationResult.ok) {
+        return validationResult as Result<string>;
+      }
+
+      // 保存快照文件
+      const snapshotPath = `${this.snapshotsDir}/${snapshotId}.json`;
+      const writeResult = await this.fileStorage.write(
+        snapshotPath,
+        JSON.stringify(snapshot, null, 2)
       );
+      
+      if (!writeResult.ok) {
+        this.logger.error("UndoManager", "保存快照文件失败", undefined, {
+          snapshotId,
+          error: writeResult.error
+        });
+        return writeResult as Result<string>;
+      }
+
+      // 更新索引
+      this.index.snapshots.push(snapshot);
+
+      // 清理过期快照（如果超过上限）
+      if (this.index.snapshots.length > this.maxSnapshots) {
+        await this.cleanupOldestSnapshots(this.index.snapshots.length - this.maxSnapshots);
+      }
+
+      // 保存索引
+      const saveIndexResult = await this.saveIndex();
+      if (!saveIndexResult.ok) {
+        return saveIndexResult as Result<string>;
+      }
+
+      this.logger.info("UndoManager", `快照已创建: ${snapshotId}`, {
+        snapshotId,
+        filePath,
+        fileSize: snapshot.fileSize,
+        taskId
+      });
+
+      return ok(snapshotId);
+    } catch (error) {
+      this.logger.error("UndoManager", "创建快照失败", error as Error, {
+        filePath,
+        taskId
+      });
+      return err("E303", "创建快照失败", error);
     }
-
-    // 更新元数据索引
-    const metadata: SnapshotMetadata = {
-      id: snapshotId,
-      filePath,
-      created: timestamp,
-      operation,
-    };
-
-    const updateResult = await this.addToIndex(metadata);
-    if (!updateResult.ok) {
-      // 如果索引更新失败，尝试删除快照文件
-      await this.storage.deleteFile(snapshotPath);
-      return err(
-        "SNAPSHOT_INDEX_ERROR",
-        `更新快照索引失败: ${snapshotId}`,
-        updateResult.error
-      );
-    }
-
-    // 检查并清理旧快照
-    await this.cleanupOldSnapshots();
-
-    return ok(snapshotId);
   }
 
   /**
-   * 恢复快照
-   * 返回快照内容，由调用者负责写入文件
+   * 恢复快照（仅读取快照内容，不写入文件）
+   * @param snapshotId 快照 ID
+   * @returns 快照内容
    */
   async restoreSnapshot(snapshotId: string): Promise<Result<Snapshot>> {
-    // 读取快照
-    const snapshotPath = `${this.snapshotsDir}/${snapshotId}.json`;
-    const readResult = await this.storage.readJSON<Snapshot>(snapshotPath);
-    if (!readResult.ok) {
-      return err(
-        "SNAPSHOT_NOT_FOUND",
-        `快照不存在: ${snapshotId}`,
-        readResult.error
-      );
-    }
+    try {
+      if (!this.index) {
+        return err("E303", "撤销管理器未初始化");
+      }
 
-    return ok(readResult.value);
+      // 查找快照记录
+      const snapshotRecord = this.index.snapshots.find(s => s.id === snapshotId);
+      if (!snapshotRecord) {
+        this.logger.warn("UndoManager", `快照不存在: ${snapshotId}`);
+        return err("E303", `快照不存在: ${snapshotId}`);
+      }
+
+      // 读取快照文件
+      const snapshotPath = `${this.snapshotsDir}/${snapshotId}.json`;
+      const readResult = await this.fileStorage.read(snapshotPath);
+      
+      if (!readResult.ok) {
+        this.logger.error("UndoManager", "读取快照文件失败", undefined, {
+          snapshotId,
+          error: readResult.error
+        });
+        return readResult as Result<Snapshot>;
+      }
+
+      try {
+        const snapshot: Snapshot = JSON.parse(readResult.value);
+        
+        // 验证校验和
+        const calculatedChecksum = this.calculateChecksum(snapshot.content);
+        if (calculatedChecksum !== snapshot.checksum) {
+          this.logger.error("UndoManager", "快照校验和不匹配", undefined, {
+            snapshotId,
+            expected: snapshot.checksum,
+            actual: calculatedChecksum
+          });
+          return err("E303", "快照文件已损坏（校验和不匹配）");
+        }
+
+        this.logger.info("UndoManager", `快照已读取: ${snapshotId}`, {
+          snapshotId,
+          path: snapshot.path
+        });
+
+        return ok(snapshot);
+      } catch (parseError) {
+        this.logger.error("UndoManager", "解析快照文件失败", parseError as Error, {
+          snapshotId
+        });
+        return err("E303", "解析快照文件失败", parseError);
+      }
+    } catch (error) {
+      this.logger.error("UndoManager", "恢复快照失败", error as Error, {
+        snapshotId
+      });
+      return err("E303", "恢复快照失败", error);
+    }
+  }
+
+  /**
+   * 恢复快照到文件
+   * 遵循 Requirements 2.8：使用原子写入（temp file + rename）确保数据完整性
+   * 
+   * Property 12: Atomic Write for Restore
+   * For any snapshot restore operation, the UndoManager SHALL use atomic write
+   * (temp file + rename) to ensure data integrity.
+   * 
+   * @param snapshotId 快照 ID
+   * @returns 恢复的快照内容
+   */
+  async restoreSnapshotToFile(snapshotId: string): Promise<Result<Snapshot>> {
+    try {
+      // 1. 读取快照内容
+      const snapshotResult = await this.restoreSnapshot(snapshotId);
+      if (!snapshotResult.ok) {
+        return snapshotResult;
+      }
+
+      const snapshot = snapshotResult.value;
+
+      // 2. 使用原子写入恢复文件
+      // 遵循 A-NF-02：写入临时文件 .tmp → 校验完整性 → 重命名为目标文件
+      const atomicWriteResult = await this.fileStorage.atomicWrite(
+        snapshot.path,
+        snapshot.content
+      );
+
+      if (!atomicWriteResult.ok) {
+        this.logger.error("UndoManager", "原子写入恢复失败", undefined, {
+          snapshotId,
+          path: snapshot.path,
+          error: atomicWriteResult.error
+        });
+        return err("E303", `快照恢复失败: ${atomicWriteResult.error.message}`, atomicWriteResult.error);
+      }
+
+      this.logger.info("UndoManager", `快照已恢复到文件: ${snapshotId}`, {
+        snapshotId,
+        path: snapshot.path,
+        fileSize: snapshot.fileSize
+      });
+
+      return ok(snapshot);
+    } catch (error) {
+      this.logger.error("UndoManager", "恢复快照到文件失败", error as Error, {
+        snapshotId
+      });
+      return err("E303", "恢复快照到文件失败", error);
+    }
   }
 
   /**
    * 删除快照
-   * 在成功恢复后调用
+   * @param snapshotId 快照 ID
    */
   async deleteSnapshot(snapshotId: string): Promise<Result<void>> {
-    // 删除快照文件
-    const snapshotPath = `${this.snapshotsDir}/${snapshotId}.json`;
-    const deleteResult = await this.storage.deleteFile(snapshotPath);
-    if (!deleteResult.ok) {
-      return err(
-        "SNAPSHOT_DELETE_ERROR",
-        `删除快照失败: ${snapshotId}`,
-        deleteResult.error
-      );
-    }
+    try {
+      if (!this.index) {
+        return err("E303", "撤销管理器未初始化");
+      }
 
-    // 从索引中移除
-    const removeResult = await this.removeFromIndex(snapshotId);
-    if (!removeResult.ok) {
-      return err(
-        "SNAPSHOT_INDEX_ERROR",
-        `从索引移除快照失败: ${snapshotId}`,
-        removeResult.error
-      );
-    }
+      // 查找快照索引
+      const snapshotIndex = this.index.snapshots.findIndex(s => s.id === snapshotId);
+      if (snapshotIndex === -1) {
+        this.logger.warn("UndoManager", `快照不存在: ${snapshotId}`);
+        return err("E303", `快照不存在: ${snapshotId}`);
+      }
 
-    return ok(undefined);
+      // 删除快照文件
+      const snapshotPath = `${this.snapshotsDir}/${snapshotId}.json`;
+      const deleteResult = await this.fileStorage.delete(snapshotPath);
+      
+      if (!deleteResult.ok) {
+        this.logger.error("UndoManager", "删除快照文件失败", undefined, {
+          snapshotId,
+          error: deleteResult.error
+        });
+        return deleteResult;
+      }
+
+      // 从索引中移除
+      this.index.snapshots.splice(snapshotIndex, 1);
+
+      // 保存索引
+      const saveIndexResult = await this.saveIndex();
+      if (!saveIndexResult.ok) {
+        return saveIndexResult;
+      }
+
+      this.logger.info("UndoManager", `快照已删除: ${snapshotId}`);
+
+      return ok(undefined);
+    } catch (error) {
+      this.logger.error("UndoManager", "删除快照失败", error as Error, {
+        snapshotId
+      });
+      return err("E303", "删除快照失败", error);
+    }
   }
 
   /**
-   * 获取所有快照元数据
+   * 列出所有快照
+   * @returns 快照元数据列表
    */
   async listSnapshots(): Promise<Result<SnapshotMetadata[]>> {
-    const readResult = await this.storage.readJSON<SnapshotMetadata[]>(
-      this.metadataFile
-    );
-    if (!readResult.ok) {
-      return err(
-        "SNAPSHOT_LIST_ERROR",
-        "读取快照索引失败",
-        readResult.error
-      );
-    }
-
-    return ok(readResult.value);
-  }
-
-  /**
-   * 获取快照数量
-   */
-  async getSnapshotCount(): Promise<Result<number>> {
-    const listResult = await this.listSnapshots();
-    if (!listResult.ok) {
-      return listResult;
-    }
-
-    return ok(listResult.value.length);
-  }
-
-  /**
-   * 批量删除快照
-   * @param snapshotIds 要删除的快照 ID 列表
-   * @returns 删除结果，包含成功和失败的 ID
-   */
-  async batchDeleteSnapshots(
-    snapshotIds: string[]
-  ): Promise<Result<{ succeeded: string[]; failed: string[] }>> {
-    const succeeded: string[] = [];
-    const failed: string[] = [];
-
-    for (const snapshotId of snapshotIds) {
-      const deleteResult = await this.deleteSnapshot(snapshotId);
-      if (deleteResult.ok) {
-        succeeded.push(snapshotId);
-      } else {
-        failed.push(snapshotId);
-        console.error(`删除快照失败: ${snapshotId}`, deleteResult.error);
+    try {
+      if (!this.index) {
+        return err("E303", "撤销管理器未初始化");
       }
-    }
 
-    return ok({ succeeded, failed });
+      const metadata: SnapshotMetadata[] = this.index.snapshots.map(s => ({
+        id: s.id,
+        nodeId: s.nodeId,
+        taskId: s.taskId,
+        path: s.path,
+        created: s.created,
+        fileSize: s.fileSize
+      }));
+
+      return ok(metadata);
+    } catch (error) {
+      this.logger.error("UndoManager", "列出快照失败", error as Error);
+      return err("E303", "列出快照失败", error);
+    }
   }
 
   /**
@@ -253,185 +435,201 @@ export class UndoManager {
    * @returns 清理的快照数量
    */
   async cleanupExpiredSnapshots(maxAgeMs: number): Promise<Result<number>> {
-    const listResult = await this.listSnapshots();
-    if (!listResult.ok) {
-      return listResult;
-    }
-
-    const now = Date.now();
-    const expiredSnapshots = listResult.value.filter((snapshot) => {
-      const created = new Date(snapshot.created).getTime();
-      return now - created > maxAgeMs;
-    });
-
-    if (expiredSnapshots.length === 0) {
-      return ok(0);
-    }
-
-    const snapshotIds = expiredSnapshots.map((s) => s.id);
-    const batchResult = await this.batchDeleteSnapshots(snapshotIds);
-
-    if (!batchResult.ok) {
-      return err(
-        "CLEANUP_ERROR",
-        "清理过期快照失败",
-        batchResult.error
-      );
-    }
-
-    return ok(batchResult.value.succeeded.length);
-  }
-
-  /**
-   * 手动清理所有快照
-   * @returns 清理的快照数量
-   */
-  async clearAllSnapshots(): Promise<Result<number>> {
-    const listResult = await this.listSnapshots();
-    if (!listResult.ok) {
-      return listResult;
-    }
-
-    const snapshotIds = listResult.value.map((s) => s.id);
-    const batchResult = await this.batchDeleteSnapshots(snapshotIds);
-
-    if (!batchResult.ok) {
-      return err(
-        "CLEAR_ERROR",
-        "清理所有快照失败",
-        batchResult.error
-      );
-    }
-
-    return ok(batchResult.value.succeeded.length);
-  }
-
-  /**
-   * 获取快照大小统计
-   * @returns 快照总大小（字节）
-   */
-  async getSnapshotsSize(): Promise<Result<number>> {
-    const listResult = await this.listSnapshots();
-    if (!listResult.ok) {
-      return listResult;
-    }
-
-    let totalSize = 0;
-
-    for (const metadata of listResult.value) {
-      const snapshotPath = `${this.snapshotsDir}/${metadata.id}.json`;
-      const readResult = await this.storage.readJSON<Snapshot>(snapshotPath);
-      if (readResult.ok) {
-        // 估算大小（JSON 字符串长度）
-        const size = JSON.stringify(readResult.value).length;
-        totalSize += size;
+    try {
+      if (!this.index) {
+        return err("E303", "撤销管理器未初始化");
       }
-    }
 
-    return ok(totalSize);
-  }
+      const now = Date.now();
+      const expiredSnapshots: string[] = [];
 
-  /**
-   * 清理旧快照
-   * 当快照数量超过上限时，删除最旧的快照
-   */
-  private async cleanupOldSnapshots(): Promise<Result<void>> {
-    const listResult = await this.listSnapshots();
-    if (!listResult.ok) {
-      return listResult;
-    }
-
-    const snapshots = listResult.value;
-
-    // 如果快照数量未超过上限，无需清理
-    if (snapshots.length <= this.maxSnapshots) {
-      return ok(undefined);
-    }
-
-    // 按创建时间排序（最旧的在前）
-    const sortedSnapshots = [...snapshots].sort(
-      (a, b) => new Date(a.created).getTime() - new Date(b.created).getTime()
-    );
-
-    // 计算需要删除的快照数量
-    const toDelete = snapshots.length - this.maxSnapshots;
-
-    // 删除最旧的快照
-    for (let i = 0; i < toDelete; i++) {
-      const snapshot = sortedSnapshots[i];
-      const deleteResult = await this.deleteSnapshot(snapshot.id);
-      if (!deleteResult.ok) {
-        // 记录错误但继续清理其他快照
-        console.error(`清理快照失败: ${snapshot.id}`, deleteResult.error);
+      for (const snapshot of this.index.snapshots) {
+        const createdTime = new Date(snapshot.created).getTime();
+        if (now - createdTime > maxAgeMs) {
+          expiredSnapshots.push(snapshot.id);
+        }
       }
-    }
 
-    return ok(undefined);
+      // 删除过期快照
+      for (const snapshotId of expiredSnapshots) {
+        await this.deleteSnapshot(snapshotId);
+      }
+
+      this.logger.info("UndoManager", `清理过期快照完成，共 ${expiredSnapshots.length} 个`, {
+        count: expiredSnapshots.length,
+        maxAgeMs
+      });
+
+      return ok(expiredSnapshots.length);
+    } catch (error) {
+      this.logger.error("UndoManager", "清理过期快照失败", error as Error);
+      return err("E303", "清理过期快照失败", error);
+    }
+  }
+
+  // ============================================================================
+  // 私有辅助方法
+  // ============================================================================
+
+  /**
+   * 创建空索引
+   * 遵循 A-FUNC-02：将保留策略写入索引
+   */
+  private createEmptyIndex(): SnapshotIndex {
+    return {
+      version: "1.0.0",
+      snapshots: [],
+      retentionPolicy: {
+        maxCount: this.maxSnapshots,
+        maxAgeDays: this.maxAgeDays
+      }
+    };
   }
 
   /**
-   * 添加快照到索引
+   * 保存索引
    */
-  private async addToIndex(
-    metadata: SnapshotMetadata
-  ): Promise<Result<void>> {
-    const listResult = await this.listSnapshots();
-    if (!listResult.ok) {
-      return listResult;
+  private async saveIndex(): Promise<Result<void>> {
+    if (!this.index) {
+      return err("E303", "索引未初始化");
     }
 
-    const snapshots = listResult.value;
-    snapshots.push(metadata);
-
-    const saveResult = await this.storage.writeJSON(
-      this.metadataFile,
-      snapshots
+    const writeResult = await this.fileStorage.write(
+      this.indexPath,
+      JSON.stringify(this.index, null, 2)
     );
-    if (!saveResult.ok) {
-      return err(
-        "SNAPSHOT_INDEX_ERROR",
-        "保存快照索引失败",
-        saveResult.error
-      );
+
+    if (!writeResult.ok) {
+      this.logger.error("UndoManager", "保存快照索引失败", undefined, {
+        error: writeResult.error
+      });
     }
 
-    return ok(undefined);
-  }
-
-  /**
-   * 从索引中移除快照
-   */
-  private async removeFromIndex(snapshotId: string): Promise<Result<void>> {
-    const listResult = await this.listSnapshots();
-    if (!listResult.ok) {
-      return listResult;
-    }
-
-    const snapshots = listResult.value;
-    const filtered = snapshots.filter((s) => s.id !== snapshotId);
-
-    const saveResult = await this.storage.writeJSON(
-      this.metadataFile,
-      filtered
-    );
-    if (!saveResult.ok) {
-      return err(
-        "SNAPSHOT_INDEX_ERROR",
-        "保存快照索引失败",
-        saveResult.error
-      );
-    }
-
-    return ok(undefined);
+    return writeResult;
   }
 
   /**
    * 生成快照 ID
-   * 格式: snapshot-{timestamp}-{random}
    */
   private generateSnapshotId(): string {
-    const timestamp = Date.now();
-    const random = Math.random().toString(36).substring(2, 10);
-    return `snapshot-${timestamp}-${random}`;
+    return `snapshot-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+  }
+
+  /**
+   * 计算内容校验和
+   */
+  private calculateChecksum(content: string): string {
+    return createHash('md5').update(content, 'utf8').digest('hex');
+  }
+
+  /**
+   * 从文件路径提取节点 ID
+   * 这是一个简化实现，实际应该从文件的 frontmatter 中读取
+   */
+  private extractNodeIdFromPath(filePath: string): string {
+    // 从路径中提取文件名（不含扩展名）作为临时 nodeId
+    const fileName = filePath.split('/').pop() || '';
+    return fileName.replace(/\.md$/, '');
+  }
+
+  /**
+   * 验证快照记录完整性
+   * Property 11: Snapshot Record Completeness
+   * 快照记录必须包含所有必需字段: id, nodeId, taskId, path, content, created, fileSize, checksum
+   */
+  private validateSnapshotRecord(snapshot: SnapshotRecord): Result<void> {
+    const requiredFields: (keyof SnapshotRecord)[] = [
+      'id', 'nodeId', 'taskId', 'path', 'content', 'created', 'fileSize', 'checksum'
+    ];
+    
+    for (const field of requiredFields) {
+      if (snapshot[field] === undefined || snapshot[field] === null) {
+        return err("E303", `快照记录缺少必需字段: ${field}`);
+      }
+    }
+    
+    // 验证字段类型
+    if (typeof snapshot.id !== 'string' || snapshot.id.length === 0) {
+      return err("E303", "快照 ID 必须是非空字符串");
+    }
+    if (typeof snapshot.nodeId !== 'string' || snapshot.nodeId.length === 0) {
+      return err("E303", "节点 ID 必须是非空字符串");
+    }
+    if (typeof snapshot.taskId !== 'string' || snapshot.taskId.length === 0) {
+      return err("E303", "任务 ID 必须是非空字符串");
+    }
+    if (typeof snapshot.path !== 'string' || snapshot.path.length === 0) {
+      return err("E303", "文件路径必须是非空字符串");
+    }
+    if (typeof snapshot.content !== 'string') {
+      return err("E303", "文件内容必须是字符串");
+    }
+    if (typeof snapshot.created !== 'string' || snapshot.created.length === 0) {
+      return err("E303", "创建时间必须是非空字符串");
+    }
+    if (typeof snapshot.fileSize !== 'number' || snapshot.fileSize < 0) {
+      return err("E303", "文件大小必须是非负数");
+    }
+    if (typeof snapshot.checksum !== 'string' || snapshot.checksum.length === 0) {
+      return err("E303", "校验和必须是非空字符串");
+    }
+    
+    // 验证 ISO 8601 时间格式
+    const dateRegex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}Z$/;
+    if (!dateRegex.test(snapshot.created)) {
+      return err("E303", "创建时间必须是 ISO 8601 格式");
+    }
+    
+    return ok(undefined);
+  }
+
+  /**
+   * 清理最旧的快照
+   */
+  private async cleanupOldestSnapshots(count: number): Promise<void> {
+    if (!this.index || count <= 0) {
+      return;
+    }
+
+    // 按创建时间排序，最旧的在前
+    const sortedSnapshots = [...this.index.snapshots].sort((a, b) => {
+      return new Date(a.created).getTime() - new Date(b.created).getTime();
+    });
+
+    // 删除最旧的 count 个快照
+    const toDelete = sortedSnapshots.slice(0, count);
+    
+    for (const snapshot of toDelete) {
+      await this.deleteSnapshot(snapshot.id);
+    }
+
+    this.logger.info("UndoManager", `清理最旧的 ${count} 个快照`);
+  }
+
+  /**
+   * 清理所有快照
+   * @returns 清理的快照数量
+   */
+  async clearAllSnapshots(): Promise<Result<number>> {
+    try {
+      if (!this.index) {
+        return err("E303", "撤销管理器未初始化");
+      }
+
+      const count = this.index.snapshots.length;
+      const snapshotIds = this.index.snapshots.map(s => s.id);
+
+      // 删除所有快照
+      for (const snapshotId of snapshotIds) {
+        await this.deleteSnapshot(snapshotId);
+      }
+
+      this.logger.info("UndoManager", `清理了所有 ${count} 个快照`);
+
+      return ok(count);
+    } catch (error) {
+      this.logger.error("UndoManager", "清理所有快照失败", error as Error);
+      return err("E303", "清理所有快照失败", error);
+    }
   }
 }

@@ -72,7 +72,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
       });
     } else {
       Object.entries(providers).forEach(([id, config]) => {
-        this.renderProviderItem(containerEl, id, config);
+        this.renderProviderItem(containerEl, id, config as ProviderConfig);
       });
     }
 
@@ -192,6 +192,22 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
           });
       });
 
+    // 快照保留天数 (A-FUNC-02: 可配置的快照保留策略)
+    new Setting(containerEl)
+      .setName("快照保留天数")
+      .setDesc("超过此天数的快照将被自动清理")
+      .addText(text => {
+        text
+          .setPlaceholder("30")
+          .setValue((this.plugin.settings.maxSnapshotAgeDays ?? 30).toString())
+          .onChange(async (value) => {
+            const num = parseInt(value);
+            if (!isNaN(num) && num > 0) {
+              await this.plugin.settingsStore.update({ maxSnapshotAgeDays: num });
+            }
+          });
+      });
+
     // 并发任务数
     new Setting(containerEl)
       .setName("并发任务数")
@@ -224,11 +240,189 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
 
   /**
    * 渲染高级设置
+   * 
+   * 遵循设计文档 A-FUNC-08：高级模式显示模型、温度/TopP、去重阈值、并发等参数
    */
   private renderAdvancedSettings(containerEl: HTMLElement): void {
     containerEl.createEl("h2", { text: "高级设置" });
 
-    // 日志级别
+    // ============ 任务模型配置 ============
+    containerEl.createEl("h3", { text: "任务模型配置" });
+    containerEl.createEl("p", {
+      text: "为不同任务类型配置使用的模型和参数",
+      cls: "setting-item-description"
+    });
+
+    // 获取可用的 Provider 列表
+    const providerIds = Object.keys(this.plugin.settings.providers);
+
+    // 为每种任务类型创建配置
+    const taskTypes: Array<{ key: string; name: string; desc: string }> = [
+      { key: "standardizeClassify", name: "标准化分类", desc: "标准化输入并分类知识类型" },
+      { key: "enrich", name: "丰富", desc: "生成别名和标签" },
+      { key: "embedding", name: "嵌入", desc: "生成向量嵌入" },
+      { key: "reason:new", name: "新概念生成", desc: "为新概念生成完整内容" },
+      { key: "reason:incremental", name: "增量改进", desc: "增量改进现有内容" },
+      { key: "reason:merge", name: "合并", desc: "合并两个重复概念" },
+      { key: "ground", name: "事实核查", desc: "验证生成内容的准确性" }
+    ];
+
+    for (const taskType of taskTypes) {
+      const taskConfig = this.plugin.settings.taskModels[taskType.key as keyof typeof this.plugin.settings.taskModels];
+      
+      new Setting(containerEl)
+        .setName(`${taskType.name} 模型`)
+        .setDesc(taskType.desc)
+        .addDropdown(dropdown => {
+          // Provider 选择
+          if (providerIds.length === 0) {
+            dropdown.addOption("", "请先配置 Provider");
+          } else {
+            dropdown.addOption("", "使用默认 Provider");
+            providerIds.forEach(id => dropdown.addOption(id, id));
+          }
+          dropdown
+            .setValue(taskConfig?.providerId || "")
+            .onChange(async (value) => {
+              const taskModels = { ...this.plugin.settings.taskModels };
+              taskModels[taskType.key as keyof typeof taskModels] = {
+                ...taskConfig,
+                providerId: value
+              };
+              await this.plugin.settingsStore.update({ taskModels });
+            });
+        })
+        .addText(text => {
+          // 模型名称
+          text
+            .setPlaceholder("模型名称")
+            .setValue(taskConfig?.model || "")
+            .onChange(async (value) => {
+              const taskModels = { ...this.plugin.settings.taskModels };
+              taskModels[taskType.key as keyof typeof taskModels] = {
+                ...taskConfig,
+                model: value
+              };
+              await this.plugin.settingsStore.update({ taskModels });
+            });
+        });
+    }
+
+    // ============ 温度参数 ============
+    containerEl.createEl("h3", { text: "生成参数" });
+
+    new Setting(containerEl)
+      .setName("默认温度 (Temperature)")
+      .setDesc("控制生成内容的随机性 (0-1)，较低值更确定，较高值更创意")
+      .addSlider(slider => {
+        slider
+          .setLimits(0, 1, 0.1)
+          .setValue(this.plugin.settings.taskModels["reason:new"]?.temperature || 0.7)
+          .setDynamicTooltip()
+          .onChange(async (value) => {
+            // 更新所有 reason 任务的温度
+            const taskModels = { ...this.plugin.settings.taskModels };
+            ["reason:new", "reason:incremental", "reason:merge"].forEach(key => {
+              const k = key as keyof typeof taskModels;
+              taskModels[k] = { ...taskModels[k], temperature: value };
+            });
+            await this.plugin.settingsStore.update({ taskModels });
+          });
+      });
+
+    // ============ 去重参数 ============
+    containerEl.createEl("h3", { text: "去重参数" });
+
+    new Setting(containerEl)
+      .setName("相似度阈值")
+      .setDesc("用于检测重复概念的相似度阈值 (0-1)，较高值更严格")
+      .addSlider(slider => {
+        slider
+          .setLimits(0.5, 1.0, 0.05)
+          .setValue(this.plugin.settings.similarityThreshold)
+          .setDynamicTooltip()
+          .onChange(async (value) => {
+            await this.plugin.settingsStore.update({ similarityThreshold: value });
+          });
+      });
+
+    new Setting(containerEl)
+      .setName("检索数量 (TopK)")
+      .setDesc("去重检测时检索的候选数量")
+      .addText(text => {
+        text
+          .setPlaceholder("10")
+          .setValue(this.plugin.settings.topK.toString())
+          .onChange(async (value) => {
+            const num = parseInt(value);
+            if (!isNaN(num) && num > 0 && num <= 100) {
+              await this.plugin.settingsStore.update({ topK: num });
+            }
+          });
+      });
+
+    // ============ 功能开关 ============
+    containerEl.createEl("h3", { text: "功能开关" });
+
+    new Setting(containerEl)
+      .setName("启用事实核查 (Ground)")
+      .setDesc("在内容生成后执行事实核查验证（会增加一次 LLM 调用）")
+      .addToggle(toggle => {
+        toggle
+          .setValue(this.plugin.settings.enableGrounding)
+          .onChange(async (value) => {
+            await this.plugin.settingsStore.update({ enableGrounding: value });
+            new Notice(`事实核查已${value ? "启用" : "禁用"}`);
+          });
+      });
+
+    // ============ 队列参数 ============
+    containerEl.createEl("h3", { text: "队列参数" });
+
+    new Setting(containerEl)
+      .setName("并发任务数")
+      .setDesc("同时执行的最大任务数")
+      .addText(text => {
+        text
+          .setPlaceholder("1")
+          .setValue(this.plugin.settings.concurrency.toString())
+          .onChange(async (value) => {
+            const num = parseInt(value);
+            if (!isNaN(num) && num > 0 && num <= 10) {
+              await this.plugin.settingsStore.update({ concurrency: num });
+            }
+          });
+      });
+
+    new Setting(containerEl)
+      .setName("自动重试")
+      .setDesc("任务失败时自动重试")
+      .addToggle(toggle => {
+        toggle
+          .setValue(this.plugin.settings.autoRetry)
+          .onChange(async (value) => {
+            await this.plugin.settingsStore.update({ autoRetry: value });
+          });
+      });
+
+    new Setting(containerEl)
+      .setName("最大重试次数")
+      .setDesc("任务失败时的最大重试次数")
+      .addText(text => {
+        text
+          .setPlaceholder("3")
+          .setValue(this.plugin.settings.maxRetryAttempts.toString())
+          .onChange(async (value) => {
+            const num = parseInt(value);
+            if (!isNaN(num) && num >= 0 && num <= 10) {
+              await this.plugin.settingsStore.update({ maxRetryAttempts: num });
+            }
+          });
+      });
+
+    // ============ 日志设置 ============
+    containerEl.createEl("h3", { text: "日志设置" });
+
     new Setting(containerEl)
       .setName("日志级别")
       .setDesc("设置日志记录的详细程度")
@@ -246,7 +440,6 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
           });
       });
 
-    // 清除日志按钮
     new Setting(containerEl)
       .setName("清除日志")
       .setDesc("清空所有日志文件")
@@ -424,12 +617,16 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
 
   /**
    * 测试 Provider 连接
+   * 强制刷新缓存以获取最新状态
    */
   private async testProviderConnection(id: string): Promise<void> {
     new Notice(`正在测试 Provider ${id} 的连接...`);
     
     try {
-      const result = await this.plugin.getComponents().providerManager.checkAvailability(id);
+      // 清除缓存并强制刷新
+      const providerManager = this.plugin.getComponents().providerManager;
+      providerManager.clearAvailabilityCache(id);
+      const result = await providerManager.checkAvailability(id, true);
       
       if (result.ok) {
         const capabilities = result.value;

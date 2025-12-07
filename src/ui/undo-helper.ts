@@ -14,7 +14,8 @@ import type { UndoManager } from "../core/undo-manager";
  * @param undoManager UndoManager 实例
  * @param filePath 文件路径
  * @param newContent 新内容
- * @param operation 操作描述
+ * @param taskId 关联的任务 ID
+ * @param nodeId 可选的节点 ID
  * @returns 是否成功
  */
 export async function writeFileWithUndo(
@@ -22,7 +23,8 @@ export async function writeFileWithUndo(
   undoManager: UndoManager,
   filePath: string,
   newContent: string,
-  operation: string
+  taskId: string,
+  nodeId?: string
 ): Promise<boolean> {
   try {
     // 1. 读取当前文件内容
@@ -37,7 +39,8 @@ export async function writeFileWithUndo(
     const snapshotResult = await undoManager.createSnapshot(
       filePath,
       currentContent,
-      operation
+      taskId,
+      nodeId
     );
 
     if (!snapshotResult.ok) {
@@ -56,7 +59,7 @@ export async function writeFileWithUndo(
     // 4. 显示撤销通知
     if (snapshotResult.ok) {
       const notification = new UndoNotification({
-        message: `${operation}完成`,
+        message: "操作完成",
         snapshotId: snapshotResult.value,
         filePath,
         onUndo: async (snapshotId: string) => {
@@ -97,25 +100,25 @@ async function handleUndo(
 
     const snapshot = restoreResult.value;
 
-    // 2. 写入文件
-    const file = app.vault.getAbstractFileByPath(snapshot.filePath);
+    // 2. 写入文件（使用 snapshot.path）
+    const file = app.vault.getAbstractFileByPath(snapshot.path);
     if (file && file instanceof TFile) {
       await app.vault.modify(file, snapshot.content);
     } else {
       // 文件不存在，创建文件
-      await app.vault.create(snapshot.filePath, snapshot.content);
+      await app.vault.create(snapshot.path, snapshot.content);
     }
 
     // 3. 删除快照
     const deleteResult = await undoManager.deleteSnapshot(snapshotId);
     if (!deleteResult.ok) {
-      console.error("删除快照失败:", deleteResult.error);
+      console.error("UndoHelper", "删除快照失败", deleteResult.error);
       // 但不影响撤销操作
     }
 
-    console.log("撤销操作完成:", snapshot.operation);
+    console.log("UndoHelper", "撤销操作完成", { snapshotId });
   } catch (error) {
-    console.error("撤销操作失败:", error);
+    console.error("UndoHelper", "撤销操作失败", error);
   }
 }
 
@@ -126,14 +129,16 @@ async function handleUndo(
  * @param app Obsidian App 实例
  * @param undoManager UndoManager 实例
  * @param filePath 文件路径
- * @param operation 操作描述
+ * @param taskId 关联的任务 ID
+ * @param nodeId 可选的节点 ID
  * @returns 快照 ID，如果失败返回 null
  */
 export async function createSnapshotForFile(
   app: App,
   undoManager: UndoManager,
   filePath: string,
-  operation: string
+  taskId: string,
+  nodeId?: string
 ): Promise<string | null> {
   try {
     // 读取当前文件内容
@@ -149,7 +154,8 @@ export async function createSnapshotForFile(
     const snapshotResult = await undoManager.createSnapshot(
       filePath,
       content,
-      operation
+      taskId,
+      nodeId
     );
 
     if (!snapshotResult.ok) {

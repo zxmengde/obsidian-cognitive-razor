@@ -7,7 +7,7 @@ export default tseslint.config(
   {
     languageOptions: {
       parserOptions: {
-        project: true,
+        project: ['./tsconfig.json', './tsconfig.test.json'],
         tsconfigRootDir: import.meta.dirname,
       },
     },
@@ -23,6 +23,13 @@ export default tseslint.config(
       'no-prototype-builtins': 'off',
       // 允许显式 any 类型（逐步迁移）
       '@typescript-eslint/no-explicit-any': 'warn',
+    },
+  },
+  {
+    // 测试文件的特殊规则
+    files: ['**/*.test.ts', '**/*.spec.ts'],
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'off',
     },
   },
   {

@@ -1,244 +1,146 @@
 /**
- * LockManager 组件
- * 负责节点锁和类型锁的管理，防止并发冲突
- * 验证需求：6.2
+ * 锁管理器
+ * 负责防止并发冲突，管理节点锁和类型锁
  */
 
-import { Result, ok, err } from "../types";
+import { ILockManager, LockRecord, Result, ok, err } from "../types";
+import { ILogger } from "../types";
 
-/**
- * 锁类型
- */
-export type LockType = "node" | "type";
+export class LockManager implements ILockManager {
+  private locks: Map<string, LockRecord>;
+  private logger: ILogger;
 
-/**
- * 锁记录
- */
-export interface Lock {
-  /** 锁键（nodeId 或 type） */
-  key: string;
-  /** 锁类型 */
-  type: LockType;
-  /** 持有锁的任务 ID */
-  taskId: string;
-  /** 获取时间 */
-  acquiredAt: string;
-}
-
-/**
- * LockManager 组件
- */
-export class LockManager {
-  /** 当前持有的锁 Map<lockKey, Lock> */
-  private locks: Map<string, Lock>;
-
-  constructor() {
+  constructor(logger: ILogger) {
     this.locks = new Map();
+    this.logger = logger;
+    
+    this.logger.debug("LockManager", "LockManager 初始化完成");
   }
 
   /**
-   * 尝试获取节点锁
-   * 如果节点已被锁定，返回失败
+   * 获取锁
+   * @param key 锁键（nodeId 或 type）
+   * @param type 锁类型
+   * @param taskId 任务 ID
+   * @returns 锁 ID 或错误
    */
-  acquireNodeLock(nodeId: string, taskId: string): Result<void> {
-    const lockKey = `node:${nodeId}`;
-
+  acquire(key: string, type: 'node' | 'type', taskId: string): Result<string> {
     // 检查是否已被锁定
-    if (this.locks.has(lockKey)) {
-      const existingLock = this.locks.get(lockKey)!;
+    if (this.locks.has(key)) {
+      const existingLock = this.locks.get(key)!;
+      this.logger.warn("LockManager", `锁冲突: key=${key} 已被任务 ${existingLock.taskId} 持有`, {
+        key,
+        type,
+        taskId,
+        existingLock
+      });
+      
       return err(
-        "LOCK_CONFLICT",
-        `节点 ${nodeId} 已被任务 ${existingLock.taskId} 锁定`,
-        { existingLock }
+        "E400",
+        `锁冲突: ${key} 已被任务 ${existingLock.taskId} 持有`,
+        { key, type, taskId, existingLock }
       );
     }
 
-    // 获取锁
-    const lock: Lock = {
-      key: lockKey,
-      type: "node",
+    // 创建锁记录
+    const lockRecord: LockRecord = {
+      key,
+      type,
       taskId,
-      acquiredAt: new Date().toISOString(),
+      acquiredAt: new Date().toISOString()
     };
 
-    this.locks.set(lockKey, lock);
-    return ok(undefined);
+    // 存储锁
+    this.locks.set(key, lockRecord);
+
+    this.logger.info("LockManager", `锁已获取: key=${key}, type=${type}, taskId=${taskId}`, {
+      lockRecord
+    });
+
+    return ok(key);
   }
 
   /**
-   * 尝试获取类型锁
-   * 如果类型已被锁定，返回失败
+   * 释放锁
+   * @param lockId 锁 ID（即 key）
    */
-  acquireTypeLock(type: string, taskId: string): Result<void> {
-    const lockKey = `type:${type}`;
-
-    // 检查是否已被锁定
-    if (this.locks.has(lockKey)) {
-      const existingLock = this.locks.get(lockKey)!;
-      return err(
-        "LOCK_CONFLICT",
-        `类型 ${type} 已被任务 ${existingLock.taskId} 锁定`,
-        { existingLock }
-      );
+  release(lockId: string): void {
+    const lock = this.locks.get(lockId);
+    
+    if (!lock) {
+      this.logger.warn("LockManager", `尝试释放不存在的锁: lockId=${lockId}`);
+      return;
     }
 
-    // 获取锁
-    const lock: Lock = {
-      key: lockKey,
-      type: "type",
-      taskId,
-      acquiredAt: new Date().toISOString(),
-    };
+    this.locks.delete(lockId);
 
-    this.locks.set(lockKey, lock);
-    return ok(undefined);
+    this.logger.info("LockManager", `锁已释放: lockId=${lockId}`, {
+      lock
+    });
   }
 
   /**
-   * 释放节点锁
+   * 检查是否被锁定
+   * @param key 锁键
    */
-  releaseNodeLock(nodeId: string, taskId: string): Result<void> {
-    const lockKey = `node:${nodeId}`;
-
-    // 检查锁是否存在
-    if (!this.locks.has(lockKey)) {
-      return err(
-        "LOCK_NOT_FOUND",
-        `节点 ${nodeId} 的锁不存在`,
-        { nodeId, taskId }
-      );
-    }
-
-    const lock = this.locks.get(lockKey)!;
-
-    // 检查是否是锁的持有者
-    if (lock.taskId !== taskId) {
-      return err(
-        "LOCK_NOT_OWNER",
-        `任务 ${taskId} 不是节点 ${nodeId} 锁的持有者`,
-        { lock, taskId }
-      );
-    }
-
-    // 释放锁
-    this.locks.delete(lockKey);
-    return ok(undefined);
+  isLocked(key: string): boolean {
+    return this.locks.has(key);
   }
 
   /**
-   * 释放类型锁
+   * 获取所有活跃锁
    */
-  releaseTypeLock(type: string, taskId: string): Result<void> {
-    const lockKey = `type:${type}`;
-
-    // 检查锁是否存在
-    if (!this.locks.has(lockKey)) {
-      return err(
-        "LOCK_NOT_FOUND",
-        `类型 ${type} 的锁不存在`,
-        { type, taskId }
-      );
-    }
-
-    const lock = this.locks.get(lockKey)!;
-
-    // 检查是否是锁的持有者
-    if (lock.taskId !== taskId) {
-      return err(
-        "LOCK_NOT_OWNER",
-        `任务 ${taskId} 不是类型 ${type} 锁的持有者`,
-        { lock, taskId }
-      );
-    }
-
-    // 释放锁
-    this.locks.delete(lockKey);
-    return ok(undefined);
-  }
-
-  /**
-   * 释放任务持有的所有锁
-   * 用于任务完成或取消时清理
-   */
-  releaseAllLocksForTask(taskId: string): Result<number> {
-    let releasedCount = 0;
-
-    // 遍历所有锁，释放属于该任务的锁
-    for (const [lockKey, lock] of this.locks.entries()) {
-      if (lock.taskId === taskId) {
-        this.locks.delete(lockKey);
-        releasedCount++;
-      }
-    }
-
-    return ok(releasedCount);
-  }
-
-  /**
-   * 检查节点是否被锁定
-   */
-  isNodeLocked(nodeId: string): boolean {
-    const lockKey = `node:${nodeId}`;
-    return this.locks.has(lockKey);
-  }
-
-  /**
-   * 检查类型是否被锁定
-   */
-  isTypeLocked(type: string): boolean {
-    const lockKey = `type:${type}`;
-    return this.locks.has(lockKey);
-  }
-
-  /**
-   * 获取节点锁信息
-   */
-  getNodeLock(nodeId: string): Lock | undefined {
-    const lockKey = `node:${nodeId}`;
-    return this.locks.get(lockKey);
-  }
-
-  /**
-   * 获取类型锁信息
-   */
-  getTypeLock(type: string): Lock | undefined {
-    const lockKey = `type:${type}`;
-    return this.locks.get(lockKey);
-  }
-
-  /**
-   * 获取任务持有的所有锁
-   */
-  getLocksForTask(taskId: string): Lock[] {
-    const taskLocks: Lock[] = [];
-
-    for (const lock of this.locks.values()) {
-      if (lock.taskId === taskId) {
-        taskLocks.push(lock);
-      }
-    }
-
-    return taskLocks;
-  }
-
-  /**
-   * 获取所有锁
-   */
-  getAllLocks(): Lock[] {
+  getActiveLocks(): LockRecord[] {
     return Array.from(this.locks.values());
   }
 
   /**
-   * 获取锁数量
+   * 从持久化状态恢复锁
    */
-  getLockCount(): number {
-    return this.locks.size;
+  restoreLocks(locks: LockRecord[]): void {
+    this.locks.clear();
+
+    for (const lock of locks) {
+      if (!lock || !lock.key || !lock.taskId) continue;
+      this.locks.set(lock.key, lock);
+    }
+
+    this.logger.info("LockManager", `锁状态已恢复，共 ${this.locks.size} 个`, {
+      keys: Array.from(this.locks.keys())
+    });
   }
 
   /**
-   * 清除所有锁（用于测试或重置）
+   * 释放任务持有的所有锁
+   * @param taskId 任务 ID
    */
-  clearAllLocks(): void {
+  releaseByTaskId(taskId: string): void {
+    const locksToRelease: string[] = [];
+
+    for (const [key, lock] of this.locks.entries()) {
+      if (lock.taskId === taskId) {
+        locksToRelease.push(key);
+      }
+    }
+
+    for (const key of locksToRelease) {
+      this.release(key);
+    }
+
+    if (locksToRelease.length > 0) {
+      this.logger.info("LockManager", `释放任务 ${taskId} 持有的 ${locksToRelease.length} 个锁`, {
+        taskId,
+        locks: locksToRelease
+      });
+    }
+  }
+
+  /**
+   * 清空所有锁（用于测试或重置）
+   */
+  clear(): void {
+    const count = this.locks.size;
     this.locks.clear();
+    this.logger.info("LockManager", `清空所有锁，共 ${count} 个`);
   }
 }

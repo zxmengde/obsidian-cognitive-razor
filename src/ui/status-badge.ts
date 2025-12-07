@@ -4,10 +4,21 @@
  * 功能：
  * - 状态栏徽章显示
  * - 快捷入口
+ * 
+ * 状态格式显示 (Requirements 5.5):
+ * - 正常: [CR: running/pending ⏳] 例如 [CR: 1/3 ⏳]
+ * - 暂停: [CR: ⏸️ n] 例如 [CR: ⏸️ 3]
+ * - 有失败: [CR: running/pending ⚠️failed] 例如 [CR: 1/3 ⚠️1]
+ * - 离线: [CR: 📴]
+ * - 空闲: [CR: ✓]
  */
 
 import { Plugin, Menu } from "obsidian";
 import type { QueueStatus } from "../types";
+import { formatStatusBadgeText } from "./status-badge-format";
+
+// 重新导出格式化函数，保持向后兼容
+export { formatStatusBadgeText } from "./status-badge-format";
 
 /**
  * StatusBadge 组件
@@ -22,6 +33,7 @@ export class StatusBadge {
     completed: 0,
     failed: 0
   };
+  private isOffline: boolean = false;
 
   constructor(plugin: Plugin) {
     this.plugin = plugin;
@@ -33,79 +45,67 @@ export class StatusBadge {
 
   /**
    * 渲染状态徽章
+   * 使用 formatStatusBadgeText 函数生成符合规范的格式
    */
   private render(): void {
     this.statusBarItem.empty();
 
-    // 图标
-    const icon = this.statusBarItem.createSpan({
-      cls: "cr-status-icon",
-      attr: { "aria-hidden": "true" }
-    });
-    icon.textContent = this.getStatusIcon();
-
-    // 任务计数
-    const count = this.statusBarItem.createSpan({
-      cls: "cr-status-count",
+    // 使用格式化函数生成状态文本
+    const statusText = formatStatusBadgeText(this.queueStatus, this.isOffline);
+    
+    // 创建状态文本元素
+    const textSpan = this.statusBarItem.createSpan({
+      cls: "cr-status-text",
       attr: {
         "aria-label": this.getAriaLabel()
       }
     });
+    textSpan.textContent = statusText;
 
-    const activeCount = this.queueStatus.pending + this.queueStatus.running;
-    if (activeCount > 0) {
-      count.textContent = activeCount.toString();
-      count.addClass("cr-status-active");
-    } else if (this.queueStatus.failed > 0) {
-      count.textContent = this.queueStatus.failed.toString();
-      count.addClass("cr-status-failed");
-    } else {
-      count.textContent = "✓";
-      count.addClass("cr-status-idle");
-    }
-
-    // 暂停指示器
-    if (this.queueStatus.paused && activeCount > 0) {
-      const pausedIndicator = this.statusBarItem.createSpan({
-        cls: "cr-status-paused-indicator",
-        attr: { "aria-label": "队列已暂停" }
-      });
-      pausedIndicator.textContent = "⏸";
-    }
+    // 根据状态添加样式类
+    this.updateStatusClasses();
 
     // 设置标题提示
     this.statusBarItem.setAttribute("title", this.getTooltip());
   }
 
   /**
-   * 获取状态图标
+   * 更新状态样式类
    */
-  private getStatusIcon(): string {
-    const activeCount = this.queueStatus.pending + this.queueStatus.running;
-    
-    if (this.queueStatus.paused && activeCount > 0) {
-      return "⏸";
+  private updateStatusClasses(): void {
+    // 移除所有状态类
+    this.statusBarItem.removeClass(
+      "cr-status-idle",
+      "cr-status-active",
+      "cr-status-paused",
+      "cr-status-failed",
+      "cr-status-offline"
+    );
+
+    const { running, pending, failed, paused } = this.queueStatus;
+    const activeCount = running + pending;
+
+    if (this.isOffline) {
+      this.statusBarItem.addClass("cr-status-offline");
+    } else if (activeCount === 0 && failed === 0) {
+      this.statusBarItem.addClass("cr-status-idle");
+    } else if (paused && activeCount > 0) {
+      this.statusBarItem.addClass("cr-status-paused");
+    } else if (failed > 0) {
+      this.statusBarItem.addClass("cr-status-failed");
+    } else {
+      this.statusBarItem.addClass("cr-status-active");
     }
-    
-    if (this.queueStatus.running > 0) {
-      return "⚙";
-    }
-    
-    if (this.queueStatus.failed > 0) {
-      return "⚠";
-    }
-    
-    if (activeCount > 0) {
-      return "⏳";
-    }
-    
-    return "🧠";
   }
 
   /**
    * 获取无障碍标签
    */
   private getAriaLabel(): string {
+    if (this.isOffline) {
+      return "Cognitive Razor - 离线";
+    }
+
     const parts: string[] = [];
     
     if (this.queueStatus.paused) {
@@ -125,7 +125,7 @@ export class StatusBadge {
     }
     
     if (parts.length === 0) {
-      return "Cognitive Razor - 无活动任务";
+      return "Cognitive Razor - 空闲";
     }
     
     return `Cognitive Razor - ${parts.join(", ")}`;
@@ -136,6 +136,13 @@ export class StatusBadge {
    */
   private getTooltip(): string {
     const lines: string[] = ["Cognitive Razor"];
+    
+    if (this.isOffline) {
+      lines.push("状态: 离线");
+      lines.push("");
+      lines.push("点击查看菜单");
+      return lines.join("\n");
+    }
     
     if (this.queueStatus.paused) {
       lines.push("状态: 已暂停");
@@ -264,10 +271,24 @@ export class StatusBadge {
   }
 
   /**
+   * 设置离线状态
+   */
+  public setOffline(offline: boolean): void {
+    this.isOffline = offline;
+    this.render();
+  }
+
+  /**
+   * 获取当前状态文本（用于测试）
+   */
+  public getStatusText(): string {
+    return formatStatusBadgeText(this.queueStatus, this.isOffline);
+  }
+
+  /**
    * 打开工作台
    */
   private openWorkbench(): void {
-    // TODO: 激活工作台视图
     this.plugin.app.workspace.trigger("cognitive-razor:open-workbench");
   }
 
@@ -275,7 +296,6 @@ export class StatusBadge {
    * 打开队列视图
    */
   private openQueueView(): void {
-    // TODO: 激活队列视图
     this.plugin.app.workspace.trigger("cognitive-razor:open-queue");
   }
 
@@ -283,7 +303,6 @@ export class StatusBadge {
    * 创建概念
    */
   private createConcept(): void {
-    // TODO: 打开创建概念对话框
     this.plugin.app.workspace.trigger("cognitive-razor:create-concept");
   }
 
@@ -291,7 +310,6 @@ export class StatusBadge {
    * 切换队列状态
    */
   private toggleQueue(): void {
-    // TODO: 调用 TaskQueue 切换暂停/恢复
     this.plugin.app.workspace.trigger("cognitive-razor:toggle-queue");
   }
 
@@ -299,7 +317,6 @@ export class StatusBadge {
    * 重试失败任务
    */
   private retryFailedTasks(): void {
-    // TODO: 调用 TaskQueue 重试所有失败任务
     this.plugin.app.workspace.trigger("cognitive-razor:retry-failed");
   }
 

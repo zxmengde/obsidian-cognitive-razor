@@ -4,7 +4,7 @@
  */
 
 import { ItemView, WorkspaceLeaf, Notice, App, Modal, TFile } from "obsidian";
-import type { SnapshotMetadata } from "../core/undo-manager";
+import type { SnapshotMetadata } from "../types";
 import type { UndoManager } from "../core/undo-manager";
 import type CognitiveRazorPlugin from "../../main";
 
@@ -168,7 +168,7 @@ export class UndoHistoryView extends ItemView {
     });
 
     // 添加复选框用于批量操作
-    const checkbox = item.createEl("input", {
+    item.createEl("input", {
       type: "checkbox",
       cls: "undo-history-checkbox",
       attr: { "aria-label": `选择快照: ${snapshot.id}` },
@@ -179,15 +179,15 @@ export class UndoHistoryView extends ItemView {
       cls: "undo-history-item-info",
     });
 
-    // 操作类型
+    // 操作类型（使用 taskId 作为操作标识）
     infoContainer.createDiv({
-      text: this.getOperationDisplayName(snapshot.operation),
+      text: this.getOperationDisplayName(snapshot.taskId),
       cls: "undo-history-item-operation",
     });
 
-    // 文件路径
+    // 文件路径（使用 path）
     infoContainer.createDiv({
-      text: snapshot.filePath,
+      text: snapshot.path,
       cls: "undo-history-item-path",
     });
 
@@ -207,7 +207,7 @@ export class UndoHistoryView extends ItemView {
     const undoButton = actionsContainer.createEl("button", {
       text: "撤销",
       cls: "undo-history-item-button",
-      attr: { "aria-label": `撤销操作: ${this.getOperationDisplayName(snapshot.operation)}` },
+      attr: { "aria-label": `撤销操作: ${this.getOperationDisplayName(snapshot.taskId)}` },
     });
 
     undoButton.addEventListener("click", async () => {
@@ -262,14 +262,14 @@ export class UndoHistoryView extends ItemView {
 
       const restoredSnapshot = restoreResult.value;
 
-      // 写入文件
-      const file = this.app.vault.getAbstractFileByPath(restoredSnapshot.filePath);
+      // 写入文件（使用 path 而不是 filePath）
+      const file = this.app.vault.getAbstractFileByPath(restoredSnapshot.path);
       if (file && file instanceof TFile) {
         // 使用 vault API 写入
         await this.app.vault.modify(file, restoredSnapshot.content);
       } else {
         // 文件不存在，创建新文件
-        await this.app.vault.create(restoredSnapshot.filePath, restoredSnapshot.content);
+        await this.app.vault.create(restoredSnapshot.path, restoredSnapshot.content);
       }
 
       // 删除快照
@@ -279,7 +279,7 @@ export class UndoHistoryView extends ItemView {
         // 但不影响撤销操作
       }
 
-      new Notice(`已撤销操作: ${this.getOperationDisplayName(snapshot.operation)}`);
+      new Notice(`已撤销操作: ${snapshot.taskId}`);
 
       // 刷新视图
       await this.refresh();
@@ -481,12 +481,12 @@ class SnapshotDetailsModal extends Modal {
     // 文件路径
     const pathContainer = contentEl.createDiv({ cls: "snapshot-detail-row" });
     pathContainer.createEl("strong", { text: "文件路径: " });
-    pathContainer.createSpan({ text: this.snapshot.filePath });
+    pathContainer.createSpan({ text: this.snapshot.path });
 
-    // 操作类型
+    // 任务 ID
     const opContainer = contentEl.createDiv({ cls: "snapshot-detail-row" });
-    opContainer.createEl("strong", { text: "操作类型: " });
-    opContainer.createSpan({ text: this.snapshot.operation });
+    opContainer.createEl("strong", { text: "任务 ID: " });
+    opContainer.createSpan({ text: this.snapshot.taskId });
 
     // 创建时间
     const timeContainer = contentEl.createDiv({ cls: "snapshot-detail-row" });
@@ -546,11 +546,11 @@ class UndoConfirmModal extends Modal {
     // 快照信息
     const info = contentEl.createDiv({ cls: "undo-confirm-info" });
     info.createEl("div", {
-      text: `操作类型: ${this.snapshot.operation}`,
+      text: `任务 ID: ${this.snapshot.taskId}`,
       cls: "undo-confirm-detail",
     });
     info.createEl("div", {
-      text: `文件路径: ${this.snapshot.filePath}`,
+      text: `文件路径: ${this.snapshot.path}`,
       cls: "undo-confirm-detail",
     });
 

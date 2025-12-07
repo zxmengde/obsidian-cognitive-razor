@@ -14,11 +14,15 @@ description: 技术栈版本参考和最佳实践指南
 | ESLint | 9.x | Flat Config |
 | Obsidian | 1.5.7+ | minAppVersion |
 
-## AI 模型
+## AI 模型（推荐默认值）
 
-- **聊天**: `gpt-4o` (默认), `gpt-4o-mini` (轻量)
-- **嵌入**: `text-embedding-3-small`
-- **避免使用**: `gpt-3.5-turbo` (已过时)
+> 以下为推荐的默认模型配置，非强制要求。设计文档支持通过 Provider 配置系统自定义模型。
+
+- **聊天**: `gpt-4o` (推荐默认), `gpt-4o-mini` (轻量替代)
+- **嵌入**: `text-embedding-3-small` (推荐默认)
+- **避免使用**: `gpt-3.5-turbo` (已过时，不推荐作为默认)
+
+用户可通过设置中的 Provider 配置使用其他兼容 OpenAI 格式的服务（如 OpenRouter、Azure、本地模型等）。
 
 ## 开发规范
 

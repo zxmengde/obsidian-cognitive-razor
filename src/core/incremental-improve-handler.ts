@@ -15,7 +15,7 @@ import { TaskQueue } from "./task-queue";
 import { UndoManager } from "./undo-manager";
 import { FileStorage } from "../data/file-storage";
 import { SimpleDiffView } from "../ui/diff-view";
-import { Result, ok, err, TaskRecord, CRFrontmatter, NoteState } from "../types";
+import { Result, ok, err, TaskRecord, CRFrontmatter, NoteState, IVectorIndex, IDuplicateManager, CRType } from "../types";
 
 /**
  * IncrementalImproveHandler 配置
@@ -29,6 +29,10 @@ export interface IncrementalImproveHandlerConfig {
   undoManager: UndoManager;
   /** FileStorage 实例 */
   storage: FileStorage;
+  /** VectorIndex 实例 */
+  vectorIndex: IVectorIndex;
+  /** DuplicateManager 实例 */
+  duplicateManager: IDuplicateManager;
 }
 
 /**
@@ -39,12 +43,16 @@ export class IncrementalImproveHandler {
   private taskQueue: TaskQueue;
   private undoManager: UndoManager;
   private storage: FileStorage;
+  private vectorIndex: IVectorIndex;
+  private duplicateManager: IDuplicateManager;
 
   constructor(config: IncrementalImproveHandlerConfig) {
     this.app = config.app;
     this.taskQueue = config.taskQueue;
     this.undoManager = config.undoManager;
     this.storage = config.storage;
+    this.vectorIndex = config.vectorIndex;
+    this.duplicateManager = config.duplicateManager;
   }
 
   /**
@@ -70,6 +78,11 @@ export class IncrementalImproveHandler {
 
     // 只处理 reason:incremental 任务
     if (task.taskType !== "reason:incremental") {
+      return;
+    }
+
+    // 如果任务属于 PipelineOrchestrator（包含 pipelineId），交由管线处理
+    if (task.payload?.pipelineId) {
       return;
     }
 
@@ -108,8 +121,8 @@ export class IncrementalImproveHandler {
     // 读取当前内容
     const currentContent = await this.app.vault.read(file);
 
-    // 获取改进后的内容
-    const improvedContent = task.result!.improved_content as string;
+    // 获取改进后的内容（兼容 improved_content 和 newContent 两种字段名）
+    const improvedContent = (task.result!.improved_content || task.result!.newContent) as string;
     if (!improvedContent) {
       new Notice("任务结果缺少改进内容");
       return;
@@ -144,10 +157,14 @@ export class IncrementalImproveHandler {
   ): Promise<void> {
     try {
       // 1. 创建快照
+      // 修复：使用 frontmatter 中的 uid 作为 nodeId（遵循 G-01 UID 稳定性）
+      const frontmatter = this.parseFrontmatter(originalContent);
+      const nodeId = frontmatter?.uid || file.basename.replace(/\.md$/, '');
       const snapshotResult = await this.undoManager.createSnapshot(
         file.path,
         originalContent,
-        "incremental-improve"
+        `incremental-improve-${Date.now()}`,
+        nodeId
       );
 
       if (!snapshotResult.ok) {
@@ -167,8 +184,8 @@ export class IncrementalImproveHandler {
         }
       }
 
-      // 4. 写入文件
-      await this.app.vault.modify(file, finalContent);
+      // 4. 写入文件（原子写入）
+      await this.atomicWriteVault(file.path, finalContent);
 
       // 5. 显示成功通知
       const message = needsDowngrade
@@ -176,6 +193,9 @@ export class IncrementalImproveHandler {
         : "增量改进已应用";
       
       new Notice(message, 5000);
+
+      // 6. 更新向量索引并触发去重（若有可用向量）
+      await this.updateIndexAndDedup(nodeId, frontmatter?.type);
 
       // 6. 显示撤销按钮（通过通知）
       this.showUndoNotification(file.path, snapshotResult.value);
@@ -271,6 +291,60 @@ export class IncrementalImproveHandler {
     return frontmatter.uid && frontmatter.type && frontmatter.status
       ? (frontmatter as CRFrontmatter)
       : null;
+  }
+
+  /**
+   * 原子写入到 Vault（临时文件 + 校验 + 重命名）
+   */
+  private async atomicWriteVault(path: string, content: string): Promise<void> {
+    const adapter = this.app.vault.adapter;
+    const temp = `${path}.tmp`;
+    const dir = path.split("/").slice(0, -1).join("/");
+
+    if (dir) {
+      const exists = await adapter.exists(dir);
+      if (!exists) {
+        await adapter.mkdir(dir);
+      }
+    }
+
+    await adapter.write(temp, content);
+    const verify = await adapter.read(temp);
+    if (verify !== content) {
+      await adapter.remove(temp);
+      throw new Error("写入校验失败");
+    }
+    if (await adapter.exists(path)) {
+      await adapter.remove(path);
+    }
+    await adapter.rename(temp, path);
+  }
+
+  /**
+   * 写入后更新向量索引并触发去重
+   */
+  private async updateIndexAndDedup(nodeId: string, type?: CRType): Promise<void> {
+    if (!type) return;
+
+    const entry = this.vectorIndex.getEntry(nodeId);
+    if (!entry) {
+      console.warn("IncrementalImproveHandler: 向量索引缺少条目，跳过更新", { nodeId });
+      return;
+    }
+
+    const updatedEntry = {
+      ...entry,
+      updated: new Date().toISOString()
+    };
+
+    const upsertResult = await this.vectorIndex.upsert(updatedEntry);
+    if (!upsertResult.ok) {
+      console.warn("IncrementalImproveHandler: 更新向量索引失败", upsertResult.error);
+      return;
+    }
+
+    // 触发去重检测
+    await this.duplicateManager.detect(nodeId, entry.type, entry.embedding);
   }
 
   /**

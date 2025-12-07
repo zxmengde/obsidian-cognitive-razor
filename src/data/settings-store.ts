@@ -1,515 +1,356 @@
 /**
- * SettingsStore 组件
- * 实现配置读写、配置验证和配置导入导出
- * 验证需求：8.5, 9.5
+ * SettingsStore 实现
+ * 管理插件配置，支持版本兼容性检查和导入导出
+ * 
+ * 实现要求：
+ * - Requirements 1.4: 验证 PluginSettings 接口所有必填字段
+ * - Requirements 1.5: 版本不兼容时重置为默认值
+ * - Requirements 10.3: 导出完整 JSON
+ * - Requirements 10.4: 导入时验证并合并默认值
+ * - Requirements 10.5: 设置变更时通知所有订阅者
  */
 
+import { ISettingsStore, PluginSettings, ProviderConfig, Result, ok, err, DirectoryScheme, TaskType } from "../types";
 import { Plugin } from "obsidian";
-import { FileStorage } from "./file-storage";
-import { Logger } from "./logger";
-import { Result, ok, err, CognitiveRazorSettings, ProviderConfig, ProviderType } from "../types";
+
+/**
+ * 默认目录方案
+ */
+const DEFAULT_DIRECTORY_SCHEME: DirectoryScheme = {
+  Domain: "1-领域",
+  Issue: "2-议题",
+  Theory: "3-理论",
+  Entity: "4-实体",
+  Mechanism: "5-机制",
+};
+
+/**
+ * PluginSettings 必填字段列表
+ * 用于验证设置对象的完整性
+ */
+export const REQUIRED_SETTINGS_FIELDS: (keyof PluginSettings)[] = [
+  "version",
+  "language",
+  "advancedMode",
+  "namingTemplate",
+  "directoryScheme",
+  "similarityThreshold",
+  "topK",
+  "concurrency",
+  "autoRetry",
+  "maxRetryAttempts",
+  "maxSnapshots",
+  "maxSnapshotAgeDays",
+  "enableGrounding",
+  "providers",
+  "defaultProviderId",
+  "taskModels",
+  "logLevel",
+];
+
+/**
+ * DirectoryScheme 必填字段列表
+ */
+export const REQUIRED_DIRECTORY_SCHEME_FIELDS: (keyof DirectoryScheme)[] = [
+  "Domain",
+  "Issue",
+  "Theory",
+  "Entity",
+  "Mechanism",
+];
+
+/**
+ * TaskType 列表
+ */
+export const TASK_TYPES: TaskType[] = [
+  "embedding",
+  "standardizeClassify",
+  "enrich",
+  "reason:new",
+  "reason:incremental",
+  "reason:merge",
+  "ground",
+];
+
+/**
+ * 验证错误接口
+ */
+export interface SettingsValidationError {
+  field: string;
+  message: string;
+  expectedType?: string;
+  actualType?: string;
+}
+
+/**
+ * 验证结果接口
+ */
+export interface SettingsValidationResult {
+  valid: boolean;
+  errors: SettingsValidationError[];
+}
 
 /**
  * 默认设置
+ * 
+ * 遵循设计文档规范：
+ * - G-10: 命名模板默认为 "{{chinese}} ({{english}})"
+ * - G-02: 相似度阈值默认为 0.9
+ * - A-FUNC-04: topK 默认为 10
+ * - 版本 0.9.3：预发布版本，尚未正式发布
  */
-export const DEFAULT_SETTINGS: CognitiveRazorSettings = {
-  version: "1.0.0",
+export const DEFAULT_SETTINGS: PluginSettings = {
+  version: "0.9.3",
+  
+  // 基础设置
+  language: "zh",
+  advancedMode: false,
+  demoMode: false,
+  
+  // 命名设置 (G-10: 命名规范性公理)
+  namingTemplate: "{{chinese}} ({{english}})",
+  
+  // 存储设置
+  directoryScheme: DEFAULT_DIRECTORY_SCHEME,
+  
+  // 去重设置 (G-02: 语义唯一性公理, A-FUNC-04: 语义去重检测)
+  similarityThreshold: 0.9,
+  topK: 10,
+  
+  // 队列设置
+  concurrency: 1,
+  autoRetry: true,
+  maxRetryAttempts: 3,
+  
+  // 快照设置
+  maxSnapshots: 100,
+  maxSnapshotAgeDays: 30, // A-FUNC-02: 可配置的快照保留天数
+  
+  // 功能开关
+  enableGrounding: false,
+  
+  // Provider 配置
   providers: {},
   defaultProviderId: "",
-  similarityThreshold: 0.9,
-  maxSnapshots: 100,
-  concurrency: 3,
-  advancedMode: false,
+  
+  // 任务模型配置
+  taskModels: {
+    embedding: {
+      providerId: "",
+      model: "text-embedding-3-small",
+    },
+    standardizeClassify: {
+      providerId: "",
+      model: "gpt-4o",
+      temperature: 0.3,
+    },
+    enrich: {
+      providerId: "",
+      model: "gpt-4o",
+      temperature: 0.5,
+    },
+    "reason:new": {
+      providerId: "",
+      model: "gpt-4o",
+      temperature: 0.7,
+    },
+    "reason:incremental": {
+      providerId: "",
+      model: "gpt-4o",
+      temperature: 0.7,
+    },
+    "reason:merge": {
+      providerId: "",
+      model: "gpt-4o",
+      temperature: 0.5,
+    },
+    ground: {
+      providerId: "",
+      model: "gpt-4o",
+      temperature: 0.3,
+    },
+  },
+  
+  // 日志级别
   logLevel: "info",
 };
 
 /**
- * SettingsStore 配置
+ * SettingsStore 实现类
  */
-export interface SettingsStoreConfig {
-  /** Obsidian Plugin 实例（用于标准 data.json 存储） */
-  plugin?: Plugin;
-  /** 文件存储（用于自定义文件存储，可选） */
-  storage?: FileStorage;
-  /** 日志记录器 */
-  logger: Logger;
-  /** 设置文件路径（仅在使用 FileStorage 时需要） */
-  settingsFilePath?: string;
-}
+export class SettingsStore implements ISettingsStore {
+  private plugin: Plugin;
+  private settings: PluginSettings;
+  private listeners: Array<(settings: PluginSettings) => void> = [];
 
-/**
- * 配置验证错误
- */
-export interface ValidationError {
-  /** 字段路径 */
-  field: string;
-  /** 错误消息 */
-  message: string;
-}
-
-/**
- * SettingsStore 组件
- */
-export class SettingsStore {
-  private plugin?: Plugin;
-  private storage?: FileStorage;
-  private logger: Logger;
-  private settingsFilePath?: string;
-  private settings: CognitiveRazorSettings;
-  private listeners: Array<(settings: CognitiveRazorSettings) => void> = [];
-
-  constructor(config: SettingsStoreConfig) {
-    this.plugin = config.plugin;
-    this.storage = config.storage;
-    this.logger = config.logger;
-    this.settingsFilePath = config.settingsFilePath;
+  /**
+   * 构造函数
+   * @param plugin Obsidian Plugin 实例
+   */
+  constructor(plugin: Plugin) {
+    this.plugin = plugin;
     this.settings = { ...DEFAULT_SETTINGS };
   }
 
   /**
    * 加载设置
+   * 
+   * **Requirements 1.4**: 验证 PluginSettings 接口所有必填字段
+   * **Requirements 1.5**: 版本不兼容时重置为默认值 (O-05)
    */
-  async load(): Promise<Result<CognitiveRazorSettings>> {
-    this.logger.info("加载设置");
-
+  async loadSettings(): Promise<Result<void>> {
     try {
-      let loadedData: CognitiveRazorSettings | null = null;
-
-      // 优先使用 Obsidian Plugin API（标准 data.json）
-      if (this.plugin) {
-        const data = await this.plugin.loadData();
-        if (data) {
-          loadedData = data as CognitiveRazorSettings;
-        }
-      } 
-      // 回退到 FileStorage
-      else if (this.storage && this.settingsFilePath) {
-        const exists = await this.storage.exists(this.settingsFilePath);
-        if (exists) {
-          const readResult = await this.storage.readJSON<CognitiveRazorSettings>(this.settingsFilePath);
-          if (readResult.ok) {
-            loadedData = readResult.value;
-          } else {
-            this.logger.error("读取设置文件失败", { error: readResult.error });
-            return readResult;
-          }
-        }
-      }
-
-      if (!loadedData) {
-        this.logger.info("设置不存在，使用默认设置");
-        this.settings = { ...DEFAULT_SETTINGS };
-        
-        // 创建默认设置
-        const saveResult = await this.save();
-        if (!saveResult.ok) {
-          return saveResult;
-        }
-        
-        return ok(this.settings);
-      }
-
-      // 合并默认设置（处理新增字段）
-      this.settings = this.mergeWithDefaults(loadedData);
-
-      // 验证设置
-      const validationResult = this.validate(this.settings);
-      if (!validationResult.ok) {
-        this.logger.error("设置验证失败", { errors: validationResult.error });
-        return validationResult;
-      }
-
-      this.logger.info("设置加载成功");
-      return ok(this.settings);
-    } catch (error) {
-      this.logger.error("加载设置异常", { error });
-      return err("LOAD_ERROR", `加载设置失败: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  /**
-   * 保存设置
-   */
-  async save(): Promise<Result<void>> {
-    this.logger.info("保存设置");
-
-    // 验证设置
-    const validationResult = this.validate(this.settings);
-    if (!validationResult.ok) {
-      this.logger.error("设置验证失败，无法保存", { errors: validationResult.error });
-      return validationResult;
-    }
-
-    try {
-      // 优先使用 Obsidian Plugin API（标准 data.json）
-      if (this.plugin) {
-        await this.plugin.saveData(this.settings);
-      } 
-      // 回退到 FileStorage
-      else if (this.storage && this.settingsFilePath) {
-        const writeResult = await this.storage.writeJSON(this.settingsFilePath, this.settings);
-        if (!writeResult.ok) {
-          this.logger.error("保存设置文件失败", { error: writeResult.error });
-          return writeResult;
-        }
-      }
-
-      this.logger.info("设置保存成功");
+      const data = await this.plugin.loadData();
       
-      // 通知监听器
-      this.notifyListeners();
+      if (!data) {
+        // 首次使用，使用默认设置
+        this.settings = { ...DEFAULT_SETTINGS };
+        await this.saveSettings();
+        return ok(undefined);
+      }
+
+      // 检查版本兼容性
+      const compatibilityResult = this.checkVersionCompatibility(data.version);
+      if (!compatibilityResult.ok) {
+        // 版本不兼容时重置为默认值 (O-05 开发阶段版本策略)
+        this.settings = { ...DEFAULT_SETTINGS };
+        await this.saveSettings();
+        return ok(undefined);
+      }
+
+      // 验证设置结构
+      const validationResult = this.validateSettingsDetailed(data);
+      if (!validationResult.valid) {
+        // 验证失败时重置为默认值
+        this.settings = { ...DEFAULT_SETTINGS };
+        await this.saveSettings();
+        return ok(undefined);
+      }
+
+      // 合并设置（保留默认值）
+      this.settings = this.mergeSettings(DEFAULT_SETTINGS, data);
       
       return ok(undefined);
     } catch (error) {
-      this.logger.error("保存设置异常", { error });
-      return err("SAVE_ERROR", `保存设置失败: ${error instanceof Error ? error.message : String(error)}`);
+      return err(
+        "E300",
+        "Failed to load settings",
+        error
+      );
     }
   }
 
   /**
-   * 获取当前设置
+   * 获取设置
    */
-  get(): CognitiveRazorSettings {
+  getSettings(): PluginSettings {
     return { ...this.settings };
   }
 
   /**
    * 更新设置
    */
-  async update(partial: Partial<CognitiveRazorSettings>): Promise<Result<void>> {
-    this.logger.info("更新设置", { fields: Object.keys(partial) });
+  async updateSettings(partial: Partial<PluginSettings>): Promise<Result<void>> {
+    try {
+      // 合并设置
+      this.settings = {
+        ...this.settings,
+        ...partial,
+      };
 
-    // 合并设置
-    const newSettings = { ...this.settings, ...partial };
+      // 保存到磁盘
+      await this.saveSettings();
 
-    // 验证新设置
-    const validationResult = this.validate(newSettings);
-    if (!validationResult.ok) {
-      this.logger.error("设置验证失败", { errors: validationResult.error });
-      return validationResult;
+      // 通知监听器
+      this.notifyListeners();
+
+      return ok(undefined);
+    } catch (error) {
+      return err(
+        "E301",
+        "Failed to update settings",
+        error
+      );
     }
-
-    // 更新内存中的设置
-    this.settings = newSettings;
-
-    // 保存到文件
-    return await this.save();
-  }
-
-  /**
-   * 验证设置
-   */
-  validate(settings: CognitiveRazorSettings): Result<void> {
-    const errors: ValidationError[] = [];
-
-    // 验证版本号
-    if (!settings.version || typeof settings.version !== "string") {
-      errors.push({ field: "version", message: "版本号必须是非空字符串" });
-    }
-
-    // 验证相似度阈值
-    if (typeof settings.similarityThreshold !== "number" ||
-        settings.similarityThreshold < 0 ||
-        settings.similarityThreshold > 1) {
-      errors.push({ field: "similarityThreshold", message: "相似度阈值必须在 0-1 之间" });
-    }
-
-    // 验证最大快照数量
-    if (typeof settings.maxSnapshots !== "number" ||
-        settings.maxSnapshots < 1 ||
-        !Number.isInteger(settings.maxSnapshots)) {
-      errors.push({ field: "maxSnapshots", message: "最大快照数量必须是正整数" });
-    }
-
-    // 验证并发数
-    if (typeof settings.concurrency !== "number" ||
-        settings.concurrency < 1 ||
-        !Number.isInteger(settings.concurrency)) {
-      errors.push({ field: "concurrency", message: "并发数必须是正整数" });
-    }
-
-    // 验证日志级别
-    const validLogLevels = ["debug", "info", "warn", "error"];
-    if (!validLogLevels.includes(settings.logLevel)) {
-      errors.push({ field: "logLevel", message: `日志级别必须是 ${validLogLevels.join(", ")} 之一` });
-    }
-
-    // 验证 providers
-    if (typeof settings.providers !== "object" || settings.providers === null) {
-      errors.push({ field: "providers", message: "providers 必须是对象" });
-    } else {
-      // 验证每个 provider 配置
-      for (const [providerId, providerConfig] of Object.entries(settings.providers)) {
-        const providerErrors = this.validateProviderConfig(providerId, providerConfig);
-        errors.push(...providerErrors);
-      }
-    }
-
-    // 验证默认 Provider ID
-    if (settings.defaultProviderId && !settings.providers[settings.defaultProviderId]) {
-      errors.push({ field: "defaultProviderId", message: "默认 Provider 不存在于 providers 中" });
-    }
-
-    if (errors.length > 0) {
-      return err("VALIDATION_ERROR", "设置验证失败", errors);
-    }
-
-    return ok(undefined);
-  }
-
-  /**
-   * 验证 Provider 配置
-   */
-  private validateProviderConfig(providerId: string, config: ProviderConfig): ValidationError[] {
-    const errors: ValidationError[] = [];
-    const prefix = `providers.${providerId}`;
-
-    // 验证类型
-    const validTypes: ProviderType[] = ["openai"];
-    if (!validTypes.includes(config.type)) {
-      errors.push({
-        field: `${prefix}.type`,
-        message: `Provider 类型必须是 ${validTypes.join(", ")} 之一`,
-      });
-    }
-
-    // 验证 API Key
-    if (!config.apiKey || typeof config.apiKey !== "string") {
-      errors.push({
-        field: `${prefix}.apiKey`,
-        message: "API Key 必须是非空字符串",
-      });
-    }
-
-    // 验证默认聊天模型
-    if (!config.defaultChatModel || typeof config.defaultChatModel !== "string") {
-      errors.push({
-        field: `${prefix}.defaultChatModel`,
-        message: "默认聊天模型必须是非空字符串",
-      });
-    }
-
-    // 验证默认嵌入模型
-    if (!config.defaultEmbedModel || typeof config.defaultEmbedModel !== "string") {
-      errors.push({
-        field: `${prefix}.defaultEmbedModel`,
-        message: "默认嵌入模型必须是非空字符串",
-      });
-    }
-
-    // 验证 enabled 标志
-    if (typeof config.enabled !== "boolean") {
-      errors.push({
-        field: `${prefix}.enabled`,
-        message: "enabled 必须是布尔值",
-      });
-    }
-
-    // 验证 baseUrl（可选）
-    if (config.baseUrl !== undefined && typeof config.baseUrl !== "string") {
-      errors.push({
-        field: `${prefix}.baseUrl`,
-        message: "baseUrl 必须是字符串",
-      });
-    }
-
-    return errors;
-  }
-
-  /**
-   * 合并默认设置
-   */
-  private mergeWithDefaults(settings: Partial<CognitiveRazorSettings>): CognitiveRazorSettings {
-    return {
-      version: settings.version || DEFAULT_SETTINGS.version,
-      providers: settings.providers || DEFAULT_SETTINGS.providers,
-      defaultProviderId: settings.defaultProviderId || DEFAULT_SETTINGS.defaultProviderId,
-      similarityThreshold: settings.similarityThreshold ?? DEFAULT_SETTINGS.similarityThreshold,
-      maxSnapshots: settings.maxSnapshots ?? DEFAULT_SETTINGS.maxSnapshots,
-      concurrency: settings.concurrency ?? DEFAULT_SETTINGS.concurrency,
-      advancedMode: settings.advancedMode ?? DEFAULT_SETTINGS.advancedMode,
-      logLevel: settings.logLevel || DEFAULT_SETTINGS.logLevel,
-    };
   }
 
   /**
    * 导出设置
    */
-  async export(): Promise<Result<string>> {
-    this.logger.info("导出设置");
-
-    try {
-      const exported = JSON.stringify(this.settings, null, 2);
-      return ok(exported);
-    } catch (error) {
-      this.logger.error("导出设置失败", { error });
-      return err("EXPORT_ERROR", "导出设置失败", error);
-    }
+  exportSettings(): string {
+    return JSON.stringify(this.settings, null, 2);
   }
 
   /**
    * 导入设置
    */
-  async import(json: string): Promise<Result<void>> {
-    this.logger.info("导入设置");
-
+  async importSettings(json: string): Promise<Result<void>> {
     try {
-      // 解析 JSON
-      const imported = JSON.parse(json) as Partial<CognitiveRazorSettings>;
+      const data = JSON.parse(json);
 
-      // 合并默认设置
-      const newSettings = this.mergeWithDefaults(imported);
-
-      // 验证设置
-      const validationResult = this.validate(newSettings);
-      if (!validationResult.ok) {
-        this.logger.error("导入的设置验证失败", { errors: validationResult.error });
-        return validationResult;
+      // 验证设置结构
+      if (!this.validateSettings(data)) {
+        return err(
+          "E001",
+          "Invalid settings format",
+          { json }
+        );
       }
 
-      // 更新设置
-      this.settings = newSettings;
-
-      // 保存到文件
-      const saveResult = await this.save();
-      if (!saveResult.ok) {
-        return saveResult;
+      // 检查版本兼容性
+      const compatibilityResult = this.checkVersionCompatibility(data.version);
+      if (!compatibilityResult.ok) {
+        return compatibilityResult;
       }
 
-      this.logger.info("设置导入成功");
+      // 合并设置
+      this.settings = this.mergeSettings(DEFAULT_SETTINGS, data);
+
+      // 保存到磁盘
+      await this.saveSettings();
+
+      // 通知监听器
+      this.notifyListeners();
+
       return ok(undefined);
     } catch (error) {
-      this.logger.error("导入设置失败", { error });
-      return err("IMPORT_ERROR", "导入设置失败", error);
+      return err(
+        "E001",
+        "Failed to parse settings JSON",
+        error
+      );
     }
   }
 
   /**
-   * 重置为默认设置
+   * 重置为默认值
    */
-  async reset(): Promise<Result<void>> {
-    this.logger.info("重置设置为默认值");
+  async resetToDefaults(): Promise<Result<void>> {
+    try {
+      this.settings = { ...DEFAULT_SETTINGS };
 
-    this.settings = { ...DEFAULT_SETTINGS };
-    return await this.save();
-  }
+      // 保存到磁盘
+      await this.saveSettings();
 
-  /**
-   * 添加 Provider 配置
-   */
-  async addProvider(providerId: string, config: ProviderConfig): Promise<Result<void>> {
-    this.logger.info("添加 Provider 配置", { providerId });
+      // 通知监听器
+      this.notifyListeners();
 
-    // 验证 Provider 配置
-    const errors = this.validateProviderConfig(providerId, config);
-    if (errors.length > 0) {
-      return err("VALIDATION_ERROR", "Provider 配置验证失败", errors);
+      return ok(undefined);
+    } catch (error) {
+      return err(
+        "E301",
+        "Failed to reset settings",
+        error
+      );
     }
-
-    // 检查是否已存在
-    if (this.settings.providers[providerId]) {
-      return err("PROVIDER_EXISTS", `Provider ${providerId} 已存在`);
-    }
-
-    // 添加配置
-    this.settings.providers[providerId] = config;
-
-    // 如果是第一个 Provider，设置为默认
-    if (!this.settings.defaultProviderId) {
-      this.settings.defaultProviderId = providerId;
-    }
-
-    // 保存设置
-    return await this.save();
-  }
-
-  /**
-   * 更新 Provider 配置
-   */
-  async updateProvider(providerId: string, config: Partial<ProviderConfig>): Promise<Result<void>> {
-    this.logger.info("更新 Provider 配置", { providerId });
-
-    // 检查 Provider 是否存在
-    if (!this.settings.providers[providerId]) {
-      return err("PROVIDER_NOT_FOUND", `Provider ${providerId} 不存在`);
-    }
-
-    // 合并配置
-    const newConfig = { ...this.settings.providers[providerId], ...config };
-
-    // 验证配置
-    const errors = this.validateProviderConfig(providerId, newConfig);
-    if (errors.length > 0) {
-      return err("VALIDATION_ERROR", "Provider 配置验证失败", errors);
-    }
-
-    // 更新配置
-    this.settings.providers[providerId] = newConfig;
-
-    // 保存设置
-    return await this.save();
-  }
-
-  /**
-   * 删除 Provider 配置
-   */
-  async removeProvider(providerId: string): Promise<Result<void>> {
-    this.logger.info("删除 Provider 配置", { providerId });
-
-    // 检查 Provider 是否存在
-    if (!this.settings.providers[providerId]) {
-      return err("PROVIDER_NOT_FOUND", `Provider ${providerId} 不存在`);
-    }
-
-    // 删除配置
-    delete this.settings.providers[providerId];
-
-    // 如果删除的是默认 Provider，清空默认 Provider ID
-    if (this.settings.defaultProviderId === providerId) {
-      // 尝试设置第一个可用的 Provider 为默认
-      const providerIds = Object.keys(this.settings.providers);
-      this.settings.defaultProviderId = providerIds.length > 0 ? providerIds[0] : "";
-    }
-
-    // 保存设置
-    return await this.save();
-  }
-
-  /**
-   * 获取 Provider 配置
-   */
-  getProvider(providerId: string): ProviderConfig | undefined {
-    return this.settings.providers[providerId];
-  }
-
-  /**
-   * 获取所有 Provider 配置
-   */
-  getAllProviders(): Record<string, ProviderConfig> {
-    return { ...this.settings.providers };
-  }
-
-  /**
-   * 设置默认 Provider
-   */
-  async setDefaultProvider(providerId: string): Promise<Result<void>> {
-    this.logger.info("设置默认 Provider", { providerId });
-
-    // 检查 Provider 是否存在
-    if (!this.settings.providers[providerId]) {
-      return err("PROVIDER_NOT_FOUND", `Provider ${providerId} 不存在`);
-    }
-
-    this.settings.defaultProviderId = providerId;
-    return await this.save();
   }
 
   /**
    * 订阅设置变更
    */
-  subscribe(listener: (settings: CognitiveRazorSettings) => void): () => void {
+  subscribe(listener: (settings: PluginSettings) => void): () => void {
     this.listeners.push(listener);
-    
+
     // 返回取消订阅函数
     return () => {
       const index = this.listeners.indexOf(listener);
@@ -520,16 +361,541 @@ export class SettingsStore {
   }
 
   /**
+   * 保存设置到磁盘
+   */
+  private async saveSettings(): Promise<void> {
+    await this.plugin.saveData(this.settings);
+  }
+
+  /**
    * 通知所有监听器
    */
   private notifyListeners(): void {
-    const settings = this.get();
+    const settingsCopy = { ...this.settings };
     for (const listener of this.listeners) {
-      try {
-        listener(settings);
-      } catch (error) {
-        this.logger.error("设置监听器执行失败", { error });
+      listener(settingsCopy);
+    }
+  }
+
+  /**
+   * 检查版本兼容性
+   */
+  private checkVersionCompatibility(version: string): Result<void> {
+    // 简单的版本检查：主版本号必须匹配
+    const currentMajor = DEFAULT_SETTINGS.version.split(".")[0];
+    const loadedMajor = version.split(".")[0];
+
+    if (currentMajor !== loadedMajor) {
+      return err(
+        "E302",
+        `Incompatible settings version: ${version} (current: ${DEFAULT_SETTINGS.version})`,
+        { version, currentVersion: DEFAULT_SETTINGS.version }
+      );
+    }
+
+    return ok(undefined);
+  }
+
+  /**
+   * 验证设置结构（简单布尔返回）
+   * @param data 待验证的数据
+   * @returns 是否为有效的 PluginSettings
+   */
+  private validateSettings(data: unknown): data is PluginSettings {
+    const result = this.validateSettingsDetailed(data);
+    return result.valid;
+  }
+
+  /**
+   * 详细验证设置结构
+   * 返回验证结果和具体错误信息
+   * 
+   * **Property 4: Settings Validation**
+   * For any settings object loaded by SettingsStore, the object SHALL conform to
+   * the PluginSettings interface with all required fields present and correctly typed.
+   * 
+   * @param data 待验证的数据
+   * @returns 验证结果，包含是否有效和错误列表
+   */
+  validateSettingsDetailed(data: unknown): SettingsValidationResult {
+    const errors: SettingsValidationError[] = [];
+
+    // 基础类型检查
+    if (typeof data !== "object" || data === null) {
+      errors.push({
+        field: "root",
+        message: "Settings must be a non-null object",
+        expectedType: "object",
+        actualType: data === null ? "null" : typeof data,
+      });
+      return { valid: false, errors };
+    }
+
+    const settings = data as Record<string, unknown>;
+
+    // 验证 version 字段
+    if (typeof settings.version !== "string") {
+      errors.push({
+        field: "version",
+        message: "version must be a string",
+        expectedType: "string",
+        actualType: typeof settings.version,
+      });
+    }
+
+    // 验证 language 字段
+    if (typeof settings.language !== "string") {
+      errors.push({
+        field: "language",
+        message: "language must be a string",
+        expectedType: "string",
+        actualType: typeof settings.language,
+      });
+    } else if (settings.language !== "zh" && settings.language !== "en") {
+      errors.push({
+        field: "language",
+        message: "language must be 'zh' or 'en'",
+        expectedType: "'zh' | 'en'",
+        actualType: `'${settings.language}'`,
+      });
+    }
+
+    // 验证 advancedMode 字段
+    if (typeof settings.advancedMode !== "boolean") {
+      errors.push({
+        field: "advancedMode",
+        message: "advancedMode must be a boolean",
+        expectedType: "boolean",
+        actualType: typeof settings.advancedMode,
+      });
+    }
+
+    // 验证 demoMode 字段（可选）
+    if (settings.demoMode !== undefined && typeof settings.demoMode !== "boolean") {
+      errors.push({
+        field: "demoMode",
+        message: "demoMode must be a boolean when provided",
+        expectedType: "boolean",
+        actualType: typeof settings.demoMode,
+      });
+    }
+
+    // 验证 namingTemplate 字段
+    if (typeof settings.namingTemplate !== "string") {
+      errors.push({
+        field: "namingTemplate",
+        message: "namingTemplate must be a string",
+        expectedType: "string",
+        actualType: typeof settings.namingTemplate,
+      });
+    }
+
+    // 验证 directoryScheme 字段
+    this.validateDirectoryScheme(settings.directoryScheme, errors);
+
+    // 验证 similarityThreshold 字段
+    if (typeof settings.similarityThreshold !== "number") {
+      errors.push({
+        field: "similarityThreshold",
+        message: "similarityThreshold must be a number",
+        expectedType: "number",
+        actualType: typeof settings.similarityThreshold,
+      });
+    } else if (settings.similarityThreshold < 0 || settings.similarityThreshold > 1) {
+      errors.push({
+        field: "similarityThreshold",
+        message: "similarityThreshold must be between 0 and 1",
+        expectedType: "number (0-1)",
+        actualType: String(settings.similarityThreshold),
+      });
+    }
+
+    // 验证 topK 字段
+    if (typeof settings.topK !== "number") {
+      errors.push({
+        field: "topK",
+        message: "topK must be a number",
+        expectedType: "number",
+        actualType: typeof settings.topK,
+      });
+    } else if (!Number.isInteger(settings.topK) || settings.topK < 1) {
+      errors.push({
+        field: "topK",
+        message: "topK must be a positive integer",
+        expectedType: "positive integer",
+        actualType: String(settings.topK),
+      });
+    }
+
+    // 验证 concurrency 字段
+    if (typeof settings.concurrency !== "number") {
+      errors.push({
+        field: "concurrency",
+        message: "concurrency must be a number",
+        expectedType: "number",
+        actualType: typeof settings.concurrency,
+      });
+    } else if (!Number.isInteger(settings.concurrency) || settings.concurrency < 1) {
+      errors.push({
+        field: "concurrency",
+        message: "concurrency must be a positive integer",
+        expectedType: "positive integer",
+        actualType: String(settings.concurrency),
+      });
+    }
+
+    // 验证 autoRetry 字段
+    if (typeof settings.autoRetry !== "boolean") {
+      errors.push({
+        field: "autoRetry",
+        message: "autoRetry must be a boolean",
+        expectedType: "boolean",
+        actualType: typeof settings.autoRetry,
+      });
+    }
+
+    // 验证 maxRetryAttempts 字段
+    if (typeof settings.maxRetryAttempts !== "number") {
+      errors.push({
+        field: "maxRetryAttempts",
+        message: "maxRetryAttempts must be a number",
+        expectedType: "number",
+        actualType: typeof settings.maxRetryAttempts,
+      });
+    } else if (!Number.isInteger(settings.maxRetryAttempts) || settings.maxRetryAttempts < 0) {
+      errors.push({
+        field: "maxRetryAttempts",
+        message: "maxRetryAttempts must be a non-negative integer",
+        expectedType: "non-negative integer",
+        actualType: String(settings.maxRetryAttempts),
+      });
+    }
+
+    // 验证 maxSnapshots 字段
+    if (typeof settings.maxSnapshots !== "number") {
+      errors.push({
+        field: "maxSnapshots",
+        message: "maxSnapshots must be a number",
+        expectedType: "number",
+        actualType: typeof settings.maxSnapshots,
+      });
+    } else if (!Number.isInteger(settings.maxSnapshots) || settings.maxSnapshots < 1) {
+      errors.push({
+        field: "maxSnapshots",
+        message: "maxSnapshots must be a positive integer",
+        expectedType: "positive integer",
+        actualType: String(settings.maxSnapshots),
+      });
+    }
+
+    // 验证 maxSnapshotAgeDays 字段 (A-FUNC-02)
+    if (typeof settings.maxSnapshotAgeDays !== "number") {
+      errors.push({
+        field: "maxSnapshotAgeDays",
+        message: "maxSnapshotAgeDays must be a number",
+        expectedType: "number",
+        actualType: typeof settings.maxSnapshotAgeDays,
+      });
+    } else if (!Number.isInteger(settings.maxSnapshotAgeDays) || settings.maxSnapshotAgeDays < 1) {
+      errors.push({
+        field: "maxSnapshotAgeDays",
+        message: "maxSnapshotAgeDays must be a positive integer",
+        expectedType: "positive integer",
+        actualType: String(settings.maxSnapshotAgeDays),
+      });
+    }
+
+    // 验证 enableGrounding 字段
+    if (typeof settings.enableGrounding !== "boolean") {
+      errors.push({
+        field: "enableGrounding",
+        message: "enableGrounding must be a boolean",
+        expectedType: "boolean",
+        actualType: typeof settings.enableGrounding,
+      });
+    }
+
+    // 验证 providers 字段
+    if (typeof settings.providers !== "object" || settings.providers === null) {
+      errors.push({
+        field: "providers",
+        message: "providers must be an object",
+        expectedType: "object",
+        actualType: settings.providers === null ? "null" : typeof settings.providers,
+      });
+    }
+
+    // 验证 defaultProviderId 字段
+    if (typeof settings.defaultProviderId !== "string") {
+      errors.push({
+        field: "defaultProviderId",
+        message: "defaultProviderId must be a string",
+        expectedType: "string",
+        actualType: typeof settings.defaultProviderId,
+      });
+    }
+
+    // 验证 taskModels 字段
+    this.validateTaskModels(settings.taskModels, errors);
+
+    // 验证 logLevel 字段
+    if (typeof settings.logLevel !== "string") {
+      errors.push({
+        field: "logLevel",
+        message: "logLevel must be a string",
+        expectedType: "string",
+        actualType: typeof settings.logLevel,
+      });
+    } else if (!["debug", "info", "warn", "error"].includes(settings.logLevel)) {
+      errors.push({
+        field: "logLevel",
+        message: "logLevel must be 'debug', 'info', 'warn', or 'error'",
+        expectedType: "'debug' | 'info' | 'warn' | 'error'",
+        actualType: `'${settings.logLevel}'`,
+      });
+    }
+
+    return { valid: errors.length === 0, errors };
+  }
+
+  /**
+   * 验证 DirectoryScheme 结构
+   */
+  private validateDirectoryScheme(
+    directoryScheme: unknown,
+    errors: SettingsValidationError[]
+  ): void {
+    if (typeof directoryScheme !== "object" || directoryScheme === null) {
+      errors.push({
+        field: "directoryScheme",
+        message: "directoryScheme must be an object",
+        expectedType: "object",
+        actualType: directoryScheme === null ? "null" : typeof directoryScheme,
+      });
+      return;
+    }
+
+    const scheme = directoryScheme as Record<string, unknown>;
+
+    for (const field of REQUIRED_DIRECTORY_SCHEME_FIELDS) {
+      if (typeof scheme[field] !== "string") {
+        errors.push({
+          field: `directoryScheme.${field}`,
+          message: `directoryScheme.${field} must be a string`,
+          expectedType: "string",
+          actualType: typeof scheme[field],
+        });
       }
     }
+  }
+
+  /**
+   * 验证 TaskModels 结构
+   */
+  private validateTaskModels(
+    taskModels: unknown,
+    errors: SettingsValidationError[]
+  ): void {
+    if (typeof taskModels !== "object" || taskModels === null) {
+      errors.push({
+        field: "taskModels",
+        message: "taskModels must be an object",
+        expectedType: "object",
+        actualType: taskModels === null ? "null" : typeof taskModels,
+      });
+      return;
+    }
+
+    const models = taskModels as Record<string, unknown>;
+
+    for (const taskType of TASK_TYPES) {
+      const model = models[taskType];
+      if (typeof model !== "object" || model === null) {
+        errors.push({
+          field: `taskModels.${taskType}`,
+          message: `taskModels.${taskType} must be an object`,
+          expectedType: "TaskModelConfig",
+          actualType: model === null ? "null" : typeof model,
+        });
+        continue;
+      }
+
+      const modelConfig = model as Record<string, unknown>;
+
+      // 验证 providerId
+      if (typeof modelConfig.providerId !== "string") {
+        errors.push({
+          field: `taskModels.${taskType}.providerId`,
+          message: `taskModels.${taskType}.providerId must be a string`,
+          expectedType: "string",
+          actualType: typeof modelConfig.providerId,
+        });
+      }
+
+      // 验证 model
+      if (typeof modelConfig.model !== "string") {
+        errors.push({
+          field: `taskModels.${taskType}.model`,
+          message: `taskModels.${taskType}.model must be a string`,
+          expectedType: "string",
+          actualType: typeof modelConfig.model,
+        });
+      }
+
+      // 验证可选字段 temperature
+      if (modelConfig.temperature !== undefined && typeof modelConfig.temperature !== "number") {
+        errors.push({
+          field: `taskModels.${taskType}.temperature`,
+          message: `taskModels.${taskType}.temperature must be a number`,
+          expectedType: "number",
+          actualType: typeof modelConfig.temperature,
+        });
+      }
+
+      // 验证可选字段 topP
+      if (modelConfig.topP !== undefined && typeof modelConfig.topP !== "number") {
+        errors.push({
+          field: `taskModels.${taskType}.topP`,
+          message: `taskModels.${taskType}.topP must be a number`,
+          expectedType: "number",
+          actualType: typeof modelConfig.topP,
+        });
+      }
+
+      // 验证可选字段 maxTokens
+      if (modelConfig.maxTokens !== undefined && typeof modelConfig.maxTokens !== "number") {
+        errors.push({
+          field: `taskModels.${taskType}.maxTokens`,
+          message: `taskModels.${taskType}.maxTokens must be a number`,
+          expectedType: "number",
+          actualType: typeof modelConfig.maxTokens,
+        });
+      }
+    }
+  }
+
+  /**
+   * 合并设置（深度合并）
+   */
+  private mergeSettings(defaults: PluginSettings, loaded: Partial<PluginSettings>): PluginSettings {
+    const merged = { ...defaults };
+
+    // 合并顶层字段
+    for (const key in loaded) {
+      if (Object.prototype.hasOwnProperty.call(loaded, key)) {
+        const value = loaded[key as keyof PluginSettings];
+        const defaultValue = defaults[key as keyof PluginSettings];
+        
+        if (value !== undefined) {
+          if (typeof value === "object" && value !== null && !Array.isArray(value) && typeof defaultValue === "object") {
+            // 深度合并对象
+            Object.assign(merged, {
+              [key]: {
+                ...defaultValue as object,
+                ...value as object,
+              }
+            });
+          } else {
+            // 直接赋值
+            Object.assign(merged, { [key]: value });
+          }
+        }
+      }
+    }
+
+    return merged;
+  }
+
+  // ============================================================================
+  // 便捷方法（供 UI 层使用）
+  // ============================================================================
+
+  /**
+   * 更新部分设置（updateSettings 的别名）
+   */
+  async update(partial: Partial<PluginSettings>): Promise<Result<void>> {
+    return this.updateSettings(partial);
+  }
+
+  /**
+   * 设置默认 Provider
+   */
+  async setDefaultProvider(providerId: string): Promise<Result<void>> {
+    return this.updateSettings({ defaultProviderId: providerId });
+  }
+
+  /**
+   * 添加 Provider
+   */
+  async addProvider(id: string, config: ProviderConfig): Promise<Result<void>> {
+    const providers = { ...this.settings.providers, [id]: config };
+    const updates: Partial<PluginSettings> = { providers };
+    
+    // 如果是第一个 Provider，设为默认
+    if (Object.keys(this.settings.providers).length === 0) {
+      updates.defaultProviderId = id;
+    }
+    
+    return this.updateSettings(updates);
+  }
+
+  /**
+   * 更新 Provider
+   */
+  async updateProvider(id: string, updates: Partial<ProviderConfig>): Promise<Result<void>> {
+    const currentConfig = this.settings.providers[id];
+    if (!currentConfig) {
+      return err("E304", `Provider 不存在: ${id}`);
+    }
+    
+    const providers = {
+      ...this.settings.providers,
+      [id]: { ...currentConfig, ...updates }
+    };
+    
+    return this.updateSettings({ providers });
+  }
+
+  /**
+   * 移除 Provider
+   */
+  async removeProvider(id: string): Promise<Result<void>> {
+    const providers = { ...this.settings.providers };
+    delete providers[id];
+    
+    const updates: Partial<PluginSettings> = { providers };
+    
+    // 如果删除的是默认 Provider，重新选择一个
+    if (this.settings.defaultProviderId === id) {
+      const remainingIds = Object.keys(providers);
+      updates.defaultProviderId = remainingIds.length > 0 ? remainingIds[0] : "";
+    }
+    
+    return this.updateSettings(updates);
+  }
+
+  /**
+   * 导出设置（返回 Result）
+   */
+  async export(): Promise<Result<string>> {
+    try {
+      return ok(this.exportSettings());
+    } catch (error) {
+      return err("E301", "导出设置失败", error);
+    }
+  }
+
+  /**
+   * 导入设置（importSettings 的别名）
+   */
+  async import(json: string): Promise<Result<void>> {
+    return this.importSettings(json);
+  }
+
+  /**
+   * 重置设置（resetToDefaults 的别名）
+   */
+  async reset(): Promise<Result<void>> {
+    return this.resetToDefaults();
   }
 }

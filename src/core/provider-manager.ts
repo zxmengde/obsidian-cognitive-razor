@@ -1,359 +1,673 @@
 /**
- * ProviderManager - AI Provider 管理和 API 调用
+ * Provider 管理器
+ * 负责与 AI 服务提供商交互，支持 OpenAI 标准格式
  * 
- * 负责：
- * - 管理 AI Provider（OpenAI 标准格式，可通过自定义端点兼容其他服务）
- * - 统一的聊天和嵌入接口
- * - Provider 能力检测
- * - API 调用和错误处理
- * - 支持自定义 API 端点配置
+ * 遵循设计文档 Requirements 3.1：
+ * - 使用 OpenAI 标准格式
+ * - 支持自定义 baseUrl（兼容 OpenRouter、Azure 等）
+ * - 错误处理委托给 RetryHandler
  */
 
 import {
-  Result,
-  ok,
-  err,
-  Err,
+  IProviderManager,
+  ILogger,
+  ISettingsStore,
   ChatRequest,
   ChatResponse,
   EmbedRequest,
   EmbedResponse,
-  ProviderInfo,
   ProviderCapabilities,
+  ProviderInfo,
   ProviderConfig,
-  ProviderType,
+  Result,
+  ok,
+  err,
+  DEFAULT_ENDPOINTS,
+  Err
 } from "../types";
+import { RetryHandler, NETWORK_ERROR_CONFIG } from "./retry-handler";
 
 /**
- * 获取错误消息
+ * OpenAI API 响应格式
  */
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+interface OpenAIChatResponse {
+  choices: Array<{
+    message: {
+      content: string;
+    };
+    finish_reason: string;
+  }>;
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
 }
 
-// ============================================================================
-// Provider 接口
-// ============================================================================
-
-/**
- * Provider 基础接口
- */
-interface IProvider {
-  /** Provider ID */
-  readonly id: string;
-  /** Provider 类型 */
-  readonly type: ProviderType;
-  /** Provider 名称 */
-  readonly name: string;
-
-  /**
-   * 聊天接口
-   */
-  chat(request: ChatRequest): Promise<Result<ChatResponse>>;
-
-  /**
-   * 嵌入接口
-   */
-  embed(request: EmbedRequest): Promise<Result<EmbedResponse>>;
-
-  /**
-   * 检查可用性和能力
-   */
-  checkCapabilities(): Promise<Result<ProviderCapabilities>>;
+interface OpenAIEmbedResponse {
+  data: Array<{
+    embedding: number[];
+  }>;
+  usage?: {
+    prompt_tokens: number;
+    total_tokens: number;
+  };
 }
 
-// ============================================================================
-// OpenAI Provider
-// ============================================================================
+/**
+ * HTTP 错误响应
+ */
+interface HttpErrorResponse {
+  error?: {
+    message?: string;
+    type?: string;
+    code?: string;
+  };
+}
 
 /**
- * OpenAI Provider 实现
+ * Provider 可用性缓存条目
  */
-class OpenAIProvider implements IProvider {
-  readonly id: string;
-  readonly type: ProviderType = "openai";
-  readonly name = "OpenAI";
+interface AvailabilityCacheEntry {
+  capabilities: ProviderCapabilities;
+  timestamp: number;
+}
 
-  private apiKey: string;
-  private baseUrl: string;
-  private defaultChatModel: string;
+/**
+ * ProviderManager - AI 服务提供商管理器
+ * 
+ * 实现设计文档 section 7.4 定义的 IProviderManager 接口
+ * 
+ * 特性：
+ * - 使用 OpenAI 标准格式调用 API
+ * - 支持自定义 baseUrl（兼容 OpenRouter、Azure、本地模型等）
+ * - 错误处理委托给 RetryHandler
+ * - 支持聊天和嵌入两种 API
+ * - 可用性检查缓存（避免频繁网络请求，遵循 G-08 本地优先）
+ */
+export class ProviderManager implements IProviderManager {
+  private settingsStore: ISettingsStore;
+  private logger: ILogger;
+  private retryHandler: RetryHandler;
+  private networkListeners: Array<(online: boolean, error?: Err) => void>;
+  private isOffline = false;
+  
+  // 可用性缓存（遵循 G-08 本地优先，A-NF-01 性能界限）
+  private availabilityCache: Map<string, AvailabilityCacheEntry>;
+  private static readonly CACHE_TTL_MS = 5 * 60 * 1000; // 5 分钟缓存
 
-  constructor(id: string, config: ProviderConfig) {
-    this.id = id;
-    this.apiKey = config.apiKey;
-    this.baseUrl = config.baseUrl || "https://api.openai.com/v1";
-    // 2025年更新: 默认使用 gpt-4o，性价比最高的多模态模型
-    this.defaultChatModel = config.defaultChatModel || "gpt-4o";
+  constructor(settingsStore: ISettingsStore, logger: ILogger, retryHandler?: RetryHandler) {
+    this.settingsStore = settingsStore;
+    this.logger = logger;
+    this.retryHandler = retryHandler || new RetryHandler(logger);
+    this.networkListeners = [];
+    this.availabilityCache = new Map();
+
+    this.logger.debug("ProviderManager", "ProviderManager 初始化完成");
   }
 
+  /**
+   * 清除可用性缓存
+   * 用于设置页面"测试连接"时强制刷新
+   */
+  clearAvailabilityCache(providerId?: string): void {
+    if (providerId) {
+      this.availabilityCache.delete(providerId);
+      this.logger.debug("ProviderManager", `已清除 Provider ${providerId} 的可用性缓存`);
+    } else {
+      this.availabilityCache.clear();
+      this.logger.debug("ProviderManager", "已清除所有 Provider 可用性缓存");
+    }
+  }
+
+  /**
+   * 调用聊天 API
+   * 
+   * 使用 OpenAI 标准格式：POST /chat/completions
+   * 支持自定义 baseUrl
+   * 错误处理委托给 RetryHandler
+   * 
+   * @param request 聊天请求
+   * @returns 聊天响应
+   */
   async chat(request: ChatRequest): Promise<Result<ChatResponse>> {
-    try {
-      const response = await fetch(`${this.baseUrl}/chat/completions`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: request.model,
-          messages: request.messages,
-          temperature: request.temperature ?? 0.7,
-          top_p: request.topP ?? 1.0,
-          max_tokens: request.maxTokens ?? 2048,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        return this.handleError(response.status, errorData);
-      }
-
-      const data = await response.json();
-      const content = data.choices?.[0]?.message?.content || "";
-      const finishReason = data.choices?.[0]?.finish_reason || "stop";
-      const tokensUsed = data.usage?.total_tokens;
-
-      return ok({
-        content,
-        finishReason,
-        tokensUsed,
-      });
-    } catch (error) {
-      return err("E100", `API 调用失败: ${getErrorMessage(error)}`, error);
+    const startTime = Date.now();
+    
+    // 验证 Provider 配置
+    const configResult = this.getProviderConfig(request.providerId);
+    if (!configResult.ok) {
+      return configResult;
     }
+    const providerConfig = configResult.value;
+
+    // 构建请求 URL
+    const baseUrl = providerConfig.baseUrl || DEFAULT_ENDPOINTS[providerConfig.type];
+    const url = `${baseUrl}/chat/completions`;
+
+    // 构建请求体（OpenAI 标准格式）
+    const requestBody = {
+      model: request.model,
+      messages: request.messages,
+      temperature: request.temperature ?? 0.7,
+      top_p: request.topP ?? 1.0,
+      max_tokens: request.maxTokens
+    };
+
+    this.logger.debug("ProviderManager", "发送聊天请求", {
+      event: "API_REQUEST",
+      providerId: request.providerId,
+      model: request.model,
+      url,
+      messageCount: request.messages.length
+    });
+
+    // 使用 RetryHandler 执行带重试的请求
+    const result = await this.retryHandler.executeWithRetry(
+      async () => this.executeChatRequest(url, requestBody, providerConfig.apiKey),
+      {
+        ...NETWORK_ERROR_CONFIG,
+        onRetry: (attempt, error) => {
+          this.logger.warn("ProviderManager", `聊天请求重试 ${attempt}`, {
+            event: "API_RETRY",
+            providerId: request.providerId,
+            errorCode: error.code,
+            errorMessage: error.message
+          });
+        }
+      }
+    );
+
+    const elapsedTime = Date.now() - startTime;
+
+    if (result.ok) {
+      this.notifyNetworkStatus(true);
+      this.logger.info("ProviderManager", "聊天请求成功", {
+        event: "API_RESPONSE",
+        providerId: request.providerId,
+        model: request.model,
+        tokensUsed: result.value.tokensUsed,
+        elapsedTime
+      });
+    } else {
+      if (result.error.code === "E102") {
+        this.notifyNetworkStatus(false, result as Err);
+      } else {
+        this.notifyNetworkStatus(true);
+      }
+      this.logger.error("ProviderManager", "聊天请求失败", undefined, {
+        event: "API_ERROR",
+        providerId: request.providerId,
+        model: request.model,
+        errorCode: result.error.code,
+        errorMessage: result.error.message,
+        elapsedTime
+      });
+    }
+
+    return result;
   }
 
+  /**
+   * 调用嵌入 API
+   * 
+   * 使用 OpenAI 标准格式：POST /embeddings
+   * 支持自定义 baseUrl
+   * 错误处理委托给 RetryHandler
+   * 
+   * @param request 嵌入请求
+   * @returns 嵌入响应
+   */
   async embed(request: EmbedRequest): Promise<Result<EmbedResponse>> {
-    try {
-      const response = await fetch(`${this.baseUrl}/embeddings`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: request.model,
-          input: request.input,
-        }),
-      });
+    const startTime = Date.now();
+    
+    // 验证 Provider 配置
+    const configResult = this.getProviderConfig(request.providerId);
+    if (!configResult.ok) {
+      return configResult;
+    }
+    const providerConfig = configResult.value;
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        return this.handleError(response.status, errorData);
+    // 构建请求 URL
+    const baseUrl = providerConfig.baseUrl || DEFAULT_ENDPOINTS[providerConfig.type];
+    const url = `${baseUrl}/embeddings`;
+
+    // 构建请求体（OpenAI 标准格式）
+    const requestBody = {
+      model: request.model,
+      input: request.input
+    };
+
+    this.logger.debug("ProviderManager", "发送嵌入请求", {
+      event: "API_REQUEST",
+      providerId: request.providerId,
+      model: request.model,
+      url,
+      inputLength: request.input.length
+    });
+
+    // 使用 RetryHandler 执行带重试的请求
+    const result = await this.retryHandler.executeWithRetry(
+      async () => this.executeEmbedRequest(url, requestBody, providerConfig.apiKey),
+      {
+        ...NETWORK_ERROR_CONFIG,
+        onRetry: (attempt, error) => {
+          this.logger.warn("ProviderManager", `嵌入请求重试 ${attempt}`, {
+            event: "API_RETRY",
+            providerId: request.providerId,
+            errorCode: error.code,
+            errorMessage: error.message
+          });
+        }
       }
+    );
 
-      const data = await response.json();
-      const embedding = data.data?.[0]?.embedding || [];
-      const tokensUsed = data.usage?.total_tokens;
+    const elapsedTime = Date.now() - startTime;
 
-      return ok({
-        embedding,
-        tokensUsed,
+    if (result.ok) {
+      this.notifyNetworkStatus(true);
+      this.logger.info("ProviderManager", "嵌入请求成功", {
+        event: "API_RESPONSE",
+        providerId: request.providerId,
+        model: request.model,
+        tokensUsed: result.value.tokensUsed,
+        dimension: result.value.embedding.length,
+        elapsedTime
       });
-    } catch (error) {
-      return err("E100", `嵌入生成失败: ${getErrorMessage(error)}`, error);
-    }
-  }
-
-  async checkCapabilities(): Promise<Result<ProviderCapabilities>> {
-    try {
-      // 首先尝试列出可用模型（官方 API）
-      const modelsResponse = await fetch(`${this.baseUrl}/models`, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-        },
-      });
-
-      if (modelsResponse.ok) {
-        const data = await modelsResponse.json();
-        const models = data.data?.map((m: { id: string }) => m.id) || [];
-
-        return ok({
-          chat: true,
-          embedding: true,
-          maxContextLength: 128000,
-          models,
-        });
+    } else {
+      if (result.error.code === "E102") {
+        this.notifyNetworkStatus(false, result as Err);
+      } else {
+        this.notifyNetworkStatus(true);
       }
-
-      // 如果 /models 端点不可用（第三方 API），尝试发送一个简单的测试请求
-      console.log("OpenAI /models 端点不可用，尝试测试聊天请求...");
-      
-      const testResult = await this.chat({
-        providerId: this.id,
-        model: this.defaultChatModel,
-        messages: [{ role: "user", content: "Hi" }],
-        maxTokens: 10,
+      this.logger.error("ProviderManager", "嵌入请求失败", undefined, {
+        event: "API_ERROR",
+        providerId: request.providerId,
+        model: request.model,
+        errorCode: result.error.code,
+        errorMessage: result.error.message,
+        elapsedTime
       });
-
-      if (testResult.ok) {
-        return ok({
-          chat: true,
-          embedding: true,
-          maxContextLength: 128000,
-          models: [], // 无法获取模型列表
-        });
-      }
-
-      // 测试请求也失败了，保留原始错误码
-      return err(
-        testResult.error.code,
-        `连接测试失败: ${testResult.error.message}`,
-        testResult.error.details
-      );
-    } catch (error) {
-      return err("E100", `能力检测失败: ${getErrorMessage(error)}`, error);
     }
+
+    return result;
   }
-
-  /**
-   * 处理 API 错误
-   */
-  private handleError(status: number, errorData: unknown): Err {
-    if (status === 401) {
-      return err("E103", "认证失败，请检查 API Key", { status, errorData });
-    }
-    if (status === 429) {
-      return err("E102", "速率限制，请稍后重试", { status, errorData });
-    }
-    if (status >= 500) {
-      return err("E100", `服务器错误 (${status})`, { status, errorData });
-    }
-    return err("E100", `API 错误 (${status})`, { status, errorData });
-  }
-}
-
-// ============================================================================
-// 默认端点配置
-// ============================================================================
-
-/**
- * 默认 API 端点配置
- */
-export const DEFAULT_ENDPOINTS: Record<ProviderType, string> = {
-  openai: "https://api.openai.com/v1",
-};
-
-// ============================================================================
-// ProviderManager 主类
-// ============================================================================
-
-/**
- * ProviderManager 接口
- */
-export interface IProviderManager {
-  /**
-   * 聊天接口
-   */
-  chat(request: ChatRequest): Promise<Result<ChatResponse>>;
-
-  /**
-   * 嵌入接口
-   */
-  embed(request: EmbedRequest): Promise<Result<EmbedResponse>>;
 
   /**
    * 检查 Provider 可用性
+   * 
+   * 通过调用 /models 端点验证 API Key 和连接
+   * 使用缓存避免频繁网络请求（遵循 G-08 本地优先，A-NF-01 性能界限）
+   * 
+   * @param providerId Provider ID
+   * @param forceRefresh 是否强制刷新（用于设置页面"测试连接"）
+   * @returns Provider 能力信息
    */
-  checkAvailability(providerId: string): Promise<Result<ProviderCapabilities>>;
+  async checkAvailability(providerId: string, forceRefresh = false): Promise<Result<ProviderCapabilities>> {
+    // 检查缓存（除非强制刷新）
+    if (!forceRefresh) {
+      const cached = this.availabilityCache.get(providerId);
+      if (cached && Date.now() - cached.timestamp < ProviderManager.CACHE_TTL_MS) {
+        this.logger.debug("ProviderManager", "使用缓存的可用性信息", {
+          event: "AVAILABILITY_CACHE_HIT",
+          providerId,
+          cacheAge: Date.now() - cached.timestamp
+        });
+        return ok(cached.capabilities);
+      }
+    }
+
+    // 验证 Provider 配置
+    const configResult = this.getProviderConfig(providerId);
+    if (!configResult.ok) {
+      return configResult;
+    }
+    const providerConfig = configResult.value;
+
+    // 构建请求 URL
+    const baseUrl = providerConfig.baseUrl || DEFAULT_ENDPOINTS[providerConfig.type];
+    const url = `${baseUrl}/models`;
+
+    this.logger.debug("ProviderManager", "检查 Provider 可用性", {
+      event: "AVAILABILITY_CHECK",
+      providerId,
+      url,
+      forceRefresh
+    });
+
+    try {
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${providerConfig.apiKey}`
+        }
+      });
+
+      if (!response.ok) {
+        const errorResult = this.mapHttpError(response.status, await this.safeReadText(response));
+        
+        // errorResult 是 Err 类型，安全访问 error 属性
+        const errorCode = !errorResult.ok ? errorResult.error.code : 'UNKNOWN';
+        
+        this.logger.error("ProviderManager", "Provider 不可用", undefined, {
+          event: "AVAILABILITY_ERROR",
+          providerId,
+          status: response.status,
+          errorCode
+        });
+
+        // 清除缓存
+        this.availabilityCache.delete(providerId);
+
+        return errorResult;
+      }
+
+      const data = await response.json();
+
+      // 构建能力信息
+      const capabilities: ProviderCapabilities = {
+        chat: true,
+        embedding: true,
+        maxContextLength: 128000, // 默认值
+        models: data.data?.map((m: { id: string }) => m.id) || []
+      };
+
+      // 更新缓存
+      this.availabilityCache.set(providerId, {
+        capabilities,
+        timestamp: Date.now()
+      });
+
+      this.notifyNetworkStatus(true);
+      this.logger.info("ProviderManager", "Provider 可用", {
+        event: "AVAILABILITY_SUCCESS",
+        providerId,
+        modelCount: capabilities.models.length
+      });
+
+      return ok(capabilities);
+    } catch (error) {
+      this.logger.error("ProviderManager", "检查 Provider 可用性失败", error as Error, {
+        event: "AVAILABILITY_ERROR",
+        providerId
+      });
+
+      // 离线容错：如果有缓存（即使过期），在网络错误时返回缓存
+      const cached = this.availabilityCache.get(providerId);
+      if (cached) {
+        this.logger.warn("ProviderManager", "网络错误，使用过期缓存", {
+          event: "AVAILABILITY_CACHE_FALLBACK",
+          providerId,
+          cacheAge: Date.now() - cached.timestamp
+        });
+        this.notifyNetworkStatus(false, err("E102", "网络请求失败", error));
+        return ok(cached.capabilities);
+      }
+
+      this.notifyNetworkStatus(false, err("E102", "网络请求失败", error));
+      return err("E102", "网络请求失败", error);
+    }
+  }
 
   /**
    * 获取已配置的 Provider 列表
    */
-  getConfiguredProviders(): ProviderInfo[];
-
-  /**
-   * 添加或更新 Provider
-   */
-  setProvider(id: string, config: ProviderConfig): void;
-
-  /**
-   * 移除 Provider
-   */
-  removeProvider(id: string): void;
-}
-
-/**
- * ProviderManager 实现
- */
-export class ProviderManager implements IProviderManager {
-  private providers: Map<string, IProvider> = new Map();
-
-  constructor(configs: Record<string, ProviderConfig> = {}) {
-    // 初始化所有配置的 Provider
-    for (const [id, config] of Object.entries(configs)) {
-      if (config.enabled) {
-        this.setProvider(id, config);
-      }
-    }
-  }
-
-  async chat(request: ChatRequest): Promise<Result<ChatResponse>> {
-    const provider = this.providers.get(request.providerId);
-    if (!provider) {
-      return err(
-        "E201",
-        `Provider 未找到: ${request.providerId}`,
-        { providerId: request.providerId }
-      );
-    }
-
-    return provider.chat(request);
-  }
-
-  async embed(request: EmbedRequest): Promise<Result<EmbedResponse>> {
-    const provider = this.providers.get(request.providerId);
-    if (!provider) {
-      return err(
-        "E201",
-        `Provider 未找到: ${request.providerId}`,
-        { providerId: request.providerId }
-      );
-    }
-
-    return provider.embed(request);
-  }
-
-  async checkAvailability(providerId: string): Promise<Result<ProviderCapabilities>> {
-    const provider = this.providers.get(providerId);
-    if (!provider) {
-      return err(
-        "E201",
-        `Provider 未找到: ${providerId}`,
-        { providerId }
-      );
-    }
-
-    return provider.checkCapabilities();
-  }
-
   getConfiguredProviders(): ProviderInfo[] {
+    const settings = this.settingsStore.getSettings();
     const providers: ProviderInfo[] = [];
 
-    for (const [id, provider] of this.providers.entries()) {
+    for (const [id, config] of Object.entries(settings.providers)) {
       providers.push({
         id,
-        type: provider.type,
-        name: provider.name,
-        configured: true,
-        capabilities: undefined, // 需要异步调用 checkAvailability 获取
+        type: config.type,
+        name: id,
+        configured: !!config.apiKey
       });
     }
 
     return providers;
   }
 
-  setProvider(id: string, config: ProviderConfig): void {
-    if (config.type !== "openai") {
-      throw new Error(`不支持的 Provider 类型: ${config.type}`);
-    }
-
-    const provider = new OpenAIProvider(id, config);
-    this.providers.set(id, provider);
+  /**
+   * 订阅网络状态变化（用于离线/恢复提示）
+   */
+  subscribeNetworkStatus(listener: (online: boolean, error?: Err) => void): () => void {
+    this.networkListeners.push(listener);
+    return () => {
+      this.networkListeners = this.networkListeners.filter((l) => l !== listener);
+    };
   }
 
+  /**
+   * 设置 Provider 配置
+   * 
+   * @param id Provider ID
+   * @param config Provider 配置
+   */
+  setProvider(id: string, config: ProviderConfig): void {
+    const settings = this.settingsStore.getSettings();
+    settings.providers[id] = config;
+    
+    this.settingsStore.updateSettings({ providers: settings.providers });
+
+    this.logger.info("ProviderManager", `Provider 配置已更新: ${id}`, {
+      event: "PROVIDER_UPDATED",
+      type: config.type,
+      enabled: config.enabled,
+      hasCustomBaseUrl: !!config.baseUrl
+    });
+  }
+
+  /**
+   * 移除 Provider
+   * 
+   * @param id Provider ID
+   */
   removeProvider(id: string): void {
-    this.providers.delete(id);
+    const settings = this.settingsStore.getSettings();
+    delete settings.providers[id];
+    
+    this.settingsStore.updateSettings({ providers: settings.providers });
+
+    this.logger.info("ProviderManager", `Provider 已移除: ${id}`, {
+      event: "PROVIDER_REMOVED"
+    });
+  }
+
+  // ============================================================================
+  // 私有辅助方法
+  // ============================================================================
+
+  /**
+   * 通知网络状态（仅在状态变更时触发）
+   */
+  private notifyNetworkStatus(online: boolean, error?: Err): void {
+    const nextOffline = !online;
+    if (this.isOffline === nextOffline) {
+      return;
+    }
+    this.isOffline = nextOffline;
+    for (const listener of this.networkListeners) {
+      try {
+        listener(online, error);
+      } catch (e) {
+        this.logger.error("ProviderManager", "网络状态监听器执行失败", e as Error);
+      }
+    }
+  }
+
+  /**
+   * 获取并验证 Provider 配置
+   * 
+   * @param providerId Provider ID
+   * @returns Provider 配置或错误
+   */
+  private getProviderConfig(providerId: string): Result<ProviderConfig> {
+    const settings = this.settingsStore.getSettings();
+    const providerConfig = settings.providers[providerId];
+
+    if (!providerConfig) {
+      return err("E304", `Provider 未配置: ${providerId}`);
+    }
+
+    if (!providerConfig.enabled) {
+      return err("E304", `Provider 已禁用: ${providerId}`);
+    }
+
+    if (!providerConfig.apiKey) {
+      return err("E103", `Provider API Key 未配置: ${providerId}`);
+    }
+
+    return ok(providerConfig);
+  }
+
+  /**
+   * 执行聊天请求（单次，不含重试逻辑）
+   * 
+   * @param url 请求 URL
+   * @param body 请求体
+   * @param apiKey API Key
+   * @returns 聊天响应
+   */
+  private async executeChatRequest(
+    url: string,
+    body: object,
+    apiKey: string
+  ): Promise<Result<ChatResponse>> {
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`
+        },
+        body: JSON.stringify(body)
+      });
+
+      if (!response.ok) {
+        return this.mapHttpError(response.status, await this.safeReadText(response));
+      }
+
+      const data: OpenAIChatResponse = await response.json();
+
+      if (!data.choices || data.choices.length === 0) {
+        return err("E100", "API 返回空响应");
+      }
+
+      return ok({
+        content: data.choices[0].message.content,
+        tokensUsed: data.usage?.total_tokens,
+        finishReason: data.choices[0].finish_reason
+      });
+    } catch (error) {
+      // 网络错误
+      if (error instanceof TypeError && error.message.includes("fetch")) {
+        return err("E102", "网络连接失败", error);
+      }
+      return err("E100", `请求失败: ${(error as Error).message}`, error);
+    }
+  }
+
+  /**
+   * 执行嵌入请求（单次，不含重试逻辑）
+   * 
+   * @param url 请求 URL
+   * @param body 请求体
+   * @param apiKey API Key
+   * @returns 嵌入响应
+   */
+  private async executeEmbedRequest(
+    url: string,
+    body: object,
+    apiKey: string
+  ): Promise<Result<EmbedResponse>> {
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`
+        },
+        body: JSON.stringify(body)
+      });
+
+      if (!response.ok) {
+        return this.mapHttpError(response.status, await this.safeReadText(response));
+      }
+
+      const data: OpenAIEmbedResponse = await response.json();
+
+      if (!data.data || data.data.length === 0) {
+        return err("E100", "API 返回空响应");
+      }
+
+      return ok({
+        embedding: data.data[0].embedding,
+        tokensUsed: data.usage?.total_tokens
+      });
+    } catch (error) {
+      // 网络错误
+      if (error instanceof TypeError && error.message.includes("fetch")) {
+        return err("E102", "网络连接失败", error);
+      }
+      return err("E100", `请求失败: ${(error as Error).message}`, error);
+    }
+  }
+
+  /**
+   * 将 HTTP 状态码映射为错误结果
+   * 
+   * 遵循设计文档错误码定义：
+   * - 401/403 → E103 (AUTH_ERROR)
+   * - 429 → E102 (RATE_LIMIT)
+   * - 5xx → E100 (API_ERROR)
+   * - 其他 → E100 (API_ERROR)
+   * 
+   * @param status HTTP 状态码
+   * @param responseText 响应文本
+   * @returns 错误结果
+   */
+  private mapHttpError(status: number, responseText: string): Result<never> {
+    // 尝试解析错误响应
+    let errorMessage = responseText;
+    try {
+      const errorData: HttpErrorResponse = JSON.parse(responseText);
+      if (errorData.error?.message) {
+        errorMessage = errorData.error.message;
+      }
+    } catch {
+      // 保持原始文本
+    }
+
+    // 认证错误 (401/403) → E103
+    if (status === 401 || status === 403) {
+      return err("E103", `认证失败: ${errorMessage}`);
+    }
+
+    // 速率限制 (429) → E102
+    if (status === 429) {
+      return err("E102", `速率限制: ${errorMessage}`);
+    }
+
+    // 服务器错误 (5xx) → E100
+    if (status >= 500) {
+      return err("E100", `服务器错误 (${status}): ${errorMessage}`);
+    }
+
+    // 其他客户端错误 → E100
+    return err("E100", `API 错误 (${status}): ${errorMessage}`);
+  }
+
+  /**
+   * 安全读取响应文本
+   * 
+   * @param response HTTP 响应
+   * @returns 响应文本或空字符串
+   */
+  private async safeReadText(response: Response): Promise<string> {
+    try {
+      return await response.text();
+    } catch {
+      return "";
+    }
   }
 }

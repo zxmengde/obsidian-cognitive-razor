@@ -4,12 +4,11 @@
  * 提供替代 prompt() 和 confirm() 的 Obsidian Modal 实现
  */
 
-import { App, Modal, Setting, Notice } from "obsidian";
+import { App, Modal, Setting } from "obsidian";
 import type {
   ProviderType,
   ProviderConfig,
   TextInputModalOptions,
-  SelectOption,
   SelectModalOptions,
   ConfirmModalOptions,
   ProviderConfigModalOptions
@@ -319,13 +318,14 @@ export class ProviderConfigModal extends Modal {
     });
 
     // 自定义端点
+    const providerType = this.options.providerType || this.options.currentConfig?.type || "openai";
     const baseUrlSetting = new Setting(formEl)
       .setName("自定义端点 (可选)")
-      .setDesc(this.getDefaultEndpoint(this.options.providerType || this.options.currentConfig?.type!));
+      .setDesc(this.getDefaultEndpoint(providerType));
 
     this.baseUrlInput = baseUrlSetting.controlEl.createEl("input", {
       type: "text",
-      placeholder: this.getDefaultEndpoint(this.options.providerType || this.options.currentConfig?.type!),
+      placeholder: this.getDefaultEndpoint(providerType),
       value: this.options.currentConfig?.baseUrl || ""
     });
 
@@ -336,7 +336,7 @@ export class ProviderConfigModal extends Modal {
 
     this.chatModelInput = chatModelSetting.controlEl.createEl("input", {
       type: "text",
-      placeholder: this.getDefaultChatModel(this.options.providerType || this.options.currentConfig?.type!),
+      placeholder: this.getDefaultChatModel(providerType),
       value: this.options.currentConfig?.defaultChatModel || ""
     });
 
@@ -347,7 +347,7 @@ export class ProviderConfigModal extends Modal {
 
     this.embedModelInput = embedModelSetting.controlEl.createEl("input", {
       type: "text",
-      placeholder: this.getDefaultEmbedModel(this.options.providerType || this.options.currentConfig?.type!),
+      placeholder: this.getDefaultEmbedModel(providerType),
       value: this.options.currentConfig?.defaultEmbedModel || ""
     });
 
@@ -411,13 +411,13 @@ export class ProviderConfigModal extends Modal {
     }
 
     // 构建配置
-    const providerType = this.options.providerType || this.options.currentConfig?.type!;
+    const finalProviderType = this.options.providerType || this.options.currentConfig?.type || "openai";
     const config: ProviderConfig = {
-      type: providerType,
+      type: finalProviderType,
       apiKey,
       baseUrl: baseUrl || undefined,
-      defaultChatModel: chatModel || this.getDefaultChatModel(providerType),
-      defaultEmbedModel: embedModel || this.getDefaultEmbedModel(providerType),
+      defaultChatModel: chatModel || this.getDefaultChatModel(finalProviderType),
+      defaultEmbedModel: embedModel || this.getDefaultEmbedModel(finalProviderType),
       enabled: this.options.currentConfig?.enabled ?? true
     };
 

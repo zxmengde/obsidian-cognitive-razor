@@ -120,9 +120,11 @@ export class MergeHandler {
       }
 
       // 4. 创建合并任务
-      const taskResult = await this.taskQueue.enqueue({
+      const taskResult = this.taskQueue.enqueue({
         nodeId: pair.noteA.nodeId,
         taskType: "reason:merge",
+        state: "Pending",
+        attempt: 0,
         maxAttempts: 3,
         payload: {
           pairId: pair.id,
@@ -169,6 +171,11 @@ export class MergeHandler {
 
     // 只处理 reason:merge 任务
     if (task.taskType !== "reason:merge") {
+      return;
+    }
+
+    // 如果任务属于 PipelineOrchestrator（包含 pipelineId），交由管线处理
+    if (task.payload?.pipelineId) {
       return;
     }
 
@@ -484,6 +491,30 @@ export class MergeHandler {
   }
 
   /**
+   * 写入后更新向量索引并触发去重
+   */
+  private async updateIndexAndDedup(nodeId: string): Promise<void> {
+    const entry = this.vectorIndex.getEntry(nodeId);
+    if (!entry) {
+      console.warn("MergeHandler: 向量索引缺少条目，跳过更新", { nodeId });
+      return;
+    }
+
+    const updatedEntry = {
+      ...entry,
+      updated: new Date().toISOString()
+    };
+
+    const upsertResult = await this.vectorIndex.upsert(updatedEntry);
+    if (!upsertResult.ok) {
+      console.warn("MergeHandler: 更新向量索引失败", upsertResult.error);
+      return;
+    }
+
+    await this.duplicateManager.detect(nodeId, entry.type, entry.embedding);
+  }
+
+  /**
    * 应用合并
    * 验证需求：7.4, 7.5
    */
@@ -499,7 +530,8 @@ export class MergeHandler {
       const snapshotResult = await this.undoManager.createSnapshot(
         mainFile.path,
         noteA.content,
-        "merge"
+        `merge-${pairId}`,
+        noteA.nodeId
       );
 
       if (!snapshotResult.ok) {
@@ -507,29 +539,36 @@ export class MergeHandler {
         return;
       }
 
-      // 2. 写入合并内容到主笔记
-      await this.app.vault.modify(mainFile, mergedContent);
+      // 2. 写入合并内容到主笔记（原子写入）
+      await this.atomicWriteVault(mainFile.path, mergedContent);
 
-      // 3. 删除被合并的笔记
+      // 3. 为被删除笔记创建快照（确保可恢复）
+      await this.undoManager.createSnapshot(
+        noteB.path,
+        noteB.content,
+        `merge-delete-${pairId}`,
+        noteB.nodeId
+      );
+
+      // 4. 删除被合并的笔记
       const fileB = this.app.vault.getAbstractFileByPath(noteB.path);
       if (fileB && fileB instanceof TFile) {
         await this.app.vault.delete(fileB);
       }
 
-      // 4. 从向量索引中删除被合并笔记的条目
+      // 5. 从向量索引中删除被合并笔记的条目
       await this.vectorIndex.delete(noteB.nodeId);
 
-      // 5. 更新主笔记的向量索引（如果需要）
-      // 注意：这里假设合并后需要重新生成向量
-      // 实际实现中可能需要创建新的 embedding 任务
+      // 6. 更新主笔记的向量索引并触发去重（使用现有 embedding）
+      await this.updateIndexAndDedup(noteA.nodeId);
 
-      // 6. 从 DuplicatePairs 中移除该重复对
+      // 7. 从 DuplicatePairs 中移除该重复对
       await this.duplicateManager.removePair(pairId);
 
-      // 7. 显示成功通知
+      // 8. 显示成功通知
       new Notice(`合并完成: ${noteA.name} ← ${noteB.name}`, 5000);
 
-      // 8. 显示撤销按钮
+      // 9. 显示撤销按钮
       this.showUndoNotification(
         mainFile.path,
         noteB.path,
@@ -545,6 +584,31 @@ export class MergeHandler {
       // 恢复重复对状态
       await this.duplicateManager.updateStatus(pairId, "pending");
     }
+  }
+
+  /**
+   * Vault 原子写入
+   */
+  private async atomicWriteVault(path: string, content: string): Promise<void> {
+    const adapter = this.app.vault.adapter;
+    const temp = `${path}.tmp`;
+    const dir = path.split("/").slice(0, -1).join("/");
+    if (dir) {
+      const exists = await adapter.exists(dir);
+      if (!exists) {
+        await adapter.mkdir(dir);
+      }
+    }
+    await adapter.write(temp, content);
+    const verify = await adapter.read(temp);
+    if (verify !== content) {
+      await adapter.remove(temp);
+      throw new Error("写入校验失败");
+    }
+    if (await adapter.exists(path)) {
+      await adapter.remove(path);
+    }
+    await adapter.rename(temp, path);
   }
 
   /**
