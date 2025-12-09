@@ -34,7 +34,6 @@ export const REQUIRED_BLOCKS = [
   "<context>",
   "<task>",
   "<output_schema>",
-  "<error_history>",
   "<reminder>"
 ] as const;
 
@@ -196,7 +195,8 @@ export function validateSlots(
     return { valid: false, extraSlots: providedSlots };
   }
 
-  const allowedSlots = new Set([...mapping.required, ...mapping.optional]);
+  // 允许的槽位包括：必需槽位 + 可选槽位 + 内部变量
+  const allowedSlots = new Set([...mapping.required, ...mapping.optional, ...INTERNAL_VARIABLES]);
   const missingRequired: string[] = [];
   const extraSlots: string[] = [];
 

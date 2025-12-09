@@ -57,10 +57,16 @@ export class DuplicateManager implements IDuplicateManager {
       if (exists) {
         const readResult = await this.fileStorage.read(this.storePath);
         if (!readResult.ok) {
-          this.logger.error("DuplicateManager", "读取重复对存储失败", undefined, {
+          // 文件读取失败，创建新存储
+          this.logger.warn("DuplicateManager", "读取重复对存储失败，创建新存储", {
             error: readResult.error
           });
-          return readResult;
+          this.store = this.createEmptyStore();
+          const writeResult = await this.saveStore();
+          if (!writeResult.ok) {
+            return writeResult;
+          }
+          return ok(undefined);
         }
 
         try {
@@ -70,8 +76,14 @@ export class DuplicateManager implements IDuplicateManager {
             dismissedCount: this.store!.dismissedPairs.length
           });
         } catch (parseError) {
-          this.logger.error("DuplicateManager", "解析重复对存储失败", parseError as Error);
+          this.logger.warn("DuplicateManager", "解析重复对存储失败，创建新存储", {
+            error: parseError
+          });
           this.store = this.createEmptyStore();
+          const writeResult = await this.saveStore();
+          if (!writeResult.ok) {
+            return writeResult;
+          }
         }
       } else {
         this.store = this.createEmptyStore();

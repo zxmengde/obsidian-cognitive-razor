@@ -36,6 +36,10 @@ export interface NamingTemplateContext {
   english: string;
   /** 类型 */
   type?: CRType;
+  /** 类型中文名 */
+  type_cn?: string;
+  /** UID */
+  uid?: string;
   /** 别名（第一个） */
   alias?: string;
 }
@@ -43,11 +47,13 @@ export interface NamingTemplateContext {
 /**
  * 渲染命名模板
  * 
- * 遵循设计文档 G-10：
+ * 遵循设计文档 G-10 和 Requirements 3.4：
  * 支持的占位符：
  * - {{chinese}}: 中文名
  * - {{english}}: 英文名
- * - {{type}}: 知识类型
+ * - {{type}}: 知识类型（英文）
+ * - {{type_cn}}: 知识类型（中文）
+ * - {{uid}}: 概念唯一标识符
  * - {{alias}}: 第一个别名
  * 
  * @param template 命名模板，如 "{{chinese}} ({{english}})"
@@ -64,6 +70,8 @@ export function renderNamingTemplate(
   result = result.replace(/\{\{chinese\}\}/g, context.chinese || "");
   result = result.replace(/\{\{english\}\}/g, context.english || "");
   result = result.replace(/\{\{type\}\}/g, context.type || "");
+  result = result.replace(/\{\{type_cn\}\}/g, context.type_cn || "");
+  result = result.replace(/\{\{uid\}\}/g, context.uid || "");
   result = result.replace(/\{\{alias\}\}/g, context.alias || "");
 
   // 清理多余的空格和括号
@@ -103,7 +111,9 @@ export function generateSignatureText(signature: ConceptSignature): string {
  * 从标准化数据创建概念签名
  * 
  * @param standardizedData 标准化数据
+ * @param type 知识类型
  * @param namingTemplate 命名模板
+ * @param uid 可选的 UID
  * @returns 概念签名
  */
 export function createConceptSignature(
@@ -113,13 +123,16 @@ export function createConceptSignature(
     coreDefinition?: string;
   },
   type: CRType,
-  namingTemplate: string = "{{chinese}} ({{english}})"
+  namingTemplate: string = "{{chinese}} ({{english}})",
+  uid?: string
 ): ConceptSignature {
   // 渲染标准名
   const standardName = renderNamingTemplate(namingTemplate, {
     chinese: standardizedData.standardName.chinese,
     english: standardizedData.standardName.english,
     type,
+    type_cn: getTypeChinese(type),
+    uid,
     alias: standardizedData.aliases[0]
   });
 
@@ -129,6 +142,23 @@ export function createConceptSignature(
     coreDefinition: standardizedData.coreDefinition || "",
     type
   };
+}
+
+/**
+ * 获取类型的中文名称
+ * 
+ * @param type 知识类型
+ * @returns 中文名称
+ */
+export function getTypeChinese(type: CRType): string {
+  const typeMap: Record<CRType, string> = {
+    Domain: "领域",
+    Issue: "议题",
+    Theory: "理论",
+    Entity: "实体",
+    Mechanism: "机制",
+  };
+  return typeMap[type];
 }
 
 /**
@@ -150,11 +180,11 @@ export function validateNamingTemplate(template: string): {
   }
 
   // 检查是否包含至少一个有效占位符
-  const validPlaceholders = ["{{chinese}}", "{{english}}", "{{type}}", "{{alias}}"];
+  const validPlaceholders = ["{{chinese}}", "{{english}}", "{{type}}", "{{type_cn}}", "{{uid}}", "{{alias}}"];
   const hasValidPlaceholder = validPlaceholders.some(p => template.includes(p));
   
   if (!hasValidPlaceholder) {
-    errors.push("命名模板必须包含至少一个有效占位符: {{chinese}}, {{english}}, {{type}}, {{alias}}");
+    errors.push("命名模板必须包含至少一个有效占位符: {{chinese}}, {{english}}, {{type}}, {{type_cn}}, {{uid}}, {{alias}}");
   }
 
   // 检查是否有未闭合的占位符
@@ -170,7 +200,7 @@ export function validateNamingTemplate(template: string): {
   let match;
   while ((match = placeholderRegex.exec(template)) !== null) {
     const placeholder = match[1];
-    if (!["chinese", "english", "type", "alias"].includes(placeholder)) {
+    if (!["chinese", "english", "type", "type_cn", "uid", "alias"].includes(placeholder)) {
       errors.push(`无效的占位符: {{${placeholder}}}`);
     }
   }
@@ -205,6 +235,22 @@ export function sanitizeFileName(name: string): string {
 }
 
 /**
+ * 获取类型对应的目录路径
+ * 
+ * 遵循 Requirements 3.5：根据 DirectoryScheme 配置返回目录路径
+ * 
+ * @param type 知识类型
+ * @param scheme 目录方案
+ * @returns 目录路径（不包含文件名）
+ */
+export function getDirectoryForType(
+  type: CRType,
+  scheme: Record<CRType, string>
+): string {
+  return scheme[type] || "";
+}
+
+/**
  * 生成文件路径
  * 
  * @param standardName 标准名
@@ -217,7 +263,7 @@ export function generateFilePath(
   directoryScheme: Record<CRType, string>,
   type: CRType
 ): string {
-  const directory = directoryScheme[type] || "";
+  const directory = getDirectoryForType(type, directoryScheme);
   const fileName = sanitizeFileName(standardName);
   
   if (directory) {

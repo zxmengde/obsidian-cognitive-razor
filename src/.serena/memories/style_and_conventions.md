@@ -1,0 +1,11 @@
+# 代码与文档约定
+- 语言：TypeScript，严格类型，模块化；UI、应用、AI、数据分层，避免跨层依赖（UI→应用→AI→数据）。
+- 命名：知识类型 Domain/Issue/Theory/Entity/Mechanism；命名模板默认 `{{chinese}} ({{english}})`；文件名需清理非法字符。
+- 任务类型：embedding、standardizeClassify、enrich、reason:new、reason:incremental、reason:merge、ground。
+- 状态：NoteState = Stub/Draft/Evergreen；TaskState 在代码中为 Pending/Running/Completed/Failed/Cancelled。
+- 数据持久化：全部写入 data/ 下 JSON/备份文件；写入需原子化（临时文件 + 重命名），写前快照以支持撤销。
+- 提示词：PromptManager 校验区块顺序与槽位；SchemaRegistry 提供类型 JSON Schema；Validator 负责 JSON Schema + 业务规则校验。
+- 日志：Logger 支持 debug/info/warn/error，写入 data/app.log。
+- UI：WorkbenchPanel 为主界面；QueueView 已废弃；使用 CommandDispatcher 注册命令；状态栏徽章 StatusBadge。
+- 注释：中文说明为主，简洁说明意图；遵守“不写无意义注释”原则。
+- 安全/隐私：默认本地优先，不外发 vault 内容；Provider Key 需显式配置；未配置时不得静默请求。

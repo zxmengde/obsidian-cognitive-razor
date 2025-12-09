@@ -95,10 +95,16 @@ export class UndoManager implements IUndoManager {
       if (indexExists) {
         const readResult = await this.fileStorage.read(this.indexPath);
         if (!readResult.ok) {
-          this.logger.error("UndoManager", "读取快照索引失败", undefined, {
+          // 文件读取失败，创建新索引
+          this.logger.warn("UndoManager", "读取快照索引失败，创建新索引", {
             error: readResult.error
           });
-          return readResult;
+          this.index = this.createEmptyIndex();
+          const writeResult = await this.saveIndex();
+          if (!writeResult.ok) {
+            return writeResult;
+          }
+          return ok(undefined);
         }
 
         try {
@@ -107,9 +113,15 @@ export class UndoManager implements IUndoManager {
             snapshotCount: this.index!.snapshots.length
           });
         } catch (parseError) {
-          this.logger.error("UndoManager", "解析快照索引失败", parseError as Error);
+          this.logger.warn("UndoManager", "解析快照索引失败，创建新索引", {
+            error: parseError
+          });
           // 创建新索引
           this.index = this.createEmptyIndex();
+          const writeResult = await this.saveIndex();
+          if (!writeResult.ok) {
+            return writeResult;
+          }
         }
       } else {
         // 创建新索引

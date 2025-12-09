@@ -69,30 +69,37 @@ export class VectorIndex implements IVectorIndex {
 
       const readResult = await this.fileStorage.read(this.indexFilePath);
       if (!readResult.ok) {
-        return readResult;
+        // 文件读取失败，创建新索引
+        await this.save();
+        return ok(undefined);
       }
 
-      const indexFile: VectorIndexFile = JSON.parse(readResult.value);
-      
-      // 验证模型和维度
-      if (indexFile.model !== this.model) {
-        return err(
-          "E302",
-          `Index model mismatch: expected ${this.model}, got ${indexFile.model}`,
-          { expected: this.model, actual: indexFile.model }
-        );
-      }
+      try {
+        const indexFile: VectorIndexFile = JSON.parse(readResult.value);
+        
+        // 验证模型和维度
+        if (indexFile.model !== this.model) {
+          return err(
+            "E302",
+            `Index model mismatch: expected ${this.model}, got ${indexFile.model}`,
+            { expected: this.model, actual: indexFile.model }
+          );
+        }
 
-      if (indexFile.dimension !== this.dimension) {
-        return err(
-          "E302",
-          `Index dimension mismatch: expected ${this.dimension}, got ${indexFile.dimension}`,
-          { expected: this.dimension, actual: indexFile.dimension }
-        );
-      }
+        if (indexFile.dimension !== this.dimension) {
+          return err(
+            "E302",
+            `Index dimension mismatch: expected ${this.dimension}, got ${indexFile.dimension}`,
+            { expected: this.dimension, actual: indexFile.dimension }
+          );
+        }
 
-      // 加载桶数据
-      this.buckets = indexFile.buckets;
+        // 加载桶数据
+        this.buckets = indexFile.buckets;
+      } catch (parseError) {
+        // 解析失败，创建新索引
+        await this.save();
+      }
 
       return ok(undefined);
     } catch (error) {

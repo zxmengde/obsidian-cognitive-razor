@@ -1,13 +1,13 @@
 /**
  * 任务管线编排器
- * 
+ *
  * 负责协调任务链的执行，包括用户确认步骤
- * 
+ *
  * 遵循设计文档 A-FUNC-05：
  * 任务链遵循固定顺序：standardizeClassify → enrich → embedding → 确认创建 → reason:new → 确认写入 → 去重检测
- * 
- * 遵循设计文档 A-UCD-03：
- * 所有写入必须经过用户显式确认；确认后提供撤销按钮并指向快照
+ * （现需求调整：standardize/enrich 流程自动确认创建与写入）
+ *
+ * 当前实现：标准创建/丰富流程自动执行写入，不生成撤销快照
  */
 
 import {
@@ -27,6 +27,7 @@ import {
   NoteState,
   DuplicatePair,
   PluginSettings,
+  StandardizedConcept,
   Result,
   ok,
   err
@@ -35,6 +36,7 @@ import { App, TFile } from "obsidian";
 import { generateFrontmatter, generateMarkdownContent } from "./frontmatter-utils";
 import { createConceptSignature, generateFilePath } from "./naming-utils";
 import { FieldDescription, schemaRegistry } from "./schema-registry";
+import { mapStandardizeOutput } from "./standardize-mapper";
 
 /**
  * 管线阶段
@@ -70,14 +72,8 @@ export interface PipelineContext {
   /** 用户输入 */
   userInput: string;
   /** 标准化结果 */
-  standardizedData?: {
-    standardName: { chinese: string; english: string };
-    aliases: string[];
-    typeConfidences: Record<string, number>;
-    primaryType?: CRType;
-    coreDefinition?: string;
-  };
-  /** 丰富结果 */
+  standardizedData?: StandardizedConcept;
+  /** 丰富结果（别名和标签） */
   enrichedData?: {
     aliases: string[];
     tags: string[];
@@ -102,6 +98,8 @@ export interface PipelineContext {
   currentStatus?: string;
   /** 快照 ID */
   snapshotId?: string;
+  /** 是否跳过快照/撤销记录（enrich 流程自动执行时使用） */
+  skipSnapshots?: boolean;
   /** 错误信息 */
   error?: { code: string; message: string };
   /** 创建时间 */
@@ -160,6 +158,15 @@ export interface PipelineOrchestratorDependencies {
 export interface IPipelineOrchestrator {
   /** 启动新概念创建管线 */
   startCreatePipeline(userInput: string, type?: CRType): Result<string>;
+
+  /** 直接标准化（不入队，用于 UI 交互） */
+  standardizeDirect(userInput: string): Promise<Result<StandardizedConcept>>;
+
+  /** 使用已标准化数据启动创建管线（跳过标准化阶段） */
+  startCreatePipelineWithStandardized(
+    standardizedData: StandardizedConcept,
+    selectedType: CRType
+  ): Result<string>;
 
   /** 启动增量改进管线 */
   startIncrementalPipeline(params: {
@@ -343,6 +350,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
         type: type || "Entity", // 默认类型，会在标准化后更新
         stage: "standardizing",
         userInput,
+        skipSnapshots: true,
         createdAt: now,
         updatedAt: now
       };
@@ -392,6 +400,196 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     }
   }
 
+  /**
+   * 直接标准化（不入队）
+   * 
+   * 遵循 Requirements 4.1, 4.2：
+   * - 直接调用 ProviderManager.chat，不进入任务队列
+   * - 立即返回结果给 UI 用于用户确认
+   * 
+   * @param userInput 用户输入的概念
+   * @returns 标准化结果
+   */
+  async standardizeDirect(userInput: string): Promise<Result<StandardizedConcept>> {
+    try {
+      // 前置校验
+      const prerequisiteCheck = this.validatePrerequisites("standardizeClassify");
+      if (!prerequisiteCheck.ok) {
+        return prerequisiteCheck as Result<StandardizedConcept>;
+      }
+
+      if (!this.providerManager) {
+        return err("E304", "ProviderManager 未初始化");
+      }
+
+      if (!this.promptManager) {
+        return err("E304", "PromptManager 未初始化");
+      }
+
+      this.logger.info("PipelineOrchestrator", "开始直接标准化", {
+        userInput: userInput.substring(0, 50),
+        event: "STANDARDIZE_DIRECT_START"
+      });
+
+      // 获取 Provider 配置
+      const settings = this.getSettings();
+      const taskConfig = settings.taskModels["standardizeClassify"];
+      const providerId = taskConfig.providerId;
+
+      // 构建 prompt
+      const promptResult = this.promptManager.build(
+        "standardizeClassify",
+        { CTX_INPUT: userInput }
+      );
+
+      if (!promptResult.ok) {
+        return err(promptResult.error.code, promptResult.error.message);
+      }
+
+      // 直接调用 API
+      const chatResult = await this.providerManager.chat({
+        providerId,
+        model: taskConfig.model,
+        messages: [
+          { role: "system", content: promptResult.value },
+          { role: "user", content: userInput }
+        ],
+        temperature: taskConfig.temperature,
+        topP: taskConfig.topP,
+        maxTokens: taskConfig.maxTokens
+      });
+
+      if (!chatResult.ok) {
+        this.logger.error("PipelineOrchestrator", "标准化 API 调用失败", undefined, {
+          errorCode: chatResult.error.code,
+          errorMessage: chatResult.error.message,
+          event: "STANDARDIZE_DIRECT_ERROR"
+        });
+        return err(chatResult.error.code, chatResult.error.message);
+      }
+
+      // 解析响应
+      try {
+        const content = chatResult.value.content.trim();
+        // 尝试提取 JSON（可能被 markdown 代码块包裹）
+        const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/) || content.match(/```\s*([\s\S]*?)\s*```/);
+        const jsonStr = jsonMatch ? jsonMatch[1] : content;
+        const rawParsed = JSON.parse(jsonStr);
+
+        // 转换字段名：API 返回下划线命名，需要转换为驼峰式
+        const parsed: StandardizedConcept = mapStandardizeOutput(rawParsed);
+
+        this.logger.info("PipelineOrchestrator", "直接标准化完成", {
+          primaryType: parsed.primaryType,
+          event: "STANDARDIZE_DIRECT_SUCCESS"
+        });
+
+        return ok(parsed);
+      } catch (parseError) {
+        this.logger.error("PipelineOrchestrator", "解析标准化结果失败", parseError as Error, {
+          response: chatResult.value.content.substring(0, 200),
+          event: "STANDARDIZE_DIRECT_PARSE_ERROR"
+        });
+        return err("E100", "解析标准化结果失败", parseError);
+      }
+    } catch (error) {
+      this.logger.error("PipelineOrchestrator", "直接标准化失败", error as Error);
+      return err("E304", "直接标准化失败", error);
+    }
+  }
+
+  /**
+   * 使用已标准化数据启动创建管线（跳过标准化阶段）
+   * 
+   * 遵循 Requirements 4.3：
+   * - 跳过标准化阶段，直接从 enrich 开始
+   * - 用户已通过 standardizeDirect 获得标准化结果并选择了类型
+   * 
+   * @param standardizedData 标准化数据
+   * @param selectedType 用户选择的类型
+   * @returns 管线 ID
+   */
+  startCreatePipelineWithStandardized(
+    standardizedData: StandardizedConcept,
+    selectedType: CRType
+  ): Result<string> {
+    try {
+      // 前置校验 enrich 任务
+      const prerequisiteCheck = this.validatePrerequisites("enrich");
+      if (!prerequisiteCheck.ok) {
+        return prerequisiteCheck as Result<string>;
+      }
+
+      const pipelineId = this.generatePipelineId();
+      const nodeId = this.generateNodeId();
+      const now = new Date().toISOString();
+
+      // 创建管线上下文，直接设置标准化数据
+      const context: PipelineContext = {
+        kind: "create",
+        pipelineId,
+        nodeId,
+        type: selectedType,
+        stage: "enriching", // 直接进入 enriching 阶段
+        userInput: standardizedData.standardNames[selectedType].chinese,
+        skipSnapshots: true,
+        standardizedData: {
+          standardNames: standardizedData.standardNames,
+          typeConfidences: standardizedData.typeConfidences,
+          primaryType: selectedType,
+          coreDefinition: standardizedData.coreDefinition
+        },
+        createdAt: now,
+        updatedAt: now
+      };
+
+      this.pipelines.set(pipelineId, context);
+
+      this.logger.info("PipelineOrchestrator", `启动创建管线（跳过标准化）: ${pipelineId}`, {
+        nodeId,
+        selectedType,
+        chinese: standardizedData.standardNames[selectedType].chinese
+      });
+
+      // 创建 enrich 任务
+      const taskResult = this.taskQueue.enqueue({
+        nodeId,
+        taskType: "enrich",
+        state: "Pending",
+        attempt: 0,
+        maxAttempts: 3,
+        providerRef: this.getProviderIdForTask("enrich"),
+        payload: {
+          pipelineId,
+          standardizedData: context.standardizedData,
+          conceptType: selectedType
+        }
+      });
+
+      if (!taskResult.ok) {
+        this.pipelines.delete(pipelineId);
+        return err("E304", `创建任务失败: ${taskResult.error.message}`);
+      }
+
+      // 记录任务到管线的映射
+      this.taskToPipeline.set(taskResult.value, pipelineId);
+
+      // 发布事件
+      this.publishEvent({
+        type: "stage_changed",
+        pipelineId,
+        stage: "enriching",
+        context,
+        timestamp: now
+      });
+
+      return ok(pipelineId);
+    } catch (error) {
+      this.logger.error("PipelineOrchestrator", "启动管线失败", error as Error);
+      return err("E304", "启动管线失败", error);
+    }
+  }
+
   private async confirmCreateWrite(context: PipelineContext): Promise<Result<void>> {
     const composed = await this.composeWriteContent(context);
     if (!composed.ok) {
@@ -403,14 +601,16 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     const { targetPath, previousContent, newContent } = composed.value;
     context.filePath = targetPath;
 
-    const snapshotResult = await this.undoManager.createSnapshot(
-      targetPath,
-      previousContent,
-      context.pipelineId,
-      context.nodeId
-    );
-    if (snapshotResult.ok) {
-      context.snapshotId = snapshotResult.value;
+    if (!context.skipSnapshots) {
+      const snapshotResult = await this.undoManager.createSnapshot(
+        targetPath,
+        previousContent,
+        context.pipelineId,
+        context.nodeId
+      );
+      if (snapshotResult.ok) {
+        context.snapshotId = snapshotResult.value;
+      }
     }
 
     await this.atomicWriteVault(targetPath, newContent);
@@ -425,8 +625,8 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     if (context.embedding && context.standardizedData) {
       const signature = createConceptSignature(
         {
-          standardName: context.standardizedData.standardName,
-          aliases: context.standardizedData.aliases || [],
+          standardName: context.standardizedData.standardNames[context.type],
+          aliases: context.enrichedData?.aliases || [],
           coreDefinition: context.standardizedData.coreDefinition
         },
         context.type,
@@ -476,14 +676,16 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     const { targetPath, previousContent, newContent } = composed.value;
     context.filePath = targetPath;
 
-    const snapshotResult = await this.undoManager.createSnapshot(
-      targetPath,
-      previousContent,
-      context.pipelineId,
-      context.nodeId
-    );
-    if (snapshotResult.ok) {
-      context.snapshotId = snapshotResult.value;
+    if (!context.skipSnapshots) {
+      const snapshotResult = await this.undoManager.createSnapshot(
+        targetPath,
+        previousContent,
+        context.pipelineId,
+        context.nodeId
+      );
+      if (snapshotResult.ok) {
+        context.snapshotId = snapshotResult.value;
+      }
     }
 
     await this.atomicWriteVault(targetPath, newContent);
@@ -520,18 +722,20 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     const { targetPath, previousContent, newContent } = composed.value;
     context.filePath = targetPath;
 
-    const snapshotResult = await this.undoManager.createSnapshot(
-      targetPath,
-      previousContent,
-      context.pipelineId,
-      context.nodeId
-    );
-    if (snapshotResult.ok) {
-      context.snapshotId = snapshotResult.value;
+    if (!context.skipSnapshots) {
+      const snapshotResult = await this.undoManager.createSnapshot(
+        targetPath,
+        previousContent,
+        context.pipelineId,
+        context.nodeId
+      );
+      if (snapshotResult.ok) {
+        context.snapshotId = snapshotResult.value;
+      }
     }
 
     // 为被删除笔记创建快照
-    if (context.deleteFilePath && context.deleteContent) {
+    if (context.deleteFilePath && context.deleteContent && !context.skipSnapshots) {
       await this.undoManager.createSnapshot(
         context.deleteFilePath,
         context.deleteContent,
@@ -930,7 +1134,8 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
           coreDefinition: context.standardizedData?.coreDefinition,
           enrichedData: context.enrichedData,
           embedding: context.embedding,
-          filePath: context.filePath // 传递 Stub 文件路径
+          filePath: context.filePath, // 传递 Stub 文件路径
+          skipSnapshot: context.skipSnapshots
         }
       });
 
@@ -973,8 +1178,8 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
       const settings = this.getSettings();
       const signature = createConceptSignature(
         {
-          standardName: context.standardizedData.standardName,
-          aliases: context.standardizedData.aliases || [],
+          standardName: context.standardizedData.standardNames[context.type],
+          aliases: context.enrichedData?.aliases || [],
           coreDefinition: context.standardizedData.coreDefinition
         },
         context.type,
@@ -993,14 +1198,16 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
       await this.ensureVaultDir(targetPath);
 
       // 创建快照（空内容，因为是新文件）
-      const snapshotResult = await this.undoManager.createSnapshot(
-        targetPath,
-        "", // 新文件，原始内容为空
-        `stub-${context.pipelineId}`,
-        context.nodeId
-      );
-      if (snapshotResult.ok) {
-        context.snapshotId = snapshotResult.value;
+      if (!context.skipSnapshots) {
+        const snapshotResult = await this.undoManager.createSnapshot(
+          targetPath,
+          "", // 新文件，原始内容为空
+          `stub-${context.pipelineId}`,
+          context.nodeId
+        );
+        if (snapshotResult.ok) {
+          context.snapshotId = snapshotResult.value;
+        }
       }
 
       // 生成仅含 frontmatter 的 Stub 内容
@@ -1008,7 +1215,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
         uid: context.nodeId,
         type: context.type,
         status: "Stub", // Stub 状态
-        aliases: context.standardizedData.aliases,
+        aliases: context.enrichedData?.aliases,
         tags: context.enrichedData?.tags
       });
       const stubContent = generateMarkdownContent(frontmatter, ""); // 无正文
@@ -1051,11 +1258,10 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     const merged: NonNullable<PipelineContext["standardizedData"]> = {
       ...context.standardizedData,
       ...edits,
-      standardName: {
-        ...context.standardizedData.standardName,
-        ...(edits.standardName || {})
+      standardNames: {
+        ...context.standardizedData.standardNames,
+        ...(edits.standardNames || {})
       },
-      aliases: edits.aliases ?? context.standardizedData.aliases ?? [],
       typeConfidences: edits.typeConfidences ?? context.standardizedData.typeConfidences ?? {}
     };
 
@@ -1269,7 +1475,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
   /**
    * 处理 Ground 任务完成
    * 
-   * Ground 完成后进入等待写入确认阶段
+   * Ground 完成后进入等待写入确认阶段（需要用户确认）
    * 如果 Ground 发现严重问题，记录到上下文中供用户参考
    */
   private async handleGroundCompleted(
@@ -1298,7 +1504,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
       });
     }
 
-    // Ground 完成后进入等待写入确认阶段
+    // Ground 完成后进入等待写入确认阶段（需要用户确认）
     this.transitionToAwaitingWriteConfirm(context);
   }
 
@@ -1447,26 +1653,30 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
       return;
     }
 
-    // 进入等待创建确认阶段
+    // 进入等待创建确认阶段（自动确认，无需 UI）
     context.stage = "awaiting_create_confirm";
     context.updatedAt = new Date().toISOString();
 
-    // 发布确认请求事件
-    this.publishEvent({
-      type: "confirmation_required",
-      pipelineId: context.pipelineId,
-      stage: "awaiting_create_confirm",
-      context,
-      timestamp: context.updatedAt
-    });
-
-    this.logger.info("PipelineOrchestrator", `等待用户确认创建: ${context.pipelineId}`);
+    this.logger.info("PipelineOrchestrator", `自动确认创建并生成内容: ${context.pipelineId}`);
+    const confirmResult = await this.confirmCreate(context.pipelineId);
+    if (!confirmResult.ok) {
+      context.stage = "failed";
+      context.error = { code: confirmResult.error.code, message: confirmResult.error.message };
+      this.publishEvent({
+        type: "pipeline_failed",
+        pipelineId: context.pipelineId,
+        stage: "failed",
+        context,
+        timestamp: new Date().toISOString()
+      });
+    }
   }
 
   /**
    * 处理 reason:new 完成
    * 
    * 遵循 A-FUNC-05：reason:new 完成后可选执行 ground 阶段
+   * 修改：reason:new 任务无需用户确认，直接写入
    */
   private async handleReasonNewCompleted(
     context: PipelineContext,
@@ -1485,18 +1695,18 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
     // 生成文件路径（如果 Stub 阶段未生成）
     if (!context.filePath && context.standardizedData) {
-      const fileName = this.sanitizeFileName(context.standardizedData.standardName.chinese);
+      const fileName = this.sanitizeFileName(context.standardizedData.standardNames[context.type].chinese);
       context.filePath = `${fileName}.md`;
     }
 
     // 检查是否启用 Ground 阶段
     const settings = this.getSettings();
     if (settings.enableGrounding) {
-      // 启用 Ground：创建 ground 任务
+      // 启用 Ground：创建 ground 任务（Ground 完成后需要用户确认）
       await this.startGroundTask(context);
     } else {
-      // 未启用 Ground：直接进入等待写入确认阶段
-      this.transitionToAwaitingWriteConfirm(context);
+      // 未启用 Ground：直接写入，无需用户确认
+      await this.autoConfirmWrite(context);
     }
   }
 
@@ -1560,6 +1770,33 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
   }
 
   /**
+   * 自动确认写入（无需用户确认）
+   * 用于 reason:new 和 enrich 任务完成后的自动写入
+   */
+  private async autoConfirmWrite(context: PipelineContext): Promise<void> {
+    this.logger.info("PipelineOrchestrator", `自动写入（无需确认）: ${context.pipelineId}`);
+
+    // 直接进入写入确认阶段，避免 UI 交互
+    context.stage = "awaiting_write_confirm";
+    context.updatedAt = new Date().toISOString();
+
+    // 直接调用 confirmWrite 逻辑
+    const writeResult = await this.confirmWrite(context.pipelineId);
+
+    if (!writeResult.ok) {
+      context.stage = "failed";
+      context.error = { code: writeResult.error.code, message: writeResult.error.message };
+      this.publishEvent({
+        type: "pipeline_failed",
+        pipelineId: context.pipelineId,
+        stage: "failed",
+        context,
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+
+  /**
    * 处理任务失败
    */
   private handleTaskFailed(taskId: string): void {
@@ -1601,8 +1838,9 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     const parts: string[] = [];
 
     if (context.standardizedData) {
-      parts.push(context.standardizedData.standardName.chinese);
-      parts.push(context.standardizedData.standardName.english);
+      const currentName = context.standardizedData.standardNames[context.type];
+      parts.push(currentName.chinese);
+      parts.push(currentName.english);
       if (context.standardizedData.coreDefinition) {
         parts.push(context.standardizedData.coreDefinition);
       }
@@ -1668,13 +1906,22 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
   /**
    * 将生成的结构化内容渲染为 Markdown
+   * 根据用户语言设置使用中文或英文标题
+   * 注意：文件名已包含中英文，无需在内容中重复
    */
   private renderContentToMarkdown(context: PipelineContext, standardName: string): string {
     const lines: string[] = [];
-    lines.push(`# ${standardName}`);
-    const english = context.standardizedData?.standardName.english;
-    if (english) {
-      lines.push(`**English**: ${english}`);
+    const settings = this.getSettings();
+    const language = settings.language || "zh";
+    
+    // 根据语言设置选择标题（文件名已包含中英文，无需重复）
+    if (language === "zh") {
+      // 中文环境：使用中文标题
+      lines.push(`# ${standardName}`);
+    } else {
+      // 英文环境：使用英文标题
+      const english = context.standardizedData?.standardNames[context.type].english;
+      lines.push(`# ${english || standardName}`);
     }
     lines.push("");
 
@@ -1793,14 +2040,20 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     mergeResult: Record<string, unknown>
   ): string {
     const sections: string[] = [];
+    const settings = this.getSettings();
+    const language = settings.language || "zh";
     const cn = mergedName.chinese || "合并后的概念";
     const en = mergedName.english || "";
 
-    sections.push(`# ${cn}`);
-    if (en) {
-      sections.push(`**English**: ${en}`);
-      sections.push("");
+    // 根据语言设置选择标题（文件名已包含中英文，无需重复）
+    if (language === "zh") {
+      // 中文环境：使用中文标题
+      sections.push(`# ${cn}`);
+    } else {
+      // 英文环境：使用英文标题
+      sections.push(`# ${en || cn}`);
     }
+    sections.push("");
 
     const rationale = mergeResult.merge_rationale as string;
     if (rationale) {
@@ -1921,8 +2174,8 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
       const settings = this.getSettings();
       const signature = createConceptSignature(
         {
-          standardName: context.standardizedData.standardName,
-          aliases: context.standardizedData.aliases || [],
+          standardName: context.standardizedData.standardNames[context.type],
+          aliases: context.enrichedData?.aliases || [],
           coreDefinition: context.standardizedData.coreDefinition
         },
         context.type,
@@ -1951,7 +2204,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
         uid: context.nodeId,
         type: context.type,
         status: "Draft",
-        aliases: context.standardizedData.aliases,
+        aliases: context.enrichedData?.aliases,
         tags: context.enrichedData?.tags
       });
 

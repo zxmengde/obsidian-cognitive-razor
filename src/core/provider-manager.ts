@@ -141,7 +141,7 @@ export class ProviderManager implements IProviderManager {
     const providerConfig = configResult.value;
 
     // 构建请求 URL
-    const baseUrl = providerConfig.baseUrl || DEFAULT_ENDPOINTS[providerConfig.type];
+    const baseUrl = providerConfig.baseUrl || DEFAULT_ENDPOINTS["openai"];
     const url = `${baseUrl}/chat/completions`;
 
     // 构建请求体（OpenAI 标准格式）
@@ -228,14 +228,20 @@ export class ProviderManager implements IProviderManager {
     const providerConfig = configResult.value;
 
     // 构建请求 URL
-    const baseUrl = providerConfig.baseUrl || DEFAULT_ENDPOINTS[providerConfig.type];
+    const baseUrl = providerConfig.baseUrl || DEFAULT_ENDPOINTS["openai"];
     const url = `${baseUrl}/embeddings`;
 
     // 构建请求体（OpenAI 标准格式）
-    const requestBody = {
+    // 支持 dimensions 参数（用于 text-embedding-3-small 等可变维度模型）
+    const requestBody: Record<string, unknown> = {
       model: request.model,
       input: request.input
     };
+    
+    // 如果指定了维度，添加到请求体
+    if (request.dimensions && request.dimensions > 0) {
+      requestBody.dimensions = request.dimensions;
+    }
 
     this.logger.debug("ProviderManager", "发送嵌入请求", {
       event: "API_REQUEST",
@@ -324,7 +330,7 @@ export class ProviderManager implements IProviderManager {
     const providerConfig = configResult.value;
 
     // 构建请求 URL
-    const baseUrl = providerConfig.baseUrl || DEFAULT_ENDPOINTS[providerConfig.type];
+    const baseUrl = providerConfig.baseUrl || DEFAULT_ENDPOINTS["openai"];
     const url = `${baseUrl}/models`;
 
     this.logger.debug("ProviderManager", "检查 Provider 可用性", {
@@ -418,7 +424,7 @@ export class ProviderManager implements IProviderManager {
     for (const [id, config] of Object.entries(settings.providers)) {
       providers.push({
         id,
-        type: config.type,
+        type: "openai",
         name: id,
         configured: !!config.apiKey
       });
@@ -451,7 +457,7 @@ export class ProviderManager implements IProviderManager {
 
     this.logger.info("ProviderManager", `Provider 配置已更新: ${id}`, {
       event: "PROVIDER_UPDATED",
-      type: config.type,
+      type: "openai",
       enabled: config.enabled,
       hasCustomBaseUrl: !!config.baseUrl
     });

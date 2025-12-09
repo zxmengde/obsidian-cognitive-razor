@@ -151,8 +151,15 @@ export class FileStorage implements IFileStorage {
       }
 
       // 2. 初始化数据文件（如果不存在）
+      // 注意：queue-state.json 总是重新创建，以确保文件存在且格式正确
+      const queueStateContent = JSON.stringify(DEFAULT_QUEUE_STATE, null, 2);
+      const queueStateResult = await this.write(QUEUE_STATE_FILE, queueStateContent);
+      if (!queueStateResult.ok) {
+        console.error(`[FileStorage] Failed to initialize queue-state.json`, queueStateResult.error);
+        return queueStateResult;
+      }
+      
       const initResults = await Promise.all([
-        this.initializeFileIfNotExists(QUEUE_STATE_FILE, DEFAULT_QUEUE_STATE),
         this.initializeFileIfNotExists(VECTOR_INDEX_FILE, DEFAULT_VECTOR_INDEX),
         this.initializeFileIfNotExists(DUPLICATE_PAIRS_FILE, DEFAULT_DUPLICATE_PAIRS),
         this.initializeFileIfNotExists(SNAPSHOTS_INDEX_FILE, DEFAULT_SNAPSHOT_INDEX),
@@ -193,7 +200,12 @@ export class FileStorage implements IFileStorage {
     const fileExists = await this.exists(path);
     if (!fileExists) {
       const content = JSON.stringify(defaultContent, null, 2);
-      return this.write(path, content);
+      const writeResult = await this.write(path, content);
+      if (!writeResult.ok) {
+        // 记录写入失败的详细信息
+        console.error(`[FileStorage] Failed to initialize file: ${path}`, writeResult.error);
+      }
+      return writeResult;
     }
     return ok(undefined);
   }
@@ -263,7 +275,7 @@ export class FileStorage implements IFileStorage {
     const backupPath = `${fullPath}.bak`;
     
     try {
-      // 确保父目录存在
+      // 确保父目录存在（使用原始 path 而非 fullPath，因为 ensureDir 内部会调用 resolvePath）
       const dirPath = path.substring(0, path.lastIndexOf("/"));
       if (dirPath) {
         const dirResult = await this.ensureDir(dirPath);
@@ -283,35 +295,67 @@ export class FileStorage implements IFileStorage {
         return verifyResult;
       }
 
-      // 步骤 3: 如果目标文件存在，先备份
-      const targetExists = await this.exists(path);
-      if (targetExists) {
-        // 创建备份
+      // 步骤 3: 如果目标文件存在，先备份并删除
+      // 注意：使用 try-catch 处理竞态条件（文件可能在检查后被删除）
+      let targetExists = false;
+      try {
         const originalContent = await this.vault.adapter.read(fullPath);
+        targetExists = true;
+        // 创建备份
         await this.vault.adapter.write(backupPath, originalContent);
-        // 删除原文件
-        await this.vault.adapter.remove(fullPath);
+        // 删除原文件（忽略 ENOENT 错误）
+        try {
+          await this.vault.adapter.remove(fullPath);
+        } catch (removeError: unknown) {
+          // 忽略文件不存在的错误（可能已被其他进程删除）
+          const e = removeError as { code?: string };
+          if (e.code !== "ENOENT") {
+            throw removeError;
+          }
+        }
+      } catch (backupError: unknown) {
+        // 读取失败说明文件不存在，这是正常情况
+        const e = backupError as { code?: string };
+        if (e.code !== "ENOENT") {
+          // 其他错误，清理临时文件并返回错误
+          await this.cleanupTempFile(tempPath);
+          return err(
+            "E300",
+            `Failed to backup/remove original file: ${path}`,
+            backupError
+          );
+        }
+        // 文件不存在，继续执行
       }
 
       // 步骤 4: 重命名临时文件为目标文件
+      // 注意：Obsidian 的 rename 在某些情况下可能会失败，使用 copy + delete 作为备选方案
       try {
         await this.vault.adapter.rename(tempPath, fullPath);
         // 成功后清理备份
         await this.cleanupTempFile(backupPath);
       } catch (renameError) {
-        // 重命名失败，尝试恢复备份
-        if (targetExists) {
-          try {
-            const backupContent = await this.vault.adapter.read(backupPath);
-            await this.vault.adapter.write(fullPath, backupContent);
-          } catch {
-            // 恢复失败，记录但不掩盖原始错误
+        // rename 失败，尝试使用 copy + delete 方案
+        try {
+          const tempContent = await this.vault.adapter.read(tempPath);
+          await this.vault.adapter.write(fullPath, tempContent);
+          await this.cleanupTempFile(tempPath);
+          await this.cleanupTempFile(backupPath);
+        } catch (copyError) {
+          // copy 也失败，尝试恢复备份
+          if (targetExists) {
+            try {
+              const backupContent = await this.vault.adapter.read(backupPath);
+              await this.vault.adapter.write(fullPath, backupContent);
+            } catch {
+              // 恢复失败，记录但不掩盖原始错误
+            }
           }
+          // 清理临时文件和备份
+          await this.cleanupTempFile(tempPath);
+          await this.cleanupTempFile(backupPath);
+          throw copyError;
         }
-        // 清理临时文件和备份
-        await this.cleanupTempFile(tempPath);
-        await this.cleanupTempFile(backupPath);
-        throw renameError;
       }
 
       return ok(undefined);
@@ -358,15 +402,15 @@ export class FileStorage implements IFileStorage {
 
   /**
    * 清理临时文件
+   * 注意：tempPath 应该是完整路径（已经通过 resolvePath 处理）
    */
   private async cleanupTempFile(tempPath: string): Promise<void> {
     try {
-      const tempExists = await this.exists(tempPath);
-      if (tempExists) {
-        await this.vault.adapter.remove(tempPath);
-      }
+      // 直接使用 vault.adapter，因为 tempPath 已经是完整路径
+      await this.vault.adapter.stat(tempPath);
+      await this.vault.adapter.remove(tempPath);
     } catch {
-      // 忽略清理错误，避免掩盖原始错误
+      // 忽略清理错误（文件可能不存在），避免掩盖原始错误
     }
   }
 

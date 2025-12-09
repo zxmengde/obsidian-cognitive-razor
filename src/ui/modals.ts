@@ -6,7 +6,6 @@
 
 import { App, Modal, Setting } from "obsidian";
 import type {
-  ProviderType,
   ProviderConfig,
   TextInputModalOptions,
   SelectModalOptions,
@@ -32,8 +31,10 @@ export class TextInputModal extends Modal {
   }
 
   onOpen(): void {
-    const { contentEl } = this;
+    const { contentEl, modalEl } = this;
     contentEl.empty();
+    modalEl.addClass("cr-scope");
+    contentEl.addClass("cr-scope");
 
     // 标题
     contentEl.createEl("h2", { text: this.options.title });
@@ -133,8 +134,10 @@ export class SelectModal extends Modal {
   }
 
   onOpen(): void {
-    const { contentEl } = this;
+    const { contentEl, modalEl } = this;
     contentEl.empty();
+    modalEl.addClass("cr-scope");
+    contentEl.addClass("cr-scope");
 
     // 标题
     contentEl.createEl("h2", { text: this.options.title });
@@ -203,8 +206,10 @@ export class ConfirmModal extends Modal {
   }
 
   onOpen(): void {
-    const { contentEl } = this;
+    const { contentEl, modalEl } = this;
     contentEl.empty();
+    modalEl.addClass("cr-scope");
+    contentEl.addClass("cr-scope");
 
     // 标题
     contentEl.createEl("h2", { text: this.options.title });
@@ -268,8 +273,10 @@ export class ProviderConfigModal extends Modal {
   }
 
   onOpen(): void {
-    const { contentEl } = this;
+    const { contentEl, modalEl } = this;
     contentEl.empty();
+    modalEl.addClass("cr-scope");
+    contentEl.addClass("cr-scope");
 
     // 标题
     const title = this.options.mode === "add" ? "添加 AI Provider" : "编辑 AI Provider";
@@ -285,7 +292,7 @@ export class ProviderConfigModal extends Modal {
 
     this.providerIdInput = idSetting.controlEl.createEl("input", {
       type: "text",
-      placeholder: `my-${this.options.providerType || "provider"}`,
+      placeholder: "my-openai",
       value: this.options.providerId || ""
     });
 
@@ -318,14 +325,13 @@ export class ProviderConfigModal extends Modal {
     });
 
     // 自定义端点
-    const providerType = this.options.providerType || this.options.currentConfig?.type || "openai";
     const baseUrlSetting = new Setting(formEl)
       .setName("自定义端点 (可选)")
-      .setDesc(this.getDefaultEndpoint(providerType));
+      .setDesc("默认: https://api.openai.com/v1");
 
     this.baseUrlInput = baseUrlSetting.controlEl.createEl("input", {
       type: "text",
-      placeholder: this.getDefaultEndpoint(providerType),
+      placeholder: "https://api.openai.com/v1",
       value: this.options.currentConfig?.baseUrl || ""
     });
 
@@ -336,7 +342,7 @@ export class ProviderConfigModal extends Modal {
 
     this.chatModelInput = chatModelSetting.controlEl.createEl("input", {
       type: "text",
-      placeholder: this.getDefaultChatModel(providerType),
+      placeholder: "gpt-4o",
       value: this.options.currentConfig?.defaultChatModel || ""
     });
 
@@ -347,7 +353,7 @@ export class ProviderConfigModal extends Modal {
 
     this.embedModelInput = embedModelSetting.controlEl.createEl("input", {
       type: "text",
-      placeholder: this.getDefaultEmbedModel(providerType),
+      placeholder: "text-embedding-3-small",
       value: this.options.currentConfig?.defaultEmbedModel || ""
     });
 
@@ -411,13 +417,11 @@ export class ProviderConfigModal extends Modal {
     }
 
     // 构建配置
-    const finalProviderType = this.options.providerType || this.options.currentConfig?.type || "openai";
     const config: ProviderConfig = {
-      type: finalProviderType,
       apiKey,
       baseUrl: baseUrl || undefined,
-      defaultChatModel: chatModel || this.getDefaultChatModel(finalProviderType),
-      defaultEmbedModel: embedModel || this.getDefaultEmbedModel(finalProviderType),
+      defaultChatModel: chatModel || "gpt-4o",
+      defaultEmbedModel: embedModel || "text-embedding-3-small",
       enabled: this.options.currentConfig?.enabled ?? true
     };
 
@@ -451,18 +455,6 @@ export class ProviderConfigModal extends Modal {
       this.errorEl.style.color = "var(--text-error)";
       this.errorEl.style.marginTop = "1em";
     }
-  }
-
-  private getDefaultEndpoint(type: ProviderType): string {
-    return "https://api.openai.com/v1";
-  }
-
-  private getDefaultChatModel(type: ProviderType): string {
-    return "gpt-4-turbo-preview";
-  }
-
-  private getDefaultEmbedModel(type: ProviderType): string {
-    return "text-embedding-3-small";
   }
 
   onClose(): void {

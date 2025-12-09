@@ -1,6 +1,14 @@
 /**
+ * @deprecated 此视图已废除，功能已整合到 WorkbenchPanel
+ * 保留此文件仅用于参考，将在未来版本中删除
+ * 
  * 撤销历史视图
  * 显示所有可撤销的操作历史
+ * 
+ * 迁移说明：
+ * - 操作历史已整合到 WorkbenchPanel 的"操作历史"区域
+ * - 显示最近 10 个快照，支持一键撤销
+ * - 批量操作（清空全部）已整合到工作台
  */
 
 import { ItemView, WorkspaceLeaf, Notice, App, Modal, TFile } from "obsidian";
@@ -98,6 +106,7 @@ export class UndoHistoryView extends ItemView {
   private render(): void {
     const container = this.containerEl.children[1];
     container.empty();
+    container.addClass("cr-scope");
 
     // 添加标题和工具栏
     const header = container.createDiv({ cls: "undo-history-header" });
@@ -469,7 +478,10 @@ class SnapshotDetailsModal extends Modal {
   }
 
   onOpen(): void {
-    const { contentEl } = this;
+    const { contentEl, modalEl } = this;
+    contentEl.empty();
+    modalEl.addClass("cr-scope");
+    contentEl.addClass("cr-scope");
 
     contentEl.createEl("h2", { text: "快照详情" });
 
@@ -533,7 +545,10 @@ class UndoConfirmModal extends Modal {
   }
 
   onOpen(): void {
-    const { contentEl } = this;
+    const { contentEl, modalEl } = this;
+    contentEl.empty();
+    modalEl.addClass("cr-scope");
+    contentEl.addClass("cr-scope");
 
     contentEl.createEl("h2", { text: "确认撤销操作" });
 
@@ -602,7 +617,10 @@ class BatchUndoConfirmModal extends Modal {
   }
 
   onOpen(): void {
-    const { contentEl } = this;
+    const { contentEl, modalEl } = this;
+    contentEl.empty();
+    modalEl.addClass("cr-scope");
+    contentEl.addClass("cr-scope");
 
     contentEl.createEl("h2", { text: "确认批量撤销" });
 
@@ -659,7 +677,10 @@ class ClearAllConfirmModal extends Modal {
   }
 
   onOpen(): void {
-    const { contentEl } = this;
+    const { contentEl, modalEl } = this;
+    contentEl.empty();
+    modalEl.addClass("cr-scope");
+    contentEl.addClass("cr-scope");
 
     contentEl.createEl("h2", { text: "确认清理全部快照" });
 

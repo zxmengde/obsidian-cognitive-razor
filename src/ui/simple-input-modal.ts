@@ -1,0 +1,121 @@
+/**
+ * SimpleInputModal - 极简单行输入框
+ * 
+ * 设计：
+ * - 单行输入框 + Enter 图标按钮
+ * - 支持 Enter 键快速提交
+ * - 用于创建概念等简单输入场景
+ */
+
+import { App, Modal, Notice } from "obsidian";
+
+/**
+ * 简单输入 Modal 选项
+ */
+export interface SimpleInputModalOptions {
+  /** 标题 */
+  title: string;
+  /** 占位符 */
+  placeholder?: string;
+  /** 默认值 */
+  defaultValue?: string;
+  /** 提交回调 */
+  onSubmit: (value: string) => void;
+  /** 取消回调 */
+  onCancel?: () => void;
+}
+
+/**
+ * 极简单行输入 Modal
+ */
+export class SimpleInputModal extends Modal {
+  private options: SimpleInputModalOptions;
+  private inputValue: string;
+
+  constructor(app: App, options: SimpleInputModalOptions) {
+    super(app);
+    this.options = options;
+    this.inputValue = options.defaultValue || "";
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass("cr-scope");
+    contentEl.addClass("cr-simple-input-modal");
+
+    // 标题
+    contentEl.createEl("h2", { 
+      text: this.options.title,
+      cls: "cr-simple-input-title"
+    });
+
+    // 输入容器
+    const inputContainer = contentEl.createDiv({ cls: "cr-simple-input-container" });
+
+    // 单行输入框
+    const input = inputContainer.createEl("input", {
+      type: "text",
+      cls: "cr-simple-input",
+      placeholder: this.options.placeholder || "",
+      value: this.inputValue
+    });
+
+    // Enter 图标按钮
+    const submitBtn = inputContainer.createEl("button", {
+      cls: "cr-simple-input-submit",
+      attr: {
+        "aria-label": "提交",
+        "title": "提交 (Enter)"
+      }
+    });
+    submitBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"></path><path d="M22 2L15 22L11 13L2 9L22 2Z"></path></svg>`;
+
+    // 自动聚焦
+    input.focus();
+
+    // 输入变化
+    input.addEventListener("input", () => {
+      this.inputValue = input.value;
+    });
+
+    // Enter 键提交
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        this.submit();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        this.close();
+        if (this.options.onCancel) {
+          this.options.onCancel();
+        }
+      }
+    });
+
+    // 按钮点击提交
+    submitBtn.addEventListener("click", () => {
+      this.submit();
+    });
+  }
+
+  onClose(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+  }
+
+  /**
+   * 提交
+   */
+  private submit(): void {
+    const value = this.inputValue.trim();
+    
+    if (!value) {
+      new Notice("请输入内容");
+      return;
+    }
+
+    this.close();
+    this.options.onSubmit(value);
+  }
+}

@@ -9,8 +9,9 @@
 
 import { App, PluginSettingTab, Setting, Notice } from "obsidian";
 import type CognitiveRazorPlugin from "../../main";
-import type { ProviderType, ProviderConfig } from "../types";
+import type { ProviderConfig, CRType, DirectoryScheme } from "../types";
 import { ProviderConfigModal, ConfirmModal } from "./modals";
+import { formatMessage } from "../core/i18n";
 
 /**
  * 设置面板
@@ -27,8 +28,14 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
+    const i18n = this.plugin.getI18n();
+    const t = i18n.t();
+
     // 标题
-    containerEl.createEl("h1", { text: "Cognitive Razor 设置" });
+    containerEl.createEl("h1", { text: t.settings.title });
+
+    // 基础设置（语言选择）
+    this.renderBasicSettings(containerEl);
 
     // Provider 配置区域
     this.renderProviderSettings(containerEl);
@@ -46,20 +53,54 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
   }
 
   /**
+   * 渲染基础设置
+   */
+  private renderBasicSettings(containerEl: HTMLElement): void {
+    const i18n = this.plugin.getI18n();
+    const t = i18n.t();
+
+    containerEl.createEl("h2", { text: t.settings.language.name });
+
+    // 语言选择
+    new Setting(containerEl)
+      .setName(t.settings.language.name)
+      .setDesc(t.settings.language.desc)
+      .addDropdown(dropdown => {
+        dropdown
+          .addOption("zh", t.settings.language.zh)
+          .addOption("en", t.settings.language.en)
+          .setValue(this.plugin.settings.language)
+          .onChange(async (value) => {
+            const lang = value as "zh" | "en";
+            await this.plugin.settingsStore.update({ language: lang });
+            i18n.setLanguage(lang);
+            new Notice(formatMessage(t.notices.languageChanged, { 
+              language: lang === "zh" ? t.settings.language.zh : t.settings.language.en 
+            }));
+            // 刷新设置面板以应用新语言
+            this.display();
+          });
+      });
+  }
+
+  /**
    * 渲染 Provider 设置
    */
   private renderProviderSettings(containerEl: HTMLElement): void {
-    containerEl.createEl("h2", { text: "AI Provider 配置" });
+    const i18n = this.plugin.getI18n();
+    const t = i18n.t();
+
+    containerEl.createEl("h2", { text: t.settings.provider.title });
 
     // 添加 Provider 按钮
     new Setting(containerEl)
-      .setName("添加 Provider")
-      .setDesc("配置 AI 服务提供商（支持 OpenAI 标准格式，可通过自定义端点兼容其他服务）")
+      .setName(t.settings.provider.addButton)
+      .setDesc(t.settings.provider.addDesc)
       .addButton(button => {
         button
-          .setButtonText("添加 Provider")
+          .setButtonText(t.settings.provider.addButton)
           .onClick(() => {
-            this.showAddProviderModal("openai");
+            this.showAddProviderModal();
           });
       });
 
@@ -67,7 +108,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
     const providers = this.plugin.settings.providers;
     if (Object.keys(providers).length === 0) {
       containerEl.createEl("p", {
-        text: "尚未配置任何 Provider。请添加至少一个 Provider 以使用插件功能。",
+        text: t.settings.provider.noProvider,
         cls: "setting-item-description"
       });
     } else {
@@ -79,8 +120,8 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
     // 默认 Provider 选择
     if (Object.keys(providers).length > 0) {
       new Setting(containerEl)
-        .setName("默认 Provider")
-        .setDesc("选择默认使用的 AI Provider")
+        .setName(t.settings.provider.defaultProvider)
+        .setDesc(t.settings.provider.defaultProviderDesc)
         .addDropdown(dropdown => {
           Object.keys(providers).forEach(id => {
             dropdown.addOption(id, id);
@@ -89,7 +130,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
             .setValue(this.plugin.settings.defaultProviderId)
             .onChange(async (value) => {
               await this.plugin.settingsStore.setDefaultProvider(value);
-              new Notice(`默认 Provider 已设置为: ${value}`);
+              new Notice(formatMessage(t.notices.providerSetDefault, { id: value }));
             });
         });
     }
@@ -103,9 +144,13 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
     id: string,
     config: ProviderConfig
   ): void {
+    const i18n = this.plugin.getI18n();
+    const t = i18n.t();
+
+    const statusText = config.enabled ? t.settings.provider.enabled : t.settings.provider.disabled;
     const setting = new Setting(containerEl)
       .setName(id)
-      .setDesc(`模型: ${config.defaultChatModel} | 状态: ${config.enabled ? "启用" : "禁用"}`);
+      .setDesc(`${t.settings.provider.model}: ${config.defaultChatModel} | ${t.settings.provider.status}: ${statusText}`);
 
     // 启用/禁用切换
     setting.addToggle(toggle => {
@@ -113,7 +158,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
         .setValue(config.enabled)
         .onChange(async (value) => {
           await this.plugin.settingsStore.updateProvider(id, { enabled: value });
-          new Notice(`Provider ${id} 已${value ? "启用" : "禁用"}`);
+          new Notice(formatMessage(t.notices.providerUpdated, { id }));
           this.display();
         });
     });
@@ -121,7 +166,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
     // 测试连接按钮
     setting.addButton(button => {
       button
-        .setButtonText("测试连接")
+        .setButtonText(t.settings.provider.testConnection)
         .onClick(async () => {
           await this.testProviderConnection(id);
         });
@@ -130,7 +175,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
     // 编辑按钮
     setting.addButton(button => {
       button
-        .setButtonText("编辑")
+        .setButtonText(t.common.edit)
         .onClick(() => {
           this.showEditProviderModal(id, config);
         });
@@ -139,7 +184,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
     // 设为默认按钮
     setting.addButton(button => {
       button
-        .setButtonText("设为默认")
+        .setButtonText(t.settings.provider.setDefault)
         .onClick(async () => {
           await this.setDefaultProvider(id);
         });
@@ -148,7 +193,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
     // 删除按钮
     setting.addButton(button => {
       button
-        .setButtonText("删除")
+        .setButtonText(t.common.delete)
         .setWarning()
         .onClick(() => {
           this.showDeleteProviderConfirm(id);
@@ -160,12 +205,15 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
    * 渲染插件设置
    */
   private renderPluginSettings(containerEl: HTMLElement): void {
-    containerEl.createEl("h2", { text: "插件设置" });
+    const i18n = this.plugin.getI18n();
+    const t = i18n.t();
+
+    containerEl.createEl("h2", { text: t.settings.title });
 
     // 相似度阈值
     new Setting(containerEl)
-      .setName("相似度阈值")
-      .setDesc("用于检测重复概念的相似度阈值 (0-1)")
+      .setName(t.settings.similarityThreshold.name)
+      .setDesc(t.settings.similarityThreshold.desc)
       .addSlider(slider => {
         slider
           .setLimits(0.5, 1.0, 0.05)
@@ -178,8 +226,8 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
 
     // 最大快照数量
     new Setting(containerEl)
-      .setName("最大快照数量")
-      .setDesc("用于撤销操作的最大快照数量")
+      .setName(t.settings.maxSnapshots.name)
+      .setDesc(t.settings.maxSnapshots.desc)
       .addText(text => {
         text
           .setPlaceholder("100")
@@ -194,8 +242,8 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
 
     // 快照保留天数 (A-FUNC-02: 可配置的快照保留策略)
     new Setting(containerEl)
-      .setName("快照保留天数")
-      .setDesc("超过此天数的快照将被自动清理")
+      .setName(t.settings.maxSnapshotAgeDays.name)
+      .setDesc(t.settings.maxSnapshotAgeDays.desc)
       .addText(text => {
         text
           .setPlaceholder("30")
@@ -210,8 +258,8 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
 
     // 并发任务数
     new Setting(containerEl)
-      .setName("并发任务数")
-      .setDesc("同时执行的最大任务数")
+      .setName(t.settings.concurrency.name)
+      .setDesc(t.settings.concurrency.desc)
       .addText(text => {
         text
           .setPlaceholder("3")
@@ -226,8 +274,8 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
 
     // 高级模式
     new Setting(containerEl)
-      .setName("高级模式")
-      .setDesc("显示高级配置选项")
+      .setName(t.settings.advancedMode.name)
+      .setDesc(t.settings.advancedMode.desc)
       .addToggle(toggle => {
         toggle
           .setValue(this.plugin.settings.advancedMode)
@@ -244,12 +292,64 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
    * 遵循设计文档 A-FUNC-08：高级模式显示模型、温度/TopP、去重阈值、并发等参数
    */
   private renderAdvancedSettings(containerEl: HTMLElement): void {
-    containerEl.createEl("h2", { text: "高级设置" });
+    const i18n = this.plugin.getI18n();
+    const t = i18n.t();
+    
+    containerEl.createEl("h2", { text: t.settings.advanced.title });
+
+    // ============ 命名和目录配置 ============
+    containerEl.createEl("h3", { text: t.settings.advanced.namingTemplate.name });
+
+    // 命名模板
+    new Setting(containerEl)
+      .setName(t.settings.advanced.namingTemplate.name)
+      .setDesc(t.settings.advanced.namingTemplate.desc)
+      .addText(text => {
+        text
+          .setPlaceholder("{{chinese}} ({{english}})")
+          .setValue(this.plugin.settings.namingTemplate)
+          .onChange(async (value) => {
+            await this.plugin.settingsStore.update({ namingTemplate: value });
+          });
+        text.inputEl.style.width = "100%";
+      });
+
+    // 目录方案配置
+    containerEl.createEl("h4", { text: t.settings.advanced.directoryScheme.title });
+    containerEl.createEl("p", {
+      text: t.settings.advanced.directoryScheme.desc,
+      cls: "setting-item-description"
+    });
+
+    const crTypes: Array<{ key: CRType; name: string }> = [
+      { key: "Domain", name: `${t.crTypes.Domain} (Domain)` },
+      { key: "Issue", name: `${t.crTypes.Issue} (Issue)` },
+      { key: "Theory", name: `${t.crTypes.Theory} (Theory)` },
+      { key: "Entity", name: `${t.crTypes.Entity} (Entity)` },
+      { key: "Mechanism", name: `${t.crTypes.Mechanism} (Mechanism)` }
+    ];
+
+    const plugin = this.plugin;
+    for (const crType of crTypes) {
+      new Setting(containerEl)
+        .setName(crType.name)
+        .addText(text => {
+          text
+            .setPlaceholder(`默认: ${plugin.settings.directoryScheme[crType.key]}`)
+            .setValue(plugin.settings.directoryScheme[crType.key])
+            .onChange(async (value) => {
+              const directoryScheme = { ...plugin.settings.directoryScheme };
+              directoryScheme[crType.key] = value;
+              await plugin.settingsStore.update({ directoryScheme });
+            });
+          text.inputEl.style.width = "100%";
+        });
+    }
 
     // ============ 任务模型配置 ============
-    containerEl.createEl("h3", { text: "任务模型配置" });
+    containerEl.createEl("h3", { text: t.settings.advanced.taskModels.title });
     containerEl.createEl("p", {
-      text: "为不同任务类型配置使用的模型和参数",
+      text: t.settings.advanced.taskModels.desc,
       cls: "setting-item-description"
     });
 
@@ -258,27 +358,34 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
 
     // 为每种任务类型创建配置
     const taskTypes: Array<{ key: string; name: string; desc: string }> = [
-      { key: "standardizeClassify", name: "标准化分类", desc: "标准化输入并分类知识类型" },
-      { key: "enrich", name: "丰富", desc: "生成别名和标签" },
-      { key: "embedding", name: "嵌入", desc: "生成向量嵌入" },
-      { key: "reason:new", name: "新概念生成", desc: "为新概念生成完整内容" },
-      { key: "reason:incremental", name: "增量改进", desc: "增量改进现有内容" },
-      { key: "reason:merge", name: "合并", desc: "合并两个重复概念" },
-      { key: "ground", name: "事实核查", desc: "验证生成内容的准确性" }
+      { key: "standardizeClassify", name: t.taskTypes.standardizeClassify.name, desc: t.taskTypes.standardizeClassify.desc },
+      { key: "enrich", name: t.taskTypes.enrich.name, desc: t.taskTypes.enrich.desc },
+      { key: "embedding", name: t.taskTypes.embedding.name, desc: t.taskTypes.embedding.desc },
+      { key: "reason:new", name: t.taskTypes["reason:new"].name, desc: t.taskTypes["reason:new"].desc },
+      { key: "reason:incremental", name: t.taskTypes["reason:incremental"].name, desc: t.taskTypes["reason:incremental"].desc },
+      { key: "reason:merge", name: t.taskTypes["reason:merge"].name, desc: t.taskTypes["reason:merge"].desc },
+      { key: "ground", name: t.taskTypes.ground.name, desc: t.taskTypes.ground.desc }
     ];
 
     for (const taskType of taskTypes) {
       const taskConfig = this.plugin.settings.taskModels[taskType.key as keyof typeof this.plugin.settings.taskModels];
       
+      // 任务类型标题
+      containerEl.createEl("h4", { text: taskType.name });
+      containerEl.createEl("p", {
+        text: taskType.desc,
+        cls: "setting-item-description"
+      });
+      
+      // Provider 和模型选择
       new Setting(containerEl)
-        .setName(`${taskType.name} 模型`)
-        .setDesc(taskType.desc)
+        .setName(t.settings.advanced.taskModels.providerAndModel)
         .addDropdown(dropdown => {
           // Provider 选择
           if (providerIds.length === 0) {
-            dropdown.addOption("", "请先配置 Provider");
+            dropdown.addOption("", t.settings.advanced.taskModels.configureProviderFirst);
           } else {
-            dropdown.addOption("", "使用默认 Provider");
+            dropdown.addOption("", t.settings.advanced.taskModels.useDefaultProvider);
             providerIds.forEach(id => dropdown.addOption(id, id));
           }
           dropdown
@@ -295,7 +402,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
         .addText(text => {
           // 模型名称
           text
-            .setPlaceholder("模型名称")
+            .setPlaceholder(t.settings.advanced.taskModels.modelNamePlaceholder)
             .setValue(taskConfig?.model || "")
             .onChange(async (value) => {
               const taskModels = { ...this.plugin.settings.taskModels };
@@ -306,6 +413,71 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
               await this.plugin.settingsStore.update({ taskModels });
             });
         });
+      
+      // Temperature 参数（仅对非 embedding 任务显示）
+      if (taskType.key !== "embedding") {
+        new Setting(containerEl)
+          .setName(t.settings.advanced.temperature.name)
+          .setDesc(t.settings.advanced.temperature.desc)
+          .addSlider(slider => {
+            slider
+              .setLimits(0, 2, 0.1)
+              .setValue(taskConfig?.temperature ?? 0.7)
+              .setDynamicTooltip()
+              .onChange(async (value) => {
+                const taskModels = { ...this.plugin.settings.taskModels };
+                taskModels[taskType.key as keyof typeof taskModels] = {
+                  ...taskConfig,
+                  temperature: value
+                };
+                await this.plugin.settingsStore.update({ taskModels });
+              });
+          });
+      }
+      
+      // TopP 参数（仅对非 embedding 任务显示）
+      if (taskType.key !== "embedding") {
+        new Setting(containerEl)
+          .setName(t.settings.advanced.topP.name)
+          .setDesc(t.settings.advanced.topP.desc)
+          .addSlider(slider => {
+            slider
+              .setLimits(0, 1, 0.05)
+              .setValue(taskConfig?.topP ?? 1)
+              .setDynamicTooltip()
+              .onChange(async (value) => {
+                const taskModels = { ...this.plugin.settings.taskModels };
+                taskModels[taskType.key as keyof typeof taskModels] = {
+                  ...taskConfig,
+                  topP: value
+                };
+                await this.plugin.settingsStore.update({ taskModels });
+              });
+          });
+      }
+      
+      // Reasoning Effort 参数（仅对非 embedding 任务显示）
+      if (taskType.key !== "embedding") {
+        new Setting(containerEl)
+          .setName(t.settings.advanced.reasoningEffort.name)
+          .setDesc(t.settings.advanced.reasoningEffort.desc)
+          .addDropdown(dropdown => {
+            dropdown
+              .addOption("", t.settings.advanced.taskModels.notSet)
+              .addOption("low", t.settings.advanced.taskModels.low)
+              .addOption("medium", t.settings.advanced.taskModels.medium)
+              .addOption("high", t.settings.advanced.taskModels.high)
+              .setValue(taskConfig?.reasoning_effort || "")
+              .onChange(async (value) => {
+                const taskModels = { ...this.plugin.settings.taskModels };
+                taskModels[taskType.key as keyof typeof taskModels] = {
+                  ...taskConfig,
+                  reasoning_effort: value ? (value as "low" | "medium" | "high") : undefined
+                };
+                await this.plugin.settingsStore.update({ taskModels });
+              });
+          });
+      }
     }
 
     // ============ 温度参数 ============
@@ -331,11 +503,11 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
       });
 
     // ============ 去重参数 ============
-    containerEl.createEl("h3", { text: "去重参数" });
+    containerEl.createEl("h3", { text: t.settings.advanced.deduplication.title });
 
     new Setting(containerEl)
-      .setName("相似度阈值")
-      .setDesc("用于检测重复概念的相似度阈值 (0-1)，较高值更严格")
+      .setName(t.settings.similarityThreshold.name)
+      .setDesc(t.settings.similarityThreshold.desc)
       .addSlider(slider => {
         slider
           .setLimits(0.5, 1.0, 0.05)
@@ -347,8 +519,8 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName("检索数量 (TopK)")
-      .setDesc("去重检测时检索的候选数量")
+      .setName(t.settings.advanced.deduplication.topK)
+      .setDesc(t.settings.advanced.deduplication.topKDesc)
       .addText(text => {
         text
           .setPlaceholder("10")
@@ -361,12 +533,36 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
           });
       });
 
-    // ============ 功能开关 ============
-    containerEl.createEl("h3", { text: "功能开关" });
+    // ============ 嵌入参数 ============
+    containerEl.createEl("h3", { text: t.settings.advanced.embedding.title });
 
     new Setting(containerEl)
-      .setName("启用事实核查 (Ground)")
-      .setDesc("在内容生成后执行事实核查验证（会增加一次 LLM 调用）")
+      .setName(t.settings.advanced.embedding.dimension)
+      .setDesc(t.settings.advanced.embedding.dimensionDesc)
+      .addDropdown(dropdown => {
+        // text-embedding-3-small 支持的维度选项
+        dropdown
+          .addOption("256", "256")
+          .addOption("512", "512")
+          .addOption("1024", "1024")
+          .addOption("1536", "1536 (默认)")
+          .addOption("3072", "3072")
+          .setValue((this.plugin.settings.embeddingDimension ?? 1536).toString())
+          .onChange(async (value) => {
+            const num = parseInt(value);
+            if (!isNaN(num) && num > 0) {
+              await this.plugin.settingsStore.update({ embeddingDimension: num });
+              new Notice(t.settings.advanced.embedding.dimensionWarning);
+            }
+          });
+      });
+
+    // ============ 功能开关 ============
+    containerEl.createEl("h3", { text: t.settings.advanced.features.title });
+
+    new Setting(containerEl)
+      .setName(t.settings.advanced.features.enableGrounding)
+      .setDesc(t.settings.advanced.features.enableGroundingDesc)
       .addToggle(toggle => {
         toggle
           .setValue(this.plugin.settings.enableGrounding)
@@ -377,11 +573,11 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
       });
 
     // ============ 队列参数 ============
-    containerEl.createEl("h3", { text: "队列参数" });
+    containerEl.createEl("h3", { text: t.settings.advanced.queue.title });
 
     new Setting(containerEl)
-      .setName("并发任务数")
-      .setDesc("同时执行的最大任务数")
+      .setName(t.settings.concurrency.name)
+      .setDesc(t.settings.concurrency.desc)
       .addText(text => {
         text
           .setPlaceholder("1")
@@ -395,8 +591,8 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName("自动重试")
-      .setDesc("任务失败时自动重试")
+      .setName(t.settings.advanced.queue.autoRetry)
+      .setDesc(t.settings.advanced.queue.autoRetryDesc)
       .addToggle(toggle => {
         toggle
           .setValue(this.plugin.settings.autoRetry)
@@ -406,8 +602,8 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName("最大重试次数")
-      .setDesc("任务失败时的最大重试次数")
+      .setName(t.settings.advanced.queue.maxRetryAttempts)
+      .setDesc(t.settings.advanced.queue.maxRetryAttemptsDesc)
       .addText(text => {
         text
           .setPlaceholder("3")
@@ -421,31 +617,31 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
       });
 
     // ============ 日志设置 ============
-    containerEl.createEl("h3", { text: "日志设置" });
+    containerEl.createEl("h3", { text: t.settings.advanced.logging.title });
 
     new Setting(containerEl)
-      .setName("日志级别")
-      .setDesc("设置日志记录的详细程度")
+      .setName(t.settings.advanced.logging.logLevel)
+      .setDesc(t.settings.advanced.logging.logLevelDesc)
       .addDropdown(dropdown => {
         dropdown
-          .addOption("debug", "调试")
-          .addOption("info", "信息")
-          .addOption("warn", "警告")
-          .addOption("error", "错误")
+          .addOption("debug", t.settings.advanced.logging.levels.debug)
+          .addOption("info", t.settings.advanced.logging.levels.info)
+          .addOption("warn", t.settings.advanced.logging.levels.warn)
+          .addOption("error", t.settings.advanced.logging.levels.error)
           .setValue(this.plugin.settings.logLevel)
           .onChange(async (value: string) => {
             const logLevel = value as "debug" | "info" | "warn" | "error";
             await this.plugin.settingsStore.update({ logLevel });
-            new Notice(`日志级别已设置为: ${logLevel}（将在下次启动时生效）`);
+            new Notice(formatMessage(t.notices.logLevelChanged, { level: logLevel }));
           });
       });
 
     new Setting(containerEl)
-      .setName("清除日志")
-      .setDesc("清空所有日志文件")
+      .setName(t.settings.advanced.logging.clearLogs)
+      .setDesc(t.settings.advanced.logging.clearLogsDesc)
       .addButton(button => {
         button
-          .setButtonText("清除日志")
+          .setButtonText(t.settings.advanced.logging.clearLogs)
           .setWarning()
           .onClick(async () => {
             await this.clearLogs();
@@ -457,15 +653,18 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
    * 渲染导入导出
    */
   private renderImportExport(containerEl: HTMLElement): void {
-    containerEl.createEl("h2", { text: "导入导出" });
+    const i18n = this.plugin.getI18n();
+    const t = i18n.t();
+    
+    containerEl.createEl("h2", { text: t.settings.importExport.title });
 
     // 导出配置
     new Setting(containerEl)
-      .setName("导出配置")
-      .setDesc("导出当前配置为 JSON 文件")
+      .setName(t.settings.importExport.export)
+      .setDesc(t.settings.importExport.exportDesc)
       .addButton(button => {
         button
-          .setButtonText("导出")
+          .setButtonText(t.settings.importExport.export)
           .onClick(async () => {
             const result = await this.plugin.settingsStore.export();
             if (result.ok) {
@@ -477,20 +676,20 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
               a.download = "cognitive-razor-settings.json";
               a.click();
               URL.revokeObjectURL(url);
-              new Notice("配置已导出");
+              new Notice(t.notices.settingsExported);
             } else {
-              new Notice(`导出失败: ${result.error.message}`);
+              new Notice(`${t.settings.importExport.export} ${t.common.error}: ${result.error.message}`);
             }
           });
       });
 
     // 导入配置
     new Setting(containerEl)
-      .setName("导入配置")
-      .setDesc("从 JSON 文件导入配置")
+      .setName(t.settings.importExport.import)
+      .setDesc(t.settings.importExport.importDesc)
       .addButton(button => {
         button
-          .setButtonText("导入")
+          .setButtonText(t.settings.importExport.import)
           .onClick(() => {
             const input = document.createElement("input");
             input.type = "file";
@@ -501,10 +700,10 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
                 const text = await file.text();
                 const result = await this.plugin.settingsStore.import(text);
                 if (result.ok) {
-                  new Notice("配置已导入");
+                  new Notice(t.notices.settingsImported);
                   this.display();
                 } else {
-                  new Notice(`导入失败: ${result.error.message}`);
+                  new Notice(`${t.settings.importExport.import} ${t.common.error}: ${result.error.message}`);
                 }
               }
             };
@@ -514,11 +713,11 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
 
     // 重置配置
     new Setting(containerEl)
-      .setName("重置配置")
-      .setDesc("将所有设置重置为默认值")
+      .setName(t.settings.importExport.reset)
+      .setDesc(t.settings.importExport.resetDesc)
       .addButton(button => {
         button
-          .setButtonText("重置")
+          .setButtonText(t.settings.importExport.reset)
           .setWarning()
           .onClick(() => {
             this.showResetSettingsConfirm();
@@ -529,17 +728,19 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
   /**
    * 显示添加 Provider 模态框
    */
-  private showAddProviderModal(type: ProviderType): void {
+  private showAddProviderModal(): void {
+    const i18n = this.plugin.getI18n();
+    const t = i18n.t();
+
     new ProviderConfigModal(this.app, {
       mode: "add",
-      providerType: type,
       onSave: async (id, config) => {
         const result = await this.plugin.settingsStore.addProvider(id, config);
         if (result.ok) {
-          new Notice(`Provider ${id} 已添加`);
+          new Notice(formatMessage(t.notices.providerAdded, { id }));
           this.display();
         } else {
-          new Notice(`添加失败: ${result.error.message}`);
+          new Notice(`${t.common.error}: ${result.error.message}`);
           throw new Error(result.error.message);
         }
       },
@@ -553,6 +754,9 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
    * 显示编辑 Provider 模态框
    */
   private showEditProviderModal(id: string, config: ProviderConfig): void {
+    const i18n = this.plugin.getI18n();
+    const t = i18n.t();
+
     new ProviderConfigModal(this.app, {
       mode: "edit",
       providerId: id,
@@ -560,10 +764,10 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
       onSave: async (providerId, newConfig) => {
         const result = await this.plugin.settingsStore.updateProvider(providerId, newConfig);
         if (result.ok) {
-          new Notice(`Provider ${providerId} 已更新`);
+          new Notice(formatMessage(t.notices.providerUpdated, { id: providerId }));
           this.display();
         } else {
-          new Notice(`更新失败: ${result.error.message}`);
+          new Notice(`${t.common.error}: ${result.error.message}`);
           throw new Error(result.error.message);
         }
       },
@@ -577,15 +781,18 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
    * 显示删除 Provider 确认对话框
    */
   private showDeleteProviderConfirm(id: string): void {
+    const i18n = this.plugin.getI18n();
+    const t = i18n.t();
+
     new ConfirmModal(this.app, {
-      title: "删除 Provider",
-      message: `确定要删除 Provider "${id}" 吗？此操作不可撤销。`,
-      confirmText: "删除",
-      cancelText: "取消",
+      title: t.confirmDialogs.deleteProvider.title,
+      message: formatMessage(t.confirmDialogs.deleteProvider.message, { id }),
+      confirmText: t.common.delete,
+      cancelText: t.common.cancel,
       danger: true,
       onConfirm: async () => {
         await this.plugin.settingsStore.removeProvider(id);
-        new Notice(`Provider ${id} 已删除`);
+        new Notice(formatMessage(t.notices.providerDeleted, { id }));
         this.display();
       },
       onCancel: () => {
@@ -598,15 +805,18 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
    * 显示重置设置确认对话框
    */
   private showResetSettingsConfirm(): void {
+    const i18n = this.plugin.getI18n();
+    const t = i18n.t();
+
     new ConfirmModal(this.app, {
-      title: "重置设置",
-      message: "确定要重置所有设置吗？此操作不可撤销。",
-      confirmText: "重置",
-      cancelText: "取消",
+      title: t.confirmDialogs.resetSettings.title,
+      message: t.confirmDialogs.resetSettings.message,
+      confirmText: t.settings.importExport.reset,
+      cancelText: t.common.cancel,
       danger: true,
       onConfirm: async () => {
         await this.plugin.settingsStore.reset();
-        new Notice("配置已重置");
+        new Notice(t.notices.settingsReset);
         this.display();
       },
       onCancel: () => {
@@ -620,7 +830,10 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
    * 强制刷新缓存以获取最新状态
    */
   private async testProviderConnection(id: string): Promise<void> {
-    new Notice(`正在测试 Provider ${id} 的连接...`);
+    const i18n = this.plugin.getI18n();
+    const t = i18n.t();
+
+    new Notice(`${t.common.loading} ${id}...`);
     
     try {
       // 清除缓存并强制刷新
@@ -630,18 +843,19 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
       
       if (result.ok) {
         const capabilities = result.value;
-        new Notice(
-          `连接成功！\n` +
-          `聊天: ${capabilities.chat ? "✓" : "✗"}\n` +
-          `嵌入: ${capabilities.embedding ? "✓" : "✗"}\n` +
-          `可用模型: ${capabilities.models.length} 个`,
-          5000
-        );
+        const message = formatMessage(t.notices.connectionSuccess, {
+          chat: capabilities.chat ? "✓" : "✗",
+          embedding: capabilities.embedding ? "✓" : "✗",
+          models: capabilities.models.length.toString()
+        });
+        new Notice(message, 5000);
       } else {
-        new Notice(`连接失败: ${result.error.message}`, 5000);
+        new Notice(formatMessage(t.notices.connectionFailed, { error: result.error.message }), 5000);
       }
     } catch (error) {
-      new Notice(`连接测试出错: ${error instanceof Error ? error.message : String(error)}`, 5000);
+      new Notice(formatMessage(t.notices.connectionFailed, { 
+        error: error instanceof Error ? error.message : String(error) 
+      }), 5000);
     }
   }
 
@@ -649,8 +863,11 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
    * 设置默认 Provider
    */
   private async setDefaultProvider(id: string): Promise<void> {
+    const i18n = this.plugin.getI18n();
+    const t = i18n.t();
+
     await this.plugin.settingsStore.setDefaultProvider(id);
-    new Notice(`默认 Provider 已设置为: ${id}`);
+    new Notice(formatMessage(t.notices.providerSetDefault, { id }));
     this.display();
   }
 

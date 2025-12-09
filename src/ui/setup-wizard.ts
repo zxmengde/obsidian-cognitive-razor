@@ -7,25 +7,22 @@
  * - 数据目录落盘：调用文件存储初始化，避免首次使用缺少 data/ 结构
  */
 
-import { App, Modal, Notice, Setting, normalizePath } from "obsidian";
+import { App, Modal, Notice, Setting } from "obsidian";
 import type CognitiveRazorPlugin from "../../main";
-import type { ProviderConfig, ProviderType } from "../types";
+import type { ProviderConfig } from "../types";
 import { validateUrl } from "../data/validators";
 
 /**
  * 配置向导步骤
  */
 enum WizardStep {
-  Mode = "mode",
-  Configure = "configure",
-  DemoReady = "demo-ready"
+  Configure = "configure"
 }
-
-type SetupMode = "full" | "demo";
 
 interface ValidationState {
   status: "idle" | "checking" | "ok" | "offline" | "error";
   message?: string;
+  showSkipButton?: boolean;  // 新增：是否显示跳过按钮
 }
 
 /**
@@ -33,22 +30,25 @@ interface ValidationState {
  */
 export class SetupWizard extends Modal {
   private plugin: CognitiveRazorPlugin;
-  private currentStep: WizardStep = WizardStep.Mode;
-  private mode: SetupMode = "full";
+  private currentStep: WizardStep = WizardStep.Configure;
   private providerId: string = "my-openai";
   private apiKey: string = "";
   private baseUrl: string = "";
   private chatModel: string = "gpt-4o";
   private embedModel: string = "text-embedding-3-small";
   private validation: ValidationState = { status: "idle" };
+  private selectedLanguage: "zh" | "en" = "zh";
 
   constructor(app: App, plugin: CognitiveRazorPlugin) {
     super(app);
     this.plugin = plugin;
+    // 读取当前语言设置
+    this.selectedLanguage = this.plugin.getComponents().settings.language;
   }
 
   onOpen(): void {
     this.modalEl.addClass("cr-setup-wizard-modal");
+    this.modalEl.addClass("cr-scope");
     this.renderStep();
   }
 
@@ -62,50 +62,10 @@ export class SetupWizard extends Modal {
   private renderStep(): void {
     const { contentEl } = this;
     contentEl.empty();
+    contentEl.addClass("cr-scope");
     contentEl.addClass("cr-setup-wizard");
 
-    switch (this.currentStep) {
-      case WizardStep.Mode:
-        this.renderMode();
-        break;
-      case WizardStep.Configure:
-        this.renderConfigure();
-        break;
-      case WizardStep.DemoReady:
-        this.renderDemoReady();
-        break;
-    }
-  }
-
-  /**
-   * 模式选择
-   */
-  private renderMode(): void {
-    const { contentEl } = this;
-
-    contentEl.createEl("h1", { text: "选择启动方式", cls: "cr-wizard-title" });
-    contentEl.createEl("p", {
-      text: "完整模式连接自己的 API，演示模式加载示例数据（AI 调用关闭）。",
-      cls: "cr-wizard-hint"
-    });
-
-    const cards = contentEl.createDiv({ cls: "cr-mode-cards" });
-
-    const fullCard = cards.createDiv({ cls: "cr-mode-card" });
-    fullCard.createEl("h3", { text: "完整模式" });
-    fullCard.createEl("p", { text: "配置 OpenAI/OpenRouter/Azure 兼容服务，体验全部功能。" });
-    const fullBtn = fullCard.createEl("button", { text: "继续配置", cls: "mod-cta" });
-    fullBtn.addEventListener("click", () => {
-      this.mode = "full";
-      this.currentStep = WizardStep.Configure;
-      this.renderStep();
-    });
-
-    const demoCard = cards.createDiv({ cls: "cr-mode-card" });
-    demoCard.createEl("h3", { text: "演示模式" });
-    demoCard.createEl("p", { text: "离线浏览示例工作台与笔记结构，稍后可切换到完整模式。" });
-    const demoBtn = demoCard.createEl("button", { text: "一键进入演示", cls: "cr-btn-secondary" });
-    demoBtn.addEventListener("click", () => this.enterDemoMode(demoBtn));
+    this.renderConfigure();
   }
 
   /**
@@ -114,16 +74,41 @@ export class SetupWizard extends Modal {
   private renderConfigure(): void {
     const { contentEl } = this;
 
-    contentEl.createEl("h1", { text: "配置 AI Provider", cls: "cr-wizard-title" });
+    const title = this.selectedLanguage === "zh" ? "配置 AI Provider" : "Configure AI Provider";
+    contentEl.createEl("h1", { text: title, cls: "cr-wizard-title" });
+
+    // 语言选择
+    new Setting(contentEl)
+      .setName(this.selectedLanguage === "zh" ? "语言 / Language" : "Language / 语言")
+      .setDesc(this.selectedLanguage === "zh" ? "选择界面语言" : "Select interface language")
+      .addDropdown(dropdown => {
+        dropdown
+          .addOption("zh", "中文")
+          .addOption("en", "English")
+          .setValue(this.selectedLanguage)
+          .onChange(async (value: string) => {
+            const lang = value as "zh" | "en";
+            this.selectedLanguage = lang;
+            // 立即更新语言设置
+            const settings = this.plugin.getComponents().settings;
+            settings.language = lang;
+            await this.plugin.settingsStore.updateSettings(settings);
+            // 重新渲染界面
+            this.renderStep();
+          });
+      });
 
     // API Key 获取提示
     const hint = contentEl.createDiv({ cls: "cr-config-hint" });
-    hint.innerHTML = '从 <a href="https://platform.openai.com/api-keys" target="_blank">OpenAI</a> 或 <a href="https://openrouter.ai/keys" target="_blank">OpenRouter</a> 获取 API Key';
+    const hintText = this.selectedLanguage === "zh" 
+      ? '从 <a href="https://platform.openai.com/api-keys" target="_blank">OpenAI</a> 或 <a href="https://openrouter.ai/keys" target="_blank">OpenRouter</a> 获取 API Key'
+      : 'Get API Key from <a href="https://platform.openai.com/api-keys" target="_blank">OpenAI</a> or <a href="https://openrouter.ai/keys" target="_blank">OpenRouter</a>';
+    hint.innerHTML = hintText;
 
     // 配置表单
     new Setting(contentEl)
       .setName("API Key")
-      .setDesc("您的 API Key（本地存储，不会上传）")
+      .setDesc(this.selectedLanguage === "zh" ? "您的 API Key（本地存储，不会上传）" : "Your API Key (stored locally, never uploaded)")
       .addText(text => {
         text
           .setPlaceholder("sk-...")
@@ -133,8 +118,8 @@ export class SetupWizard extends Modal {
       });
 
     new Setting(contentEl)
-      .setName("自定义端点")
-      .setDesc("留空使用 OpenAI 默认端点")
+      .setName(this.selectedLanguage === "zh" ? "自定义端点" : "Custom Endpoint")
+      .setDesc(this.selectedLanguage === "zh" ? "留空使用 OpenAI 默认端点" : "Leave empty to use OpenAI default endpoint")
       .addText(text => {
         text
           .setPlaceholder("https://api.openai.com/v1")
@@ -142,20 +127,8 @@ export class SetupWizard extends Modal {
           .onChange(value => this.baseUrl = value);
       });
 
-    // 高级选项折叠
-    const advancedToggle = contentEl.createDiv({ cls: "cr-advanced-toggle" });
-    const toggleBtn = advancedToggle.createEl("button", {
-      text: "▶ 高级选项",
-      cls: "cr-btn-link"
-    });
-
-    const advancedSection = contentEl.createDiv({ cls: "cr-advanced-section cr-hidden" });
-
-    toggleBtn.addEventListener("click", () => {
-      const isHidden = advancedSection.hasClass("cr-hidden");
-      advancedSection.toggleClass("cr-hidden", !isHidden);
-      toggleBtn.setText(isHidden ? "▼ 高级选项" : "▶ 高级选项");
-    });
+    // 高级选项（直接展示，不折叠）
+    const advancedSection = contentEl.createDiv({ cls: "cr-advanced-section" });
 
     new Setting(advancedSection)
       .setName("Provider ID")
@@ -167,7 +140,7 @@ export class SetupWizard extends Modal {
       });
 
     new Setting(advancedSection)
-      .setName("聊天模型")
+      .setName(this.selectedLanguage === "zh" ? "聊天模型" : "Chat Model")
       .addText(text => {
         text
           .setValue(this.chatModel)
@@ -175,7 +148,7 @@ export class SetupWizard extends Modal {
       });
 
     new Setting(advancedSection)
-      .setName("嵌入模型")
+      .setName(this.selectedLanguage === "zh" ? "嵌入模型" : "Embedding Model")
       .addText(text => {
         text
           .setValue(this.embedModel)
@@ -189,39 +162,11 @@ export class SetupWizard extends Modal {
     // 按钮
     const buttons = contentEl.createDiv({ cls: "cr-wizard-buttons" });
 
-    const backBtn = buttons.createEl("button", {
-      text: "返回",
-      cls: "cr-btn-secondary"
-    });
-    backBtn.addEventListener("click", () => {
-      this.currentStep = WizardStep.Mode;
-      this.renderStep();
-    });
-
     const saveBtn = buttons.createEl("button", {
-      text: "保存并校验",
+      text: this.selectedLanguage === "zh" ? "保存并校验" : "Save and Validate",
       cls: "mod-cta"
     });
-    saveBtn.addEventListener("click", () => this.saveConfig(saveBtn, statusBox));
-  }
-
-  /**
-   * 演示模式完成页
-   */
-  private renderDemoReady(): void {
-    const { contentEl } = this;
-    contentEl.createEl("h1", { text: "演示模式已加载", cls: "cr-wizard-title" });
-    contentEl.createEl("p", {
-      text: "已生成示例笔记与数据结构。随时可在设置中切换到完整模式并配置真实 API。",
-      cls: "cr-wizard-hint"
-    });
-
-    const buttons = contentEl.createDiv({ cls: "cr-wizard-buttons" });
-    const startBtn = buttons.createEl("button", { text: "打开工作台", cls: "mod-cta" });
-    startBtn.addEventListener("click", () => {
-      this.close();
-      this.app.workspace.trigger("cognitive-razor:open-workbench");
-    });
+    saveBtn.addEventListener("click", () => this.saveConfig(saveBtn, statusBox, buttons));
   }
 
   /**
@@ -232,31 +177,35 @@ export class SetupWizard extends Modal {
     const { status, message } = this.validation;
     const text = container.createDiv({ cls: `cr-validation-${status}` });
 
+    const isZh = this.selectedLanguage === "zh";
+
     if (status === "idle") {
-      text.setText("尚未校验");
+      text.setText(isZh ? "尚未校验" : "Not validated yet");
     } else if (status === "checking") {
-      text.setText("正在校验连接…");
+      text.setText(isZh ? "正在校验连接…" : "Validating connection...");
     } else if (status === "ok") {
-      text.setText(message || "连接正常");
+      text.setText(message || (isZh ? "连接正常" : "Connection successful"));
     } else if (status === "offline") {
-      text.setText(message || "网络不可用，已跳过校验，可稍后重试");
+      text.setText(message || (isZh ? "网络不可用，已跳过校验，可稍后重试" : "Network unavailable, validation skipped, can retry later"));
     } else {
-      text.setText(message || "校验失败，请检查配置后重试");
+      text.setText(message || (isZh ? "校验失败，请检查配置后重试" : "Validation failed, please check configuration and retry"));
     }
   }
 
   /**
    * 保存配置
    */
-  private async saveConfig(btn: HTMLButtonElement, statusBox: HTMLElement): Promise<void> {
+  private async saveConfig(btn: HTMLButtonElement, statusBox: HTMLElement, buttonsContainer: HTMLElement): Promise<void> {
+    const isZh = this.selectedLanguage === "zh";
+
     // 验证必填项
     if (!this.apiKey.trim()) {
-      new Notice("请输入 API Key");
+      new Notice(isZh ? "请输入 API Key" : "Please enter API Key");
       return;
     }
 
     if (!this.providerId.trim()) {
-      new Notice("请输入 Provider ID");
+      new Notice(isZh ? "请输入 Provider ID" : "Please enter Provider ID");
       return;
     }
 
@@ -264,21 +213,20 @@ export class SetupWizard extends Modal {
     if (this.baseUrl.trim()) {
       const urlError = validateUrl(this.baseUrl);
       if (urlError) {
-        new Notice(`端点 URL 无效: ${urlError}`);
+        new Notice(`${isZh ? "端点 URL 无效" : "Invalid endpoint URL"}: ${urlError}`);
         return;
       }
     }
 
     // 显示保存中状态
     const originalText = btn.getText();
-    btn.setText("保存中...");
+    btn.setText(isZh ? "保存中..." : "Saving...");
     btn.disabled = true;
     this.validation = { status: "checking" };
     this.renderValidation(statusBox);
 
     try {
       const config: ProviderConfig = {
-        type: "openai" as ProviderType,
         apiKey: this.apiKey.trim(),
         baseUrl: this.baseUrl.trim() || undefined,
         defaultChatModel: this.chatModel,
@@ -289,11 +237,12 @@ export class SetupWizard extends Modal {
       const result = await this.plugin.settingsStore.addProvider(this.providerId, config);
 
       if (!result.ok) {
-        new Notice(`保存失败: ${result.error.message}`);
+        new Notice(`${isZh ? "保存失败" : "Save failed"}: ${result.error.message}`);
         btn.setText(originalText);
         btn.disabled = false;
-        this.validation = { status: "error", message: result.error.message };
+        this.validation = { status: "error", message: result.error.message, showSkipButton: true };
         this.renderValidation(statusBox);
+        this.renderSkipButton(buttonsContainer);
         return;
       }
 
@@ -304,142 +253,78 @@ export class SetupWizard extends Modal {
           if (checkResult.error.code === "E102") {
             this.validation = {
               status: "offline",
-              message: "网络不可用，配置已保存，可稍后重试连接"
+              message: isZh ? "网络不可用，配置已保存，可稍后重试连接" : "Network unavailable, configuration saved, can retry later",
+              showSkipButton: true
             };
-            new Notice("⚠️ 网络不可用，已跳过在线校验", 4500);
+            new Notice(isZh ? "⚠️ 网络不可用，已跳过在线校验" : "⚠️ Network unavailable, validation skipped", 4500);
           } else {
             this.validation = {
               status: "error",
-              message: `校验失败：${checkResult.error.message}`
+              message: `${isZh ? "校验失败" : "Validation failed"}：${checkResult.error.message}`,
+              showSkipButton: true
             };
-            new Notice(`校验失败：${checkResult.error.message}`);
+            new Notice(`${isZh ? "校验失败" : "Validation failed"}：${checkResult.error.message}`);
             btn.setText(originalText);
             btn.disabled = false;
             this.renderValidation(statusBox);
+            this.renderSkipButton(buttonsContainer);
             return;
           }
         } else {
-          this.validation = { status: "ok", message: "连接正常" };
+          this.validation = { status: "ok", message: isZh ? "连接正常" : "Connection successful" };
         }
       } catch (error) {
         this.validation = {
           status: "offline",
-          message: "网络错误，已保存配置，可稍后重试"
+          message: isZh ? "网络错误，已保存配置，可稍后重试" : "Network error, configuration saved, can retry later",
+          showSkipButton: true
         };
-        new Notice("⚠️ 网络错误，已跳过校验");
+        new Notice(isZh ? "⚠️ 网络错误，已跳过校验" : "⚠️ Network error, validation skipped");
       }
 
       this.renderValidation(statusBox);
 
-      // 配置成功，关闭向导并自动打开工作台
-      new Notice("✓ 配置完成");
-      this.close();
-      this.app.workspace.trigger("cognitive-razor:open-workbench");
+      // 如果需要显示跳过按钮（离线或错误状态），则显示
+      if (this.validation.showSkipButton) {
+        this.renderSkipButton(buttonsContainer);
+        btn.setText(originalText);
+        btn.disabled = false;
+      } else {
+        // 配置成功，关闭向导并自动打开工作台
+        new Notice(isZh ? "✓ 配置完成" : "✓ Configuration complete");
+        this.close();
+        this.app.workspace.trigger("cognitive-razor:open-workbench");
+      }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      new Notice(`保存出错: ${msg}`);
-      this.validation = { status: "error", message: msg };
+      new Notice(`${isZh ? "保存出错" : "Save error"}: ${msg}`);
+      this.validation = { status: "error", message: msg, showSkipButton: true };
       this.renderValidation(statusBox);
+      this.renderSkipButton(buttonsContainer);
       btn.setText(originalText);
       btn.disabled = false;
     }
   }
 
   /**
-   * 进入演示模式：落盘 data 结构并生成示例文件
+   * 渲染"跳过配置"按钮
    */
-  private async enterDemoMode(btn?: HTMLButtonElement): Promise<void> {
-    const originalText = btn?.getText();
-    if (btn) {
-      btn.setText("正在加载…");
-      btn.disabled = true;
+  private renderSkipButton(buttonsContainer: HTMLElement): void {
+    // 检查是否已经存在跳过按钮
+    const existingSkipBtn = buttonsContainer.querySelector(".cr-skip-btn");
+    if (existingSkipBtn) {
+      return;
     }
 
-    try {
-      // 标记演示模式
-      await this.plugin.settingsStore.updateSettings({ demoMode: true });
-
-      // 确保存储结构存在
-      await this.plugin.getComponents().fileStorage?.initialize();
-
-      // 生成示例笔记（不会覆盖已有文件）
-      await this.seedDemoNotes();
-
-      new Notice("演示模式已启用，已生成示例数据");
-      this.currentStep = WizardStep.DemoReady;
-      this.renderStep();
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      new Notice(`演示模式初始化失败：${msg}`);
-    } finally {
-      if (btn) {
-        btn.setText(originalText || "一键进入演示");
-        btn.disabled = false;
-      }
-    }
-  }
-
-  /**
-   * 写入简单的示例笔记，便于在工作台浏览
-   */
-  private async seedDemoNotes(): Promise<void> {
-    const adapter = this.app.vault.adapter;
-    const folder = normalizePath("Cognitive Razor Demo");
-    if (!(await adapter.exists(folder))) {
-      await adapter.mkdir(folder);
-    }
-
-    const samples = [
-      {
-        path: `${folder}/认知负荷示例.md`,
-        content: [
-          "---",
-          "uid: demo-uid-1",
-          "type: Theory",
-          "status: Draft",
-          `created: ${new Date().toISOString()}`,
-          `updated: ${new Date().toISOString()}`,
-          "aliases:",
-          "  - Cognitive Load",
-          "---",
-          "",
-          "# 认知负荷（示例）",
-          "",
-          "**English**: Cognitive Load",
-          "",
-          "## 核心定义",
-          "用于衡量学习任务对工作记忆的占用程度。",
-          "",
-          "## 详细说明",
-          "演示模式下的示例笔记，您可以在完整模式下继续生成真实内容。"
-        ].join("\n")
-      },
-      {
-        path: `${folder}/工作记忆示例.md`,
-        content: [
-          "---",
-          "uid: demo-uid-2",
-          "type: Mechanism",
-          "status: Draft",
-          `created: ${new Date().toISOString()}`,
-          `updated: ${new Date().toISOString()}`,
-          "---",
-          "",
-          "# 工作记忆（示例）",
-          "",
-          "**English**: Working Memory",
-          "",
-          "## 详细说明",
-          "演示模式仅包含静态示例，切换到完整模式后可通过管线生成和改进内容。"
-        ].join("\n")
-      }
-    ];
-
-    for (const sample of samples) {
-      const exists = await adapter.exists(sample.path);
-      if (!exists) {
-        await this.app.vault.create(sample.path, sample.content);
-      }
-    }
+    const isZh = this.selectedLanguage === "zh";
+    const skipBtn = buttonsContainer.createEl("button", {
+      text: isZh ? "跳过配置" : "Skip Configuration",
+      cls: "cr-skip-btn"
+    });
+    skipBtn.addEventListener("click", () => {
+      new Notice(isZh ? "已跳过配置，您可以稍后在设置中配置 Provider" : "Configuration skipped, you can configure Provider later in settings");
+      this.close();
+      this.app.workspace.trigger("cognitive-razor:open-workbench");
+    });
   }
 }

@@ -77,6 +77,7 @@ export class DiffView extends Modal {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("cr-diff-view");
+    contentEl.addClass("cr-scope");
     contentEl.setAttr("role", "dialog");
     contentEl.setAttr("aria-modal", "true");
     contentEl.setAttr("aria-live", "polite");
@@ -559,6 +560,7 @@ export class SimpleDiffView extends Modal {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("cr-simple-diff-view");
+    contentEl.addClass("cr-scope");
 
     // 标题
     contentEl.createEl("h2", { text: this.title });

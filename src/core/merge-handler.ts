@@ -46,6 +46,8 @@ export interface MergeHandlerConfig {
   vectorIndex: VectorIndex;
   /** FileStorage 实例 */
   storage: FileStorage;
+  /** 获取语言设置的函数 */
+  getLanguage: () => "zh" | "en";
 }
 
 /**
@@ -58,6 +60,7 @@ export class MergeHandler {
   private duplicateManager: DuplicateManager;
   private vectorIndex: VectorIndex;
   private storage: FileStorage;
+  private getLanguage: () => "zh" | "en";
 
   constructor(config: MergeHandlerConfig) {
     this.app = config.app;
@@ -66,6 +69,7 @@ export class MergeHandler {
     this.duplicateManager = config.duplicateManager;
     this.vectorIndex = config.vectorIndex;
     this.storage = config.storage;
+    this.getLanguage = config.getLanguage;
   }
 
   /**
@@ -352,6 +356,8 @@ export class MergeHandler {
 
   /**
    * 构建 Markdown 正文
+   * 根据用户语言设置使用中文或英文标题
+   * 注意：文件名已包含中英文，无需在内容中重复
    */
   private buildMarkdownBody(
     chineseName: string,
@@ -361,10 +367,16 @@ export class MergeHandler {
     mergeResult: Record<string, unknown>
   ): string {
     const sections: string[] = [];
+    const language = this.getLanguage();
 
-    // 标题
-    sections.push(`# ${chineseName}`);
-    sections.push(`**English**: ${englishName}`);
+    // 根据语言设置选择标题（文件名已包含中英文，无需重复）
+    if (language === "zh") {
+      // 中文环境：使用中文标题
+      sections.push(`# ${chineseName}`);
+    } else {
+      // 英文环境：使用英文标题
+      sections.push(`# ${englishName}`);
+    }
     sections.push("");
 
     // 合并说明

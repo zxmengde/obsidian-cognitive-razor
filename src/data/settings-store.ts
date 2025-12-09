@@ -16,7 +16,7 @@ import { Plugin } from "obsidian";
 /**
  * 默认目录方案
  */
-const DEFAULT_DIRECTORY_SCHEME: DirectoryScheme = {
+export const DEFAULT_DIRECTORY_SCHEME: DirectoryScheme = {
   Domain: "1-领域",
   Issue: "2-议题",
   Theory: "3-理论",
@@ -46,6 +46,7 @@ export const REQUIRED_SETTINGS_FIELDS: (keyof PluginSettings)[] = [
   "defaultProviderId",
   "taskModels",
   "logLevel",
+  "embeddingDimension",
 ];
 
 /**
@@ -105,7 +106,6 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   // 基础设置
   language: "zh",
   advancedMode: false,
-  demoMode: false,
   
   // 命名设置 (G-10: 命名规范性公理)
   namingTemplate: "{{chinese}} ({{english}})",
@@ -173,6 +173,9 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   
   // 日志级别
   logLevel: "info",
+  
+  // 嵌入向量维度（text-embedding-3-small 支持 512-3072，默认 1536）
+  embeddingDimension: 1536,
 };
 
 /**
@@ -470,16 +473,6 @@ export class SettingsStore implements ISettingsStore {
       });
     }
 
-    // 验证 demoMode 字段（可选）
-    if (settings.demoMode !== undefined && typeof settings.demoMode !== "boolean") {
-      errors.push({
-        field: "demoMode",
-        message: "demoMode must be a boolean when provided",
-        expectedType: "boolean",
-        actualType: typeof settings.demoMode,
-      });
-    }
-
     // 验证 namingTemplate 字段
     if (typeof settings.namingTemplate !== "string") {
       errors.push({
@@ -652,6 +645,23 @@ export class SettingsStore implements ISettingsStore {
         message: "logLevel must be 'debug', 'info', 'warn', or 'error'",
         expectedType: "'debug' | 'info' | 'warn' | 'error'",
         actualType: `'${settings.logLevel}'`,
+      });
+    }
+
+    // 验证 embeddingDimension 字段
+    if (typeof settings.embeddingDimension !== "number") {
+      errors.push({
+        field: "embeddingDimension",
+        message: "embeddingDimension must be a number",
+        expectedType: "number",
+        actualType: typeof settings.embeddingDimension,
+      });
+    } else if (!Number.isInteger(settings.embeddingDimension) || settings.embeddingDimension < 1) {
+      errors.push({
+        field: "embeddingDimension",
+        message: "embeddingDimension must be a positive integer",
+        expectedType: "positive integer",
+        actualType: String(settings.embeddingDimension),
       });
     }
 
@@ -831,9 +841,21 @@ export class SettingsStore implements ISettingsStore {
     const providers = { ...this.settings.providers, [id]: config };
     const updates: Partial<PluginSettings> = { providers };
     
-    // 如果是第一个 Provider，设为默认
+    // 如果是第一个 Provider，设为默认并更新所有任务配置
     if (Object.keys(this.settings.providers).length === 0) {
       updates.defaultProviderId = id;
+      
+      // 更新所有任务的 providerId 为新添加的 Provider
+      const taskModels = { ...this.settings.taskModels };
+      for (const taskType of TASK_TYPES) {
+        if (taskModels[taskType] && !taskModels[taskType].providerId) {
+          taskModels[taskType] = {
+            ...taskModels[taskType],
+            providerId: id
+          };
+        }
+      }
+      updates.taskModels = taskModels;
     }
     
     return this.updateSettings(updates);

@@ -52,6 +52,7 @@ export class UndoNotification {
     // 添加自定义类（如果支持）
     if (this.notice.noticeEl.classList) {
       this.notice.noticeEl.classList.add("cr-undo-notification");
+      this.notice.noticeEl.classList.add("cr-scope");
     }
 
     // 创建通知容器

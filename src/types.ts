@@ -308,6 +308,8 @@ export interface EmbedRequest {
   model: string;
   /** 输入文本 */
   input: string;
+  /** 向量维度（可选，用于支持可变维度的模型如 text-embedding-3-small） */
+  dimensions?: number;
 }
 
 /**
@@ -326,10 +328,11 @@ export interface EmbedResponse {
 
 /**
  * Provider 配置
+ * 
+ * 注意：系统仅支持 OpenAI 标准格式，可通过 baseUrl 兼容其他服务
+ * 已移除 type 字段，因为所有 Provider 都使用 OpenAI 格式
  */
 export interface ProviderConfig {
-  /** Provider 类型 */
-  type: ProviderType;
   /** API Key */
   apiKey: string;
   /** 自定义端点 URL (可选，用于支持 OpenRouter 等第三方服务) */
@@ -351,10 +354,12 @@ export interface TaskModelConfig {
   providerId: string;
   /** 模型名称 */
   model: string;
-  /** 温度参数（0-1） */
+  /** 温度参数（0-2，默认 0.7） */
   temperature?: number;
-  /** TopP 参数（0-1） */
+  /** TopP 参数（0-1，默认 1） */
   topP?: number;
+  /** 推理强度（用于支持推理的模型，如 o1, o3） */
+  reasoning_effort?: "low" | "medium" | "high";
   /** 最大 token 数 */
   maxTokens?: number;
 }
@@ -393,8 +398,6 @@ export interface PluginSettings {
   /** 基础设置 */
   language: "zh" | "en";
   advancedMode: boolean;
-  /** 是否处于演示模式（关闭 API 调用，仅展示示例数据） */
-  demoMode?: boolean;
   
   /** 命名设置 */
   namingTemplate: string;
@@ -428,6 +431,9 @@ export interface PluginSettings {
   
   /** 日志级别 */
   logLevel: "debug" | "info" | "warn" | "error";
+  
+  /** 嵌入向量维度（text-embedding-3-small 支持 512-3072，默认 1536） */
+  embeddingDimension: number;
 }
 
 /**
@@ -567,27 +573,20 @@ export interface LockRecord {
  * 标准化概念结果
  */
 export interface StandardizedConcept {
-  /** 标准名称 */
-  standardName: {
-    /** 中文名 */
-    chinese: string;
-    /** 英文名 */
-    english: string;
+  /** 所有类型的标准名称 */
+  standardNames: {
+    Domain: { chinese: string; english: string };
+    Issue: { chinese: string; english: string };
+    Theory: { chinese: string; english: string };
+    Entity: { chinese: string; english: string };
+    Mechanism: { chinese: string; english: string };
   };
-  /** 别名列表 */
-  aliases: string[];
   /** 类型置信度 */
-  typeConfidences: {
-    Domain: number;
-    Issue: number;
-    Theory: number;
-    Entity: number;
-    Mechanism: number;
-  };
+  typeConfidences: Record<CRType, number>;
   /** 主要类型 */
   primaryType?: CRType;
   /** 核心定义 */
-  coreDefinition: string;
+  coreDefinition?: string;
 }
 
 // ============================================================================
@@ -778,8 +777,6 @@ export interface ProviderConfigModalOptions {
   mode: "add" | "edit";
   /** Provider ID (编辑模式) */
   providerId?: string;
-  /** Provider 类型 (添加模式) */
-  providerType?: ProviderType;
   /** 当前配置 (编辑模式) */
   currentConfig?: ProviderConfig;
   /** 保存回调 */

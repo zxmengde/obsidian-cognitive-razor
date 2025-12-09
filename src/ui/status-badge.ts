@@ -39,6 +39,7 @@ export class StatusBadge {
     this.plugin = plugin;
     this.statusBarItem = plugin.addStatusBarItem();
     this.statusBarItem.addClass("cr-status-badge");
+    this.statusBarItem.addClass("cr-scope");
     this.render();
     this.setupClickHandler();
   }
@@ -206,7 +207,7 @@ export class StatusBadge {
         .setTitle("查看任务队列")
         .setIcon("list-checks")
         .onClick(() => {
-          this.openQueueView();
+          this.openWorkbench();
         });
     });
 
@@ -286,17 +287,10 @@ export class StatusBadge {
   }
 
   /**
-   * 打开工作台
+   * 打开工作台（替代原队列视图）
    */
   private openWorkbench(): void {
     this.plugin.app.workspace.trigger("cognitive-razor:open-workbench");
-  }
-
-  /**
-   * 打开队列视图
-   */
-  private openQueueView(): void {
-    this.plugin.app.workspace.trigger("cognitive-razor:open-queue");
   }
 
   /**

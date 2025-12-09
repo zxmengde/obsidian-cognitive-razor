@@ -82,6 +82,7 @@ const DEFAULT_EVENTS: Record<LogLevel, string> = {
  * - 异步文件写入
  * - 跨会话日志追加（A-NF-03 可观察性）
  * - 耗时埋点支持
+ * - 控制台输出（Requirements 8.1, 8.2）
  */
 export class Logger implements ILogger {
   private logBuffer: string[] = [];
@@ -95,6 +96,8 @@ export class Logger implements ILogger {
   };
   private minLevel: LogLevel;
   private initialized = false;
+  /** 是否启用控制台输出，默认启用 */
+  private consoleEnabled = true;
 
   /**
    * 构造函数
@@ -384,6 +387,9 @@ export class Logger implements ILogger {
     this.logBuffer.push(logLine);
     this.currentSize += logLineSize;
 
+    // 输出到控制台（Requirements 8.1, 8.2）
+    this.outputToConsole(entry);
+
     // 异步写入文件（不阻塞）
     this.writeToFile().catch((err) => {
       console.error("Failed to write log to file:", err);
@@ -463,6 +469,9 @@ export class Logger implements ILogger {
     // 添加到缓冲区
     this.logBuffer.push(logLine);
     this.currentSize += logLineSize;
+
+    // 输出到控制台（Requirements 8.1, 8.2）
+    this.outputToConsole(entry);
 
     // 异步写入文件（不阻塞）
     this.writeToFile().catch((err) => {
@@ -554,5 +563,71 @@ export class Logger implements ILogger {
    */
   getLogLevel(): LogLevel {
     return this.minLevel;
+  }
+
+  /**
+   * 设置是否启用控制台输出
+   * @param enabled 是否启用
+   */
+  setConsoleEnabled(enabled: boolean): void {
+    this.consoleEnabled = enabled;
+  }
+
+  /**
+   * 获取控制台输出是否启用
+   * @returns 是否启用控制台输出
+   */
+  isConsoleEnabled(): boolean {
+    return this.consoleEnabled;
+  }
+
+  /**
+   * 输出日志到控制台
+   * 遵循 Requirements 8.1, 8.2：
+   * - 当日志级别为 debug 时，输出所有日志到控制台
+   * - 输出格式：[CR][LEVEL][Module] message
+   * - 包含 timestamp, level, module, message 等必需字段
+   * 
+   * @param entry 日志条目
+   */
+  private outputToConsole(entry: LogEntry): void {
+    if (!this.consoleEnabled) {
+      return;
+    }
+
+    // 格式化前缀：[CR][LEVEL][Module]
+    const prefix = `[CR][${entry.level.toUpperCase()}][${entry.module}]`;
+    const msg = `${prefix} ${entry.message}`;
+
+    // 准备上下文数据（包含 timestamp 和其他信息）
+    const contextData: Record<string, unknown> = {
+      timestamp: entry.timestamp,
+      event: entry.event,
+    };
+
+    if (entry.context) {
+      Object.assign(contextData, entry.context);
+    }
+
+    // 根据日志级别使用不同的 console 方法
+    switch (entry.level) {
+      case "debug":
+        console.debug(msg, contextData);
+        break;
+      case "info":
+        console.info(msg, contextData);
+        break;
+      case "warn":
+        console.warn(msg, contextData);
+        break;
+      case "error":
+        // 错误日志优先显示 error 对象
+        if (entry.error) {
+          console.error(msg, entry.error, contextData);
+        } else {
+          console.error(msg, contextData);
+        }
+        break;
+    }
   }
 }

@@ -1,13 +1,13 @@
 /**
  * 创建概念 Modal
  * 
- * 提供简单的文本输入界面，用于创建新概念
+ * 提供极简的单行输入界面，用于创建新概念
  * 
  * 遵循设计文档 A-UCD-01：三步完成核心任务
+ * 修改：使用极简单行输入框设计
  */
 
-import { App, Modal, Setting, Notice } from "obsidian";
-import { PipelineOrchestrator } from "../core/pipeline-orchestrator";
+import { App, Modal, Notice } from "obsidian";
 import { CRType } from "../types";
 
 /**
@@ -16,107 +16,77 @@ import { CRType } from "../types";
 export interface CreateConceptModalOptions {
   /** 默认输入值 */
   defaultValue?: string;
-  /** 默认类型 */
-  defaultType?: CRType;
   /** 提交回调 */
-  onSubmit: (input: string, type?: CRType) => void;
+  onSubmit: (input: string) => void;
   /** 取消回调 */
   onCancel?: () => void;
 }
 
 /**
- * 创建概念 Modal
+ * 创建概念 Modal（极简版）
  */
 export class CreateConceptModal extends Modal {
   private options: CreateConceptModalOptions;
   private inputValue: string;
-  private selectedType?: CRType;
 
   constructor(app: App, options: CreateConceptModalOptions) {
     super(app);
     this.options = options;
     this.inputValue = options.defaultValue || "";
-    this.selectedType = options.defaultType;
   }
 
   onOpen(): void {
     const { contentEl } = this;
     contentEl.empty();
+    contentEl.addClass("cr-scope");
+    contentEl.addClass("cr-minimal-modal");
 
-    // 标题
-    contentEl.createEl("h2", { text: "创建概念" });
+    // 极简输入框 - 占据整行，无标题无提示
+    const inputContainer = contentEl.createDiv({ cls: "cr-minimal-input cr-minimal-input-fullwidth" });
 
-    // 输入框
-    new Setting(contentEl)
-      .setName("概念名称或描述")
-      .setDesc("输入概念的名称或简短描述，AI 将帮助你标准化和分类")
-      .addTextArea((text) => {
-        text
-          .setPlaceholder("例如：认知负荷、工作记忆、注意力分配机制...")
-          .setValue(this.inputValue)
-          .onChange((value) => {
-            this.inputValue = value;
-          });
-        
-        // 自动聚焦
-        text.inputEl.focus();
-        
-        // 设置样式
-        text.inputEl.style.width = "100%";
-        text.inputEl.style.minHeight = "100px";
-        
-        // 支持 Ctrl/Cmd + Enter 提交
-        text.inputEl.addEventListener("keydown", (e) => {
-          if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-            e.preventDefault();
-            this.submit();
-          }
-        });
-      });
+    // 单行输入框
+    const input = inputContainer.createEl("input", {
+      type: "text",
+      cls: "cr-minimal-input-field",
+      placeholder: "Enter concept name or description...",
+      value: this.inputValue
+    });
 
-    // 类型选择（可选，高级选项）
-    new Setting(contentEl)
-      .setName("指定类型（可选）")
-      .setDesc("如果不指定，AI 将自动判断类型")
-      .addDropdown((dropdown) => {
-        dropdown
-          .addOption("", "自动判断")
-          .addOption("Domain", "Domain（领域）")
-          .addOption("Issue", "Issue（议题）")
-          .addOption("Theory", "Theory（理论）")
-          .addOption("Entity", "Entity（实体）")
-          .addOption("Mechanism", "Mechanism（机制）")
-          .setValue(this.selectedType || "")
-          .onChange((value) => {
-            this.selectedType = value as CRType || undefined;
-          });
-      });
+    // 提交按钮（圆形）
+    const submitBtn = inputContainer.createEl("button", {
+      cls: "cr-minimal-submit-btn",
+      attr: {
+        "aria-label": "Submit",
+        "title": "Enter to submit"
+      }
+    });
+    submitBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>`;
 
-    // 按钮
-    new Setting(contentEl)
-      .addButton((btn) => {
-        btn
-          .setButtonText("取消")
-          .onClick(() => {
-            this.close();
-            if (this.options.onCancel) {
-              this.options.onCancel();
-            }
-          });
-      })
-      .addButton((btn) => {
-        btn
-          .setButtonText("创建")
-          .setCta()
-          .onClick(() => {
-            this.submit();
-          });
-      });
+    // 自动聚焦
+    input.focus();
 
-    // 提示
-    contentEl.createEl("p", {
-      text: "提示：按 Ctrl/Cmd + Enter 快速提交",
-      cls: "mod-muted"
+    // 输入变化
+    input.addEventListener("input", () => {
+      this.inputValue = input.value;
+    });
+
+    // Enter 键提交
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        this.submit();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        this.close();
+        if (this.options.onCancel) {
+          this.options.onCancel();
+        }
+      }
+    });
+
+    // 按钮点击提交
+    submitBtn.addEventListener("click", () => {
+      this.submit();
     });
   }
 
@@ -132,12 +102,12 @@ export class CreateConceptModal extends Modal {
     const input = this.inputValue.trim();
     
     if (!input) {
-      new Notice("请输入概念名称或描述");
+      new Notice("Please enter concept name or description");
       return;
     }
 
     this.close();
-    this.options.onSubmit(input, this.selectedType);
+    this.options.onSubmit(input);
   }
 }
 

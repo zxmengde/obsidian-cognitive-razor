@@ -29,6 +29,8 @@ export type JSONSchemaProperty = {
   maxLength?: number;
   minItems?: number;
   maxItems?: number;
+  minimum?: number;
+  maximum?: number;
   pattern?: string;
   items?: JSONSchemaProperty;
   properties?: Record<string, JSONSchemaProperty>;
@@ -615,41 +617,52 @@ const MECHANISM_SCHEMA: JSONSchema = {
 const STANDARDIZE_CLASSIFY_SCHEMA: JSONSchema = {
   $schema: "http://json-schema.org/draft-07/schema#",
   type: "object",
-  required: ["standard_name", "aliases", "type_confidences", "primary_type", "core_definition"],
+  required: ["Domain", "Issue", "Theory", "Entity", "Mechanism"],
   properties: {
-    standard_name: {
+    Domain: {
       type: "object",
-      required: ["chinese", "english"],
+      required: ["chinese", "english", "confidences"],
       properties: {
         chinese: { type: "string", minLength: 1 },
-        english: { type: "string", minLength: 1 }
+        english: { type: "string", minLength: 1 },
+        confidences: { type: "number", minimum: 0, maximum: 1 }
       }
     },
-    aliases: {
-      type: "array",
-      items: { type: "string" },
-      minItems: 1,
-      maxItems: 10
-    },
-    type_confidences: {
+    Issue: {
       type: "object",
-      required: ["Domain", "Issue", "Theory", "Entity", "Mechanism"],
+      required: ["chinese", "english", "confidences"],
       properties: {
-        Domain: { type: "number" },
-        Issue: { type: "number" },
-        Theory: { type: "number" },
-        Entity: { type: "number" },
-        Mechanism: { type: "number" }
+        chinese: { type: "string", minLength: 1 },
+        english: { type: "string", minLength: 1 },
+        confidences: { type: "number", minimum: 0, maximum: 1 }
       }
     },
-    primary_type: {
-      type: "string",
-      enum: ["Domain", "Issue", "Theory", "Entity", "Mechanism"]
+    Theory: {
+      type: "object",
+      required: ["chinese", "english", "confidences"],
+      properties: {
+        chinese: { type: "string", minLength: 1 },
+        english: { type: "string", minLength: 1 },
+        confidences: { type: "number", minimum: 0, maximum: 1 }
+      }
     },
-    core_definition: {
-      type: "string",
-      minLength: 10,
-      maxLength: 500
+    Entity: {
+      type: "object",
+      required: ["chinese", "english", "confidences"],
+      properties: {
+        chinese: { type: "string", minLength: 1 },
+        english: { type: "string", minLength: 1 },
+        confidences: { type: "number", minimum: 0, maximum: 1 }
+      }
+    },
+    Mechanism: {
+      type: "object",
+      required: ["chinese", "english", "confidences"],
+      properties: {
+        chinese: { type: "string", minLength: 1 },
+        english: { type: "string", minLength: 1 },
+        confidences: { type: "number", minimum: 0, maximum: 1 }
+      }
     }
   }
 };

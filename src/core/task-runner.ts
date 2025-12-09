@@ -19,6 +19,7 @@ import {
   ILogger,
   IVectorIndex,
   IFileStorage,
+  ISettingsStore,
   TaskRecord,
   TaskResult,
   TaskError,
@@ -31,6 +32,7 @@ import {
 } from "../types";
 import { schemaRegistry, ISchemaRegistry } from "./schema-registry";
 import { createConceptSignature, generateSignatureText } from "./naming-utils";
+import { mapStandardizeOutput } from "./standardize-mapper";
 
 /**
  * 任务管线阶段定义
@@ -117,6 +119,7 @@ export interface TaskRunnerDependencies {
   vectorIndex?: IVectorIndex;
   fileStorage?: IFileStorage;
   schemaRegistry?: ISchemaRegistry;
+  settingsStore?: ISettingsStore;
 }
 
 /**
@@ -139,6 +142,7 @@ export class TaskRunner implements ITaskRunner {
   private vectorIndex?: IVectorIndex;
   private fileStorage?: IFileStorage;
   private schemaRegistry: ISchemaRegistry;
+  private settingsStore?: ISettingsStore;
   private abortControllers: Map<string, AbortController>;
 
   constructor(deps: TaskRunnerDependencies) {
@@ -151,6 +155,7 @@ export class TaskRunner implements ITaskRunner {
     this.fileStorage = deps.fileStorage;
     // 使用注入的 SchemaRegistry 或默认单例
     this.schemaRegistry = deps.schemaRegistry || schemaRegistry;
+    this.settingsStore = deps.settingsStore;
     this.abortControllers = new Map();
 
     this.logger.debug("TaskRunner", "TaskRunner 初始化完成");
@@ -692,22 +697,13 @@ export class TaskRunner implements ITaskRunner {
       }
 
       // 解析结果并标准化键名
-      const data = JSON.parse(chatResult.value.content) as Record<string, any>;
-      const parsed = {
-        standardName: {
-          chinese: data.standard_name?.chinese || "",
-          english: data.standard_name?.english || ""
-        },
-        aliases: Array.isArray(data.aliases) ? data.aliases : [],
-        typeConfidences: data.type_confidences as Record<string, number>,
-        primaryType: data.primary_type as CRType,
-        coreDefinition: data.core_definition as string
-      };
+      const data = (validationResult.data as Record<string, any>) || JSON.parse(chatResult.value.content);
+      const parsed = mapStandardizeOutput(data);
 
       return ok({
         taskId: task.id,
         state: "Completed",
-        data: parsed
+        data: parsed as unknown as Record<string, unknown>
       });
     } catch (error) {
       this.logger.error("TaskRunner", "执行 standardizeClassify 失败", error as Error, {
@@ -770,7 +766,7 @@ export class TaskRunner implements ITaskRunner {
       }
 
       // 解析结果
-      const data = JSON.parse(chatResult.value.content) as Record<string, any>;
+      const data = (validationResult.data as Record<string, any>) || JSON.parse(chatResult.value.content);
       const parsed = {
         aliases: Array.isArray(data.aliases) ? data.aliases : [],
         tags: Array.isArray(data.tags) ? data.tags : []
@@ -819,11 +815,13 @@ export class TaskRunner implements ITaskRunner {
         text = generateSignatureText(signature);
       }
 
-      // 调用 Embedding API
+      // 调用 Embedding API（支持用户配置的向量维度）
+      const embeddingDimension = this.settingsStore?.getSettings().embeddingDimension || 1536;
       const embedResult = await this.providerManager.embed({
         providerId: task.providerRef || "default",
         model: "text-embedding-3-small",
-        input: text
+        input: text,
+        dimensions: embeddingDimension
       });
 
       if (!embedResult.ok) {
@@ -900,7 +898,7 @@ export class TaskRunner implements ITaskRunner {
       }
 
       // 解析结果
-      const data = JSON.parse(chatResult.value.content) as Record<string, unknown>;
+      const data = (validationResult.data as Record<string, unknown>) || JSON.parse(chatResult.value.content);
 
       // Property 27: 验证类型字段完整性
       const fieldValidation = this.validateTypeFieldCompleteness(data, conceptType);
@@ -909,7 +907,8 @@ export class TaskRunner implements ITaskRunner {
       }
 
       // Property 10: 创建快照（写入前）
-      if (task.payload.filePath) {
+      const skipSnapshot = task.payload.skipSnapshot === true;
+      if (task.payload.filePath && !skipSnapshot) {
         const snapshotResult = await this.createSnapshotBeforeWrite({
           filePath: task.payload.filePath as string,
           content: "", // 新文件，原始内容为空

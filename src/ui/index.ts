@@ -8,7 +8,7 @@ export type { RecentOperation } from "./workbench-panel";
 // StandardizedConcept 类型从 types.ts 导出
 export type { StandardizedConcept } from "../types";
 
-export { QueueView, QUEUE_VIEW_TYPE } from "./queue-view";
+// export { QueueView, QUEUE_VIEW_TYPE } from "./queue-view"; // 已废除，功能已整合到 WorkbenchPanel
 
 export { DiffView, SimpleDiffView } from "./diff-view";
 export type { DiffType, DiffItem, DiffData } from "./diff-view";

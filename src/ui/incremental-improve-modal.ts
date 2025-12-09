@@ -28,6 +28,7 @@ export class IncrementalImproveModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("cr-incremental-improve-modal");
+    contentEl.addClass("cr-scope");
 
     // 标题
     contentEl.createEl("h2", { text: "增量改进笔记" });

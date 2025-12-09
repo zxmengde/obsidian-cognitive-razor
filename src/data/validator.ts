@@ -75,22 +75,12 @@ export class Validator implements IValidator {
     rules: string[],
     context?: ValidationContext
   ): Promise<ValidationResult> {
-    // 阶段 1: JSON 解析校验
-    let data: Record<string, unknown>;
-    try {
-      data = JSON.parse(output);
-    } catch {
-      return {
-        valid: false,
-        errors: [{
-          code: "E001",
-          type: "ParseError",
-          message: "Failed to parse JSON output",
-          rawOutput: output.substring(0, 500), // 限制长度
-          fixInstruction: "Ensure the output is valid JSON format",
-        }],
-      };
+    // 阶段 1: JSON 解析校验（容错提取 markdown 代码块或前后缀文本）
+    const parseResult = this.tryParseJson(output);
+    if (!parseResult.ok) {
+      return { valid: false, errors: [parseResult.error] };
     }
+    const data = parseResult.data;
 
     // 阶段 2: Schema 校验
     const schemaErrors = this.validateSchema(data, schema);
@@ -133,6 +123,57 @@ export class Validator implements IValidator {
       valid: true,
       data,
     };
+  }
+
+  /**
+   * 容错 JSON 解析：支持直接 JSON、```json ``` 代码块，以及包含前后缀文本的情况
+   */
+  private tryParseJson(output: string): { ok: true; data: Record<string, unknown> } | { ok: false; error: ValidationError } {
+    const trimmed = output.trim();
+
+    const buildParseError = (): ValidationError => ({
+      code: "E001",
+      type: "ParseError",
+      message: "Failed to parse JSON output",
+      rawOutput: trimmed.substring(0, 500),
+      fixInstruction: "确保输出为纯 JSON，避免 ```json 代码块或多余说明文字",
+    });
+
+    const attemptParse = (text: string): Record<string, unknown> | null => {
+      try {
+        return JSON.parse(text);
+      } catch {
+        return null;
+      }
+    };
+
+    // 1) 直接解析
+    const direct = attemptParse(trimmed);
+    if (direct) {
+      return { ok: true, data: direct };
+    }
+
+    // 2) 提取 ```json ``` 或 ``` ``` 代码块
+    const codeBlockMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    if (codeBlockMatch) {
+      const parsed = attemptParse(codeBlockMatch[1]);
+      if (parsed) {
+        return { ok: true, data: parsed };
+      }
+    }
+
+    // 3) 提取首尾大括号之间的内容（容忍前后缀文本）
+    const firstBrace = trimmed.indexOf("{");
+    const lastBrace = trimmed.lastIndexOf("}");
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+      const sliced = trimmed.slice(firstBrace, lastBrace + 1);
+      const parsed = attemptParse(sliced);
+      if (parsed) {
+        return { ok: true, data: parsed };
+      }
+    }
+
+    return { ok: false, error: buildParseError() };
   }
 
   /**
@@ -463,45 +504,43 @@ export class Validator implements IValidator {
       return null;
     });
 
-    // C009: standardizeClassify 输出的 type_confidences 五值求和 = 1.0
+    // C009: standardizeClassify 输出的五个 confidences 求和 = 1.0
     validators.set("C009", (data) => {
-      const typeConfidences = data.type_confidences as Record<string, number>;
-      if (typeConfidences === undefined) {
-        return null; // 由必填字段检查处理
-      }
-      if (!typeConfidences || typeof typeConfidences !== "object") {
-        return {
-          code: "E009",
-          type: "SumNotOne",
-          message: 'Field "type_confidences" must be an object',
-          location: "type_confidences",
-          fixInstruction: 'Ensure "type_confidences" is an object with five type values',
-        };
-      }
       const types: CRType[] = ["Domain", "Issue", "Theory", "Entity", "Mechanism"];
       let sum = 0;
+
       for (const type of types) {
-        const value = typeConfidences[type];
+        const node = data[type] as Record<string, unknown>;
+        if (!node || typeof node !== "object" || Array.isArray(node)) {
+          return {
+            code: "E009",
+            type: "SumNotOne",
+            message: `Field "${type}" must be an object containing "confidences"`,
+            location: type,
+            fixInstruction: `Ensure "${type}" is an object with chinese/english/confidences fields`,
+          };
+        }
+        const value = (node as { confidences?: unknown }).confidences;
         if (typeof value !== "number") {
           return {
             code: "E009",
             type: "SumNotOne",
-            message: `type_confidences.${type} must be a number`,
-            location: `type_confidences.${type}`,
-            fixInstruction: `Ensure "type_confidences.${type}" is a number`,
+            message: `"${type}.confidences" must be a number`,
+            location: `${type}.confidences`,
+            fixInstruction: `Provide a numeric confidence score for "${type}"`,
           };
         }
         sum += value;
       }
-      // 允许浮点数精度误差
+
       if (Math.abs(sum - 1.0) > 0.001) {
         return {
           code: "E009",
           type: "SumNotOne",
-          message: `type_confidences sum is ${sum.toFixed(4)}, should be 1.0`,
-          location: "type_confidences",
-          rawOutput: JSON.stringify({ type_confidences: typeConfidences }),
-          fixInstruction: "Adjust type_confidences values to sum exactly to 1.0",
+          message: `confidences sum is ${sum.toFixed(4)}, should be 1.0`,
+          location: "confidences",
+          rawOutput: JSON.stringify({ sum }),
+          fixInstruction: "Adjust the five confidences so they sum exactly to 1.0",
         };
       }
       return null;

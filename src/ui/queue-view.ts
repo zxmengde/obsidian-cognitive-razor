@@ -1,10 +1,18 @@
 /**
+ * @deprecated 此视图已废除，功能已整合到 WorkbenchPanel
+ * 保留此文件仅用于参考，将在未来版本中删除
+ * 
  * QueueView - 任务队列详情视图
  * 
  * 功能：
  * - 任务列表显示
  * - 任务操作（取消、重试）
  * - 并发控制
+ * 
+ * 迁移说明：
+ * - 队列状态显示已整合到 WorkbenchPanel 的"队列状态"区域
+ * - 任务列表通过工作台的"查看详情"按钮展开
+ * - 所有队列操作（暂停/恢复、重试、清空）已整合到工作台
  */
 
 import { ItemView, WorkspaceLeaf, Notice } from "obsidian";
@@ -54,6 +62,7 @@ export class QueueView extends ItemView {
     const container = this.containerEl.children[1] as HTMLElement;
     container.empty();
     container.addClass("cr-queue-view");
+    container.addClass("cr-scope");
 
     // 渲染头部控制区
     this.renderHeader(container);
@@ -426,11 +435,27 @@ export class QueueView extends ItemView {
    * 获取任务类型标签
    */
   private getTaskTypeLabel(taskType: string): string {
+    if (!this.plugin) {
+      // 默认标签
+      const defaultLabels: Record<string, string> = {
+        "embedding": "向量嵌入",
+        "standardizeClassify": "标准化分类",
+        "enrich": "内容生成",
+        "reason:new": "新概念推理",
+        "reason:incremental": "增量改进",
+        "reason:merge": "合并推理",
+        "ground": "事实核查"
+      };
+      return defaultLabels[taskType] || taskType;
+    }
+    
+    const i18n = this.plugin.getI18n();
+    const t = i18n.t();
     const labels: Record<string, string> = {
-      "embedding": "向量嵌入",
-      "standardizeClassify": "标准化分类",
-      "enrich": "内容生成",
-      "reason:new": "新概念推理",
+      "embedding": t.taskTypes.embedding.name,
+      "standardizeClassify": t.taskTypes.standardizeClassify.name,
+      "enrich": t.taskTypes.enrich.name,
+      "reason:new": t.taskTypes["reason:new"].name,
       "reason:incremental": "增量改进",
       "reason:merge": "合并推理",
       "ground": "接地验证"

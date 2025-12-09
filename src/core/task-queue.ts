@@ -11,6 +11,7 @@ import {
   ILogger,
   ISettingsStore,
   TaskRecord,
+  TaskResult,
   QueueStatus,
   QueueEventListener,
   QueueEvent,
@@ -19,6 +20,7 @@ import {
   ok,
   err
 } from "../types";
+import { RetryHandler } from "./retry-handler";
 
 export class TaskQueue implements ITaskQueue {
   private lockManager: ILockManager;
@@ -27,6 +29,7 @@ export class TaskQueue implements ITaskQueue {
   private settingsStore: ISettingsStore;
   private queuePath: string;
   private taskRunner?: ITaskRunner; // 可选，稍后通过 setTaskRunner 注入
+  private retryHandler: RetryHandler; // 重试处理器
   
   private tasks: Map<string, TaskRecord>;
   private paused: boolean;
@@ -34,6 +37,7 @@ export class TaskQueue implements ITaskQueue {
   private processingTasks: Set<string>;
   private schedulerInterval: NodeJS.Timeout | null;
   private lastPersistedContent: string | null;
+  private saveQueueChain: Promise<void>;
 
   constructor(
     lockManager: ILockManager,
@@ -47,6 +51,7 @@ export class TaskQueue implements ITaskQueue {
     this.logger = logger;
     this.settingsStore = settingsStore;
     this.queuePath = queuePath;
+    this.retryHandler = new RetryHandler(logger);
     
     this.tasks = new Map();
     this.paused = false;
@@ -54,6 +59,8 @@ export class TaskQueue implements ITaskQueue {
     this.processingTasks = new Set();
     this.schedulerInterval = null;
     this.lastPersistedContent = null;
+    // 串行化持久化操作，避免并发写入同一 .tmp/.bak 文件导致的 ENOENT
+    this.saveQueueChain = Promise.resolve();
 
     this.logger.debug("TaskQueue", "TaskQueue 初始化完成", {
       queuePath
@@ -82,21 +89,32 @@ export class TaskQueue implements ITaskQueue {
       if (exists) {
         const readResult = await this.fileStorage.read(this.queuePath);
         if (!readResult.ok) {
-          this.logger.error("TaskQueue", "读取队列状态失败", undefined, {
+          // 文件读取失败，使用空队列
+          this.logger.warn("TaskQueue", "读取队列状态失败，使用空队列", {
             error: readResult.error
           });
-          return readResult;
-        }
-
-        try {
-          const queueState: QueueStateFile = JSON.parse(readResult.value);
-          await this.restoreQueueState(queueState);
-        } catch (parseError) {
-          this.logger.error("TaskQueue", "解析队列状态失败", parseError as Error);
-          // 继续使用空队列
+          // 继续初始化，使用空队列
+        } else {
+          try {
+            const queueState: QueueStateFile = JSON.parse(readResult.value);
+            await this.restoreQueueState(queueState);
+          } catch (parseError) {
+            this.logger.warn("TaskQueue", "解析队列状态失败，使用空队列", {
+              error: parseError
+            });
+            // 继续使用空队列
+          }
         }
       } else {
         this.logger.info("TaskQueue", "创建新的队列状态");
+      }
+
+      // 启动时自动恢复队列（除非用户明确暂停）
+      // 这样可以避免队列在重启后一直处于暂停状态
+      if (this.paused) {
+        this.logger.info("TaskQueue", "检测到队列处于暂停状态，自动恢复");
+        this.paused = false;
+        this.saveQueue();
       }
 
       // 启动调度器
@@ -203,7 +221,12 @@ export class TaskQueue implements ITaskQueue {
         timestamp: now
       });
 
-      this.logger.info("TaskQueue", `任务已入队: ${taskId}`, {
+      // Requirements 8.4: 记录任务状态变更日志
+      this.logger.info("TaskQueue", `任务状态变更: ${taskId}`, {
+        event: "TASK_STATE_CHANGE",
+        taskId,
+        previousState: null,
+        newState: "Pending",
         taskType: task.taskType,
         nodeId: task.nodeId
       });
@@ -220,6 +243,8 @@ export class TaskQueue implements ITaskQueue {
 
   /**
    * 取消任务
+   * 
+   * 修复：允许清除 Failed 状态的任务
    */
   cancel(taskId: string): Result<boolean> {
     try {
@@ -229,14 +254,18 @@ export class TaskQueue implements ITaskQueue {
         return err("E304", `任务不存在: ${taskId}`);
       }
 
-      // 只能取消 Pending 或 Running 状态的任务
-      if (task.state !== "Pending" && task.state !== "Running") {
+      // 可以取消 Pending、Running 或 Failed 状态的任务
+      // Completed 和 Cancelled 状态的任务不能再次取消
+      if (task.state !== "Pending" && task.state !== "Running" && task.state !== "Failed") {
         this.logger.warn("TaskQueue", "任务状态不允许取消", {
           taskId,
           state: task.state
         });
         return err("E304", `任务状态不允许取消: ${task.state}`);
       }
+
+      // 记录之前的状态
+      const previousState = task.state;
 
       // 更新任务状态
       task.state = "Cancelled";
@@ -263,7 +292,13 @@ export class TaskQueue implements ITaskQueue {
         timestamp: task.updated
       });
 
-      this.logger.info("TaskQueue", `任务已取消: ${taskId}`);
+      // Requirements 8.4: 记录任务状态变更日志
+      this.logger.info("TaskQueue", `任务状态变更: ${taskId}`, {
+        event: "TASK_STATE_CHANGE",
+        taskId,
+        previousState,
+        newState: "Cancelled"
+      });
 
       return ok(true);
     } catch (error) {
@@ -492,10 +527,15 @@ export class TaskQueue implements ITaskQueue {
    * - TaskQueue 负责调度和并发控制
    * - TaskRunner 负责实际执行
    * - 执行结果更新任务状态并持久化
+   * 
+   * Requirements 6.1, 6.3: 
+   * - 当任务进入队列且状态为 Pending 时，调度器应在 2 秒内尝试启动任务（如果没有锁冲突）
+   * - 当队列有待处理任务且运行任务数低于并发限制时，调度器应启动下一个待处理任务
    */
   private scheduleNextTask(): void {
     // 如果队列暂停，不调度新任务
     if (this.paused) {
+      this.logger.debug("TaskQueue", "队列已暂停，跳过调度");
       return;
     }
 
@@ -508,17 +548,27 @@ export class TaskQueue implements ITaskQueue {
     const settings = this.settingsStore.getSettings();
     const concurrency = settings.concurrency;
 
-    // 如果已达到并发上限，不调度新任务
+    // Requirements 6.3: 如果已达到并发上限，不调度新任务
     if (this.processingTasks.size >= concurrency) {
+      this.logger.debug("TaskQueue", "已达到并发上限，跳过调度", {
+        processingCount: this.processingTasks.size,
+        concurrency
+      });
       return;
     }
 
-    // 查找第一个 Pending 状态的任务
+    // Requirements 6.1: 查找第一个 Pending 状态的任务并尝试启动
+    let attemptedTasks = 0;
+    let skippedDueToLock = 0;
+
     for (const task of this.tasks.values()) {
       if (task.state === "Pending") {
-        // 检查锁
+        attemptedTasks++;
+
+        // 检查节点锁
         const lockResult = this.lockManager.acquire(task.nodeId, "node", task.id);
         if (!lockResult.ok) {
+          skippedDueToLock++;
           this.logger.debug("TaskQueue", `任务 ${task.id} 节点锁冲突，跳过`, {
             nodeId: task.nodeId,
             lockError: lockResult.error
@@ -526,7 +576,7 @@ export class TaskQueue implements ITaskQueue {
           continue;
         }
 
-        // 尝试类型锁
+        // 尝试获取类型锁（如果需要）
         let typeLockKey: string | undefined;
         const crType = (task.payload?.type as string | undefined) || (task.payload?.conceptType as string | undefined);
         if (crType) {
@@ -534,6 +584,7 @@ export class TaskQueue implements ITaskQueue {
           if (!typeLockResult.ok) {
             // 释放节点锁并跳过
             this.lockManager.release(lockResult.value);
+            skippedDueToLock++;
             this.logger.debug("TaskQueue", `任务 ${task.id} 类型锁冲突，跳过`, {
               nodeId: task.nodeId,
               crType,
@@ -552,6 +603,7 @@ export class TaskQueue implements ITaskQueue {
         }
 
         // 更新任务状态
+        const previousState = task.state;
         task.state = "Running";
         task.startedAt = new Date().toISOString();
         task.updated = task.startedAt;
@@ -565,7 +617,12 @@ export class TaskQueue implements ITaskQueue {
           timestamp: task.startedAt
         });
 
-        this.logger.info("TaskQueue", `任务开始执行: ${task.id}`, {
+        // Requirements 8.4: 记录任务状态变更日志
+        this.logger.info("TaskQueue", `任务状态变更: ${task.id}`, {
+          event: "TASK_STATE_CHANGE",
+          taskId: task.id,
+          previousState,
+          newState: "Running",
           taskType: task.taskType,
           nodeId: task.nodeId
         });
@@ -575,9 +632,23 @@ export class TaskQueue implements ITaskQueue {
           this.logger.error("TaskQueue", `任务执行异常: ${task.id}`, error as Error);
         });
 
-        // 只调度一个任务
-        break;
+        // 只调度一个任务，然后退出
+        this.logger.debug("TaskQueue", "成功调度一个任务", {
+          taskId: task.id,
+          attemptedTasks,
+          skippedDueToLock
+        });
+        return;
       }
+    }
+
+    // 如果没有找到可调度的任务，记录调试信息
+    if (attemptedTasks > 0) {
+      this.logger.debug("TaskQueue", "没有可调度的任务", {
+        attemptedTasks,
+        skippedDueToLock,
+        reason: skippedDueToLock > 0 ? "所有待处理任务都被锁定" : "未知"
+      });
     }
   }
 
@@ -585,11 +656,17 @@ export class TaskQueue implements ITaskQueue {
    * 执行任务
    * 
    * 调用 TaskRunner.run() 并处理结果
+   * Requirements 6.2: 确保任务正确执行并更新状态
    */
   private async executeTask(task: TaskRecord): Promise<void> {
     if (!this.taskRunner) {
       this.logger.error("TaskQueue", "TaskRunner 未注入", undefined, {
         taskId: task.id
+      });
+      // 即使 TaskRunner 未注入，也要清理任务状态
+      this.handleTaskExecutionFailure(task, {
+        code: "E304",
+        message: "TaskRunner 未注入"
       });
       return;
     }
@@ -597,132 +674,170 @@ export class TaskQueue implements ITaskQueue {
     try {
       this.logger.debug("TaskQueue", `开始执行任务: ${task.id}`, {
         taskType: task.taskType,
-        attempt: task.attempt + 1
+        attempt: task.attempt + 1,
+        nodeId: task.nodeId
       });
 
       // 调用 TaskRunner 执行任务
       const result = await this.taskRunner.run(task);
 
       if (result.ok) {
-        // 任务成功
-        task.state = "Completed";
-        task.completedAt = new Date().toISOString();
-        task.updated = task.completedAt;
-        task.result = result.value.data;
-        // 将结果也写回 payload，方便旧代码读取
-        if (result.value.data !== undefined) {
-          task.payload = {
-            ...task.payload,
-            result: result.value.data
-          };
-        }
-
-        this.logger.info("TaskQueue", `任务完成: ${task.id}`, {
-          taskType: task.taskType,
-          nodeId: task.nodeId
-        });
-
-        // 发布完成事件
-        this.publishEvent({
-          type: "task-completed",
-          taskId: task.id,
-          timestamp: task.completedAt
-        });
+        // Requirements 6.2: 任务成功，更新状态为 Completed
+        await this.handleTaskSuccess(task, result.value);
       } else {
-        // 任务失败
-        task.attempt++;
-        
-        // 记录错误
-        if (!task.errors) {
-          task.errors = [];
-        }
-        task.errors.push({
-          code: result.error.code,
-          message: result.error.message,
-          timestamp: new Date().toISOString(),
-          attempt: task.attempt
-        });
-
-        // 检查是否需要重试
-        const settings = this.settingsStore.getSettings();
-        if (settings.autoRetry && task.attempt < task.maxAttempts) {
-          // 重试：重置为 Pending 状态
-          task.state = "Pending";
-          task.updated = new Date().toISOString();
-
-          this.logger.warn("TaskQueue", `任务失败，将重试: ${task.id}`, {
-            attempt: task.attempt,
-            maxAttempts: task.maxAttempts,
-            error: result.error
-          });
-        } else {
-          // 不再重试：标记为 Failed
-          task.state = "Failed";
-          task.updated = new Date().toISOString();
-
-          this.logger.error("TaskQueue", `任务失败: ${task.id}`, undefined, {
-            attempt: task.attempt,
-            maxAttempts: task.maxAttempts,
-            error: result.error
-          });
-
-          // 发布失败事件
-          this.publishEvent({
-            type: "task-failed",
-            taskId: task.id,
-            timestamp: task.updated
-          });
-        }
+        // Requirements 6.2: 任务失败，根据重试策略处理
+        await this.handleTaskFailure(task, result.error);
       }
-
-      // 释放锁
-      if (task.lockKey) {
-        this.lockManager.release(task.lockKey);
-        task.lockKey = undefined;
-      }
-      if (task.typeLockKey) {
-        this.lockManager.release(task.typeLockKey);
-        task.typeLockKey = undefined;
-      }
-
-      // 从处理中集合移除
-      this.processingTasks.delete(task.id);
-
-      // 持久化
-      await this.saveQueue();
 
     } catch (error) {
       // 捕获未预期的异常
-      this.logger.error("TaskQueue", `任务执行异常: ${task.id}`, error as Error);
-
-      task.state = "Failed";
-      task.updated = new Date().toISOString();
-      
-      if (!task.errors) {
-        task.errors = [];
-      }
-      task.errors.push({
-        code: "E304",
-        message: error instanceof Error ? error.message : String(error),
-        timestamp: new Date().toISOString(),
-        attempt: task.attempt
+      this.logger.error("TaskQueue", `任务执行异常: ${task.id}`, error as Error, {
+        taskType: task.taskType,
+        nodeId: task.nodeId
       });
 
-      // 释放锁
-      if (task.lockKey) {
-        this.lockManager.release(task.lockKey);
-        task.lockKey = undefined;
-      }
-      if (task.typeLockKey) {
-        this.lockManager.release(task.typeLockKey);
-        task.typeLockKey = undefined;
-      }
+      await this.handleTaskExecutionFailure(task, {
+        code: "E304",
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  /**
+   * 处理任务成功
+   * Requirements 6.2: 任务转换到 Completed 状态
+   */
+  private async handleTaskSuccess(task: TaskRecord, taskResult: TaskResult): Promise<void> {
+    const previousState = task.state;
+    task.state = "Completed";
+    task.completedAt = new Date().toISOString();
+    task.updated = task.completedAt;
+    task.result = taskResult.data;
+    
+    // 将结果也写回 payload，方便旧代码读取
+    if (taskResult.data !== undefined) {
+      task.payload = {
+        ...task.payload,
+        result: taskResult.data
+      };
+    }
+
+    // Requirements 8.4: 记录任务状态变更日志
+    this.logger.info("TaskQueue", `任务状态变更: ${task.id}`, {
+      event: "TASK_STATE_CHANGE",
+      taskId: task.id,
+      previousState,
+      newState: "Completed",
+      taskType: task.taskType,
+      nodeId: task.nodeId
+    });
+
+    // 释放锁（必须先释放，再发布事件以便下游入队不被锁阻塞）
+    this.releaseTaskLocks(task);
+
+    // 发布完成事件
+    this.publishEvent({
+      type: "task-completed",
+      taskId: task.id,
+      timestamp: task.completedAt
+    });
+
+    // 从处理中集合移除
+    this.processingTasks.delete(task.id);
+
+    // 持久化
+    await this.saveQueue();
+  }
+
+  /**
+   * 处理任务失败
+   * Requirements 6.4: 根据重试策略决定是否重试
+   * - 内容错误 (E001-E010): 最多重试 3 次
+   * - 网络错误 (E100-E102): 最多重试 5 次，使用指数退避
+   * - 终止错误: 不重试
+   */
+  private async handleTaskFailure(task: TaskRecord, error: { code: string; message: string }): Promise<void> {
+    const previousState = task.state;
+    task.attempt++;
+    
+    // 记录错误
+    if (!task.errors) {
+      task.errors = [];
+    }
+    task.errors.push({
+      code: error.code,
+      message: error.message,
+      timestamp: new Date().toISOString(),
+      attempt: task.attempt
+    });
+
+    // Requirements 6.4: 使用 RetryHandler 分类错误并确定重试策略
+    const errorClassification = this.retryHandler.classifyError(error.code);
+    
+    // 动态更新 maxAttempts（如果当前值小于分类建议的值）
+    if (task.maxAttempts < errorClassification.maxAttempts) {
+      task.maxAttempts = errorClassification.maxAttempts;
+      this.logger.debug("TaskQueue", `更新任务最大重试次数: ${task.id}`, {
+        taskId: task.id,
+        errorCode: error.code,
+        errorCategory: errorClassification.category,
+        newMaxAttempts: task.maxAttempts
+      });
+    }
+
+    // 检查是否需要重试
+    const settings = this.settingsStore.getSettings();
+    const shouldRetry = settings.autoRetry && 
+                       errorClassification.retryable && 
+                       task.attempt < task.maxAttempts;
+
+    if (shouldRetry) {
+      // Requirements 6.4: 重试 - 重置为 Pending 状态
+      task.state = "Pending";
+      task.updated = new Date().toISOString();
+
+      // Requirements 8.4: 记录任务状态变更日志（重试）
+      this.logger.warn("TaskQueue", `任务状态变更: ${task.id}`, {
+        event: "TASK_STATE_CHANGE",
+        taskId: task.id,
+        previousState,
+        newState: "Pending",
+        reason: "retry",
+        attempt: task.attempt,
+        maxAttempts: task.maxAttempts,
+        errorCode: error.code,
+        errorMessage: error.message,
+        errorCategory: errorClassification.category,
+        retryStrategy: errorClassification.strategy
+      });
+
+      // 释放锁（重试时会重新获取）
+      this.releaseTaskLocks(task);
 
       // 从处理中集合移除
       this.processingTasks.delete(task.id);
+    } else {
+      // Requirements 6.4: 不再重试 - 标记为 Failed
+      task.state = "Failed";
+      task.updated = new Date().toISOString();
 
-      // 持久化
-      await this.saveQueue();
+      const failureReason = !settings.autoRetry ? "autoRetry disabled" :
+                           !errorClassification.retryable ? "non-retryable error" :
+                           "max attempts reached";
+
+      // Requirements 8.4: 记录任务状态变更日志（失败）
+      this.logger.error("TaskQueue", `任务状态变更: ${task.id}`, undefined, {
+        event: "TASK_STATE_CHANGE",
+        taskId: task.id,
+        previousState,
+        newState: "Failed",
+        attempt: task.attempt,
+        maxAttempts: task.maxAttempts,
+        errorCode: error.code,
+        errorMessage: error.message,
+        errorCategory: errorClassification.category,
+        failureReason
+      });
 
       // 发布失败事件
       this.publishEvent({
@@ -730,6 +845,75 @@ export class TaskQueue implements ITaskQueue {
         taskId: task.id,
         timestamp: task.updated
       });
+
+      // 释放锁
+      this.releaseTaskLocks(task);
+
+      // 从处理中集合移除
+      this.processingTasks.delete(task.id);
+    }
+
+    // 持久化
+    await this.saveQueue();
+  }
+
+  /**
+   * 处理任务执行异常（未预期的错误）
+   */
+  private async handleTaskExecutionFailure(task: TaskRecord, error: { code: string; message: string }): Promise<void> {
+    const previousState = task.state;
+    task.state = "Failed";
+    task.updated = new Date().toISOString();
+    
+    if (!task.errors) {
+      task.errors = [];
+    }
+    task.errors.push({
+      code: error.code,
+      message: error.message,
+      timestamp: new Date().toISOString(),
+      attempt: task.attempt
+    });
+
+    // Requirements 8.4: 记录任务状态变更日志（异常）
+    this.logger.error("TaskQueue", `任务状态变更: ${task.id}`, undefined, {
+      event: "TASK_STATE_CHANGE",
+      taskId: task.id,
+      previousState,
+      newState: "Failed",
+      reason: "exception",
+      errorCode: error.code,
+      errorMessage: error.message
+    });
+
+    // 释放锁
+    this.releaseTaskLocks(task);
+
+    // 从处理中集合移除
+    this.processingTasks.delete(task.id);
+
+    // 持久化
+    await this.saveQueue();
+
+    // 发布失败事件
+    this.publishEvent({
+      type: "task-failed",
+      taskId: task.id,
+      timestamp: task.updated
+    });
+  }
+
+  /**
+   * 释放任务持有的所有锁
+   */
+  private releaseTaskLocks(task: TaskRecord): void {
+    if (task.lockKey) {
+      this.lockManager.release(task.lockKey);
+      task.lockKey = undefined;
+    }
+    if (task.typeLockKey) {
+      this.lockManager.release(task.typeLockKey);
+      task.typeLockKey = undefined;
     }
   }
 
@@ -742,42 +926,48 @@ export class TaskQueue implements ITaskQueue {
    * 这是为了保持 ITaskQueue 接口的同步特性。
    * 写入操作会立即开始，但可能在 enqueue 返回后完成。
    */
-  private async saveQueue(): Promise<void> {
-    try {
-      const settings = this.settingsStore.getSettings();
-      
-      const queueState: QueueStateFile = {
-        version: "1.0.0",
-        tasks: Array.from(this.tasks.values()),
-        concurrency: settings.concurrency,
-        paused: this.paused,
-        stats: this.calculateStats(),
-        locks: this.lockManager.getActiveLocks()
-      };
+  private saveQueue(): Promise<void> {
+    const settings = this.settingsStore.getSettings();
+    
+    const queueState: QueueStateFile = {
+      version: "1.0.0",
+      tasks: Array.from(this.tasks.values()),
+      concurrency: settings.concurrency,
+      paused: this.paused,
+      stats: this.calculateStats(),
+      locks: this.lockManager.getActiveLocks()
+    };
 
-      const content = JSON.stringify(queueState, null, 2);
-      
-      // 更新最后持久化的内容（用于测试验证）
-      this.lastPersistedContent = content;
+    const content = JSON.stringify(queueState, null, 2);
+    
+    // 更新最后持久化的内容（用于测试验证）
+    this.lastPersistedContent = content;
 
-      const writeResult = await this.fileStorage.atomicWrite(
-        this.queuePath,
-        content
-      );
+    // 将写入操作串行化，避免并发 atomicWrite 竞争同一个 .tmp/.bak
+    this.saveQueueChain = this.saveQueueChain
+      .then(async () => {
+        const writeResult = await this.fileStorage.atomicWrite(
+          this.queuePath,
+          content
+        );
 
-      if (!writeResult.ok) {
-        this.logger.error("TaskQueue", "保存队列状态失败", undefined, {
-          error: writeResult.error
-        });
-      } else {
-        this.logger.debug("TaskQueue", "队列状态已持久化", {
-          path: this.queuePath,
-          taskCount: queueState.tasks.length
-        });
-      }
-    } catch (error) {
-      this.logger.error("TaskQueue", "保存队列状态异常", error as Error);
-    }
+        if (!writeResult.ok) {
+          this.logger.error("TaskQueue", "保存队列状态失败", undefined, {
+            error: writeResult.error
+          });
+        } else {
+          this.logger.debug("TaskQueue", "队列状态已持久化", {
+            path: this.queuePath,
+            taskCount: queueState.tasks.length
+          });
+        }
+      })
+      .catch((error) => {
+        // 确保链条不中断，持续串行后续写入
+        this.logger.error("TaskQueue", "保存队列状态异常", error as Error);
+      });
+
+    return this.saveQueueChain;
   }
 
   /**
