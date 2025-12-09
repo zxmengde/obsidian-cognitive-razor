@@ -123,8 +123,6 @@ const taskTypeArb = fc.constantFrom(
   "enrich",
   "embedding",
   "reason:new",
-  "reason:incremental",
-  "reason:merge",
   "ground"
 );
 

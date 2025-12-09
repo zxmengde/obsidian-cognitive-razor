@@ -3,10 +3,35 @@
  * 
  * 遵循设计文档 5.3.1 Frontmatter 模型：
  * - 必填字段：uid, type, status, created, updated
- * - 可选字段：aliases, tags, parentUid, parentType, sourceUids, version
+ * - 可选字段：aliases, tags, parentUid, parentType, sourceUids
  */
 
 import { CRFrontmatter, CRType, NoteState } from "../types";
+import YAML from "yaml";
+
+const FRONTMATTER_DELIMITER = "---";
+const REQUIRED_FIELDS: Array<keyof CRFrontmatter> = [
+  "uid",
+  "type",
+  "status",
+  "created",
+  "updated"
+];
+const ARRAY_FIELDS: Array<keyof CRFrontmatter> = ["aliases", "tags", "sourceUids"];
+
+/**
+ * 格式化日期为 yyyy-MM-DD HH:mm:ss
+ */
+function formatDateTime(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  const seconds = String(date.getSeconds()).padStart(2, '0');
+  
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+}
 
 /**
  * 生成 frontmatter
@@ -24,7 +49,7 @@ export function generateFrontmatter(options: {
   parentType?: CRType;
   sourceUids?: string[];
 }): CRFrontmatter {
-  const now = new Date().toISOString();
+  const now = formatDateTime(new Date());
 
   return {
     uid: options.uid,
@@ -36,187 +61,145 @@ export function generateFrontmatter(options: {
     tags: options.tags,
     parentUid: options.parentUid,
     parentType: options.parentType,
-    sourceUids: options.sourceUids,
-    version: "0.9.3"
+    sourceUids: options.sourceUids
   };
 }
 
 /**
- * 将 frontmatter 对象转换为 YAML 字符串
- * 
- * @param frontmatter Frontmatter 对象
- * @returns YAML 字符串（包含 --- 分隔符）
+ * 将数组格式化为单行 YAML 数组字符串
  */
-export function frontmatterToYaml(frontmatter: CRFrontmatter): string {
-  const lines: string[] = ["---"];
+function formatArrayInline(arr: string[]): string {
+  if (arr.length === 0) return '[]';
+  const formatted = arr.map(item => {
+    // 如果包含特殊字符，需要加引号
+    if (item.includes(' ') || item.includes(',') || item.includes(':') || item.includes('#')) {
+      return `"${item.replace(/"/g, '\\"')}"`;
+    }
+    return item;
+  });
+  return `[${formatted.join(', ')}]`;
+}
 
-  // 必填字段
+/**
+ * 将 frontmatter 对象转换为 YAML 字符串（内部使用）
+ * aliases 和 tags 使用单行数组格式
+ */
+function frontmatterToYaml(frontmatter: CRFrontmatter): string {
+  // 手动构建 YAML 字符串以确保格式正确
+  const lines: string[] = [];
+  
+  // 必填字段按固定顺序
   lines.push(`uid: ${frontmatter.uid}`);
   lines.push(`type: ${frontmatter.type}`);
   lines.push(`status: ${frontmatter.status}`);
   lines.push(`created: ${frontmatter.created}`);
   lines.push(`updated: ${frontmatter.updated}`);
-
-  // 可选字段
+  
+  // 可选数组字段 - 单行格式
   if (frontmatter.aliases && frontmatter.aliases.length > 0) {
-    lines.push("aliases:");
-    for (const alias of frontmatter.aliases) {
-      lines.push(`  - ${escapeYamlString(alias)}`);
-    }
+    lines.push(`aliases: ${formatArrayInline(frontmatter.aliases)}`);
   }
-
+  
   if (frontmatter.tags && frontmatter.tags.length > 0) {
-    lines.push("tags:");
-    for (const tag of frontmatter.tags) {
-      lines.push(`  - ${escapeYamlString(tag)}`);
-    }
+    lines.push(`tags: ${formatArrayInline(frontmatter.tags)}`);
   }
-
+  
+  // 其他可选字段
   if (frontmatter.parentUid) {
     lines.push(`parentUid: ${frontmatter.parentUid}`);
   }
-
+  
   if (frontmatter.parentType) {
     lines.push(`parentType: ${frontmatter.parentType}`);
   }
-
+  
   if (frontmatter.sourceUids && frontmatter.sourceUids.length > 0) {
-    lines.push("sourceUids:");
-    for (const uid of frontmatter.sourceUids) {
-      lines.push(`  - ${uid}`);
-    }
+    lines.push(`sourceUids: ${formatArrayInline(frontmatter.sourceUids)}`);
   }
 
-  if (frontmatter.version) {
-    lines.push(`version: ${frontmatter.version}`);
-  }
-
-  lines.push("---");
-  lines.push(""); // 空行分隔 frontmatter 和内容
-
-  return lines.join("\n");
+  return `${FRONTMATTER_DELIMITER}\n${lines.join('\n')}\n${FRONTMATTER_DELIMITER}\n\n`;
 }
 
 /**
- * 转义 YAML 字符串
- * 
- * @param str 原始字符串
- * @returns 转义后的字符串
+ * 从 YAML 字符串解析 frontmatter（内部使用）
  */
-function escapeYamlString(str: string): string {
-  // 如果包含特殊字符，使用引号包裹
-  if (/[:#\[\]{}|>*&!%@`]/.test(str) || str.includes('"') || str.includes("'")) {
-    // 使用双引号并转义内部的双引号
-    return `"${str.replace(/"/g, '\\"')}"`;
-  }
-  return str;
-}
-
-/**
- * 从 YAML 字符串解析 frontmatter
- * 
- * 注意：这是一个简单的解析器，仅用于基本场景
- * 对于复杂的 YAML，建议使用专门的 YAML 解析库
- * 
- * @param yaml YAML 字符串
- * @returns CRFrontmatter 对象或 null
- */
-export function parseFrontmatter(yaml: string): CRFrontmatter | null {
+function parseFrontmatter(yaml: string): CRFrontmatter | null {
   try {
-    // 移除 --- 分隔符
-    const content = yaml.replace(/^---\n/, "").replace(/\n---$/, "");
-    const lines = content.split("\n");
+    const trimmed = yaml.trim();
+    const cleanYaml = trimmed.startsWith(FRONTMATTER_DELIMITER)
+      ? trimmed.replace(/^---\s*/, "").replace(/\s*---$/, "")
+      : trimmed;
 
-    const frontmatter: Partial<CRFrontmatter> = {};
-    let currentArray: string[] | null = null;
-    let currentArrayKey: string | null = null;
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      
-      // 跳过空行和注释
-      if (!trimmed || trimmed.startsWith("#")) {
-        continue;
-      }
-
-      // 数组项
-      if (trimmed.startsWith("- ")) {
-        if (currentArray && currentArrayKey) {
-          const value = trimmed.substring(2).trim();
-          // 移除引号
-          const unquoted = value.replace(/^["']|["']$/g, "");
-          currentArray.push(unquoted);
-        }
-        continue;
-      }
-
-      // 键值对
-      const colonIndex = trimmed.indexOf(":");
-      if (colonIndex > 0) {
-        const key = trimmed.substring(0, colonIndex).trim();
-        const value = trimmed.substring(colonIndex + 1).trim();
-
-        // 检查是否是数组字段
-        if (["aliases", "tags", "sourceUids"].includes(key)) {
-          if (!value) {
-            // 数组开始
-            currentArrayKey = key;
-            currentArray = [];
-            (frontmatter as any)[key] = currentArray;
-          } else {
-            // 单行数组（不常见）
-            currentArrayKey = null;
-            currentArray = null;
-          }
-        } else {
-          // 普通字段
-          currentArrayKey = null;
-          currentArray = null;
-          
-          if (value) {
-            // 移除引号
-            const unquoted = value.replace(/^["']|["']$/g, "");
-            (frontmatter as any)[key] = unquoted;
-          }
-        }
-      }
-    }
-
-    // 验证必填字段
-    if (!frontmatter.uid || !frontmatter.type || !frontmatter.status || 
-        !frontmatter.created || !frontmatter.updated) {
+    const document = YAML.parse(cleanYaml, { uniqueKeys: true }) as Record<string, unknown> | null;
+    if (!document || typeof document !== "object") {
       return null;
     }
 
-    return frontmatter as CRFrontmatter;
+    const normalized: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(document)) {
+      if (ARRAY_FIELDS.includes(key as keyof CRFrontmatter) && Array.isArray(value)) {
+        normalized[key] = value.map((v) => String(v));
+        continue;
+      }
+      normalized[key] = value;
+    }
+
+    // 验证必填字段
+    for (const field of REQUIRED_FIELDS) {
+      if (!normalized[field] || typeof normalized[field] !== "string") {
+        return null;
+      }
+    }
+
+    const aliases = normalizeStringArray(normalized.aliases);
+    const tags = normalizeStringArray(normalized.tags);
+    const sourceUids = normalizeStringArray(normalized.sourceUids);
+
+    return {
+      uid: normalized.uid as string,
+      type: normalized.type as CRType,
+      status: normalized.status as NoteState,
+      created: normalized.created as string,
+      updated: normalized.updated as string,
+      aliases,
+      tags,
+      parentUid: normalizeOptionalString(normalized.parentUid),
+      parentType: normalizeOptionalString(normalized.parentType) as CRType | undefined,
+      sourceUids
+    };
   } catch (error) {
     return null;
   }
 }
 
 /**
- * 从 Markdown 内容中提取 frontmatter
- * 
- * @param content Markdown 内容
- * @returns { frontmatter, body } 或 null
+ * 从 Markdown 内容中提取 frontmatter（内部使用）
  */
-export function extractFrontmatter(content: string): {
+function extractFrontmatter(content: string): {
   frontmatter: CRFrontmatter;
   body: string;
 } | null {
   // 检查是否以 --- 开头
-  if (!content.startsWith("---\n")) {
+  if (!content.startsWith(`${FRONTMATTER_DELIMITER}\n`)) {
     return null;
   }
 
-  // 查找第二个 ---
-  const endIndex = content.indexOf("\n---\n", 4);
+  const lines = content.split("\n");
+  let endIndex = -1;
+
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i].trim() === FRONTMATTER_DELIMITER) {
+      endIndex = i;
+      break;
+    }
+  }
+
   if (endIndex === -1) {
     return null;
   }
 
-  const yamlContent = content.substring(0, endIndex + 5); // 包含 \n---\n
-  const body = content.substring(endIndex + 5);
+  const yamlContent = lines.slice(0, endIndex + 1).join("\n");
+  const body = lines.slice(endIndex + 1).join("\n");
 
   const frontmatter = parseFrontmatter(yamlContent);
   if (!frontmatter) {
@@ -227,16 +210,13 @@ export function extractFrontmatter(content: string): {
 }
 
 /**
- * 更新 Markdown 内容中的 frontmatter
- * 
- * @param content 原始 Markdown 内容
- * @param updates Frontmatter 更新
- * @returns 更新后的 Markdown 内容
+ * 更新 Markdown 内容中的 frontmatter（内部使用）
  */
-export function updateFrontmatter(
+function updateFrontmatter(
   content: string,
   updates: Partial<CRFrontmatter>
 ): string {
+  const now = formatDateTime(new Date());
   const extracted = extractFrontmatter(content);
   
   if (!extracted) {
@@ -256,7 +236,7 @@ export function updateFrontmatter(
   const merged: CRFrontmatter = {
     ...extracted.frontmatter,
     ...updates,
-    updated: new Date().toISOString() // 总是更新时间戳
+    updated: now // 总是更新时间戳
   };
 
   return frontmatterToYaml(merged) + extracted.body;
@@ -274,5 +254,24 @@ export function generateMarkdownContent(
   body: string
 ): string {
   return frontmatterToYaml(frontmatter) + body;
+}
+
+function normalizeStringArray(value: unknown): string[] | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item));
+  }
+
+  return undefined;
+}
+
+function normalizeOptionalString(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return value;
+  }
+  return undefined;
 }
 

@@ -16,7 +16,7 @@ import { ILogger, Result, ok, err } from "../types";
 /**
  * 版本信息接口
  */
-export interface VersionInfo {
+interface VersionInfo {
   major: number;
   minor: number;
   patch: number;
@@ -26,7 +26,7 @@ export interface VersionInfo {
 /**
  * 兼容性检查结果
  */
-export interface CompatibilityResult {
+interface CompatibilityResult {
   compatible: boolean;
   currentVersion: VersionInfo;
   loadedVersion: VersionInfo;
@@ -38,7 +38,7 @@ export interface CompatibilityResult {
 /**
  * 迁移选项
  */
-export type MigrationOption = 
+type MigrationOption = 
   | "auto_migrate"    // 自动迁移（如果可行）
   | "export_reset"    // 导出当前数据后重置
   | "continue_risk"   // 继续使用（可能有风险）
@@ -47,7 +47,7 @@ export type MigrationOption =
 /**
  * VersionChecker 接口
  */
-export interface IVersionChecker {
+interface IVersionChecker {
   /**
    * 检查版本兼容性
    * @param loadedVersion 加载的版本字符串
@@ -90,12 +90,12 @@ export interface IVersionChecker {
  * - 预发布版本，尚未正式发布
  * - 实现核心功能和公理化设计
  */
-export const CURRENT_VERSION = "0.9.3";
+const CURRENT_VERSION = "0.9.3";
 
 /**
  * 支持的最低版本（可以自动迁移）
  */
-export const MIN_SUPPORTED_VERSION = "0.9.0";
+const MIN_SUPPORTED_VERSION = "0.9.0";
 
 /**
  * VersionChecker 实现类
@@ -320,7 +320,5 @@ export class VersionChecker implements IVersionChecker {
   }
 }
 
-/**
- * 导出单例实例
- */
-export const versionChecker = new VersionChecker();
+// 单例实例（内部使用）
+const versionChecker = new VersionChecker();

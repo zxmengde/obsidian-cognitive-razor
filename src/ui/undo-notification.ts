@@ -8,7 +8,7 @@ import { Notice } from "obsidian";
 /**
  * 撤销通知选项
  */
-export interface UndoNotificationOptions {
+interface UndoNotificationOptions {
   /** 通知消息 */
   message: string;
   /** 快照 ID */

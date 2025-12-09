@@ -18,7 +18,7 @@ import {
 /**
  * 提示词模板结构
  */
-export interface PromptTemplate {
+interface PromptTemplate {
   id: string;
   content: string;
   requiredSlots: string[];
@@ -29,7 +29,7 @@ export interface PromptTemplate {
  * 必需的提示词区块（A-PDD-01 区块序公理）
  * 模板必须包含且仅包含这些区块，按顺序排列
  */
-export const REQUIRED_BLOCKS = [
+const REQUIRED_BLOCKS = [
   "<system>",
   "<context>",
   "<task>",
@@ -41,81 +41,31 @@ export const REQUIRED_BLOCKS = [
  * 任务-槽位映射表（设计文档 6.2 节）
  * 定义每种任务类型允许使用的槽位
  */
-export const TASK_SLOT_MAPPING: Record<TaskType, { required: string[]; optional: string[] }> = {
+const TASK_SLOT_MAPPING: Record<TaskType, { required: string[]; optional: string[] }> = {
   "embedding": {
     required: ["CTX_INPUT"],
-    optional: []
+    optional: ["CTX_LANGUAGE"]
   },
   "standardizeClassify": {
     required: ["CTX_INPUT"],
-    optional: []
+    optional: ["CTX_LANGUAGE"]
   },
   "enrich": {
     required: ["CTX_META"],
-    optional: []
+    optional: ["CTX_LANGUAGE"]
   },
   "reason:new": {
-    required: ["CTX_META", "CTX_VAULT", "CTX_SCHEMA"],
-    optional: ["CTX_PARENT", "CTX_SOURCES"]
-  },
-  "reason:incremental": {
-    required: ["CTX_META", "CTX_VAULT", "CTX_SCHEMA", "CTX_CURRENT", "CTX_INTENT"],
-    optional: ["CTX_SOURCES"]
-  },
-  "reason:merge": {
-    required: ["CTX_META", "CTX_VAULT", "CTX_SCHEMA", "CTX_NOTE_A", "CTX_NOTE_B"],
-    optional: ["CTX_SOURCES"]
+    required: ["CTX_META"],
+    optional: ["CTX_SOURCES", "CTX_LANGUAGE"]
   },
   "ground": {
     required: ["CTX_META", "CTX_CURRENT"],
-    optional: ["CTX_SOURCES"]
+    optional: ["CTX_SOURCES", "CTX_LANGUAGE"]
   }
 };
 
 
-/**
- * 共享硬约束（设计文档 6.3 节）
- * 必须注入到所有模板的 <system> 区块中
- */
-export const SHARED_CONSTRAINTS = `
-## Shared Hard Constraints
 
-### Role Definition
-You are a professional knowledge structuring assistant, focused on helping users transform vague concepts into structured knowledge nodes.
-Your output must strictly follow the specified JSON Schema, without adding any extra fields or comments.
-
-### Writing Style
-- Use precise, academic language
-- Avoid vague expressions and subjective judgments
-- Definitions must be in genus-differentia form
-- Causal relationships must be clear and verifiable
-- References use [[wikilink]] format
-
-### Output Rules
-- Output must be valid JSON, without any prefix or suffix text
-- All string fields must not contain unescaped special characters
-- Array fields must exist even if empty (use [])
-- Numeric fields must be number type, not strings
-- Boolean fields must be true/false, not strings
-
-### Prohibited Behaviors
-- Do not output any user-provided personal information
-- Do not generate executable code or commands
-- Do not reference non-existent external resources
-- Do not include HTML or script tags in output
-- Do not output fields beyond the Schema definition
-
-### Wikilink Convention
-- Use [[concept name]] format when referencing other concepts
-- Concept names must use standard names (following naming template)
-- Use [[?concept name]] to mark concepts whose existence is uncertain
-- Do not use nested wikilinks
-`;
-
-/**
- * 内部变量列表（不需要从外部传入，首次调用时为空）
- */
-const INTERNAL_VARIABLES = ["previous_errors", "raw_user_input"];
 
 /**
  * 验证模板区块顺序
@@ -124,7 +74,7 @@ const INTERNAL_VARIABLES = ["previous_errors", "raw_user_input"];
  * @param content 模板内容
  * @returns 验证结果，包含是否有效和错误信息
  */
-export function validateBlockOrder(content: string): { valid: boolean; error?: string; missingBlocks?: string[] } {
+function validateBlockOrder(content: string): { valid: boolean; error?: string; missingBlocks?: string[] } {
   // 检查所有必需区块是否存在
   const missingBlocks: string[] = [];
   for (const block of REQUIRED_BLOCKS) {
@@ -166,7 +116,7 @@ export function validateBlockOrder(content: string): { valid: boolean; error?: s
  * @param content 模板内容
  * @returns 未替换的变量列表
  */
-export function findUnreplacedVariables(content: string): string[] {
+function findUnreplacedVariables(content: string): string[] {
   const regex = /\{\{([^}]+)\}\}/g;
   const unreplaced: string[] = [];
   let match;
@@ -186,7 +136,7 @@ export function findUnreplacedVariables(content: string): string[] {
  * @param providedSlots 提供的槽位
  * @returns 验证结果
  */
-export function validateSlots(
+function validateSlots(
   taskType: TaskType,
   providedSlots: string[]
 ): { valid: boolean; missingRequired?: string[]; extraSlots?: string[] } {
@@ -195,8 +145,8 @@ export function validateSlots(
     return { valid: false, extraSlots: providedSlots };
   }
 
-  // 允许的槽位包括：必需槽位 + 可选槽位 + 内部变量
-  const allowedSlots = new Set([...mapping.required, ...mapping.optional, ...INTERNAL_VARIABLES]);
+  // 允许的槽位包括：必需槽位 + 可选槽位
+  const allowedSlots = new Set([...mapping.required, ...mapping.optional]);
   const missingRequired: string[] = [];
   const extraSlots: string[] = [];
 
@@ -305,18 +255,9 @@ export class PromptManager implements IPromptManager {
       // 替换变量
       let prompt = template.content;
 
-      // A-PDD-03: 注入共享硬约束到 <system> 区块
-      prompt = this.injectSharedConstraints(prompt);
-
       // 替换所有槽位
       for (const [key, value] of Object.entries(slots)) {
         prompt = replaceVariable(prompt, key, value);
-      }
-
-      // 替换内部变量（如 previous_errors）为空字符串
-      // 这些变量用于结构化重试，首次调用时为空
-      for (const varName of INTERNAL_VARIABLES) {
-        prompt = replaceVariable(prompt, varName, "");
       }
 
       // A-PDD-02: 验证是否还有未替换的变量
@@ -424,8 +365,6 @@ export class PromptManager implements IPromptManager {
       "enrich": "enrich",
       "embedding": "embedding",
       "reason:new": "reason-domain", // 默认值，会被 conceptType 覆盖
-      "reason:incremental": "reason-incremental",
-      "reason:merge": "reason-merge",
       "ground": "ground"
     };
 
@@ -536,8 +475,6 @@ export class PromptManager implements IPromptManager {
       "reason-theory",
       "reason-entity",
       "reason-mechanism",
-      "reason-incremental",
-      "reason-merge",
       "ground"
     ];
 
@@ -592,26 +529,7 @@ export class PromptManager implements IPromptManager {
     };
   }
 
-  /**
-   * 注入共享硬约束
-   * 遵循 A-PDD-03: 在 <system> 区块注入共享约束
-   */
-  private injectSharedConstraints(prompt: string): string {
-    // 查找 <system> 标签后的位置
-    const systemStartTag = "<system>";
-    const systemStartIndex = prompt.indexOf(systemStartTag);
 
-    if (systemStartIndex === -1) {
-      this.logger.warn("PromptManager", "未找到 <system> 标签，无法注入共享硬约束");
-      return prompt;
-    }
-
-    // 在 <system> 标签后立即注入共享约束
-    const insertPosition = systemStartIndex + systemStartTag.length;
-    return prompt.slice(0, insertPosition) +
-           "\n" + SHARED_CONSTRAINTS + "\n" +
-           prompt.slice(insertPosition);
-  }
 
   /**
    * 清除模板缓存（用于测试）

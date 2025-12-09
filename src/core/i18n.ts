@@ -7,12 +7,12 @@
  * - 支持动态插值
  */
 
-export type Language = "zh" | "en";
+type Language = "zh" | "en";
 
 /**
  * 翻译文本类型
  */
-export interface Translations {
+interface Translations {
   // 通用
   common: {
     confirm: string;
@@ -257,6 +257,8 @@ export interface Translations {
         title: string;
         logLevel: string;
         logLevelDesc: string;
+        logFormat: string;
+        logFormatDesc: string;
         clearLogs: string;
         clearLogsDesc: string;
         levels: {
@@ -317,14 +319,6 @@ export interface Translations {
       desc: string;
     };
     "reason:new": {
-      name: string;
-      desc: string;
-    };
-    "reason:incremental": {
-      name: string;
-      desc: string;
-    };
-    "reason:merge": {
       name: string;
       desc: string;
     };
@@ -624,6 +618,8 @@ export class I18n {
             title: "日志设置",
             logLevel: "日志级别",
             logLevelDesc: "设置日志记录的详细程度",
+            logFormat: "日志格式",
+            logFormatDesc: "选择日志文件的输出格式（JSON: 结构化, Pretty: 易读, Compact: 紧凑）",
             clearLogs: "清除日志",
             clearLogsDesc: "清空所有日志文件",
             levels: {
@@ -680,14 +676,6 @@ export class I18n {
         "reason:new": {
           name: "新概念生成",
           desc: "为新概念生成完整内容",
-        },
-        "reason:incremental": {
-          name: "增量改进",
-          desc: "增量改进现有内容",
-        },
-        "reason:merge": {
-          name: "合并",
-          desc: "合并两个重复概念",
         },
         ground: {
           name: "事实核查",
@@ -948,6 +936,8 @@ export class I18n {
             title: "Logging Settings",
             logLevel: "Log Level",
             logLevelDesc: "Set the verbosity of logging",
+            logFormat: "Log Format",
+            logFormatDesc: "Choose the output format for log files (JSON: structured, Pretty: readable, Compact: concise)",
             clearLogs: "Clear Logs",
             clearLogsDesc: "Clear all log files",
             levels: {
@@ -1004,14 +994,6 @@ export class I18n {
         "reason:new": {
           name: "New Concept",
           desc: "Generate complete content for new concept",
-        },
-        "reason:incremental": {
-          name: "Incremental Improve",
-          desc: "Incrementally improve existing content",
-        },
-        "reason:merge": {
-          name: "Merge",
-          desc: "Merge two duplicate concepts",
         },
         ground: {
           name: "Grounding",

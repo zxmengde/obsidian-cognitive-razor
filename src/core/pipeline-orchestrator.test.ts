@@ -179,8 +179,6 @@ const createMockSettings = (): PluginSettings => ({
     enrich: { providerId: "test-provider", model: "gpt-4o", temperature: 0.5 },
     embedding: { providerId: "test-provider", model: "text-embedding-3-small" },
     "reason:new": { providerId: "test-provider", model: "gpt-4o", temperature: 0.7 },
-    "reason:incremental": { providerId: "test-provider", model: "gpt-4o", temperature: 0.7 },
-    "reason:merge": { providerId: "test-provider", model: "gpt-4o", temperature: 0.5 },
     ground: { providerId: "test-provider", model: "gpt-4o", temperature: 0.3 }
   },
   logLevel: "debug"

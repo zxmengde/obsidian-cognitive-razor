@@ -25,6 +25,7 @@ export class UndoManager implements IUndoManager {
   private maxSnapshots: number;
   private maxAgeDays: number;
   private index: SnapshotIndex | null;
+  private readonly MAX_SNAPSHOT_SIZE = 10 * 1024 * 1024; // 10MB 防止 OOM
 
   constructor(
     fileStorage: IFileStorage,
@@ -172,6 +173,18 @@ export class UndoManager implements IUndoManager {
         return err("E303", "任务 ID 不能为空");
       }
 
+      // 路径合法性校验（防止路径遍历 / 绝对路径）
+      const pathValidation = this.validateFilePath(filePath);
+      if (!pathValidation.ok) {
+        return pathValidation as Result<string>;
+      }
+
+      // 内容大小校验
+      const fileSize = Buffer.byteLength(content, 'utf8');
+      if (fileSize > this.MAX_SNAPSHOT_SIZE) {
+        return err("E303", `快照内容过大: ${fileSize} bytes (最大 ${this.MAX_SNAPSHOT_SIZE} bytes)`);
+      }
+
       // 生成快照 ID
       const snapshotId = this.generateSnapshotId();
       
@@ -180,9 +193,6 @@ export class UndoManager implements IUndoManager {
       
       // 确定 nodeId：优先使用传入的值，否则从路径提取
       const resolvedNodeId = nodeId || this.extractNodeIdFromPath(filePath);
-      
-      // 计算文件大小（字节）
-      const fileSize = Buffer.byteLength(content, 'utf8');
       
       // 创建快照记录 - 确保包含所有必需字段
       // Property 11: Snapshot Record Completeness
@@ -531,7 +541,23 @@ export class UndoManager implements IUndoManager {
    * 计算内容校验和
    */
   private calculateChecksum(content: string): string {
-    return createHash('md5').update(content, 'utf8').digest('hex');
+    return createHash('sha256').update(content, 'utf8').digest('hex');
+  }
+
+  /**
+   * 验证文件路径，防止路径遍历 / 绝对路径 / 非 md 文件
+   */
+  private validateFilePath(filePath: string): Result<void> {
+    if (filePath.includes("..")) {
+      return err("E303", "文件路径不能包含 '..'");
+    }
+    if (/^([A-Za-z]:|\\\\|\/)/.test(filePath)) {
+      return err("E303", "文件路径必须是相对路径");
+    }
+    if (!filePath.endsWith(".md")) {
+      return err("E303", "仅支持 Markdown 文件快照 (.md)");
+    }
+    return ok(undefined);
   }
 
   /**

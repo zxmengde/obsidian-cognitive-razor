@@ -1,9 +1,11 @@
 /**
  * MergeHandler - 合并处理器
  * 
+ * @deprecated 此功能已被弃用，等待重构
+ * 
  * 功能：
- * - 生成合并任务
- * - 监听 reason:merge 任务完成
+ * - 生成合并任务（已弃用）
+ * - 监听 reason:merge 任务完成（已弃用）
  * - 生成合并预览
  * - 处理用户确认
  * - 执行合并写入和清理
@@ -33,7 +35,7 @@ interface MergeNoteData {
 /**
  * MergeHandler 配置
  */
-export interface MergeHandlerConfig {
+interface MergeHandlerConfig {
   /** Obsidian App 实例 */
   app: App;
   /** TaskQueue 实例 */
@@ -61,6 +63,7 @@ export class MergeHandler {
   private vectorIndex: VectorIndex;
   private storage: FileStorage;
   private getLanguage: () => "zh" | "en";
+  private unsubscribeQueue?: () => void;
 
   constructor(config: MergeHandlerConfig) {
     this.app = config.app;
@@ -77,7 +80,8 @@ export class MergeHandler {
    */
   public start(): void {
     // 订阅任务完成事件
-    this.taskQueue.subscribe((event) => {
+    this.unsubscribeQueue?.();
+    this.unsubscribeQueue = this.taskQueue.subscribe((event) => {
       if (event.type === "task-completed" && event.taskId) {
         this.handleTaskCompleted(event.taskId);
       }
@@ -85,123 +89,30 @@ export class MergeHandler {
   }
 
   /**
-   * 创建合并任务
-   * 验证需求：7.1
+   * 停止监听，释放资源
    */
-  public async createMergeTask(pair: DuplicatePair): Promise<Result<string>> {
-    try {
-      // 1. 验证重复对状态
-      if (pair.status !== "pending") {
-        return err(
-          "INVALID_STATUS",
-          `重复对状态必须为 pending，当前为 ${pair.status}`
-        );
-      }
-
-      // 2. 读取两个笔记的内容
-      const fileA = this.app.vault.getAbstractFileByPath(pair.noteA.path);
-      const fileB = this.app.vault.getAbstractFileByPath(pair.noteB.path);
-
-      if (!fileA || !(fileA instanceof TFile)) {
-        return err("FILE_NOT_FOUND", `文件不存在: ${pair.noteA.path}`);
-      }
-
-      if (!fileB || !(fileB instanceof TFile)) {
-        return err("FILE_NOT_FOUND", `文件不存在: ${pair.noteB.path}`);
-      }
-
-      const contentA = await this.app.vault.read(fileA);
-      const contentB = await this.app.vault.read(fileB);
-
-      // 3. 更新重复对状态为 merging
-      const updateResult = await this.duplicateManager.updateStatus(
-        pair.id,
-        "merging"
-      );
-
-      if (!updateResult.ok) {
-        return updateResult;
-      }
-
-      // 4. 创建合并任务
-      const taskResult = this.taskQueue.enqueue({
-        nodeId: pair.noteA.nodeId,
-        taskType: "reason:merge",
-        state: "Pending",
-        attempt: 0,
-        maxAttempts: 3,
-        payload: {
-          pairId: pair.id,
-          noteA: {
-            nodeId: pair.noteA.nodeId,
-            name: pair.noteA.name,
-            path: pair.noteA.path,
-            content: contentA,
-          },
-          noteB: {
-            nodeId: pair.noteB.nodeId,
-            name: pair.noteB.name,
-            path: pair.noteB.path,
-            content: contentB,
-          },
-          type: pair.type,
-          similarity: pair.similarity,
-        },
-      });
-
-      if (!taskResult.ok) {
-        // 恢复重复对状态
-        await this.duplicateManager.updateStatus(pair.id, "pending");
-        return taskResult;
-      }
-
-      new Notice(`已创建合并任务: ${pair.noteA.name} ↔ ${pair.noteB.name}`);
-      return ok(taskResult.value);
-    } catch (error) {
-      console.error("创建合并任务失败:", error);
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      return err("CREATE_TASK_ERROR", `创建合并任务失败: ${errorMessage}`);
+  public stop(): void {
+    if (this.unsubscribeQueue) {
+      this.unsubscribeQueue();
+      this.unsubscribeQueue = undefined;
     }
   }
 
   /**
+   * 创建合并任务
+   * 注意：reason:merge 任务类型已被弃用，此方法暂时保留但不应被调用
+   */
+  public async createMergeTask(pair: DuplicatePair): Promise<Result<string>> {
+    return err("DEPRECATED", "合并功能已被弃用，等待重构");
+  }
+
+  /**
    * 处理任务完成
+   * 注意：reason:merge 任务类型已被弃用，此方法暂时保留但不会被调用
    */
   private async handleTaskCompleted(taskId: string): Promise<void> {
-    const task = this.taskQueue.getTask(taskId);
-    if (!task) {
-      return;
-    }
-
-    // 只处理 reason:merge 任务
-    if (task.taskType !== "reason:merge") {
-      return;
-    }
-
-    // 如果任务属于 PipelineOrchestrator（包含 pipelineId），交由管线处理
-    if (task.payload?.pipelineId) {
-      return;
-    }
-
-    // 检查任务结果
-    if (!task.result) {
-      console.error("合并任务没有结果:", taskId);
-      return;
-    }
-
-    try {
-      await this.showMergePreviewAndConfirm(task);
-    } catch (error) {
-      console.error("处理合并任务失败:", error);
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      new Notice(`处理合并失败: ${errorMessage}`);
-
-      // 恢复重复对状态
-      const pairId = task.payload.pairId as string;
-      if (pairId) {
-        await this.duplicateManager.updateStatus(pairId, "pending");
-      }
-    }
+    // 功能已弃用，等待重构
+    return;
   }
 
   /**

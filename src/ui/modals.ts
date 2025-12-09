@@ -7,188 +7,9 @@
 import { App, Modal, Setting } from "obsidian";
 import type {
   ProviderConfig,
-  TextInputModalOptions,
-  SelectModalOptions,
   ConfirmModalOptions,
   ProviderConfigModalOptions
 } from "../types";
-
-// ============================================================================
-// TextInputModal - 文本输入对话框
-// ============================================================================
-
-/**
- * 文本输入 Modal
- */
-export class TextInputModal extends Modal {
-  private options: TextInputModalOptions;
-  private inputEl: HTMLInputElement | null = null;
-  private errorEl: HTMLElement | null = null;
-
-  constructor(app: App, options: TextInputModalOptions) {
-    super(app);
-    this.options = options;
-  }
-
-  onOpen(): void {
-    const { contentEl, modalEl } = this;
-    contentEl.empty();
-    modalEl.addClass("cr-scope");
-    contentEl.addClass("cr-scope");
-
-    // 标题
-    contentEl.createEl("h2", { text: this.options.title });
-
-    // 输入框容器
-    const inputContainer = contentEl.createDiv({ cls: "modal-input-container" });
-
-    // 输入框
-    this.inputEl = inputContainer.createEl("input", {
-      type: "text",
-      placeholder: this.options.placeholder || "",
-      value: this.options.defaultValue || "",
-      cls: "modal-input"
-    });
-
-    // 错误消息容器
-    this.errorEl = inputContainer.createDiv({ cls: "modal-error" });
-    this.errorEl.style.display = "none";
-
-    // 按钮容器
-    const buttonContainer = contentEl.createDiv({ cls: "modal-button-container" });
-
-    // 取消按钮
-    const cancelBtn = buttonContainer.createEl("button", { text: "取消" });
-    cancelBtn.addEventListener("click", () => {
-      this.options.onCancel?.();
-      this.close();
-    });
-
-    // 确认按钮
-    const submitBtn = buttonContainer.createEl("button", {
-      text: "确认",
-      cls: "mod-cta"
-    });
-    submitBtn.addEventListener("click", () => this.handleSubmit());
-
-    // Enter 键提交
-    this.inputEl.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        this.handleSubmit();
-      }
-    });
-
-    // 设置焦点
-    setTimeout(() => {
-      this.inputEl?.focus();
-      this.inputEl?.select();
-    }, 10);
-  }
-
-  private handleSubmit(): void {
-    const value = this.inputEl?.value.trim() || "";
-
-    // 验证
-    if (this.options.validator) {
-      const error = this.options.validator(value);
-      if (error) {
-        this.showError(error);
-        return;
-      }
-    }
-
-    // 提交
-    this.options.onSubmit(value);
-    this.close();
-  }
-
-  private showError(message: string): void {
-    if (this.errorEl) {
-      this.errorEl.textContent = message;
-      this.errorEl.style.display = "block";
-      this.errorEl.style.color = "var(--text-error)";
-      this.errorEl.style.marginTop = "0.5em";
-    }
-  }
-
-  onClose(): void {
-    const { contentEl } = this;
-    contentEl.empty();
-  }
-}
-
-// ============================================================================
-// SelectModal - 选择对话框
-// ============================================================================
-
-/**
- * 选择 Modal
- */
-export class SelectModal extends Modal {
-  private options: SelectModalOptions;
-
-  constructor(app: App, options: SelectModalOptions) {
-    super(app);
-    this.options = options;
-  }
-
-  onOpen(): void {
-    const { contentEl, modalEl } = this;
-    contentEl.empty();
-    modalEl.addClass("cr-scope");
-    contentEl.addClass("cr-scope");
-
-    // 标题
-    contentEl.createEl("h2", { text: this.options.title });
-
-    // 选项列表
-    const optionsList = contentEl.createDiv({ cls: "modal-options-list" });
-
-    this.options.options.forEach((option, index) => {
-      const optionEl = optionsList.createDiv({ cls: "modal-option-item" });
-
-      // 选项按钮
-      const button = optionEl.createEl("button", {
-        text: option.label,
-        cls: "modal-option-button"
-      });
-
-      if (option.description) {
-        const desc = optionEl.createDiv({
-          text: option.description,
-          cls: "modal-option-description"
-        });
-        desc.style.fontSize = "0.9em";
-        desc.style.color = "var(--text-muted)";
-        desc.style.marginTop = "0.25em";
-      }
-
-      button.addEventListener("click", () => {
-        this.options.onSelect(option.value);
-        this.close();
-      });
-
-      // 第一个选项自动获得焦点
-      if (index === 0) {
-        setTimeout(() => button.focus(), 10);
-      }
-    });
-
-    // 取消按钮
-    const buttonContainer = contentEl.createDiv({ cls: "modal-button-container" });
-    const cancelBtn = buttonContainer.createEl("button", { text: "取消" });
-    cancelBtn.addEventListener("click", () => {
-      this.options.onCancel?.();
-      this.close();
-    });
-  }
-
-  onClose(): void {
-    const { contentEl } = this;
-    contentEl.empty();
-  }
-}
 
 // ============================================================================
 // ConfirmModal - 确认对话框
@@ -211,18 +32,14 @@ export class ConfirmModal extends Modal {
     modalEl.addClass("cr-scope");
     contentEl.addClass("cr-scope");
 
-    // 标题
     contentEl.createEl("h2", { text: this.options.title });
 
-    // 消息
     const messageEl = contentEl.createDiv({ cls: "modal-message" });
     messageEl.textContent = this.options.message;
     messageEl.style.marginBottom = "1em";
 
-    // 按钮容器
     const buttonContainer = contentEl.createDiv({ cls: "modal-button-container" });
 
-    // 取消按钮
     const cancelBtn = buttonContainer.createEl("button", {
       text: this.options.cancelText || "取消"
     });
@@ -231,7 +48,6 @@ export class ConfirmModal extends Modal {
       this.close();
     });
 
-    // 确认按钮
     const confirmBtn = buttonContainer.createEl("button", {
       text: this.options.confirmText || "确认",
       cls: this.options.danger ? "mod-warning" : "mod-cta"
@@ -241,13 +57,11 @@ export class ConfirmModal extends Modal {
       this.close();
     });
 
-    // 设置焦点到确认按钮
     setTimeout(() => confirmBtn.focus(), 10);
   }
 
   onClose(): void {
-    const { contentEl } = this;
-    contentEl.empty();
+    this.contentEl.empty();
   }
 }
 
@@ -265,6 +79,7 @@ export class ProviderConfigModal extends Modal {
   private baseUrlInput: HTMLInputElement | null = null;
   private chatModelInput: HTMLInputElement | null = null;
   private embedModelInput: HTMLInputElement | null = null;
+  private persistToggle: boolean = true;
   private errorEl: HTMLElement | null = null;
 
   constructor(app: App, options: ProviderConfigModalOptions) {
@@ -278,11 +93,9 @@ export class ProviderConfigModal extends Modal {
     modalEl.addClass("cr-scope");
     contentEl.addClass("cr-scope");
 
-    // 标题
     const title = this.options.mode === "add" ? "添加 AI Provider" : "编辑 AI Provider";
     contentEl.createEl("h2", { text: title });
 
-    // 表单容器
     const formEl = contentEl.createDiv({ cls: "modal-form" });
 
     // Provider ID
@@ -303,7 +116,7 @@ export class ProviderConfigModal extends Modal {
     // API Key
     const apiKeySetting = new Setting(formEl)
       .setName("API Key")
-      .setDesc("您的 API 密钥");
+      .setDesc("您的 API 密钥（默认写入本地 data.json，不会上传）");
 
     this.apiKeyInput = apiKeySetting.controlEl.createEl("input", {
       type: "password",
@@ -311,7 +124,6 @@ export class ProviderConfigModal extends Modal {
       value: this.options.currentConfig?.apiKey || ""
     });
 
-    // 显示/隐藏 API Key 按钮
     apiKeySetting.addButton(button => {
       button
         .setButtonText("显示")
@@ -323,6 +135,18 @@ export class ProviderConfigModal extends Modal {
           }
         });
     });
+
+    new Setting(formEl)
+      .setName("仅本次会话保存")
+      .setDesc("开启后不会将 API Key 写入 data.json，重启需重新输入。关闭则明文存储在本地 data.json。")
+      .addToggle(toggle => {
+        this.persistToggle = this.options.currentConfig?.persistApiKey ?? true;
+        toggle
+          .setValue(!this.persistToggle)
+          .onChange(value => {
+            this.persistToggle = !value;
+          });
+      });
 
     // 自定义端点
     const baseUrlSetting = new Setting(formEl)
@@ -357,28 +181,23 @@ export class ProviderConfigModal extends Modal {
       value: this.options.currentConfig?.defaultEmbedModel || ""
     });
 
-    // 错误消息容器
     this.errorEl = formEl.createDiv({ cls: "modal-error" });
     this.errorEl.style.display = "none";
 
-    // 按钮容器
     const buttonContainer = contentEl.createDiv({ cls: "modal-button-container" });
 
-    // 取消按钮
     const cancelBtn = buttonContainer.createEl("button", { text: "取消" });
     cancelBtn.addEventListener("click", () => {
       this.options.onCancel?.();
       this.close();
     });
 
-    // 保存按钮
     const saveBtn = buttonContainer.createEl("button", {
       text: "保存",
       cls: "mod-cta"
     });
     saveBtn.addEventListener("click", () => this.handleSave());
 
-    // 设置焦点
     setTimeout(() => {
       if (this.options.mode === "add") {
         this.providerIdInput?.focus();
@@ -389,14 +208,12 @@ export class ProviderConfigModal extends Modal {
   }
 
   private async handleSave(): Promise<void> {
-    // 获取表单值
     const providerId = this.providerIdInput?.value.trim() || "";
     const apiKey = this.apiKeyInput?.value.trim() || "";
     const baseUrl = this.baseUrlInput?.value.trim() || "";
     const chatModel = this.chatModelInput?.value.trim() || "";
     const embedModel = this.embedModelInput?.value.trim() || "";
 
-    // 验证
     if (!providerId) {
       this.showError("请输入 Provider ID");
       return;
@@ -407,7 +224,6 @@ export class ProviderConfigModal extends Modal {
       return;
     }
 
-    // 验证自定义端点 URL
     if (baseUrl) {
       const urlError = this.validateUrl(baseUrl);
       if (urlError) {
@@ -416,13 +232,13 @@ export class ProviderConfigModal extends Modal {
       }
     }
 
-    // 构建配置
     const config: ProviderConfig = {
       apiKey,
       baseUrl: baseUrl || undefined,
       defaultChatModel: chatModel || "gpt-4o",
       defaultEmbedModel: embedModel || "text-embedding-3-small",
-      enabled: this.options.currentConfig?.enabled ?? true
+      enabled: this.options.currentConfig?.enabled ?? true,
+      persistApiKey: this.persistToggle
     };
 
     try {
@@ -434,15 +250,12 @@ export class ProviderConfigModal extends Modal {
   }
 
   private validateUrl(url: string): string | null {
-    // 必须以 http:// 或 https:// 开头
     if (!/^https?:\/\/.+/.test(url)) {
       return "URL 必须以 http:// 或 https:// 开头";
     }
-
-    // 尝试解析 URL
     try {
       new URL(url);
-      return null; // 有效
+      return null;
     } catch {
       return "无效的 URL 格式";
     }
@@ -458,7 +271,6 @@ export class ProviderConfigModal extends Modal {
   }
 
   onClose(): void {
-    const { contentEl } = this;
-    contentEl.empty();
+    this.contentEl.empty();
   }
 }

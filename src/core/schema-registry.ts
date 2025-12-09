@@ -14,7 +14,7 @@ import { CRType } from "../types";
 /**
  * JSON Schema 类型定义
  */
-export type JSONSchema = {
+type JSONSchema = {
   $schema?: string;
   type: string;
   required?: string[];
@@ -22,7 +22,7 @@ export type JSONSchema = {
   additionalProperties?: boolean;
 };
 
-export type JSONSchemaProperty = {
+type JSONSchemaProperty = {
   type: string;
   description?: string;
   minLength?: number;
@@ -138,8 +138,15 @@ const DOMAIN_SCHEMA: JSONSchema = {
     // 问题空间：该领域的涌现议题列表
     issues: {
       type: "array",
-      description: "该领域的涌现议题列表（wikilink）",
-      items: { type: "string" }
+      description: "该领域的涌现议题列表",
+      items: {
+        type: "object",
+        required: ["name", "description"],
+        properties: {
+          name: { type: "string", description: "议题名称" },
+          description: { type: "string", description: "议题描述" }
+        }
+      }
     },
     // 综合理解
     holistic_understanding: {
@@ -153,11 +160,10 @@ const DOMAIN_SCHEMA: JSONSchema = {
       description: "子领域划分（仅在领域可继续划分时给出）",
       items: {
         type: "object",
-        required: ["name", "dimension", "description"],
+        required: ["name", "description"],
         properties: {
-          name: { type: "string", description: "子领域名称（wikilink）" },
-          dimension: { type: "string", description: "划分维度" },
-          description: { type: "string", description: "简要描述" }
+          name: { type: "string", description: "子领域名称" },
+          description: { type: "string", description: "详细定义和范围" }
         }
       }
     },
@@ -180,39 +186,67 @@ const ISSUE_SCHEMA: JSONSchema = {
   $schema: "http://json-schema.org/draft-07/schema#",
   type: "object",
   required: [
+    "definition",
     "core_tension",
     "significance",
+    "epistemic_barrier",
+    "counter_intuition",
     "historical_genesis",
-    "structural_analysis",
+    "sub_issues",
     "stakeholder_perspectives",
     "boundary_conditions",
     "theories",
     "holistic_understanding"
   ],
   properties: {
+    // 形式定义
+    definition: {
+      type: "string",
+      description: "形式定义（属+种差），清晰陈述问题/张力的本质",
+      minLength: 50
+    },
     // 矛盾律：必须表述为 "X vs Y" 格式
     core_tension: {
       type: "string",
-      description: "核心张力，必须表述为 'X vs Y' 格式",
+      description: "核心张力，必须表述为 'Concept A vs Concept B' 格式",
       pattern: "^.+ vs .+$"
     },
     // 价值论：为什么这是个问题？
     significance: {
       type: "string",
-      description: "为什么这是个问题？该议题的重要性和影响范围",
+      description: "详细解释为什么这个议题至关重要，理论后果或现实影响",
+      minLength: 50
+    },
+    // 认识论障碍
+    epistemic_barrier: {
+      type: "string",
+      description: "该议题未解决的根本原因（如：缺乏实证数据、逻辑悖论、定义模糊）",
+      minLength: 50
+    },
+    // 反直觉性
+    counter_intuition: {
+      type: "string",
+      description: "该议题如何挑战常识或直觉理解",
       minLength: 50
     },
     // 时间性：该议题何时被识别？
     historical_genesis: {
       type: "string",
-      description: "该议题何时被识别？什么事件触发了它？",
+      description: "问题的起源故事，关键事件、日期和人物",
       minLength: 50
     },
-    // 分解：将议题拆解为子问题
-    structural_analysis: {
-      type: "string",
-      description: "将议题拆解为子问题，揭示内部逻辑结构",
-      minLength: 50
+    // 子议题
+    sub_issues: {
+      type: "array",
+      description: "子问题列表",
+      items: {
+        type: "object",
+        required: ["name", "description"],
+        properties: {
+          name: { type: "string", description: "子议题名称" },
+          description: { type: "string", description: "子问题的详细定义" }
+        }
+      }
     },
     // 主体间性：不同立场的人如何看待此议题？
     stakeholder_perspectives: {
@@ -222,8 +256,8 @@ const ISSUE_SCHEMA: JSONSchema = {
         type: "object",
         required: ["stakeholder", "perspective"],
         properties: {
-          stakeholder: { type: "string", description: "利益相关方" },
-          perspective: { type: "string", description: "该方的立场和观点" }
+          stakeholder: { type: "string", description: "群体/学派名称" },
+          perspective: { type: "string", description: "该方的具体立场或解释" }
         }
       },
       minItems: 2
@@ -231,7 +265,7 @@ const ISSUE_SCHEMA: JSONSchema = {
     // 否定性定义：在什么条件下该议题不成立？
     boundary_conditions: {
       type: "array",
-      description: "在什么条件下该议题不成立或不相关？",
+      description: "在什么条件下该议题不相关？范围限制",
       items: { type: "string", minLength: 10 },
       minItems: 1
     },
@@ -243,20 +277,20 @@ const ISSUE_SCHEMA: JSONSchema = {
         type: "object",
         required: ["name", "status", "brief"],
         properties: {
-          name: { type: "string", description: "理论名称（wikilink）" },
+          name: { type: "string", description: "理论名称" },
           status: { 
             type: "string", 
             enum: ["mainstream", "marginal", "falsified"],
             description: "主流/边缘/已证伪" 
           },
-          brief: { type: "string", description: "简要说明" }
+          brief: { type: "string", description: "该理论如何尝试解决主要议题" }
         }
       }
     },
     // 综合理解
     holistic_understanding: {
       type: "string",
-      description: "综合上述信息，如何整体理解该议题？",
+      description: "哲学世界观，该议题如何重构现实/认知",
       minLength: 100
     }
   }
@@ -617,51 +651,57 @@ const MECHANISM_SCHEMA: JSONSchema = {
 const STANDARDIZE_CLASSIFY_SCHEMA: JSONSchema = {
   $schema: "http://json-schema.org/draft-07/schema#",
   type: "object",
-  required: ["Domain", "Issue", "Theory", "Entity", "Mechanism"],
+  required: ["classification_result"],
   properties: {
-    Domain: {
+    classification_result: {
       type: "object",
-      required: ["chinese", "english", "confidences"],
+      required: ["Domain", "Issue", "Theory", "Entity", "Mechanism"],
       properties: {
-        chinese: { type: "string", minLength: 1 },
-        english: { type: "string", minLength: 1 },
-        confidences: { type: "number", minimum: 0, maximum: 1 }
-      }
-    },
-    Issue: {
-      type: "object",
-      required: ["chinese", "english", "confidences"],
-      properties: {
-        chinese: { type: "string", minLength: 1 },
-        english: { type: "string", minLength: 1 },
-        confidences: { type: "number", minimum: 0, maximum: 1 }
-      }
-    },
-    Theory: {
-      type: "object",
-      required: ["chinese", "english", "confidences"],
-      properties: {
-        chinese: { type: "string", minLength: 1 },
-        english: { type: "string", minLength: 1 },
-        confidences: { type: "number", minimum: 0, maximum: 1 }
-      }
-    },
-    Entity: {
-      type: "object",
-      required: ["chinese", "english", "confidences"],
-      properties: {
-        chinese: { type: "string", minLength: 1 },
-        english: { type: "string", minLength: 1 },
-        confidences: { type: "number", minimum: 0, maximum: 1 }
-      }
-    },
-    Mechanism: {
-      type: "object",
-      required: ["chinese", "english", "confidences"],
-      properties: {
-        chinese: { type: "string", minLength: 1 },
-        english: { type: "string", minLength: 1 },
-        confidences: { type: "number", minimum: 0, maximum: 1 }
+        Domain: {
+          type: "object",
+          required: ["standard_name_cn", "standard_name_en", "confidence_score"],
+          properties: {
+            standard_name_cn: { type: "string", minLength: 1 },
+            standard_name_en: { type: "string", minLength: 1 },
+            confidence_score: { type: "number", minimum: 0, maximum: 1 }
+          }
+        },
+        Issue: {
+          type: "object",
+          required: ["standard_name_cn", "standard_name_en", "confidence_score"],
+          properties: {
+            standard_name_cn: { type: "string", minLength: 1 },
+            standard_name_en: { type: "string", minLength: 1 },
+            confidence_score: { type: "number", minimum: 0, maximum: 1 }
+          }
+        },
+        Theory: {
+          type: "object",
+          required: ["standard_name_cn", "standard_name_en", "confidence_score"],
+          properties: {
+            standard_name_cn: { type: "string", minLength: 1 },
+            standard_name_en: { type: "string", minLength: 1 },
+            confidence_score: { type: "number", minimum: 0, maximum: 1 }
+          }
+        },
+        Entity: {
+          type: "object",
+          required: ["standard_name_cn", "standard_name_en", "confidence_score"],
+          properties: {
+            standard_name_cn: { type: "string", minLength: 1 },
+            standard_name_en: { type: "string", minLength: 1 },
+            confidence_score: { type: "number", minimum: 0, maximum: 1 }
+          }
+        },
+        Mechanism: {
+          type: "object",
+          required: ["standard_name_cn", "standard_name_en", "confidence_score"],
+          properties: {
+            standard_name_cn: { type: "string", minLength: 1 },
+            standard_name_en: { type: "string", minLength: 1 },
+            confidence_score: { type: "number", minimum: 0, maximum: 1 }
+          }
+        }
       }
     }
   }
@@ -756,7 +796,7 @@ const FIELD_DESCRIPTIONS: Record<CRType, FieldDescription[]> = {
 // SchemaRegistry 实现类
 // ============================================================================
 
-export class SchemaRegistryImpl implements ISchemaRegistry {
+class SchemaRegistryImpl implements ISchemaRegistry {
   /**
    * 检查是否为有效的知识类型
    * 遵循设计文档 G-03：知识类型属于有限有序集合 K = {Domain, Issue, Theory, Entity, Mechanism}
@@ -866,6 +906,3 @@ export class SchemaRegistryImpl implements ISchemaRegistry {
 
 // 导出单例实例
 export const schemaRegistry = new SchemaRegistryImpl();
-
-// 导出类型和常量
-export { SCHEMAS, VALIDATION_RULES, STANDARDIZE_CLASSIFY_SCHEMA };

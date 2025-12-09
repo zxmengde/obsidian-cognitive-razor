@@ -17,9 +17,6 @@ import { Plugin, Menu } from "obsidian";
 import type { QueueStatus } from "../types";
 import { formatStatusBadgeText } from "./status-badge-format";
 
-// 重新导出格式化函数，保持向后兼容
-export { formatStatusBadgeText } from "./status-badge-format";
-
 /**
  * StatusBadge 组件
  */

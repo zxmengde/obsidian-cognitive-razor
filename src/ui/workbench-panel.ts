@@ -40,11 +40,11 @@ interface SectionCollapseState {
 /**
  * 重复对排序顺序
  */
-type DuplicateSortOrder = 
-  | "similarity-desc" 
-  | "similarity-asc" 
-  | "time-desc" 
-  | "time-asc" 
+type DuplicateSortOrder =
+  | "similarity-desc"
+  | "similarity-asc"
+  | "time-desc"
+  | "time-asc"
   | "type";
 
 /**
@@ -68,7 +68,7 @@ export class WorkbenchPanel extends ItemView {
   private plugin: CognitiveRazorPlugin | null = null;
   private taskQueue: TaskQueue | null = null;
   private pipelineUnsubscribe: (() => void) | null = null;
-  
+
   // 标准化相关
   private standardizeBtn: HTMLButtonElement | null = null;
   private standardizedResultContainer: HTMLElement | null = null;
@@ -76,6 +76,7 @@ export class WorkbenchPanel extends ItemView {
   private currentStandardizedData: StandardizedConcept | null = null;
   private currentPipelineId: string | null = null;
   private pipelineContexts: Map<string, PipelineContext> = new Map();
+  private pendingConceptInput: string | null = null;
 
   // 重复对管理相关
   private selectedDuplicates: Set<string> = new Set();
@@ -97,7 +98,7 @@ export class WorkbenchPanel extends ItemView {
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
   }
-  
+
   /**
    * 设置插件引用
    * 自动从插件组件中获取 TaskQueue 和 MergeHandler
@@ -151,6 +152,16 @@ export class WorkbenchPanel extends ItemView {
 
     // 订阅管线事件以更新状态/确认按钮
     this.subscribePipelineEvents();
+
+    // 如果有快速创建的待处理输入，在渲染完成后直接触发标准化流程
+    if (this.pendingConceptInput) {
+      const value = this.pendingConceptInput;
+      this.pendingConceptInput = null;
+      if (this.conceptInput) {
+        this.conceptInput.value = value;
+      }
+      void this.handleStandardize(value);
+    }
   }
 
   async onClose(): Promise<void> {
@@ -164,18 +175,18 @@ export class WorkbenchPanel extends ItemView {
       this.pipelineUnsubscribe();
       this.pipelineUnsubscribe = null;
     }
+    this.pendingConceptInput = null;
   }
-
   /**
    * 渲染创建概念区域（可折叠）
    * Requirements: 5.1
    * 
-   * 修改：使用极简单行输入框设计
+   * 修改：使用 Modern Search Bar 设计 (Google/Bing 风格)
    */
   private renderCreateConceptSection(container: HTMLElement): void {
     const section = container.createDiv({ cls: "cr-section cr-create-concept" });
-    
-    // 可折叠标题
+
+    // 可折叠标题 (保持原样)
     const header = this.createCollapsibleHeader(
       section,
       this.t("workbench.createConcept.title"),
@@ -185,34 +196,39 @@ export class WorkbenchPanel extends ItemView {
     // 内容容器（可折叠）
     const content = section.createDiv({ cls: "cr-section-content" });
     this.sectionContents.set("createConcept", content);
-    
+
     // 根据折叠状态设置显示
     if (this.collapseState.createConcept) {
       content.addClass("cr-collapsed");
     }
 
-    // 超级极简输入框 - 只有输入框和提交按钮（全宽）
-    const inputWrapper = content.createDiv({ cls: "cr-minimal-input cr-minimal-input-fullwidth" });
-    
-    // 输入框
-    this.conceptInput = inputWrapper.createEl("input", {
+    // Modern Search Container
+    const searchContainer = content.createDiv({ cls: "cr-modern-search-container" });
+
+    // 1. Search Icon (Left)
+    const searchIcon = searchContainer.createDiv({ cls: "cr-search-icon" });
+    searchIcon.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>`;
+
+    // 2. Input Field
+    this.conceptInput = searchContainer.createEl("input", {
       type: "text",
-      cls: "cr-minimal-input-field",
+      cls: "cr-modern-search-input",
       attr: {
         placeholder: this.t("workbench.createConcept.placeholder"),
         "aria-label": this.t("workbench.createConcept.placeholder")
       }
     });
 
-    // 提交按钮（圆形图标按钮）
-    this.standardizeBtn = inputWrapper.createEl("button", {
-      cls: "cr-minimal-submit-btn",
+    // 3. Action Button (Right)
+    this.standardizeBtn = searchContainer.createEl("button", {
+      cls: "cr-search-action-btn",
       attr: {
         "aria-label": this.t("workbench.createConcept.startButton"),
-        "title": "Enter"
+        "title": "Standardize (Enter)"
       }
     });
-    this.standardizeBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>`;
+    // Initial Icon: Arrow Right
+    this.standardizeBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>`;
 
     this.standardizeBtn.addEventListener("click", () => {
       this.handleStandardize();
@@ -237,24 +253,21 @@ export class WorkbenchPanel extends ItemView {
     }
   }
 
-  /**
-   * 获取国际化文本
-   */
   private t(path: string): string {
     if (!this.plugin) return path;
-    
+
     const i18n = this.plugin.getComponents().i18n;
     if (!i18n) return path;
-    
+
     const translations = i18n.t();
     const keys = path.split('.');
     let value: any = translations;
-    
+
     for (const key of keys) {
       value = value?.[key];
       if (value === undefined) return path;
     }
-    
+
     return typeof value === 'string' ? value : path;
   }
 
@@ -264,7 +277,7 @@ export class WorkbenchPanel extends ItemView {
    */
   private renderDuplicatesSection(container: HTMLElement): void {
     const section = container.createDiv({ cls: "cr-section cr-duplicates" });
-    
+
     // 可折叠标题（带徽章）
     const header = this.createCollapsibleHeader(
       section,
@@ -272,13 +285,13 @@ export class WorkbenchPanel extends ItemView {
       "duplicates",
       true // 显示徽章
     );
-    
+
     // 徽章已在 createCollapsibleHeader 中创建
 
     // 内容容器（可折叠）
     const content = section.createDiv({ cls: "cr-section-content" });
     this.sectionContents.set("duplicates", content);
-    
+
     // 根据折叠状态设置显示
     if (this.collapseState.duplicates) {
       content.addClass("cr-collapsed");
@@ -286,12 +299,12 @@ export class WorkbenchPanel extends ItemView {
 
     // 控制按钮组
     const controls = content.createDiv({ cls: "cr-duplicates-controls" });
-    
+
     // 排序选择器
     const sortContainer = controls.createDiv({ cls: "cr-sort-container" });
-    sortContainer.createEl("label", { 
-      text: this.t("workbench.duplicates.sortBy"), 
-      cls: "cr-control-label" 
+    sortContainer.createEl("label", {
+      text: this.t("workbench.duplicates.sortBy"),
+      cls: "cr-control-label"
     });
     const sortSelect = sortContainer.createEl("select", { cls: "cr-sort-select" });
     sortSelect.createEl("option", { text: this.t("workbench.duplicates.sortBy") + " " + this.t("workbench.queueStatus.completed"), value: "similarity-desc" });
@@ -306,9 +319,9 @@ export class WorkbenchPanel extends ItemView {
 
     // 类型筛选器
     const filterContainer = controls.createDiv({ cls: "cr-filter-container" });
-    filterContainer.createEl("label", { 
-      text: this.t("workbench.duplicates.filterBy"), 
-      cls: "cr-control-label" 
+    filterContainer.createEl("label", {
+      text: this.t("workbench.duplicates.filterBy"),
+      cls: "cr-control-label"
     });
     const filterSelect = filterContainer.createEl("select", { cls: "cr-filter-select" });
     filterSelect.createEl("option", { text: "All", value: "all" });
@@ -324,7 +337,7 @@ export class WorkbenchPanel extends ItemView {
 
     // 批量操作按钮
     const batchActions = content.createDiv({ cls: "cr-batch-actions" });
-    
+
     const selectAllBtn = batchActions.createEl("button", {
       text: this.t("workbench.duplicates.selectAll"),
       cls: "cr-btn-small",
@@ -364,7 +377,7 @@ export class WorkbenchPanel extends ItemView {
    */
   private renderQueueStatusSection(container: HTMLElement): void {
     const section = container.createDiv({ cls: "cr-section cr-queue-status" });
-    
+
     // 可折叠标题
     this.createCollapsibleHeader(
       section,
@@ -375,7 +388,7 @@ export class WorkbenchPanel extends ItemView {
     // 内容容器（可折叠）
     const content = section.createDiv({ cls: "cr-section-content" });
     this.sectionContents.set("queueStatus", content);
-    
+
     // 根据折叠状态设置显示
     if (this.collapseState.queueStatus) {
       content.addClass("cr-collapsed");
@@ -407,7 +420,7 @@ export class WorkbenchPanel extends ItemView {
    */
   private renderRecentOpsSection(container: HTMLElement): void {
     const section = container.createDiv({ cls: "cr-section cr-recent-ops" });
-    
+
     // 可折叠标题
     this.createCollapsibleHeader(
       section,
@@ -418,7 +431,7 @@ export class WorkbenchPanel extends ItemView {
     // 内容容器（可折叠）
     const content = section.createDiv({ cls: "cr-section-content" });
     this.sectionContents.set("recentOps", content);
-    
+
     // 根据折叠状态设置显示
     if (this.collapseState.recentOps) {
       content.addClass("cr-collapsed");
@@ -426,7 +439,7 @@ export class WorkbenchPanel extends ItemView {
 
     // 工具栏
     const toolbar = content.createDiv({ cls: "cr-recent-ops-toolbar" });
-    
+
     const refreshBtn = toolbar.createEl("button", {
       text: "刷新",
       cls: "cr-btn-small",
@@ -468,20 +481,20 @@ export class WorkbenchPanel extends ItemView {
     header.setAttr("role", "button");
     header.setAttr("tabindex", "0");
     header.setAttr("aria-expanded", String(!this.collapseState[sectionKey]));
-    
+
     // 折叠图标
     const collapseIcon = header.createEl("span", {
       cls: "cr-collapse-icon",
       attr: { "aria-hidden": "true" }
     });
     collapseIcon.textContent = this.collapseState[sectionKey] ? "▶" : "▼";
-    
+
     // 标题
-    const titleEl = header.createEl("h3", { 
+    const titleEl = header.createEl("h3", {
       text: title,
       cls: "cr-section-title"
     });
-    
+
     // 徽章（可选）
     if (showBadge) {
       const badge = header.createEl("span", {
@@ -490,7 +503,7 @@ export class WorkbenchPanel extends ItemView {
       });
       badge.textContent = "0";
     }
-    
+
     // 点击切换折叠状态
     header.addEventListener("click", (e) => {
       // 防止点击徽章时触发折叠
@@ -509,10 +522,10 @@ export class WorkbenchPanel extends ItemView {
         header.setAttr("aria-expanded", String(!this.collapseState[sectionKey]));
       }
     });
-    
+
     // 添加可点击样式
     header.addClass("cr-clickable");
-    
+
     return header;
   }
 
@@ -527,10 +540,10 @@ export class WorkbenchPanel extends ItemView {
   ): void {
     // 切换状态
     this.collapseState[sectionKey] = !this.collapseState[sectionKey];
-    
+
     // 更新图标
     icon.textContent = this.collapseState[sectionKey] ? "▶" : "▼";
-    
+
     // 更新内容显示
     const content = this.sectionContents.get(sectionKey);
     if (content) {
@@ -546,31 +559,36 @@ export class WorkbenchPanel extends ItemView {
    * 处理标准化（直接调用 API，不进入任务队列）
    * Requirements: 5.1
    */
-  private async handleStandardize(): Promise<void> {
-    if (!this.conceptInput || !this.plugin) {
+  private async handleStandardize(descriptionOverride?: string): Promise<void> {
+    if (!this.plugin) {
       new Notice(this.t("workbench.notifications.systemNotInitialized"));
       return;
     }
 
-    const description = this.conceptInput.value.trim();
+    const description = (descriptionOverride ?? this.conceptInput?.value ?? "").trim();
     if (!description) {
       new Notice(this.t("workbench.notifications.enterDescription"));
       return;
     }
 
-    // 禁用按钮，防止重复点击
+    // 确保输入框与传入值同步
+    if (this.conceptInput) {
+      this.conceptInput.value = description;
+    }
+
+    // 禁用按钮并显示加载状态
     if (this.standardizeBtn) {
       this.standardizeBtn.disabled = true;
-      this.standardizeBtn.textContent = this.t("workbench.createConcept.standardizing");
+      this.standardizeBtn.innerHTML = `<div class="cr-loading-spinner" style="width: 16px; height: 16px; border-width: 2px;"></div>`;
     }
 
     try {
       const components = this.plugin.getComponents();
       const po = components.pipelineOrchestrator;
-      
+
       // 直接调用标准化 API（不入队）
       const result = await po.standardizeDirect(description);
-      
+
       if (!result.ok) {
         new Notice(`${this.t("workbench.notifications.standardizeFailed")}: ${result.error.message}`);
         return;
@@ -578,10 +596,10 @@ export class WorkbenchPanel extends ItemView {
 
       // 保存标准化结果
       this.currentStandardizedData = result.value;
-      
+
       // 显示类型置信度表格
       this.renderTypeConfidenceTable(result.value);
-      
+
       new Notice(this.t("workbench.notifications.standardizeComplete"));
     } catch (error) {
       console.error("标准化失败:", error);
@@ -593,12 +611,32 @@ export class WorkbenchPanel extends ItemView {
   }
 
   /**
+   * 从命令入口快速创建概念：复用标准化 → 选择类型流程
+   */
+  public async startQuickCreate(description: string): Promise<void> {
+    const value = description.trim();
+    if (!value) {
+      new Notice(this.t("workbench.notifications.enterDescription"));
+      return;
+    }
+
+    this.pendingConceptInput = value;
+
+    // 视图已渲染时直接触发标准化，否则等待 onOpen 消费 pendingConceptInput
+    if (this.conceptInput) {
+      this.conceptInput.value = value;
+      await this.handleStandardize(value);
+      this.pendingConceptInput = null;
+    }
+  }
+
+  /**
    * 重置标准化按钮
    */
   private resetStandardizeButton(): void {
     if (this.standardizeBtn) {
       this.standardizeBtn.disabled = false;
-      this.standardizeBtn.textContent = this.t("workbench.createConcept.startButton");
+      this.standardizeBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>`;
     }
   }
 
@@ -630,7 +668,7 @@ export class WorkbenchPanel extends ItemView {
 
     // 创建表格
     const table = this.typeConfidenceTableContainer.createEl("table", { cls: "cr-confidence-table" });
-    
+
     // 表头
     const thead = table.createEl("thead");
     const headerRow = thead.createEl("tr");
@@ -653,19 +691,19 @@ export class WorkbenchPanel extends ItemView {
     // 渲染每一行
     typeConfidences.forEach(({ type, confidence }) => {
       const row = tbody.createEl("tr", { cls: "cr-confidence-row" });
-      
+
       // 类型名称列
       const typeCell = row.createEl("td", { cls: "cr-type-cell" });
       typeCell.createEl("span", { text: type, cls: "cr-type-name" });
-      
+
       // 标准名称列
       const nameCell = row.createEl("td", { cls: "cr-name-cell" });
       const typeName = standardizedData.standardNames[type];
-      nameCell.createEl("span", { 
+      nameCell.createEl("span", {
         text: `${typeName.chinese} (${typeName.english})`,
         cls: "cr-standard-name"
       });
-      
+
       // 置信度列
       const confidenceCell = row.createEl("td", { cls: "cr-confidence-cell" });
       const confidenceBar = confidenceCell.createDiv({ cls: "cr-confidence-bar" });
@@ -675,7 +713,7 @@ export class WorkbenchPanel extends ItemView {
         text: `${(confidence * 100).toFixed(1)}%`,
         cls: "cr-confidence-percentage"
       });
-      
+
       // 操作列
       const actionCell = row.createEl("td", { cls: "cr-action-cell" });
       const createBtn = actionCell.createEl("button", {
@@ -683,7 +721,7 @@ export class WorkbenchPanel extends ItemView {
         cls: "mod-cta cr-create-btn",
         attr: { "aria-label": `${this.t("workbench.createConcept.create")} ${type}` }
       });
-      
+
       // 绑定创建按钮点击事件（任务 10.4）
       createBtn.addEventListener("click", () => {
         this.handleCreateConcept(type, standardizedData);
@@ -710,10 +748,10 @@ export class WorkbenchPanel extends ItemView {
     try {
       const components = this.plugin.getComponents();
       const po = components.pipelineOrchestrator;
-      
+
       // 使用标准化数据和选择的类型启动创建管线
       const result = po.startCreatePipelineWithStandardized(standardizedData, selectedType);
-      
+
       if (!result.ok) {
         new Notice(`${this.t("workbench.notifications.createFailed")}: ${result.error.message}`);
         return;
@@ -721,7 +759,7 @@ export class WorkbenchPanel extends ItemView {
 
       this.currentPipelineId = result.value;
       new Notice(`${this.t("workbench.notifications.conceptCreated")} (${result.value})`);
-      
+
       // 隐藏表格并重置输入（任务 10.5）
       this.hideTypeConfidenceTable();
       this.resetConceptInput();
@@ -790,8 +828,14 @@ export class WorkbenchPanel extends ItemView {
       failed: "失败"
     };
 
+    // 创建管线的过渡界面不再展示，直接交由管线列表与通知处理
+    if (ctx.kind === "create") {
+      this.standardizedResultContainer.style.display = "none";
+      return;
+    }
+
     // 非创建管线：直接提供预览/确认入口
-    if (ctx.kind && ctx.kind !== "create") {
+    if (ctx.kind) {
       const summary = this.standardizedResultContainer.createDiv({ cls: "cr-pipeline-summary" });
       summary.createEl("div", { text: `管线类型：${ctx.kind === "incremental" ? "增量改进" : "合并"}` });
       summary.createEl("div", { text: `阶段：${stageLabel[ctx.stage] || ctx.stage}` });
@@ -828,14 +872,14 @@ export class WorkbenchPanel extends ItemView {
       const form = this.standardizedResultContainer.createDiv({ cls: "cr-standardize-preview" });
 
       const currentName = ctx.standardizedData.standardNames[ctx.type];
-      
+
       form.createEl("label", { text: "中文名称：" });
       const nameCnInput = form.createEl("input", {
         type: "text",
         value: currentName.chinese,
         cls: "cr-input"
       });
-      
+
       form.createEl("label", { text: "英文名称：" });
       const nameEnInput = form.createEl("input", {
         type: "text",
@@ -861,7 +905,7 @@ export class WorkbenchPanel extends ItemView {
           chinese: nameCnInput.value.trim() || currentName.chinese,
           english: nameEnInput.value.trim() || currentName.english
         };
-        
+
         await this.applyStandardizationEdits(ctx.pipelineId, {
           standardNames: updatedNames,
           primaryType: typeSelect.value ? typeSelect.value as CRType : undefined
@@ -1008,17 +1052,20 @@ export class WorkbenchPanel extends ItemView {
     }
 
     // 渲染重复对列表（卡片样式）
+    // 渲染重复对列表（List View 模式）
     sortedDuplicates.forEach(pair => {
-      const card = this.duplicatesContainer!.createDiv({ cls: "cr-duplicate-card" });
-      
-      // 选择框
-      const checkbox = card.createEl("input", {
+      // 列表项容器 - 使用 cr-duplicate-card 类但样式已修改为列表项
+      const item = this.duplicatesContainer!.createDiv({ cls: "cr-duplicate-card" });
+
+      // 1. 选择框
+      const checkbox = item.createEl("input", {
         type: "checkbox",
         cls: "cr-duplicate-checkbox",
-        attr: { "aria-label": `选择重复对 ${pair.noteA.name} 和 ${pair.noteB.name}` }
+        attr: { "aria-label": `Select ${pair.noteA.name} and ${pair.noteB.name}` }
       });
       checkbox.checked = this.selectedDuplicates.has(pair.id);
-      checkbox.addEventListener("change", () => {
+      checkbox.addEventListener("change", (e) => {
+        e.stopPropagation();
         if (checkbox.checked) {
           this.selectedDuplicates.add(pair.id);
         } else {
@@ -1026,66 +1073,85 @@ export class WorkbenchPanel extends ItemView {
         }
       });
 
-      // 卡片内容
-      const content = card.createDiv({ cls: "cr-duplicate-content cr-clickable" });
-      
-      // 标题行
-      const titleRow = content.createDiv({ cls: "cr-duplicate-title-row" });
-      titleRow.createEl("div", {
-        text: `${pair.noteA.name} ↔ ${pair.noteB.name}`,
-        cls: "cr-duplicate-names"
+      // 2. 主要内容区 (点击预览)
+      const content = item.createDiv({ cls: "cr-duplicate-content cr-clickable" });
+
+      // Flex 布局行
+      const row = content.createDiv({ cls: "cr-duplicate-row" });
+      row.style.display = "flex";
+      row.style.alignItems = "center";
+      row.style.gap = "var(--cr-spacing-md)";
+      row.style.width = "100%";
+
+      // 名称
+      const namesDigest = row.createEl("span", {
+        text: `${pair.noteA.name} · ${pair.noteB.name}`,
+        cls: "cr-duplicate-names",
+        attr: { "title": `${pair.noteA.path}\n${pair.noteB.path}` }
       });
-      
-      // 元信息行
-      const metaRow = content.createDiv({ cls: "cr-duplicate-meta-row" });
-      
-      // 相似度指示器
-      const similarityBar = metaRow.createDiv({ cls: "cr-similarity-bar" });
-      const similarityFill = similarityBar.createDiv({ cls: "cr-similarity-fill" });
-      similarityFill.style.width = `${pair.similarity * 100}%`;
-      
-      metaRow.createEl("span", {
-        text: `${(pair.similarity * 100).toFixed(1)}%`,
-        cls: "cr-similarity-text"
+      namesDigest.style.flex = "1";
+      namesDigest.style.fontSize = "0.95em";
+      namesDigest.style.fontWeight = "500";
+      // namesDigest.style.color = "var(--text-normal)"; // 已由 CSS 处理
+
+      // 相似度 Pill
+      const similarityPill = row.createEl("span", {
+        cls: "cr-similarity-pill",
+        text: `${(pair.similarity * 100).toFixed(0)}%`
+      });
+      similarityPill.style.fontWeight = "600";
+      similarityPill.style.fontSize = "0.85em";
+      similarityPill.style.padding = "2px 6px";
+      similarityPill.style.borderRadius = "4px";
+      similarityPill.style.backgroundColor = "var(--background-modifier-border)";
+      similarityPill.style.color = pair.similarity > 0.8 ? "var(--color-green)" : "var(--color-orange)";
+
+      // 类型 Badge
+      row.createEl("span", {
+        text: pair.type.substring(0, 1), // 仅显示首字母
+        cls: "cr-type-tag",
+        attr: { "title": pair.type }
       });
 
-      metaRow.createEl("span", {
-        text: pair.type,
-        cls: "cr-type-tag"
-      });
-
-      metaRow.createEl("span", {
-        text: this.formatTime(pair.detectedAt),
-        cls: "cr-time-text"
-      });
-
-      // 点击内容区域显示预览
+      // 点击事件
       content.addEventListener("click", () => {
         this.handleShowDuplicatePreview(pair);
       });
 
-      // 操作按钮
-      const actions = card.createDiv({ cls: "cr-duplicate-card-actions" });
-      
+      // 3. 悬浮操作按钮 (Actions)
+      const actions = item.createDiv({ cls: "cr-duplicate-card-actions" });
+      actions.style.opacity = "0"; // 默认隐藏
+      actions.style.transition = "opacity 0.2s ease";
+
+      // Merge Button (Icon)
       const mergeBtn = actions.createEl("button", {
-        text: this.t("workbench.duplicates.merge"),
-        cls: "mod-cta cr-btn-small",
-        attr: { "aria-label": `${this.t("workbench.duplicates.merge")} ${pair.noteA.name} ${pair.noteB.name}` }
+        cls: "cr-icon-btn", // 需要在 CSS 中确保这个类有合适的样式，或者内联
+        attr: { "aria-label": this.t("workbench.duplicates.merge"), "title": this.t("workbench.duplicates.merge") }
       });
+      mergeBtn.addClass("cr-btn-small"); // 复用现有类
+      mergeBtn.style.padding = "4px";
+      mergeBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 9l3 3-3 3"></path><line x1="15" y1="4" x2="15" y2="20"></line></svg>`;
       mergeBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         this.handleMergeDuplicate(pair);
       });
 
+      // Dismiss Button (Icon)
       const dismissBtn = actions.createEl("button", {
-        text: this.t("workbench.duplicates.dismiss"),
-        cls: "cr-btn-small",
-        attr: { "aria-label": `${this.t("workbench.duplicates.dismiss")} ${pair.noteA.name} ${pair.noteB.name}` }
+        cls: "cr-icon-btn",
+        attr: { "aria-label": this.t("workbench.duplicates.dismiss"), "title": this.t("workbench.duplicates.dismiss") }
       });
+      dismissBtn.addClass("cr-btn-small");
+      dismissBtn.style.padding = "4px";
+      dismissBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
       dismissBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         this.handleDismissDuplicate(pair);
       });
+
+      // Hover effect logic
+      item.addEventListener("mouseenter", () => { actions.style.opacity = "1"; });
+      item.addEventListener("mouseleave", () => { actions.style.opacity = "0"; });
     });
   }
 
@@ -1094,7 +1160,7 @@ export class WorkbenchPanel extends ItemView {
    */
   private sortDuplicates(duplicates: DuplicatePair[]): DuplicatePair[] {
     const sorted = [...duplicates];
-    
+
     switch (this.currentSortOrder) {
       case "similarity-desc":
         sorted.sort((a, b) => b.similarity - a.similarity);
@@ -1112,7 +1178,7 @@ export class WorkbenchPanel extends ItemView {
         sorted.sort((a, b) => a.type.localeCompare(b.type));
         break;
     }
-    
+
     return sorted;
   }
 
@@ -1127,11 +1193,11 @@ export class WorkbenchPanel extends ItemView {
 
     checkboxes.forEach(cb => {
       cb.checked = !allChecked;
-      const pairId = this.allDuplicates.find(p => 
-        cb.parentElement?.textContent?.includes(p.noteA.name) && 
+      const pairId = this.allDuplicates.find(p =>
+        cb.parentElement?.textContent?.includes(p.noteA.name) &&
         cb.parentElement?.textContent?.includes(p.noteB.name)
       )?.id;
-      
+
       if (pairId) {
         if (!allChecked) {
           this.selectedDuplicates.add(pairId);
@@ -1162,18 +1228,9 @@ export class WorkbenchPanel extends ItemView {
     let successCount = 0;
     let failCount = 0;
 
-    const po = this.plugin?.getComponents().pipelineOrchestrator;
-    for (const pairId of this.selectedDuplicates) {
-      const pair = this.allDuplicates.find(p => p.id === pairId);
-      if (pair && po) {
-        const result = await po.startMergePipeline(pair);
-        if (result.ok) {
-          successCount++;
-        } else {
-          failCount++;
-        }
-      }
-    }
+    // 注意：合并功能已被弃用，等待重构
+    new Notice("合并功能已被弃用，等待重构");
+    return;
 
     new Notice(`${this.t("workbench.notifications.batchMergeComplete")}: ${successCount} / ${failCount}`);
     this.selectedDuplicates.clear();
@@ -1300,7 +1357,7 @@ export class WorkbenchPanel extends ItemView {
    */
   private renderEmptyDuplicates(): void {
     if (!this.duplicatesContainer) return;
-    
+
     this.duplicatesContainer.createEl("div", {
       text: this.t("workbench.duplicates.empty"),
       cls: "cr-empty-state"
@@ -1323,7 +1380,7 @@ export class WorkbenchPanel extends ItemView {
 
     this.queueStatusContainer.empty();
 
-    const grid = this.queueStatusContainer.createDiv({ 
+    const grid = this.queueStatusContainer.createDiv({
       cls: "cr-queue-grid",
       attr: { role: "region", "aria-label": "队列统计信息" }
     });
@@ -1332,7 +1389,7 @@ export class WorkbenchPanel extends ItemView {
     const statusIndicator = grid.createDiv({ cls: "cr-queue-indicator" });
     const statusIcon = statusIndicator.createEl("span", {
       cls: status.paused ? "cr-status-paused" : "cr-status-active",
-      attr: { 
+      attr: {
         "aria-label": status.paused ? this.t("workbench.queueStatus.queuePaused") : this.t("workbench.queueStatus.queueRunning"),
         role: "status"
       }
@@ -1350,14 +1407,14 @@ export class WorkbenchPanel extends ItemView {
     this.createStatItem(grid, this.t("workbench.queueStatus.failed"), status.failed, "cr-stat-failed");
 
     // 操作按钮
-    const actions = this.queueStatusContainer.createDiv({ 
+    const actions = this.queueStatusContainer.createDiv({
       cls: "cr-queue-actions",
       attr: { role: "group", "aria-label": "队列操作" }
     });
-    
+
     const toggleBtn = actions.createEl("button", {
       text: status.paused ? this.t("workbench.queueStatus.resumeQueue") : this.t("workbench.queueStatus.pauseQueue"),
-      attr: { 
+      attr: {
         "aria-label": status.paused ? this.t("workbench.queueStatus.resumeQueue") : this.t("workbench.queueStatus.pauseQueue"),
         tabindex: "0"
       }
@@ -1375,7 +1432,7 @@ export class WorkbenchPanel extends ItemView {
 
     const viewBtn = actions.createEl("button", {
       text: this.t("workbench.queueStatus.viewDetails"),
-      attr: { 
+      attr: {
         "aria-label": this.t("workbench.queueStatus.viewDetails"),
         tabindex: "0"
       }
@@ -1402,20 +1459,20 @@ export class WorkbenchPanel extends ItemView {
     value: number,
     className: string
   ): void {
-    const item = container.createDiv({ 
+    const item = container.createDiv({
       cls: `cr-stat-item ${className}`,
-      attr: { 
+      attr: {
         role: "group",
         "aria-label": `${label}: ${value}`
       }
     });
-    item.createEl("div", { 
-      text: value.toString(), 
+    item.createEl("div", {
+      text: value.toString(),
       cls: "cr-stat-value",
       attr: { "aria-hidden": "true" }
     });
-    item.createEl("div", { 
-      text: label, 
+    item.createEl("div", {
+      text: label,
       cls: "cr-stat-label",
       attr: { "aria-hidden": "true" }
     });
@@ -1426,7 +1483,7 @@ export class WorkbenchPanel extends ItemView {
    */
   private renderEmptyRecentOps(): void {
     if (!this.recentOpsContainer) return;
-    
+
     this.recentOpsContainer.createEl("div", {
       text: "暂无可撤销的操作",
       cls: "cr-empty-state"
@@ -1444,7 +1501,7 @@ export class WorkbenchPanel extends ItemView {
 
     const undoManager = this.plugin.getComponents().undoManager;
     const result = await undoManager.listSnapshots();
-    
+
     if (!result.ok || result.value.length === 0) {
       this.renderEmptyRecentOps();
       return;
@@ -1460,13 +1517,13 @@ export class WorkbenchPanel extends ItemView {
 
     recentSnapshots.forEach(snapshot => {
       const item = this.recentOpsContainer!.createDiv({ cls: "cr-recent-op-item" });
-      
+
       const info = item.createDiv({ cls: "cr-op-info" });
-      
+
       // 操作描述
       const description = `${this.getOperationDisplayName(snapshot.taskId)}: ${snapshot.path.split("/").pop()}`;
       info.createEl("div", { text: description, cls: "cr-op-description" });
-      
+
       // 时间
       info.createEl("div", { text: this.formatTime(snapshot.created), cls: "cr-op-time" });
 
@@ -1521,7 +1578,7 @@ export class WorkbenchPanel extends ItemView {
     }
 
     const undoManager = this.plugin.getComponents().undoManager;
-    
+
     try {
       // 恢复快照
       const restoreResult = await undoManager.restoreSnapshot(snapshotId);
@@ -1545,7 +1602,7 @@ export class WorkbenchPanel extends ItemView {
 
       // 删除快照
       await undoManager.deleteSnapshot(snapshotId);
-      
+
       // 刷新列表
       await this.refreshRecentOps();
     } catch (error) {
@@ -1573,7 +1630,7 @@ export class WorkbenchPanel extends ItemView {
 
     const undoManager = this.plugin.getComponents().undoManager;
     const result = await undoManager.clearAllSnapshots();
-    
+
     if (result.ok) {
       new Notice(`已清空 ${result.value} 个快照`);
       await this.refreshRecentOps();
@@ -1597,7 +1654,7 @@ export class WorkbenchPanel extends ItemView {
 
     operations.forEach(op => {
       const item = this.recentOpsContainer!.createDiv({ cls: "cr-recent-op-item" });
-      
+
       const info = item.createDiv({ cls: "cr-op-info" });
       info.createEl("div", { text: op.description, cls: "cr-op-description" });
       info.createEl("div", { text: this.formatTime(op.timestamp), cls: "cr-op-time" });
@@ -1622,14 +1679,14 @@ export class WorkbenchPanel extends ItemView {
     const date = new Date(timestamp);
     const now = new Date();
     const diff = now.getTime() - date.getTime();
-    
+
     const minutes = Math.floor(diff / 60000);
     if (minutes < 1) return "刚刚";
     if (minutes < 60) return `${minutes} 分钟前`;
-    
+
     const hours = Math.floor(minutes / 60);
     if (hours < 24) return `${hours} 小时前`;
-    
+
     const days = Math.floor(hours / 24);
     return `${days} 天前`;
   }
@@ -1678,7 +1735,7 @@ export class WorkbenchPanel extends ItemView {
     }
 
     const undoManager = this.plugin.getComponents().undoManager;
-    
+
     try {
       // 恢复快照
       const restoreResult = await undoManager.restoreSnapshot(snapshotId);
@@ -1783,17 +1840,9 @@ export class WorkbenchPanel extends ItemView {
       return;
     }
 
-    const po = this.plugin.getComponents().pipelineOrchestrator;
-    const result = await po.startMergePipeline(pair);
-    if (!result.ok) {
-      new Notice(`${this.t("workbench.notifications.createFailed")}: ${result.error.message}`);
-      return;
-    }
-
-    new Notice(this.t("workbench.notifications.mergeTaskCreated"));
-    
-    // 刷新重复列表
-    this.refreshDuplicates();
+    // 注意：合并功能已被弃用，等待重构
+    new Notice("合并功能已被弃用，等待重构");
+    return;
   }
 
   /**
@@ -1817,14 +1866,14 @@ export class WorkbenchPanel extends ItemView {
 
       // 更新状态为 dismissed
       const result = await duplicateManager.updateStatus(pair.id, "dismissed");
-      
+
       if (!result.ok) {
         new Notice(`${this.t("workbench.notifications.dismissFailed")}: ${result.error.message}`);
         return;
       }
 
       new Notice(`${this.t("workbench.notifications.dismissSuccess")}: ${pair.noteA.name} ↔ ${pair.noteB.name}`);
-      
+
       // 刷新重复列表
       this.refreshDuplicates();
     } catch (error) {
@@ -1857,7 +1906,7 @@ export class WorkbenchPanel extends ItemView {
   /**
    * 处理切换队列状态
    */
-  private handleToggleQueue(): void {
+  private async handleToggleQueue(): Promise<void> {
     if (!this.plugin) {
       new Notice(this.t("workbench.notifications.pluginNotInitialized"));
       return;
@@ -1865,15 +1914,15 @@ export class WorkbenchPanel extends ItemView {
 
     const taskQueue = this.plugin.getComponents().taskQueue;
     const status = taskQueue.getStatus();
-    
+
     if (status.paused) {
-      taskQueue.resume();
+      await taskQueue.resume();
       new Notice(this.t("workbench.notifications.queueResumed"));
     } else {
-      taskQueue.pause();
+      await taskQueue.pause();
       new Notice(this.t("workbench.notifications.queuePaused"));
     }
-    
+
     // 刷新显示
     this.updateQueueStatus(taskQueue.getStatus());
   }
@@ -1894,9 +1943,9 @@ export class WorkbenchPanel extends ItemView {
     this.pipelineUnsubscribe = po.subscribe((event) => {
       // A-UCD-03: 写入完成后显示撤销通知
       if (event.type === "pipeline_completed" && event.context.snapshotId && event.context.filePath) {
-        const kindLabel = event.context.kind === "create" ? "创建" 
-          : event.context.kind === "incremental" ? "增量改进" 
-          : "合并";
+        const kindLabel = event.context.kind === "create" ? "创建"
+          : event.context.kind === "incremental" ? "增量改进"
+            : "合并";
         this.showUndoToast(
           `${kindLabel}完成: ${event.context.filePath.split("/").pop()}`,
           event.context.snapshotId,
@@ -1992,7 +2041,7 @@ export class WorkbenchPanel extends ItemView {
 
     // 查找或创建内联详情容器
     let detailsContainer = this.queueStatusContainer.querySelector(".cr-queue-details") as HTMLElement;
-    
+
     if (!detailsContainer) {
       // 首次点击，创建详情容器
       detailsContainer = this.queueStatusContainer.createDiv({ cls: "cr-queue-details" });
@@ -2032,7 +2081,7 @@ export class WorkbenchPanel extends ItemView {
 
     // 创建任务列表表格
     const table = container.createEl("table", { cls: "cr-queue-details-table" });
-    
+
     // 表头
     const thead = table.createEl("thead");
     const headerRow = thead.createEl("tr");
@@ -2047,27 +2096,27 @@ export class WorkbenchPanel extends ItemView {
 
     allTasks.forEach(task => {
       const row = tbody.createEl("tr", { cls: `cr-task-row cr-task-${task.state.toLowerCase()}` });
-      
+
       // 任务 ID
       row.createEl("td", {
         text: task.id.substring(0, 8),
         cls: "cr-task-id",
         attr: { title: task.id }
       });
-      
+
       // 任务类型
       row.createEl("td", {
         text: task.taskType,
         cls: "cr-task-type"
       });
-      
+
       // 状态
       const statusCell = row.createEl("td", { cls: "cr-task-status" });
       const statusBadge = statusCell.createEl("span", {
         cls: `cr-status-badge cr-status-${task.state.toLowerCase()}`,
         text: this.getStatusLabel(task.state)
       });
-      
+
       // 进度
       const progressCell = row.createEl("td", { cls: "cr-task-progress" });
       // TaskRecord 没有 progress 字段，显示尝试次数
@@ -2076,10 +2125,10 @@ export class WorkbenchPanel extends ItemView {
       } else {
         progressCell.textContent = "-";
       }
-      
+
       // 操作按钮
       const actionCell = row.createEl("td", { cls: "cr-task-actions" });
-      
+
       if (task.state === "Pending") {
         const cancelBtn = actionCell.createEl("button", {
           text: this.t("workbench.queueStatus.cancel"),
@@ -2108,7 +2157,7 @@ export class WorkbenchPanel extends ItemView {
 
     // 批量操作按钮
     const batchActions = container.createDiv({ cls: "cr-queue-batch-actions" });
-    
+
     const retryFailedBtn = batchActions.createEl("button", {
       text: this.t("workbench.queueStatus.retryFailed"),
       cls: "cr-btn-small mod-cta",
@@ -2117,7 +2166,7 @@ export class WorkbenchPanel extends ItemView {
     retryFailedBtn.addEventListener("click", () => {
       this.handleRetryFailed();
     });
-    
+
     const clearCompletedBtn = batchActions.createEl("button", {
       text: this.t("workbench.queueStatus.clearCompleted"),
       cls: "cr-btn-small",
@@ -2159,7 +2208,7 @@ export class WorkbenchPanel extends ItemView {
 
     const taskQueue = this.plugin.getComponents().taskQueue;
     const result = taskQueue.cancel(taskId);
-    
+
     if (result.ok) {
       new Notice(this.t("workbench.notifications.taskCancelled"));
       // 刷新详情显示
@@ -2182,7 +2231,7 @@ export class WorkbenchPanel extends ItemView {
 
     const taskQueue = this.plugin.getComponents().taskQueue;
     const result = await taskQueue.retryFailed();
-    
+
     if (result.ok) {
       new Notice(`${this.t("workbench.notifications.retryComplete")}: ${result.value}`);
       // 刷新详情显示
@@ -2205,7 +2254,7 @@ export class WorkbenchPanel extends ItemView {
 
     const taskQueue = this.plugin.getComponents().taskQueue;
     const result = await taskQueue.clearCompleted();
-    
+
     if (result.ok) {
       new Notice(`${this.t("workbench.notifications.clearComplete")}: ${result.value}`);
       // 刷新详情显示
@@ -2229,7 +2278,7 @@ export class WorkbenchPanel extends ItemView {
 
     const taskQueue = this.plugin.getComponents().taskQueue;
     const allTasks = taskQueue.getAllTasks();
-    
+
     // 手动取消所有失败的任务
     let clearedCount = 0;
     allTasks.forEach(task => {
@@ -2240,9 +2289,9 @@ export class WorkbenchPanel extends ItemView {
         }
       }
     });
-    
+
     new Notice(`已清除 ${clearedCount} 个失败的任务`);
-    
+
     // 刷新详情显示
     const detailsContainer = this.queueStatusContainer?.querySelector(".cr-queue-details") as HTMLElement;
     if (detailsContainer) {
@@ -2263,7 +2312,7 @@ export class WorkbenchPanel extends ItemView {
 
     const undoManager = this.plugin.getComponents().undoManager;
     const result = await undoManager.restoreSnapshot(operationId);
-    
+
     if (result.ok) {
       // 恢复快照内容到文件（使用 path 而不是 filePath）
       const snapshot = result.value;
@@ -2287,7 +2336,7 @@ export class WorkbenchPanel extends ItemView {
 /**
  * 最近操作记录
  */
-export interface RecentOperation {
+interface RecentOperation {
   /** 操作 ID */
   id: string;
   /** 操作描述 */
@@ -2339,7 +2388,7 @@ class DuplicatePreviewModal extends Modal {
 
     // 元信息卡片
     const metaCard = contentEl.createDiv({ cls: "cr-preview-meta-card" });
-    
+
     const similarityRow = metaCard.createDiv({ cls: "cr-meta-row" });
     similarityRow.createEl("span", { text: "相似度:", cls: "cr-meta-label" });
     const similarityValue = similarityRow.createDiv({ cls: "cr-meta-value" });
@@ -2381,7 +2430,7 @@ class DuplicatePreviewModal extends Modal {
 
     // 并排视图
     const sideBySideView = previewContainer.createDiv({ cls: "cr-side-by-side-view" });
-    
+
     // 笔记 A 面板
     const panelA = sideBySideView.createDiv({ cls: "cr-preview-panel" });
     const headerA = panelA.createDiv({ cls: "cr-panel-header" });
@@ -2579,7 +2628,7 @@ class MergeHistoryModal extends Modal {
     }
 
     const historyContainer = contentEl.createDiv({ cls: "cr-history-container" });
-    
+
     // 标签页
     const tabContainer = historyContainer.createDiv({ cls: "cr-history-tabs" });
     const mergedTab = tabContainer.createEl("button", {
@@ -2703,7 +2752,7 @@ class MergeHistoryModal extends Modal {
     if (!duplicateManager) return;
 
     const result = await duplicateManager.updateStatus(pairId, "pending");
-    
+
     if (result.ok) {
       new Notice("已撤销忽略，重复对已恢复到待处理列表");
       await this.renderList();
@@ -2733,7 +2782,7 @@ class MergeHistoryModal extends Modal {
     if (!duplicateManager) return;
 
     const result = await duplicateManager.removePair(pairId);
-    
+
     if (result.ok) {
       new Notice("已删除重复对记录");
       await this.renderList();

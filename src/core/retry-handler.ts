@@ -18,7 +18,7 @@ import { Result, Err, TaskError, ILogger } from "../types";
 /**
  * 错误类别
  */
-export type ErrorCategory =
+type ErrorCategory =
   | "CONTENT_ERROR"         // 内容错误 (E001-E010)
   | "NETWORK_ERROR"         // 网络错误 (E100-E102)
   | "AUTH_ERROR"            // 认证错误 (E103)
@@ -29,7 +29,7 @@ export type ErrorCategory =
 /**
  * 重试策略类型
  */
-export type RetryStrategy =
+type RetryStrategy =
   | "immediate"             // 立即重试（内容错误）
   | "exponential"           // 指数退避重试（网络错误）
   | "no_retry";             // 不重试（终止错误）
@@ -37,7 +37,7 @@ export type RetryStrategy =
 /**
  * 错误分类结果
  */
-export interface ErrorClassification {
+interface ErrorClassification {
   /** 错误类别 */
   category: ErrorCategory;
   /** 重试策略 */
@@ -55,7 +55,7 @@ export interface ErrorClassification {
 /**
  * 重试配置
  */
-export interface RetryConfig {
+interface RetryConfig {
   /** 最大重试次数 */
   maxAttempts: number;
   /** 重试策略 */
@@ -72,7 +72,7 @@ export interface RetryConfig {
  * 内容错误的默认配置
  * Requirements 6.1: 内容错误 (E001-E010) 立即重试，最多 3 次
  */
-export const CONTENT_ERROR_CONFIG: RetryConfig = {
+const CONTENT_ERROR_CONFIG: RetryConfig = {
   maxAttempts: 3,
   strategy: "immediate",
 };
@@ -95,7 +95,7 @@ export const NETWORK_ERROR_CONFIG: RetryConfig = {
  * 内容错误码 (E001-E010)
  * 这些错误可以通过重试（附加错误历史）来修复
  */
-export const CONTENT_ERROR_CODES = [
+const CONTENT_ERROR_CODES = [
   "E001", // PARSE_ERROR - 输出非 JSON 或解析失败
   "E002", // SCHEMA_VIOLATION - 不符合输出 Schema
   "E003", // MISSING_REQUIRED - 必填字段缺失
@@ -112,7 +112,7 @@ export const CONTENT_ERROR_CODES = [
  * 网络错误码 (E100-E102)
  * 这些错误可以通过指数退避重试来恢复
  */
-export const NETWORK_ERROR_CODES = [
+const NETWORK_ERROR_CODES = [
   "E100", // API_ERROR - Provider 返回 5xx/4xx
   "E101", // TIMEOUT - 请求超时
   "E102", // RATE_LIMIT - 触发速率限制 (429)
@@ -122,7 +122,7 @@ export const NETWORK_ERROR_CODES = [
  * 认证错误码 (E103)
  * 终止错误，不重试
  */
-export const AUTH_ERROR_CODES = [
+const AUTH_ERROR_CODES = [
   "E103", // AUTH_ERROR - 认证失败 (401/403)
 ] as const;
 
@@ -130,7 +130,7 @@ export const AUTH_ERROR_CODES = [
  * 能力错误码 (E200-E201)
  * 终止错误，不重试
  */
-export const CAPABILITY_ERROR_CODES = [
+const CAPABILITY_ERROR_CODES = [
   "E200", // SAFETY_VIOLATION - 触发安全边界
   "E201", // CAPABILITY_MISMATCH - Provider 能力不足
 ] as const;
@@ -139,7 +139,7 @@ export const CAPABILITY_ERROR_CODES = [
  * 文件系统错误码 (E300-E304)
  * 终止错误，不重试
  */
-export const FILE_SYSTEM_ERROR_CODES = [
+const FILE_SYSTEM_ERROR_CODES = [
   "E300", // FILE_WRITE_ERROR - 文件写入失败
   "E301", // FILE_READ_ERROR - 文件读取失败
   "E302", // INDEX_CORRUPTED - 向量索引损坏
@@ -150,7 +150,7 @@ export const FILE_SYSTEM_ERROR_CODES = [
 /**
  * 所有终止错误码（不重试）
  */
-export const TERMINAL_ERROR_CODES = [
+const TERMINAL_ERROR_CODES = [
   ...AUTH_ERROR_CODES,
   ...CAPABILITY_ERROR_CODES,
   ...FILE_SYSTEM_ERROR_CODES,
@@ -164,7 +164,7 @@ export const TERMINAL_ERROR_CODES = [
  * RetryHandler 接口
  * 遵循设计文档 section 7.4 定义
  */
-export interface IRetryHandler {
+interface IRetryHandler {
   /**
    * 带重试的异步操作执行
    * @param operation 要执行的操作
@@ -722,21 +722,16 @@ export class RetryHandler implements IRetryHandler {
 // ============================================================================
 
 /**
- * 延迟执行
+ * 延迟执行（内部使用）
  */
-export function delay(ms: number): Promise<void> {
+function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
  * 带重试的异步操作包装器（便捷函数）
- * 
- * @param operation 要执行的操作
- * @param retryHandler 重试处理器
- * @param config 重试配置
- * @returns 操作结果
  */
-export async function withRetry<T>(
+async function withRetry<T>(
   operation: (attempt: number, errorHistory: TaskError[]) => Promise<Result<T>>,
   retryHandler: RetryHandler,
   config?: Partial<RetryConfig>

@@ -16,28 +16,22 @@
 
 import { Plugin, Notice, MarkdownView, TFile, Menu } from "obsidian";
 import { IncrementalImproveModal } from "./incremental-improve-modal";
+import { SimpleInputModal } from "./simple-input-modal";
+import { WorkbenchPanel, WORKBENCH_VIEW_TYPE } from "./workbench-panel";
 import { TaskQueue } from "../core/task-queue";
-import { 
-  COMMAND_PREFIX, 
-  COMMAND_IDS, 
-  getCoreCommandIds, 
-  isValidCommandId 
-} from "./command-utils";
+import { COMMAND_IDS, getCoreCommandIds, isValidCommandId } from "./command-utils";
 import type CognitiveRazorPlugin from "../../main";
 import type { DuplicatePair, SnapshotMetadata } from "../types";
-
-// 重新导出常量，保持向后兼容
-export { COMMAND_PREFIX, COMMAND_IDS };
 
 /**
  * 命令处理器类型
  */
-export type CommandHandler = () => void | Promise<void>;
+type CommandHandler = () => void | Promise<void>;
 
 /**
  * 命令定义
  */
-export interface CommandDefinition {
+interface CommandDefinition {
   /** 命令 ID（格式：cognitive-razor:<action>-<target>） */
   id: string;
   /** 命令名称 */
@@ -289,25 +283,28 @@ export class CommandDispatcher {
   /**
    * 打开工作台
    */
-  private async openWorkbench(): Promise<void> {
+  private async openWorkbench(): Promise<WorkbenchPanel | null> {
     const { workspace } = this.plugin.app;
     
     // 检查是否已经打开
-    const existing = workspace.getLeavesOfType("cognitive-razor-workbench");
+    const existing = workspace.getLeavesOfType(WORKBENCH_VIEW_TYPE);
     if (existing.length > 0) {
       workspace.revealLeaf(existing[0]);
-      return;
+      return existing[0].view as WorkbenchPanel;
     }
 
     // 在右侧边栏打开
     const leaf = workspace.getRightLeaf(false);
     if (leaf) {
       await leaf.setViewState({
-        type: "cognitive-razor-workbench",
+        type: WORKBENCH_VIEW_TYPE,
         active: true
       });
       workspace.revealLeaf(leaf);
+      return leaf.view as WorkbenchPanel;
     }
+
+    return null;
   }
 
   /**
@@ -317,31 +314,16 @@ export class CommandDispatcher {
    * 遵循设计文档 A-UCD-01：三步完成核心任务
    */
   private async createConcept(): Promise<void> {
-    // 动态导入 Modal 和 PipelineOrchestrator
-    const { CreateConceptModal } = await import("./create-concept-modal");
-    const components = (this.plugin as any).getComponents?.();
-    
-    if (!components?.pipelineOrchestrator) {
-      new Notice("系统未初始化，请稍后再试");
-      return;
-    }
-
-    const pipelineOrchestrator = components.pipelineOrchestrator;
-
-    // 打开创建概念对话框（极简版）
-    const modal = new CreateConceptModal(this.plugin.app, {
-      onSubmit: (input) => {
-        // 启动创建管线（不指定类型，由 AI 自动判断）
-        const result = pipelineOrchestrator.startCreatePipeline(input);
-        
-        if (result.ok) {
-          new Notice(`创建管线已启动: ${result.value}`);
-          
-          // 打开工作台以查看进度
-          this.openWorkbench();
-        } else {
-          new Notice(`启动失败: ${result.error.message}`);
+    const modal = new SimpleInputModal(this.plugin.app, {
+      title: "创建概念",
+      placeholder: "输入概念描述...",
+      onSubmit: async (input) => {
+        const workbench = await this.openWorkbench();
+        if (!workbench) {
+          new Notice("工作台未初始化，请稍后重试");
+          return;
         }
+        await workbench.startQuickCreate(input);
       },
       onCancel: () => {
         // 用户取消，不做任何操作

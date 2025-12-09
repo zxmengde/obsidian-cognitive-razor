@@ -12,12 +12,12 @@ import { Modal, App, Notice } from "obsidian";
 /**
  * 差异类型
  */
-export type DiffType = "add" | "remove" | "modify";
+type DiffType = "add" | "remove" | "modify";
 
 /**
  * 差异项
  */
-export interface DiffItem {
+interface DiffItem {
   /** 差异类型 */
   type: DiffType;
   /** 字段路径 */
@@ -33,7 +33,7 @@ export interface DiffItem {
 /**
  * 差异数据
  */
-export interface DiffData {
+interface DiffData {
   /** 文件路径 */
   filePath: string;
   /** 原始内容 */
@@ -47,9 +47,9 @@ export interface DiffData {
 }
 
 /**
- * DiffView 模态框
+ * DiffView 模态框（完整版，预留供未来使用）
  */
-export class DiffView extends Modal {
+class DiffView extends Modal {
   private diffData: DiffData;
   private onAccept: (selectedDiffs: DiffItem[]) => void;
   private onReject: () => void;
@@ -473,9 +473,9 @@ export class DiffView extends Modal {
   }
 }
 
-export type LineDiffType = "add" | "remove" | "context";
+type LineDiffType = "add" | "remove" | "context";
 
-export interface LineDiff {
+interface LineDiff {
   type: LineDiffType;
   text: string;
 }

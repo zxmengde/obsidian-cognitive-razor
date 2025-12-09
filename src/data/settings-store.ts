@@ -10,7 +10,7 @@
  * - Requirements 10.5: 设置变更时通知所有订阅者
  */
 
-import { ISettingsStore, PluginSettings, ProviderConfig, Result, ok, err, DirectoryScheme, TaskType } from "../types";
+import { ISettingsStore, PluginSettings, ProviderConfig, Result, ok, err, DirectoryScheme, TaskType, TaskModelConfig } from "../types";
 import { Plugin } from "obsidian";
 
 /**
@@ -49,6 +49,9 @@ export const REQUIRED_SETTINGS_FIELDS: (keyof PluginSettings)[] = [
   "embeddingDimension",
 ];
 
+const DEFAULT_TASK_TIMEOUT_MS = 3 * 60 * 1000;
+const DEFAULT_TASK_HISTORY = 300;
+
 /**
  * DirectoryScheme 必填字段列表
  */
@@ -68,8 +71,6 @@ export const TASK_TYPES: TaskType[] = [
   "standardizeClassify",
   "enrich",
   "reason:new",
-  "reason:incremental",
-  "reason:merge",
   "ground",
 ];
 
@@ -121,6 +122,8 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   concurrency: 1,
   autoRetry: true,
   maxRetryAttempts: 3,
+  taskTimeoutMs: DEFAULT_TASK_TIMEOUT_MS,
+  maxTaskHistory: DEFAULT_TASK_HISTORY,
   
   // 快照设置
   maxSnapshots: 100,
@@ -154,16 +157,6 @@ export const DEFAULT_SETTINGS: PluginSettings = {
       model: "gpt-4o",
       temperature: 0.7,
     },
-    "reason:incremental": {
-      providerId: "",
-      model: "gpt-4o",
-      temperature: 0.7,
-    },
-    "reason:merge": {
-      providerId: "",
-      model: "gpt-4o",
-      temperature: 0.5,
-    },
     ground: {
       providerId: "",
       model: "gpt-4o",
@@ -173,6 +166,9 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   
   // 日志级别
   logLevel: "info",
+
+  // 日志格式（json: 结构化, pretty: 易读, compact: 紧凑）
+  logFormat: "json",
   
   // 嵌入向量维度（text-embedding-3-small 支持 512-3072，默认 1536）
   embeddingDimension: 1536,
@@ -255,11 +251,21 @@ export class SettingsStore implements ISettingsStore {
    */
   async updateSettings(partial: Partial<PluginSettings>): Promise<Result<void>> {
     try {
-      // 合并设置
-      this.settings = {
-        ...this.settings,
-        ...partial,
-      };
+      const mergeResult = this.mergePartialSettings(partial);
+      if (!mergeResult.ok) {
+        return mergeResult;
+      }
+
+      const validation = this.validateSettingsDetailed(mergeResult.value);
+      if (!validation.valid) {
+        return err(
+          "E001",
+          "设置校验失败",
+          { errors: validation.errors }
+        );
+      }
+
+      this.settings = mergeResult.value;
 
       // 保存到磁盘
       await this.saveSettings();
@@ -281,7 +287,7 @@ export class SettingsStore implements ISettingsStore {
    * 导出设置
    */
   exportSettings(): string {
-    return JSON.stringify(this.settings, null, 2);
+    return JSON.stringify(this.serializeSettings(true), null, 2);
   }
 
   /**
@@ -367,7 +373,7 @@ export class SettingsStore implements ISettingsStore {
    * 保存设置到磁盘
    */
   private async saveSettings(): Promise<void> {
-    await this.plugin.saveData(this.settings);
+    await this.plugin.saveData(this.serializeSettings());
   }
 
   /**
@@ -378,6 +384,25 @@ export class SettingsStore implements ISettingsStore {
     for (const listener of this.listeners) {
       listener(settingsCopy);
     }
+  }
+
+  /**
+   * 序列化设置（根据 persistApiKey 处理敏感字段）
+   */
+  private serializeSettings(redactAllApiKeys = false): PluginSettings {
+    const providers: Record<string, ProviderConfig> = {};
+    for (const [id, config] of Object.entries(this.settings.providers)) {
+      providers[id] = {
+        ...config,
+        apiKey: config.persistApiKey === false || redactAllApiKeys ? "" : config.apiKey,
+        persistApiKey: config.persistApiKey ?? true
+      };
+    }
+
+    return {
+      ...this.settings,
+      providers
+    };
   }
 
   /**
@@ -616,6 +641,67 @@ export class SettingsStore implements ISettingsStore {
         expectedType: "object",
         actualType: settings.providers === null ? "null" : typeof settings.providers,
       });
+    } else {
+      for (const [providerId, providerConfig] of Object.entries(settings.providers)) {
+        if (typeof providerConfig !== "object" || providerConfig === null) {
+          errors.push({
+            field: `providers.${providerId}`,
+            message: "provider config must be an object",
+            expectedType: "ProviderConfig",
+            actualType: providerConfig === null ? "null" : typeof providerConfig
+          });
+          continue;
+        }
+        const cfg = providerConfig as ProviderConfig;
+        if (typeof cfg.apiKey !== "string") {
+          errors.push({
+            field: `providers.${providerId}.apiKey`,
+            message: "apiKey must be a string",
+            expectedType: "string",
+            actualType: typeof cfg.apiKey
+          });
+        }
+        if (cfg.baseUrl !== undefined && typeof cfg.baseUrl !== "string") {
+          errors.push({
+            field: `providers.${providerId}.baseUrl`,
+            message: "baseUrl must be a string",
+            expectedType: "string",
+            actualType: typeof cfg.baseUrl
+          });
+        }
+        if (typeof cfg.defaultChatModel !== "string") {
+          errors.push({
+            field: `providers.${providerId}.defaultChatModel`,
+            message: "defaultChatModel must be a string",
+            expectedType: "string",
+            actualType: typeof cfg.defaultChatModel
+          });
+        }
+        if (typeof cfg.defaultEmbedModel !== "string") {
+          errors.push({
+            field: `providers.${providerId}.defaultEmbedModel`,
+            message: "defaultEmbedModel must be a string",
+            expectedType: "string",
+            actualType: typeof cfg.defaultEmbedModel
+          });
+        }
+        if (typeof cfg.enabled !== "boolean") {
+          errors.push({
+            field: `providers.${providerId}.enabled`,
+            message: "enabled must be a boolean",
+            expectedType: "boolean",
+            actualType: typeof cfg.enabled
+          });
+        }
+        if (cfg.persistApiKey !== undefined && typeof cfg.persistApiKey !== "boolean") {
+          errors.push({
+            field: `providers.${providerId}.persistApiKey`,
+            message: "persistApiKey must be a boolean",
+            expectedType: "boolean",
+            actualType: typeof cfg.persistApiKey
+          });
+        }
+      }
     }
 
     // 验证 defaultProviderId 字段
@@ -663,6 +749,43 @@ export class SettingsStore implements ISettingsStore {
         expectedType: "positive integer",
         actualType: String(settings.embeddingDimension),
       });
+    }
+
+    // 任务超时
+    if (settings.taskTimeoutMs !== undefined) {
+      if (typeof settings.taskTimeoutMs !== "number") {
+        errors.push({
+          field: "taskTimeoutMs",
+          message: "taskTimeoutMs must be a number",
+          expectedType: "number",
+          actualType: typeof settings.taskTimeoutMs
+        });
+      } else if (!Number.isInteger(settings.taskTimeoutMs) || settings.taskTimeoutMs < 1000) {
+        errors.push({
+          field: "taskTimeoutMs",
+          message: "taskTimeoutMs must be an integer greater than 1000",
+          expectedType: "integer (>=1000)",
+          actualType: String(settings.taskTimeoutMs)
+        });
+      }
+    }
+
+    if (settings.maxTaskHistory !== undefined) {
+      if (typeof settings.maxTaskHistory !== "number") {
+        errors.push({
+          field: "maxTaskHistory",
+          message: "maxTaskHistory must be a number",
+          expectedType: "number",
+          actualType: typeof settings.maxTaskHistory
+        });
+      } else if (!Number.isInteger(settings.maxTaskHistory) || settings.maxTaskHistory < 50) {
+        errors.push({
+          field: "maxTaskHistory",
+          message: "maxTaskHistory must be an integer greater than 50",
+          expectedType: "integer (>=50)",
+          actualType: String(settings.maxTaskHistory)
+        });
+      }
     }
 
     return { valid: errors.length === 0, errors };
@@ -785,6 +908,142 @@ export class SettingsStore implements ISettingsStore {
   }
 
   /**
+   * 合并部分设置并进行基础类型检查
+   * 仅接受已知字段，忽略 undefined，若类型不匹配则返回错误
+   */
+  private mergePartialSettings(partial: Partial<PluginSettings>): Result<PluginSettings> {
+    const next: PluginSettings = {
+      ...this.settings,
+      directoryScheme: { ...this.settings.directoryScheme },
+      providers: { ...this.settings.providers },
+      taskModels: { ...this.settings.taskModels }
+    };
+
+    // 基础字段
+    if (partial.language !== undefined) {
+      if (partial.language !== "zh" && partial.language !== "en") {
+        return err("E001", "language 必须是 zh 或 en");
+      }
+      next.language = partial.language;
+    }
+
+    if (partial.advancedMode !== undefined) {
+      if (typeof partial.advancedMode !== "boolean") {
+        return err("E001", "advancedMode 必须是布尔值");
+      }
+      next.advancedMode = partial.advancedMode;
+    }
+
+    if (partial.namingTemplate !== undefined) {
+      if (typeof partial.namingTemplate !== "string") {
+        return err("E001", "namingTemplate 必须是字符串");
+      }
+      next.namingTemplate = partial.namingTemplate;
+    }
+
+    // 目录方案
+    if (partial.directoryScheme !== undefined) {
+      if (!this.isPlainObject(partial.directoryScheme)) {
+        return err("E001", "directoryScheme 必须是对象");
+      }
+      next.directoryScheme = {
+        ...next.directoryScheme,
+        ...partial.directoryScheme
+      };
+    }
+
+    // 数值字段
+    for (const key of [
+      "similarityThreshold",
+      "topK",
+      "concurrency",
+      "maxRetryAttempts",
+      "maxSnapshots",
+      "maxSnapshotAgeDays",
+      "embeddingDimension",
+      "taskTimeoutMs",
+      "maxTaskHistory"
+    ] as const) {
+      const result = this.applyNumberUpdate(partial, key, next);
+      if (!result.ok) {
+        return err(result.error.code, result.error.message, result.error.details);
+      }
+    }
+
+    // 布尔字段
+    for (const key of ["autoRetry", "enableGrounding"] as const) {
+      const result = this.applyBooleanUpdate(partial, key, next);
+      if (!result.ok) {
+        return err(result.error.code, result.error.message, result.error.details);
+      }
+    }
+
+    // 日志级别
+    if (partial.logLevel !== undefined) {
+      if (!["debug", "info", "warn", "error"].includes(partial.logLevel)) {
+        return err("E001", "logLevel 不合法");
+      }
+      next.logLevel = partial.logLevel as PluginSettings["logLevel"];
+    }
+
+    // Provider 配置
+    if (partial.providers !== undefined) {
+      if (!this.isPlainObject(partial.providers)) {
+        return err("E001", "providers 必须是对象");
+      }
+      const mergedProviders: Record<string, ProviderConfig> = { ...next.providers };
+      for (const [providerId, providerConfig] of Object.entries(partial.providers)) {
+        const existing = mergedProviders[providerId];
+        const normalized = this.normalizeProviderConfig(existing, providerConfig);
+        if (!normalized.ok) {
+          return normalized;
+        }
+        mergedProviders[providerId] = normalized.value;
+      }
+      next.providers = mergedProviders;
+    }
+
+    if (partial.defaultProviderId !== undefined) {
+      if (typeof partial.defaultProviderId !== "string") {
+        return err("E001", "defaultProviderId 必须是字符串");
+      }
+      next.defaultProviderId = partial.defaultProviderId;
+    }
+
+    // 任务模型
+    if (partial.taskModels !== undefined) {
+      if (!this.isPlainObject(partial.taskModels)) {
+        return err("E001", "taskModels 必须是对象");
+      }
+      const mergedTaskModels: Record<TaskType, TaskModelConfig> = { ...next.taskModels };
+      for (const [taskType, config] of Object.entries(partial.taskModels)) {
+        const existing = mergedTaskModels[taskType as TaskType];
+        if (!existing) {
+          continue;
+        }
+        if (!this.isPlainObject(config)) {
+          return err("E001", `taskModels.${taskType} 必须是对象`);
+        }
+        mergedTaskModels[taskType as TaskType] = {
+          ...existing,
+          ...(config as TaskModelConfig)
+        };
+      }
+      next.taskModels = mergedTaskModels;
+    }
+
+    // 版本号
+    if (partial.version !== undefined) {
+      if (typeof partial.version !== "string") {
+        return err("E001", "version 必须是字符串");
+      }
+      next.version = partial.version;
+    }
+
+    return ok(next);
+  }
+
+  /**
    * 合并设置（深度合并）
    */
   private mergeSettings(defaults: PluginSettings, loaded: Partial<PluginSettings>): PluginSettings {
@@ -813,7 +1072,115 @@ export class SettingsStore implements ISettingsStore {
       }
     }
 
+    // 补齐 provider 的 persistApiKey 默认值
+    for (const [providerId, config] of Object.entries((merged as PluginSettings).providers)) {
+      if (config.persistApiKey === undefined) {
+        config.persistApiKey = true;
+        (merged as PluginSettings).providers[providerId] = config;
+      }
+    }
+
     return merged;
+  }
+
+  private normalizeProviderConfig(
+    existing: ProviderConfig | undefined,
+    incoming: unknown
+  ): Result<ProviderConfig> {
+    if (!this.isPlainObject(incoming)) {
+      return err("E001", "provider 配置必须是对象");
+    }
+    const incomingConfig = incoming as Partial<ProviderConfig>;
+    const base: ProviderConfig = existing
+      ? { ...existing }
+      : {
+          apiKey: "",
+          baseUrl: undefined,
+          defaultChatModel: "gpt-4o",
+          defaultEmbedModel: "text-embedding-3-small",
+          enabled: true,
+          persistApiKey: true
+        };
+
+    if (incomingConfig.apiKey !== undefined) {
+      if (typeof incomingConfig.apiKey !== "string") {
+        return err("E001", "provider.apiKey 必须是字符串");
+      }
+      base.apiKey = incomingConfig.apiKey.trim();
+    }
+
+    if (incomingConfig.baseUrl !== undefined) {
+      if (incomingConfig.baseUrl !== null && typeof incomingConfig.baseUrl !== "string") {
+        return err("E001", "provider.baseUrl 必须是字符串");
+      }
+      base.baseUrl = incomingConfig.baseUrl?.trim() || undefined;
+    }
+
+    if (incomingConfig.defaultChatModel !== undefined) {
+      if (typeof incomingConfig.defaultChatModel !== "string") {
+        return err("E001", "provider.defaultChatModel 必须是字符串");
+      }
+      base.defaultChatModel = incomingConfig.defaultChatModel.trim();
+    }
+
+    if (incomingConfig.defaultEmbedModel !== undefined) {
+      if (typeof incomingConfig.defaultEmbedModel !== "string") {
+        return err("E001", "provider.defaultEmbedModel 必须是字符串");
+      }
+      base.defaultEmbedModel = incomingConfig.defaultEmbedModel.trim();
+    }
+
+    if (incomingConfig.enabled !== undefined) {
+      if (typeof incomingConfig.enabled !== "boolean") {
+        return err("E001", "provider.enabled 必须是布尔值");
+      }
+      base.enabled = incomingConfig.enabled;
+    }
+
+    if (incomingConfig.persistApiKey !== undefined) {
+      if (typeof incomingConfig.persistApiKey !== "boolean") {
+        return err("E001", "provider.persistApiKey 必须是布尔值");
+      }
+      base.persistApiKey = incomingConfig.persistApiKey;
+    } else if (base.persistApiKey === undefined) {
+      base.persistApiKey = true;
+    }
+
+    return ok(base);
+  }
+
+  private applyNumberUpdate(
+    partial: Partial<PluginSettings>,
+    key: keyof Pick<PluginSettings, "similarityThreshold" | "topK" | "concurrency" | "maxRetryAttempts" | "maxSnapshots" | "maxSnapshotAgeDays" | "embeddingDimension" | "taskTimeoutMs" | "maxTaskHistory">,
+    target: PluginSettings
+  ): Result<void> {
+    const value = partial[key];
+    if (value !== undefined) {
+      if (typeof value !== "number" || Number.isNaN(value)) {
+        return err("E001", `${String(key)} 必须是数字`);
+      }
+      Reflect.set(target, key, value);
+    }
+    return ok(undefined);
+  }
+
+  private applyBooleanUpdate(
+    partial: Partial<PluginSettings>,
+    key: keyof Pick<PluginSettings, "autoRetry" | "enableGrounding">,
+    target: PluginSettings
+  ): Result<void> {
+    const value = partial[key];
+    if (value !== undefined) {
+      if (typeof value !== "boolean") {
+        return err("E001", `${String(key)} 必须是布尔值`);
+      }
+      Reflect.set(target, key, value);
+    }
+    return ok(undefined);
+  }
+
+  private isPlainObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
   }
 
   // ============================================================================

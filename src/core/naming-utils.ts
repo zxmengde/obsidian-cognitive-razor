@@ -15,7 +15,7 @@ import { CRType } from "../types";
  * 
  * 遵循设计文档 5.3.2 概念签名模型
  */
-export interface ConceptSignature {
+interface ConceptSignature {
   /** 标准名（经命名模板渲染） */
   standardName: string;
   /** 别名列表 */
@@ -29,7 +29,7 @@ export interface ConceptSignature {
 /**
  * 命名模板上下文
  */
-export interface NamingTemplateContext {
+interface NamingTemplateContext {
   /** 中文名 */
   chinese: string;
   /** 英文名 */
@@ -146,11 +146,8 @@ export function createConceptSignature(
 
 /**
  * 获取类型的中文名称
- * 
- * @param type 知识类型
- * @returns 中文名称
  */
-export function getTypeChinese(type: CRType): string {
+function getTypeChinese(type: CRType): string {
   const typeMap: Record<CRType, string> = {
     Domain: "领域",
     Issue: "议题",
@@ -213,10 +210,9 @@ export function validateNamingTemplate(template: string): {
 
 /**
  * 获取默认命名模板
- * 
  * 遵循设计文档 G-10：默认格式为 `{{chinese}} ({{english}})`
  */
-export function getDefaultNamingTemplate(): string {
+function getDefaultNamingTemplate(): string {
   return "{{chinese}} ({{english}})";
 }
 
@@ -236,14 +232,9 @@ export function sanitizeFileName(name: string): string {
 
 /**
  * 获取类型对应的目录路径
- * 
  * 遵循 Requirements 3.5：根据 DirectoryScheme 配置返回目录路径
- * 
- * @param type 知识类型
- * @param scheme 目录方案
- * @returns 目录路径（不包含文件名）
  */
-export function getDirectoryForType(
+function getDirectoryForType(
   type: CRType,
   scheme: Record<CRType, string>
 ): string {

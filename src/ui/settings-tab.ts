@@ -74,8 +74,8 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
             const lang = value as "zh" | "en";
             await this.plugin.settingsStore.update({ language: lang });
             i18n.setLanguage(lang);
-            new Notice(formatMessage(t.notices.languageChanged, { 
-              language: lang === "zh" ? t.settings.language.zh : t.settings.language.en 
+            new Notice(formatMessage(t.notices.languageChanged, {
+              language: lang === "zh" ? t.settings.language.zh : t.settings.language.en
             }));
             // 刷新设置面板以应用新语言
             this.display();
@@ -90,10 +90,15 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
     const i18n = this.plugin.getI18n();
     const t = i18n.t();
 
-    containerEl.createEl("h2", { text: t.settings.provider.title });
+    const detailsEl = containerEl.createEl("details", { cls: "cr-settings-details" });
+    const summary = detailsEl.createEl("summary", { cls: "cr-settings-summary" });
+    summary.createEl("h2", { text: t.settings.provider.title, cls: "cr-settings-header" });
+    summary.createEl("div", { cls: "cr-settings-indicator" }).innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>`;
+
+    const details = detailsEl.createDiv({ cls: "cr-settings-content-wrapper" });
 
     // 添加 Provider 按钮
-    new Setting(containerEl)
+    new Setting(details)
       .setName(t.settings.provider.addButton)
       .setDesc(t.settings.provider.addDesc)
       .addButton(button => {
@@ -107,19 +112,19 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
     // 显示已配置的 Providers
     const providers = this.plugin.settings.providers;
     if (Object.keys(providers).length === 0) {
-      containerEl.createEl("p", {
+      details.createEl("p", {
         text: t.settings.provider.noProvider,
         cls: "setting-item-description"
       });
     } else {
       Object.entries(providers).forEach(([id, config]) => {
-        this.renderProviderItem(containerEl, id, config as ProviderConfig);
+        this.renderProviderItem(details, id, config as ProviderConfig);
       });
     }
 
     // 默认 Provider 选择
     if (Object.keys(providers).length > 0) {
-      new Setting(containerEl)
+      new Setting(details)
         .setName(t.settings.provider.defaultProvider)
         .setDesc(t.settings.provider.defaultProviderDesc)
         .addDropdown(dropdown => {
@@ -294,14 +299,19 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
   private renderAdvancedSettings(containerEl: HTMLElement): void {
     const i18n = this.plugin.getI18n();
     const t = i18n.t();
-    
-    containerEl.createEl("h2", { text: t.settings.advanced.title });
+
+    const detailsEl = containerEl.createEl("details", { cls: "cr-settings-details" });
+    const summary = detailsEl.createEl("summary", { cls: "cr-settings-summary" });
+    summary.createEl("h2", { text: t.settings.advanced.title, cls: "cr-settings-header" });
+    summary.createEl("div", { cls: "cr-settings-indicator" }).innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>`;
+
+    const details = detailsEl.createDiv({ cls: "cr-settings-content-wrapper" });
 
     // ============ 命名和目录配置 ============
-    containerEl.createEl("h3", { text: t.settings.advanced.namingTemplate.name });
+    details.createEl("h3", { text: t.settings.advanced.namingTemplate.name });
 
     // 命名模板
-    new Setting(containerEl)
+    new Setting(details)
       .setName(t.settings.advanced.namingTemplate.name)
       .setDesc(t.settings.advanced.namingTemplate.desc)
       .addText(text => {
@@ -315,8 +325,8 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
       });
 
     // 目录方案配置
-    containerEl.createEl("h4", { text: t.settings.advanced.directoryScheme.title });
-    containerEl.createEl("p", {
+    details.createEl("h4", { text: t.settings.advanced.directoryScheme.title });
+    details.createEl("p", {
       text: t.settings.advanced.directoryScheme.desc,
       cls: "setting-item-description"
     });
@@ -331,7 +341,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
 
     const plugin = this.plugin;
     for (const crType of crTypes) {
-      new Setting(containerEl)
+      new Setting(details)
         .setName(crType.name)
         .addText(text => {
           text
@@ -347,8 +357,8 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
     }
 
     // ============ 任务模型配置 ============
-    containerEl.createEl("h3", { text: t.settings.advanced.taskModels.title });
-    containerEl.createEl("p", {
+    details.createEl("h3", { text: t.settings.advanced.taskModels.title });
+    details.createEl("p", {
       text: t.settings.advanced.taskModels.desc,
       cls: "setting-item-description"
     });
@@ -362,23 +372,21 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
       { key: "enrich", name: t.taskTypes.enrich.name, desc: t.taskTypes.enrich.desc },
       { key: "embedding", name: t.taskTypes.embedding.name, desc: t.taskTypes.embedding.desc },
       { key: "reason:new", name: t.taskTypes["reason:new"].name, desc: t.taskTypes["reason:new"].desc },
-      { key: "reason:incremental", name: t.taskTypes["reason:incremental"].name, desc: t.taskTypes["reason:incremental"].desc },
-      { key: "reason:merge", name: t.taskTypes["reason:merge"].name, desc: t.taskTypes["reason:merge"].desc },
       { key: "ground", name: t.taskTypes.ground.name, desc: t.taskTypes.ground.desc }
     ];
 
     for (const taskType of taskTypes) {
       const taskConfig = this.plugin.settings.taskModels[taskType.key as keyof typeof this.plugin.settings.taskModels];
-      
+
       // 任务类型标题
-      containerEl.createEl("h4", { text: taskType.name });
-      containerEl.createEl("p", {
+      details.createEl("h4", { text: taskType.name });
+      details.createEl("p", {
         text: taskType.desc,
         cls: "setting-item-description"
       });
-      
+
       // Provider 和模型选择
-      new Setting(containerEl)
+      new Setting(details)
         .setName(t.settings.advanced.taskModels.providerAndModel)
         .addDropdown(dropdown => {
           // Provider 选择
@@ -413,10 +421,10 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
               await this.plugin.settingsStore.update({ taskModels });
             });
         });
-      
+
       // Temperature 参数（仅对非 embedding 任务显示）
       if (taskType.key !== "embedding") {
-        new Setting(containerEl)
+        new Setting(details)
           .setName(t.settings.advanced.temperature.name)
           .setDesc(t.settings.advanced.temperature.desc)
           .addSlider(slider => {
@@ -434,10 +442,10 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
               });
           });
       }
-      
+
       // TopP 参数（仅对非 embedding 任务显示）
       if (taskType.key !== "embedding") {
-        new Setting(containerEl)
+        new Setting(details)
           .setName(t.settings.advanced.topP.name)
           .setDesc(t.settings.advanced.topP.desc)
           .addSlider(slider => {
@@ -455,10 +463,10 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
               });
           });
       }
-      
+
       // Reasoning Effort 参数（仅对非 embedding 任务显示）
       if (taskType.key !== "embedding") {
-        new Setting(containerEl)
+        new Setting(details)
           .setName(t.settings.advanced.reasoningEffort.name)
           .setDesc(t.settings.advanced.reasoningEffort.desc)
           .addDropdown(dropdown => {
@@ -481,9 +489,9 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
     }
 
     // ============ 温度参数 ============
-    containerEl.createEl("h3", { text: "生成参数" });
+    details.createEl("h3", { text: "生成参数" });
 
-    new Setting(containerEl)
+    new Setting(details)
       .setName("默认温度 (Temperature)")
       .setDesc("控制生成内容的随机性 (0-1)，较低值更确定，较高值更创意")
       .addSlider(slider => {
@@ -492,20 +500,17 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.taskModels["reason:new"]?.temperature || 0.7)
           .setDynamicTooltip()
           .onChange(async (value) => {
-            // 更新所有 reason 任务的温度
+            // 更新 reason:new 任务的温度
             const taskModels = { ...this.plugin.settings.taskModels };
-            ["reason:new", "reason:incremental", "reason:merge"].forEach(key => {
-              const k = key as keyof typeof taskModels;
-              taskModels[k] = { ...taskModels[k], temperature: value };
-            });
+            taskModels["reason:new"] = { ...taskModels["reason:new"], temperature: value };
             await this.plugin.settingsStore.update({ taskModels });
           });
       });
 
     // ============ 去重参数 ============
-    containerEl.createEl("h3", { text: t.settings.advanced.deduplication.title });
+    details.createEl("h3", { text: t.settings.advanced.deduplication.title });
 
-    new Setting(containerEl)
+    new Setting(details)
       .setName(t.settings.similarityThreshold.name)
       .setDesc(t.settings.similarityThreshold.desc)
       .addSlider(slider => {
@@ -518,7 +523,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
           });
       });
 
-    new Setting(containerEl)
+    new Setting(details)
       .setName(t.settings.advanced.deduplication.topK)
       .setDesc(t.settings.advanced.deduplication.topKDesc)
       .addText(text => {
@@ -534,9 +539,9 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
       });
 
     // ============ 嵌入参数 ============
-    containerEl.createEl("h3", { text: t.settings.advanced.embedding.title });
+    details.createEl("h3", { text: t.settings.advanced.embedding.title });
 
-    new Setting(containerEl)
+    new Setting(details)
       .setName(t.settings.advanced.embedding.dimension)
       .setDesc(t.settings.advanced.embedding.dimensionDesc)
       .addDropdown(dropdown => {
@@ -558,9 +563,9 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
       });
 
     // ============ 功能开关 ============
-    containerEl.createEl("h3", { text: t.settings.advanced.features.title });
+    details.createEl("h3", { text: t.settings.advanced.features.title });
 
-    new Setting(containerEl)
+    new Setting(details)
       .setName(t.settings.advanced.features.enableGrounding)
       .setDesc(t.settings.advanced.features.enableGroundingDesc)
       .addToggle(toggle => {
@@ -573,9 +578,9 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
       });
 
     // ============ 队列参数 ============
-    containerEl.createEl("h3", { text: t.settings.advanced.queue.title });
+    details.createEl("h3", { text: t.settings.advanced.queue.title });
 
-    new Setting(containerEl)
+    new Setting(details)
       .setName(t.settings.concurrency.name)
       .setDesc(t.settings.concurrency.desc)
       .addText(text => {
@@ -590,7 +595,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
           });
       });
 
-    new Setting(containerEl)
+    new Setting(details)
       .setName(t.settings.advanced.queue.autoRetry)
       .setDesc(t.settings.advanced.queue.autoRetryDesc)
       .addToggle(toggle => {
@@ -601,7 +606,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
           });
       });
 
-    new Setting(containerEl)
+    new Setting(details)
       .setName(t.settings.advanced.queue.maxRetryAttempts)
       .setDesc(t.settings.advanced.queue.maxRetryAttemptsDesc)
       .addText(text => {
@@ -617,9 +622,9 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
       });
 
     // ============ 日志设置 ============
-    containerEl.createEl("h3", { text: t.settings.advanced.logging.title });
+    details.createEl("h3", { text: t.settings.advanced.logging.title });
 
-    new Setting(containerEl)
+    new Setting(details)
       .setName(t.settings.advanced.logging.logLevel)
       .setDesc(t.settings.advanced.logging.logLevelDesc)
       .addDropdown(dropdown => {
@@ -636,7 +641,24 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
           });
       });
 
-    new Setting(containerEl)
+    // 日志格式设置
+    new Setting(details)
+      .setName(t.settings.advanced.logging.logFormat ?? "日志格式")
+      .setDesc(t.settings.advanced.logging.logFormatDesc ?? "选择日志文件的输出格式")
+      .addDropdown(dropdown => {
+        dropdown
+          .addOption("json", "JSON (结构化)")
+          .addOption("pretty", "Pretty (易读)")
+          .addOption("compact", "Compact (紧凑)")
+          .setValue(this.plugin.settings.logFormat ?? "json")
+          .onChange(async (value: string) => {
+            const logFormat = value as "json" | "pretty" | "compact";
+            await this.plugin.settingsStore.update({ logFormat });
+            new Notice(`日志格式已更改为: ${logFormat}`);
+          });
+      });
+
+    new Setting(details)
       .setName(t.settings.advanced.logging.clearLogs)
       .setDesc(t.settings.advanced.logging.clearLogsDesc)
       .addButton(button => {
@@ -655,7 +677,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
   private renderImportExport(containerEl: HTMLElement): void {
     const i18n = this.plugin.getI18n();
     const t = i18n.t();
-    
+
     containerEl.createEl("h2", { text: t.settings.importExport.title });
 
     // 导出配置
@@ -834,13 +856,13 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
     const t = i18n.t();
 
     new Notice(`${t.common.loading} ${id}...`);
-    
+
     try {
       // 清除缓存并强制刷新
       const providerManager = this.plugin.getComponents().providerManager;
       providerManager.clearAvailabilityCache(id);
       const result = await providerManager.checkAvailability(id, true);
-      
+
       if (result.ok) {
         const capabilities = result.value;
         const message = formatMessage(t.notices.connectionSuccess, {
@@ -853,8 +875,8 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
         new Notice(formatMessage(t.notices.connectionFailed, { error: result.error.message }), 5000);
       }
     } catch (error) {
-      new Notice(formatMessage(t.notices.connectionFailed, { 
-        error: error instanceof Error ? error.message : String(error) 
+      new Notice(formatMessage(t.notices.connectionFailed, {
+        error: error instanceof Error ? error.message : String(error)
       }), 5000);
     }
   }
@@ -878,11 +900,11 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
     try {
       // 获取日志文件路径
       const logPath = `${this.plugin.manifest.dir}/logs`;
-      
+
       // 检查日志目录是否存在
       const adapter = this.app.vault.adapter;
       const exists = await adapter.exists(logPath);
-      
+
       if (exists) {
         // 删除日志目录
         await adapter.rmdir(logPath, true);

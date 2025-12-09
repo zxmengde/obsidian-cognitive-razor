@@ -38,6 +38,9 @@ export class TaskQueue implements ITaskQueue {
   private schedulerInterval: NodeJS.Timeout | null;
   private lastPersistedContent: string | null;
   private saveQueueChain: Promise<void>;
+  private isScheduling: boolean;
+  private static readonly DEFAULT_TASK_TIMEOUT_MS = 3 * 60 * 1000;
+  private static readonly DEFAULT_TASK_HISTORY_LIMIT = 300;
 
   constructor(
     lockManager: ILockManager,
@@ -61,6 +64,7 @@ export class TaskQueue implements ITaskQueue {
     this.lastPersistedContent = null;
     // 串行化持久化操作，避免并发写入同一 .tmp/.bak 文件导致的 ENOENT
     this.saveQueueChain = Promise.resolve();
+    this.isScheduling = false;
 
     this.logger.debug("TaskQueue", "TaskQueue 初始化完成", {
       queuePath
@@ -107,14 +111,6 @@ export class TaskQueue implements ITaskQueue {
         }
       } else {
         this.logger.info("TaskQueue", "创建新的队列状态");
-      }
-
-      // 启动时自动恢复队列（除非用户明确暂停）
-      // 这样可以避免队列在重启后一直处于暂停状态
-      if (this.paused) {
-        this.logger.info("TaskQueue", "检测到队列处于暂停状态，自动恢复");
-        this.paused = false;
-        this.saveQueue();
       }
 
       // 启动调度器
@@ -312,9 +308,9 @@ export class TaskQueue implements ITaskQueue {
   /**
    * 暂停队列
    */
-  pause(): void {
+  async pause(): Promise<void> {
     this.paused = true;
-    this.saveQueue();
+    await this.saveQueue();
     
     this.publishEvent({
       type: "queue-paused",
@@ -327,9 +323,9 @@ export class TaskQueue implements ITaskQueue {
   /**
    * 恢复队列
    */
-  resume(): void {
+  async resume(): Promise<void> {
     this.paused = false;
-    this.saveQueue();
+    await this.saveQueue();
     
     this.publishEvent({
       type: "queue-resumed",
@@ -512,6 +508,9 @@ export class TaskQueue implements ITaskQueue {
    * 启动调度器
    */
   private startScheduler(): void {
+    if (this.schedulerInterval) {
+      return;
+    }
     // 每秒检查一次是否有任务可以执行
     this.schedulerInterval = setInterval(() => {
       this.scheduleNextTask();
@@ -533,6 +532,12 @@ export class TaskQueue implements ITaskQueue {
    * - 当队列有待处理任务且运行任务数低于并发限制时，调度器应启动下一个待处理任务
    */
   private scheduleNextTask(): void {
+    if (this.isScheduling) {
+      this.logger.debug("TaskQueue", "调度器正在运行，跳过本轮");
+      return;
+    }
+    this.isScheduling = true;
+    try {
     // 如果队列暂停，不调度新任务
     if (this.paused) {
       this.logger.debug("TaskQueue", "队列已暂停，跳过调度");
@@ -643,12 +648,15 @@ export class TaskQueue implements ITaskQueue {
     }
 
     // 如果没有找到可调度的任务，记录调试信息
-    if (attemptedTasks > 0) {
-      this.logger.debug("TaskQueue", "没有可调度的任务", {
-        attemptedTasks,
-        skippedDueToLock,
-        reason: skippedDueToLock > 0 ? "所有待处理任务都被锁定" : "未知"
-      });
+      if (attemptedTasks > 0) {
+        this.logger.debug("TaskQueue", "没有可调度的任务", {
+          attemptedTasks,
+          skippedDueToLock,
+          reason: skippedDueToLock > 0 ? "所有待处理任务都被锁定" : "未知"
+        });
+      }
+    } finally {
+      this.isScheduling = false;
     }
   }
 
@@ -671,6 +679,8 @@ export class TaskQueue implements ITaskQueue {
       return;
     }
 
+    let timeoutHandle: NodeJS.Timeout | null = null;
+
     try {
       this.logger.debug("TaskQueue", `开始执行任务: ${task.id}`, {
         taskType: task.taskType,
@@ -678,8 +688,27 @@ export class TaskQueue implements ITaskQueue {
         nodeId: task.nodeId
       });
 
+      const timeoutMs = this.settingsStore.getSettings().taskTimeoutMs || TaskQueue.DEFAULT_TASK_TIMEOUT_MS;
+      let timedOut = false;
+      timeoutHandle = setTimeout(() => {
+        timedOut = true;
+        this.logger.warn("TaskQueue", `任务超时，触发自动取消: ${task.id}`, {
+          taskId: task.id,
+          timeoutMs
+        });
+        this.taskRunner?.abort(task.id);
+      }, Math.max(1000, timeoutMs));
+
       // 调用 TaskRunner 执行任务
       const result = await this.taskRunner.run(task);
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+
+      if (timedOut && result.ok) {
+        await this.handleTaskFailure(task, { code: "E102", message: "任务执行超时" });
+        return;
+      }
 
       if (result.ok) {
         // Requirements 6.2: 任务成功，更新状态为 Completed
@@ -700,6 +729,10 @@ export class TaskQueue implements ITaskQueue {
         code: "E304",
         message: error instanceof Error ? error.message : String(error)
       });
+    } finally {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
     }
   }
 
@@ -744,6 +777,8 @@ export class TaskQueue implements ITaskQueue {
 
     // 从处理中集合移除
     this.processingTasks.delete(task.id);
+
+    this.trimHistory();
 
     // 持久化
     await this.saveQueue();
@@ -853,6 +888,8 @@ export class TaskQueue implements ITaskQueue {
       this.processingTasks.delete(task.id);
     }
 
+    this.trimHistory();
+
     // 持久化
     await this.saveQueue();
   }
@@ -891,6 +928,8 @@ export class TaskQueue implements ITaskQueue {
 
     // 从处理中集合移除
     this.processingTasks.delete(task.id);
+
+    this.trimHistory();
 
     // 持久化
     await this.saveQueue();
@@ -1075,6 +1114,39 @@ export class TaskQueue implements ITaskQueue {
     }
 
     return released;
+  }
+
+  /**
+   * 限制历史任务数量，避免 queue-state.json 无限增长
+   */
+  private trimHistory(): void {
+    const limit = this.settingsStore.getSettings().maxTaskHistory || TaskQueue.DEFAULT_TASK_HISTORY_LIMIT;
+    const removableStates = new Set(["Completed", "Failed", "Cancelled"]);
+    const candidates = Array.from(this.tasks.values()).filter((task) => removableStates.has(task.state));
+
+    if (candidates.length <= limit) {
+      return;
+    }
+
+    candidates.sort((a, b) => {
+      const aTime = a.updated || a.created;
+      const bTime = b.updated || b.created;
+      return aTime.localeCompare(bTime);
+    });
+
+    const removeCount = candidates.length - limit;
+    const toRemove = candidates.slice(0, removeCount);
+
+    for (const task of toRemove) {
+      this.tasks.delete(task.id);
+    }
+
+    if (removeCount > 0) {
+      this.logger.info("TaskQueue", "裁剪任务历史", {
+        removed: removeCount,
+        limit
+      });
+    }
   }
 
   /**

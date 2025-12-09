@@ -2,29 +2,30 @@
  * Logger 实现
  * 提供结构化日志记录功能，支持循环日志（1MB 上限）
  * 
+ * 优化特性：
+ * - 人类可读的格式化输出
+ * - 会话分隔符和启动标记
+ * - 关联 ID 追踪（traceId）
+ * - 简短时间戳格式
+ * - 日志分组/折叠功能
+ * - 日志过滤和搜索辅助
+ * 
  * 遵循设计文档 A-NF-03 可观察性要求：
  * - 结构化日志格式（JSON）
  * - 循环日志机制（1MB 上限）
  * - 日志级别控制
- * 
- * 遵循 Requirements 6.5：
- * - 所有错误使用 E001-E304 错误码
- * - 错误日志包含错误码信息
  */
 
 import { ILogger } from "../types";
 import { ErrorCode, isValidErrorCode, getErrorCodeInfo } from "./error-codes";
 
-/**
- * 日志级别
- */
+/** 日志级别 */
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
-/**
- * 日志条目接口
- * 遵循设计文档 Requirements 1.2 定义的结构化日志格式
- * 遵循 Requirements 6.5：错误日志包含错误码
- */
+/** 日志输出格式 */
+export type LogFormat = "json" | "pretty" | "compact";
+
+/** 日志条目接口 */
 export interface LogEntry {
   /** ISO 8601 格式时间戳 */
   timestamp: string;
@@ -32,29 +33,26 @@ export interface LogEntry {
   level: LogLevel;
   /** 模块名称 */
   module: string;
-  /** 事件类型（如 TASK_STATE_CHANGE, LOCK_ACQUIRED 等） */
+  /** 事件类型 */
   event: string;
   /** 人类可读消息 */
   message: string;
-  /** 上下文数据（可选） */
+  /** 追踪 ID（用于关联同一操作的多条日志） */
+  traceId?: string;
+  /** 上下文数据 */
   context?: Record<string, unknown>;
-  /** 错误信息（可选） */
+  /** 错误信息 */
   error?: {
     name: string;
     message: string;
     stack?: string;
-    /** 错误码 (E001-E304)，遵循 Requirements 6.5 */
     code?: string;
-    /** 错误码名称 */
     codeName?: string;
-    /** 修复建议 */
     fixSuggestion?: string;
   };
 }
 
-/**
- * 日志级别优先级映射
- */
+/** 日志级别优先级映射 */
 const LOG_LEVEL_PRIORITY: Record<LogLevel, number> = {
   debug: 0,
   info: 1,
@@ -62,9 +60,7 @@ const LOG_LEVEL_PRIORITY: Record<LogLevel, number> = {
   error: 3,
 };
 
-/**
- * 默认事件类型映射
- */
+/** 默认事件类型映射 */
 const DEFAULT_EVENTS: Record<LogLevel, string> = {
   debug: "DEBUG",
   info: "INFO",
@@ -72,17 +68,64 @@ const DEFAULT_EVENTS: Record<LogLevel, string> = {
   error: "ERROR",
 };
 
+/** 日志级别颜色（用于 pretty 格式） */
+const LEVEL_COLORS: Record<LogLevel, string> = {
+  debug: "🔍",
+  info: "ℹ️",
+  warn: "⚠️",
+  error: "❌",
+};
+
+/** 日志级别标签（用于 compact 格式） */
+const LEVEL_LABELS: Record<LogLevel, string> = {
+  debug: "DBG",
+  info: "INF",
+  warn: "WRN",
+  error: "ERR",
+};
+
+/**
+ * 格式化时间戳为简短格式
+ * @param isoString ISO 8601 时间戳
+ * @returns 简短格式 HH:mm:ss.SSS
+ */
+function formatShortTime(isoString: string): string {
+  const date = new Date(isoString);
+  const hours = date.getHours().toString().padStart(2, "0");
+  const minutes = date.getMinutes().toString().padStart(2, "0");
+  const seconds = date.getSeconds().toString().padStart(2, "0");
+  const ms = date.getMilliseconds().toString().padStart(3, "0");
+  return `${hours}:${minutes}:${seconds}.${ms}`;
+}
+
+/**
+ * 格式化时间戳为日期+时间格式
+ * @param isoString ISO 8601 时间戳
+ * @returns 格式 MM-DD HH:mm:ss
+ */
+function formatDateTime(isoString: string): string {
+  const date = new Date(isoString);
+  const month = (date.getMonth() + 1).toString().padStart(2, "0");
+  const day = date.getDate().toString().padStart(2, "0");
+  const hours = date.getHours().toString().padStart(2, "0");
+  const minutes = date.getMinutes().toString().padStart(2, "0");
+  const seconds = date.getSeconds().toString().padStart(2, "0");
+  return `${month}-${day} ${hours}:${minutes}:${seconds}`;
+}
+
 /**
  * Logger 实现类
  * 
  * 功能特性：
  * - 结构化 JSON 日志格式
+ * - 人类可读的 pretty/compact 格式
  * - 循环日志机制（1MB 上限）
  * - 日志级别过滤
  * - 异步文件写入
- * - 跨会话日志追加（A-NF-03 可观察性）
+ * - 跨会话日志追加
  * - 耗时埋点支持
- * - 控制台输出（Requirements 8.1, 8.2）
+ * - 追踪 ID 关联
+ * - 会话分隔标记
  */
 export class Logger implements ILogger {
   private logBuffer: string[] = [];
@@ -96,16 +139,13 @@ export class Logger implements ILogger {
   };
   private minLevel: LogLevel;
   private initialized = false;
-  /** 是否启用控制台输出，默认启用 */
   private consoleEnabled = true;
+  private fileFormat: LogFormat = "json";
+  private consoleFormat: LogFormat = "pretty";
+  private sessionId: string;
+  private currentTraceId: string | null = null;
+  private groupStack: string[] = [];
 
-  /**
-   * 构造函数
-   * @param logFilePath 日志文件路径
-   * @param fileStorage 文件存储实例
-   * @param minLevel 最小日志级别
-   * @param maxLogSize 最大日志文件大小（字节），默认 1MB
-   */
   constructor(
     logFilePath: string,
     fileStorage: {
@@ -114,28 +154,76 @@ export class Logger implements ILogger {
       exists?: (path: string) => Promise<boolean>;
     },
     minLevel: LogLevel = "info",
-    maxLogSize: number = 1024 * 1024 // 1MB
+    maxLogSize: number = 1024 * 1024
   ) {
     this.logFilePath = logFilePath;
     this.fileStorage = fileStorage;
     this.minLevel = minLevel;
     this.maxLogSize = maxLogSize;
+    this.sessionId = this.generateSessionId();
   }
 
-  /**
-   * 初始化 Logger，读取既有日志文件
-   * 遵循 A-NF-03：启动时读取既有 app.log 并以追加+1MB 轮转写入
-   */
+  /** 生成会话 ID */
+  private generateSessionId(): string {
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0, 10).replace(/-/g, "");
+    const timeStr = now.toISOString().slice(11, 19).replace(/:/g, "");
+    const random = Math.random().toString(36).slice(2, 6);
+    return `${dateStr}-${timeStr}-${random}`;
+  }
+
+  /** 生成追踪 ID */
+  generateTraceId(): string {
+    const timestamp = Date.now().toString(36);
+    const random = Math.random().toString(36).slice(2, 8);
+    return `${timestamp}-${random}`;
+  }
+
+  /** 设置当前追踪 ID（用于关联同一操作的多条日志） */
+  setTraceId(traceId: string | null): void {
+    this.currentTraceId = traceId;
+  }
+
+  /** 获取当前追踪 ID */
+  getTraceId(): string | null {
+    return this.currentTraceId;
+  }
+
+  /** 开始一个带追踪 ID 的操作 */
+  startTrace(operation: string): string {
+    const traceId = this.generateTraceId();
+    this.currentTraceId = traceId;
+    this.debug("Trace", `开始追踪: ${operation}`, { event: "TRACE_START", operation });
+    return traceId;
+  }
+
+  /** 结束当前追踪 */
+  endTrace(operation: string): void {
+    if (this.currentTraceId) {
+      this.debug("Trace", `结束追踪: ${operation}`, { event: "TRACE_END", operation });
+      this.currentTraceId = null;
+    }
+  }
+
+  /** 设置文件输出格式 */
+  setFileFormat(format: LogFormat): void {
+    this.fileFormat = format;
+  }
+
+  /** 设置控制台输出格式 */
+  setConsoleFormat(format: LogFormat): void {
+    this.consoleFormat = format;
+  }
+
+  /** 初始化 Logger，读取既有日志文件 */
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
     try {
-      // 检查文件是否存在
       let fileExists = false;
       if (this.fileStorage.exists) {
         fileExists = await this.fileStorage.exists(this.logFilePath);
       } else {
-        // 尝试读取来判断是否存在
         try {
           await this.fileStorage.read(this.logFilePath);
           fileExists = true;
@@ -145,14 +233,12 @@ export class Logger implements ILogger {
       }
 
       if (fileExists) {
-        // 读取既有日志
         const existingContent = await this.fileStorage.read(this.logFilePath);
         if (existingContent) {
           const lines = existingContent.split("\n").filter(line => line.trim());
           this.logBuffer = lines;
           this.currentSize = new TextEncoder().encode(existingContent).length;
           
-          // 如果超过大小限制，进行轮转
           if (this.currentSize > this.maxLogSize) {
             this.rotateLog(0);
           }
@@ -160,22 +246,59 @@ export class Logger implements ILogger {
       }
 
       this.initialized = true;
+      this.logSessionStart();
     } catch (error) {
-      // 初始化失败时继续使用空缓冲区
       console.error("Logger initialization failed:", error);
       this.initialized = true;
     }
   }
 
-  /**
-   * 记录带耗时的操作
-   * 遵循 A-NF-03：为文件写入、队列调度、LLM/Embedding 调用增加耗时埋点
-   * 
-   * @param module 模块名称
-   * @param operation 操作名称
-   * @param fn 要执行的异步函数
-   * @returns 函数执行结果
-   */
+  /** 记录会话开始标记 */
+  private logSessionStart(): void {
+    const separator = "═".repeat(60);
+    const timestamp = new Date().toISOString();
+    const startEntry: LogEntry = {
+      timestamp,
+      level: "info",
+      module: "Session",
+      event: "SESSION_START",
+      message: `新会话开始 [${this.sessionId}]`,
+      context: {
+        sessionId: this.sessionId,
+        separator: true
+      }
+    };
+    
+    // 添加分隔符（仅在 pretty/compact 格式时显示）
+    if (this.fileFormat !== "json") {
+      this.logBuffer.push("");
+      this.logBuffer.push(separator);
+    }
+    
+    const logLine = this.formatLogEntry(startEntry, this.fileFormat);
+    this.logBuffer.push(logLine);
+    this.currentSize += new TextEncoder().encode(logLine + "\n").length;
+    
+    this.writeToFile().catch(err => {
+      console.error("Failed to write session start:", err);
+    });
+  }
+
+  /** 开始日志分组 */
+  startGroup(groupName: string): void {
+    this.groupStack.push(groupName);
+    this.debug("Group", `┌─ ${groupName}`, { event: "GROUP_START", groupName });
+  }
+
+  /** 结束日志分组 */
+  endGroup(): void {
+    const groupName = this.groupStack.pop();
+    if (groupName) {
+      this.debug("Group", `└─ ${groupName} 完成`, { event: "GROUP_END", groupName });
+    }
+  }
+
+  /** 记录带耗时的操作 */
   async withTiming<T>(
     module: string,
     operation: string,
@@ -185,7 +308,7 @@ export class Logger implements ILogger {
     try {
       const result = await fn();
       const duration = Date.now() - startTime;
-      this.info(module, `${operation} 完成`, {
+      this.info(module, `${operation} 完成 (${duration}ms)`, {
         event: "TIMING",
         operation,
         durationMs: duration
@@ -193,7 +316,7 @@ export class Logger implements ILogger {
       return result;
     } catch (error) {
       const duration = Date.now() - startTime;
-      this.error(module, `${operation} 失败`, error as Error, {
+      this.error(module, `${operation} 失败 (${duration}ms)`, error as Error, {
         event: "TIMING_ERROR",
         operation,
         durationMs: duration
@@ -202,16 +325,14 @@ export class Logger implements ILogger {
     }
   }
 
-  /**
-   * 记录耗时指标（不执行操作，仅记录）
-   */
+  /** 记录耗时指标 */
   timing(
     module: string,
     operation: string,
     durationMs: number,
     context?: Record<string, unknown>
   ): void {
-    this.info(module, `${operation} 耗时: ${durationMs}ms`, {
+    this.info(module, `${operation} (${durationMs}ms)`, {
       event: "TIMING",
       operation,
       durationMs,
@@ -219,44 +340,27 @@ export class Logger implements ILogger {
     });
   }
 
-  /**
-   * 调试日志
-   */
+  /** 调试日志 */
   debug(module: string, message: string, context?: Record<string, unknown>): void {
     this.log("debug", module, message, undefined, context);
   }
 
-  /**
-   * 信息日志
-   */
+  /** 信息日志 */
   info(module: string, message: string, context?: Record<string, unknown>): void {
     this.log("info", module, message, undefined, context);
   }
 
-  /**
-   * 警告日志
-   */
+  /** 警告日志 */
   warn(module: string, message: string, context?: Record<string, unknown>): void {
     this.log("warn", module, message, undefined, context);
   }
 
-  /**
-   * 错误日志
-   */
+  /** 错误日志 */
   error(module: string, message: string, error?: Error, context?: Record<string, unknown>): void {
     this.log("error", module, message, error, context);
   }
 
-  /**
-   * 带错误码的错误日志
-   * 遵循 Requirements 6.5：所有错误使用 E001-E304 错误码
-   * 
-   * @param module 模块名称
-   * @param errorCode 错误码 (E001-E304)
-   * @param message 错误消息
-   * @param error 可选的 Error 对象
-   * @param context 可选的上下文数据
-   */
+  /** 带错误码的错误日志 */
   errorWithCode(
     module: string,
     errorCode: string,
@@ -264,17 +368,14 @@ export class Logger implements ILogger {
     error?: Error,
     context?: Record<string, unknown>
   ): void {
-    // 获取错误码信息
     const codeInfo = isValidErrorCode(errorCode) ? getErrorCodeInfo(errorCode) : undefined;
     
-    // 构建包含错误码的上下文
     const enrichedContext: Record<string, unknown> = {
       ...context,
       errorCode,
       event: context?.event || "ERROR",
     };
 
-    // 如果有错误码信息，添加到上下文
     if (codeInfo) {
       enrichedContext.errorCodeName = codeInfo.name;
       enrichedContext.errorCategory = codeInfo.category;
@@ -284,52 +385,63 @@ export class Logger implements ILogger {
     this.logWithErrorCode("error", module, message, errorCode, error, enrichedContext);
   }
 
-  /**
-   * 获取日志内容
-   */
+  /** 获取日志内容 */
   getLogContent(): string {
     return this.logBuffer.join("\n");
   }
 
-  /**
-   * 清空日志
-   */
+  /** 清空日志 */
   clear(): void {
     this.logBuffer = [];
     this.currentSize = 0;
   }
 
-  /**
-   * 获取当前日志大小（字节）
-   */
+  /** 获取当前日志大小（字节） */
   getCurrentSize(): number {
     return this.currentSize;
   }
 
-  /**
-   * 获取最大日志大小（字节）
-   */
+  /** 获取最大日志大小（字节） */
   getMaxLogSize(): number {
     return this.maxLogSize;
   }
 
-  /**
-   * 获取日志条目数量
-   */
+  /** 获取日志条目数量 */
   getEntryCount(): number {
     return this.logBuffer.length;
   }
 
-  /**
-   * 设置最小日志级别
-   */
+  /** 设置最小日志级别 */
   setMinLevel(level: LogLevel): void {
     this.minLevel = level;
   }
 
-  /**
-   * 核心日志方法
-   */
+  /** 设置日志级别 */
+  setLogLevel(level: LogLevel): void {
+    this.minLevel = level;
+  }
+
+  /** 获取当前日志级别 */
+  getLogLevel(): LogLevel {
+    return this.minLevel;
+  }
+
+  /** 设置是否启用控制台输出 */
+  setConsoleEnabled(enabled: boolean): void {
+    this.consoleEnabled = enabled;
+  }
+
+  /** 获取控制台输出是否启用 */
+  isConsoleEnabled(): boolean {
+    return this.consoleEnabled;
+  }
+
+  /** 获取会话 ID */
+  getSessionId(): string {
+    return this.sessionId;
+  }
+
+  /** 核心日志方法 */
   private log(
     level: LogLevel,
     module: string,
@@ -337,22 +449,18 @@ export class Logger implements ILogger {
     error?: Error,
     context?: Record<string, unknown>
   ): void {
-    // 检查日志级别
     if (!this.shouldLog(level)) {
       return;
     }
 
-    // 从 context 中提取 event，如果没有则使用默认值
     const event = (context?.event as string) || DEFAULT_EVENTS[level];
     
-    // 创建不包含 event 的 context 副本
     let cleanContext: Record<string, unknown> | undefined;
     if (context) {
       const { event: _, ...rest } = context;
       cleanContext = Object.keys(rest).length > 0 ? rest : undefined;
     }
 
-    // 构建日志条目
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
       level,
@@ -361,7 +469,11 @@ export class Logger implements ILogger {
       message,
     };
 
-    // 添加可选字段
+    // 添加追踪 ID
+    if (this.currentTraceId) {
+      entry.traceId = this.currentTraceId;
+    }
+
     if (cleanContext && Object.keys(cleanContext).length > 0) {
       entry.context = cleanContext;
     }
@@ -374,32 +486,24 @@ export class Logger implements ILogger {
       };
     }
 
-    // 格式化为 JSON 日志行
-    const logLine = this.formatLogEntry(entry);
+    const logLine = this.formatLogEntry(entry, this.fileFormat);
     const logLineSize = new TextEncoder().encode(logLine + "\n").length;
 
-    // 检查是否需要循环覆盖
     if (this.currentSize + logLineSize > this.maxLogSize) {
       this.rotateLog(logLineSize);
     }
 
-    // 添加到缓冲区
     this.logBuffer.push(logLine);
     this.currentSize += logLineSize;
 
-    // 输出到控制台（Requirements 8.1, 8.2）
     this.outputToConsole(entry);
 
-    // 异步写入文件（不阻塞）
     this.writeToFile().catch((err) => {
       console.error("Failed to write log to file:", err);
     });
   }
 
-  /**
-   * 带错误码的核心日志方法
-   * 遵循 Requirements 6.5：所有错误使用 E001-E304 错误码
-   */
+  /** 带错误码的核心日志方法 */
   private logWithErrorCode(
     level: LogLevel,
     module: string,
@@ -408,15 +512,12 @@ export class Logger implements ILogger {
     error?: Error,
     context?: Record<string, unknown>
   ): void {
-    // 检查日志级别
     if (!this.shouldLog(level)) {
       return;
     }
 
-    // 从 context 中提取 event，如果没有则使用默认值
     const event = (context?.event as string) || DEFAULT_EVENTS[level];
     
-    // 创建不包含 event 和错误码相关字段的 context 副本
     let cleanContext: Record<string, unknown> | undefined;
     if (context) {
       const { 
@@ -430,10 +531,8 @@ export class Logger implements ILogger {
       cleanContext = Object.keys(rest).length > 0 ? rest : undefined;
     }
 
-    // 获取错误码信息
     const codeInfo = isValidErrorCode(errorCode) ? getErrorCodeInfo(errorCode) : undefined;
 
-    // 构建日志条目
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
       level,
@@ -442,12 +541,14 @@ export class Logger implements ILogger {
       message,
     };
 
-    // 添加可选字段
+    if (this.currentTraceId) {
+      entry.traceId = this.currentTraceId;
+    }
+
     if (cleanContext && Object.keys(cleanContext).length > 0) {
       entry.context = cleanContext;
     }
 
-    // 构建错误信息，包含错误码
     entry.error = {
       name: error?.name || codeInfo?.name || "Error",
       message: error?.message || message,
@@ -457,60 +558,136 @@ export class Logger implements ILogger {
       fixSuggestion: codeInfo?.fixSuggestion,
     };
 
-    // 格式化为 JSON 日志行
-    const logLine = this.formatLogEntry(entry);
+    const logLine = this.formatLogEntry(entry, this.fileFormat);
     const logLineSize = new TextEncoder().encode(logLine + "\n").length;
 
-    // 检查是否需要循环覆盖
     if (this.currentSize + logLineSize > this.maxLogSize) {
       this.rotateLog(logLineSize);
     }
 
-    // 添加到缓冲区
     this.logBuffer.push(logLine);
     this.currentSize += logLineSize;
 
-    // 输出到控制台（Requirements 8.1, 8.2）
     this.outputToConsole(entry);
 
-    // 异步写入文件（不阻塞）
     this.writeToFile().catch((err) => {
       console.error("Failed to write log to file:", err);
     });
   }
 
-  /**
-   * 检查是否应该记录该级别的日志
-   */
+  /** 检查是否应该记录该级别的日志 */
   private shouldLog(level: LogLevel): boolean {
     return LOG_LEVEL_PRIORITY[level] >= LOG_LEVEL_PRIORITY[this.minLevel];
   }
 
-  /**
-   * 格式化日志条目为 JSON 字符串
-   * 遵循 Requirements 1.2：实现 JSON 格式日志输出
-   */
-  private formatLogEntry(entry: LogEntry): string {
-    return JSON.stringify(entry);
+  /** 格式化日志条目 */
+  private formatLogEntry(entry: LogEntry, format: LogFormat): string {
+    switch (format) {
+      case "pretty":
+        return this.formatPretty(entry);
+      case "compact":
+        return this.formatCompact(entry);
+      case "json":
+      default:
+        return JSON.stringify(entry);
+    }
   }
 
-  /**
-   * 解析日志行为 LogEntry 对象
-   * @param logLine JSON 格式的日志行
-   * @returns 解析后的 LogEntry 或 null（解析失败时）
-   */
+  /** Pretty 格式：人类可读，带图标和缩进 */
+  private formatPretty(entry: LogEntry): string {
+    const time = formatShortTime(entry.timestamp);
+    const icon = LEVEL_COLORS[entry.level];
+    const indent = "  ".repeat(this.groupStack.length);
+    const traceStr = entry.traceId ? ` [${entry.traceId.slice(-8)}]` : "";
+    
+    let line = `${time} ${icon} ${indent}[${entry.module}]${traceStr} ${entry.message}`;
+    
+    if (entry.context && Object.keys(entry.context).length > 0) {
+      const contextStr = this.formatContext(entry.context);
+      if (contextStr) {
+        line += ` ${contextStr}`;
+      }
+    }
+    
+    if (entry.error) {
+      line += `\n${indent}    └─ ${entry.error.code || ""} ${entry.error.message}`;
+      if (entry.error.fixSuggestion) {
+        line += `\n${indent}       💡 ${entry.error.fixSuggestion}`;
+      }
+    }
+    
+    return line;
+  }
+
+  /** Compact 格式：紧凑单行，适合快速扫描 */
+  private formatCompact(entry: LogEntry): string {
+    const time = formatShortTime(entry.timestamp);
+    const level = LEVEL_LABELS[entry.level];
+    const traceStr = entry.traceId ? `[${entry.traceId.slice(-6)}]` : "";
+    
+    let line = `${time} ${level} ${entry.module}${traceStr}: ${entry.message}`;
+    
+    // 只显示关键上下文
+    if (entry.context) {
+      const keyFields = ["taskId", "nodeId", "pipelineId", "providerId", "elapsedTime", "durationMs"];
+      const relevantContext: Record<string, unknown> = {};
+      for (const key of keyFields) {
+        if (entry.context[key] !== undefined) {
+          relevantContext[key] = entry.context[key];
+        }
+      }
+      if (Object.keys(relevantContext).length > 0) {
+        line += ` ${this.formatContext(relevantContext)}`;
+      }
+    }
+    
+    if (entry.error?.code) {
+      line += ` [${entry.error.code}]`;
+    }
+    
+    return line;
+  }
+
+  /** 格式化上下文对象为简短字符串 */
+  private formatContext(context: Record<string, unknown>): string {
+    const parts: string[] = [];
+    for (const [key, value] of Object.entries(context)) {
+      if (value === undefined || value === null) continue;
+      if (key === "separator") continue; // 跳过内部标记
+      
+      let valueStr: string;
+      if (typeof value === "string") {
+        valueStr = value.length > 30 ? value.slice(0, 30) + "..." : value;
+      } else if (typeof value === "number") {
+        valueStr = String(value);
+      } else if (typeof value === "boolean") {
+        valueStr = String(value);
+      } else {
+        valueStr = JSON.stringify(value);
+        if (valueStr.length > 50) {
+          valueStr = valueStr.slice(0, 50) + "...";
+        }
+      }
+      parts.push(`${key}=${valueStr}`);
+    }
+    return parts.length > 0 ? `{${parts.join(", ")}}` : "";
+  }
+
+  /** 解析日志行为 LogEntry 对象 */
   static parseLogEntry(logLine: string): LogEntry | null {
     try {
-      const parsed = JSON.parse(logLine);
-      // 验证必需字段
-      if (
-        typeof parsed.timestamp === "string" &&
-        typeof parsed.level === "string" &&
-        typeof parsed.module === "string" &&
-        typeof parsed.event === "string" &&
-        typeof parsed.message === "string"
-      ) {
-        return parsed as LogEntry;
+      // 尝试 JSON 解析
+      if (logLine.startsWith("{")) {
+        const parsed = JSON.parse(logLine);
+        if (
+          typeof parsed.timestamp === "string" &&
+          typeof parsed.level === "string" &&
+          typeof parsed.module === "string" &&
+          typeof parsed.event === "string" &&
+          typeof parsed.message === "string"
+        ) {
+          return parsed as LogEntry;
+        }
       }
       return null;
     } catch {
@@ -518,15 +695,10 @@ export class Logger implements ILogger {
     }
   }
 
-  /**
-   * 循环日志（删除旧日志以保持文件大小在限制内）
-   * 遵循 Requirements 1.3：检测文件大小超过 1MB 时截断旧条目
-   */
+  /** 循环日志（删除旧日志以保持文件大小在限制内） */
   private rotateLog(newEntrySize: number): void {
-    // 计算需要释放的空间
     const targetSize = this.maxLogSize - newEntrySize;
     
-    // 从头部开始删除日志条目，直到有足够空间
     while (this.logBuffer.length > 0 && this.currentSize > targetSize) {
       const removedLine = this.logBuffer.shift();
       if (removedLine) {
@@ -536,98 +708,205 @@ export class Logger implements ILogger {
     }
   }
 
-  /**
-   * 写入日志到文件
-   */
+  /** 写入日志到文件 */
   private async writeToFile(): Promise<void> {
     try {
       const content = this.getLogContent();
       await this.fileStorage.write(this.logFilePath, content);
     } catch (error) {
-      // 写入失败时只在控制台输出，避免递归
       console.error("Failed to write log file:", error);
     }
   }
 
-  /**
-   * 设置日志级别
-   * @param level 新的日志级别
-   */
-  setLogLevel(level: LogLevel): void {
-    this.minLevel = level;
-  }
-
-  /**
-   * 获取当前日志级别
-   * @returns 当前日志级别
-   */
-  getLogLevel(): LogLevel {
-    return this.minLevel;
-  }
-
-  /**
-   * 设置是否启用控制台输出
-   * @param enabled 是否启用
-   */
-  setConsoleEnabled(enabled: boolean): void {
-    this.consoleEnabled = enabled;
-  }
-
-  /**
-   * 获取控制台输出是否启用
-   * @returns 是否启用控制台输出
-   */
-  isConsoleEnabled(): boolean {
-    return this.consoleEnabled;
-  }
-
-  /**
-   * 输出日志到控制台
-   * 遵循 Requirements 8.1, 8.2：
-   * - 当日志级别为 debug 时，输出所有日志到控制台
-   * - 输出格式：[CR][LEVEL][Module] message
-   * - 包含 timestamp, level, module, message 等必需字段
-   * 
-   * @param entry 日志条目
-   */
+  /** 输出日志到控制台 */
   private outputToConsole(entry: LogEntry): void {
     if (!this.consoleEnabled) {
       return;
     }
 
-    // 格式化前缀：[CR][LEVEL][Module]
-    const prefix = `[CR][${entry.level.toUpperCase()}][${entry.module}]`;
-    const msg = `${prefix} ${entry.message}`;
+    // 使用 pretty 格式输出到控制台
+    const formattedMsg = this.formatConsoleOutput(entry);
 
-    // 准备上下文数据（包含 timestamp 和其他信息）
-    const contextData: Record<string, unknown> = {
-      timestamp: entry.timestamp,
-      event: entry.event,
-    };
-
-    if (entry.context) {
-      Object.assign(contextData, entry.context);
-    }
-
-    // 根据日志级别使用不同的 console 方法
     switch (entry.level) {
       case "debug":
-        console.debug(msg, contextData);
+        console.debug(formattedMsg);
         break;
       case "info":
-        console.info(msg, contextData);
+        console.info(formattedMsg);
         break;
       case "warn":
-        console.warn(msg, contextData);
+        console.warn(formattedMsg);
         break;
       case "error":
-        // 错误日志优先显示 error 对象
-        if (entry.error) {
-          console.error(msg, entry.error, contextData);
+        if (entry.error?.stack) {
+          console.error(formattedMsg, "\n", entry.error.stack);
         } else {
-          console.error(msg, contextData);
+          console.error(formattedMsg);
         }
         break;
     }
+  }
+
+  /** 格式化控制台输出 */
+  private formatConsoleOutput(entry: LogEntry): string {
+    const time = formatShortTime(entry.timestamp);
+    const prefix = `[CR][${entry.level.toUpperCase()}]`;
+    const traceStr = entry.traceId ? ` [${entry.traceId.slice(-6)}]` : "";
+    
+    let msg = `${time} ${prefix}[${entry.module}]${traceStr} ${entry.message}`;
+    
+    if (entry.context && Object.keys(entry.context).length > 0) {
+      const contextStr = this.formatContext(entry.context);
+      if (contextStr) {
+        msg += ` ${contextStr}`;
+      }
+    }
+    
+    if (entry.error && entry.level === "error") {
+      msg += `\n  └─ ${entry.error.code || ""} ${entry.error.message}`;
+      if (entry.error.fixSuggestion) {
+        msg += `\n     💡 ${entry.error.fixSuggestion}`;
+      }
+    }
+    
+    return msg;
+  }
+
+  // ==================== 日志查询和过滤方法 ====================
+
+  /** 按级别过滤日志 */
+  filterByLevel(level: LogLevel): LogEntry[] {
+    const entries: LogEntry[] = [];
+    const minPriority = LOG_LEVEL_PRIORITY[level];
+    
+    for (const line of this.logBuffer) {
+      const entry = Logger.parseLogEntry(line);
+      if (entry && LOG_LEVEL_PRIORITY[entry.level] >= minPriority) {
+        entries.push(entry);
+      }
+    }
+    return entries;
+  }
+
+  /** 按模块过滤日志 */
+  filterByModule(module: string): LogEntry[] {
+    const entries: LogEntry[] = [];
+    for (const line of this.logBuffer) {
+      const entry = Logger.parseLogEntry(line);
+      if (entry && entry.module === module) {
+        entries.push(entry);
+      }
+    }
+    return entries;
+  }
+
+  /** 按追踪 ID 过滤日志 */
+  filterByTraceId(traceId: string): LogEntry[] {
+    const entries: LogEntry[] = [];
+    for (const line of this.logBuffer) {
+      const entry = Logger.parseLogEntry(line);
+      if (entry && entry.traceId === traceId) {
+        entries.push(entry);
+      }
+    }
+    return entries;
+  }
+
+  /** 按事件类型过滤日志 */
+  filterByEvent(event: string): LogEntry[] {
+    const entries: LogEntry[] = [];
+    for (const line of this.logBuffer) {
+      const entry = Logger.parseLogEntry(line);
+      if (entry && entry.event === event) {
+        entries.push(entry);
+      }
+    }
+    return entries;
+  }
+
+  /** 按时间范围过滤日志 */
+  filterByTimeRange(startTime: Date, endTime: Date): LogEntry[] {
+    const entries: LogEntry[] = [];
+    for (const line of this.logBuffer) {
+      const entry = Logger.parseLogEntry(line);
+      if (entry) {
+        const entryTime = new Date(entry.timestamp);
+        if (entryTime >= startTime && entryTime <= endTime) {
+          entries.push(entry);
+        }
+      }
+    }
+    return entries;
+  }
+
+  /** 搜索日志消息 */
+  search(keyword: string): LogEntry[] {
+    const entries: LogEntry[] = [];
+    const lowerKeyword = keyword.toLowerCase();
+    
+    for (const line of this.logBuffer) {
+      const entry = Logger.parseLogEntry(line);
+      if (entry) {
+        const searchText = `${entry.module} ${entry.message} ${entry.event}`.toLowerCase();
+        if (searchText.includes(lowerKeyword)) {
+          entries.push(entry);
+        }
+      }
+    }
+    return entries;
+  }
+
+  /** 获取最近 N 条日志 */
+  getRecentEntries(count: number): LogEntry[] {
+    const entries: LogEntry[] = [];
+    const startIndex = Math.max(0, this.logBuffer.length - count);
+    
+    for (let i = startIndex; i < this.logBuffer.length; i++) {
+      const entry = Logger.parseLogEntry(this.logBuffer[i]);
+      if (entry) {
+        entries.push(entry);
+      }
+    }
+    return entries;
+  }
+
+  /** 获取错误摘要 */
+  getErrorSummary(): { count: number; byModule: Record<string, number>; byCode: Record<string, number> } {
+    const summary = {
+      count: 0,
+      byModule: {} as Record<string, number>,
+      byCode: {} as Record<string, number>
+    };
+    
+    for (const line of this.logBuffer) {
+      const entry = Logger.parseLogEntry(line);
+      if (entry && entry.level === "error") {
+        summary.count++;
+        summary.byModule[entry.module] = (summary.byModule[entry.module] || 0) + 1;
+        if (entry.error?.code) {
+          summary.byCode[entry.error.code] = (summary.byCode[entry.error.code] || 0) + 1;
+        }
+      }
+    }
+    return summary;
+  }
+
+  /** 导出日志为指定格式 */
+  exportAs(format: LogFormat): string {
+    if (format === this.fileFormat) {
+      return this.getLogContent();
+    }
+    
+    const lines: string[] = [];
+    for (const line of this.logBuffer) {
+      const entry = Logger.parseLogEntry(line);
+      if (entry) {
+        lines.push(this.formatLogEntry(entry, format));
+      } else {
+        // 保留非 JSON 行（如分隔符）
+        lines.push(line);
+      }
+    }
+    return lines.join("\n");
   }
 }

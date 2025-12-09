@@ -121,6 +121,9 @@ export class DuplicateManager implements IDuplicateManager {
       const settings = this.settingsStore.getSettings();
       const threshold = settings.similarityThreshold;
       const topK = settings.topK;
+      const dismissedSet = new Set(this.store.dismissedPairs);
+      const existingPairIds = new Set(this.store.pairs.map((p) => p.id));
+      const selfEntry = this.vectorIndex.getEntry(nodeId);
 
       this.logger.debug("DuplicateManager", "开始检测重复", {
         nodeId,
@@ -161,45 +164,23 @@ export class DuplicateManager implements IDuplicateManager {
         // 检查是否已存在或已被标记为非重复
         const pairId = this.generatePairId(nodeId, duplicate.uid);
         
-        if (this.store.dismissedPairs.includes(pairId)) {
+        if (dismissedSet.has(pairId)) {
           this.logger.debug("DuplicateManager", "跳过已标记为非重复的对", {
             pairId
           });
           continue;
         }
 
-        const existingPair = this.store.pairs.find(p => p.id === pairId);
-        if (existingPair) {
+        if (existingPairIds.has(pairId)) {
           this.logger.debug("DuplicateManager", "重复对已存在", {
             pairId
           });
           continue;
         }
 
-        // 获取 noteA 的信息（从向量索引中查找）
-        // 由于在去重检测前已经更新了向量索引，可以直接查找
-        let noteAName = "";
-        let noteAPath = "";
-        
-        // 从向量索引中查找 noteA 的信息
-        // 使用一个小的相似度搜索来找到自己
-        const selfSearchResult = await this.vectorIndex.search(type, embedding, 1);
-        if (selfSearchResult.ok && selfSearchResult.value.length > 0) {
-          const self = selfSearchResult.value[0];
-          if (self.uid === nodeId) {
-            noteAName = self.name;
-            noteAPath = self.path;
-          }
-        }
-        
-        // 如果找不到，使用 nodeId 作为名称（不应该发生）
-        if (!noteAName) {
-          this.logger.warn("DuplicateManager", "无法从向量索引获取 noteA 信息，使用 nodeId", {
-            nodeId
-          });
-          noteAName = nodeId;
-        }
-        
+        const noteAName = selfEntry?.name || nodeId;
+        const noteAPath = selfEntry?.path || "";
+
         this.logger.debug("DuplicateManager", "创建重复对", {
           pairId,
           noteA: { nodeId, name: noteAName, path: noteAPath },
@@ -227,6 +208,7 @@ export class DuplicateManager implements IDuplicateManager {
 
         newPairs.push(pair);
         this.store.pairs.push(pair);
+        existingPairIds.add(pairId);
       }
 
       if (newPairs.length > 0) {

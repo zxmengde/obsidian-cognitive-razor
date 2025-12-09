@@ -12,7 +12,7 @@ import { App, Modal, Notice } from "obsidian";
 /**
  * 简单输入 Modal 选项
  */
-export interface SimpleInputModalOptions {
+interface SimpleInputModalOptions {
   /** 标题 */
   title: string;
   /** 占位符 */

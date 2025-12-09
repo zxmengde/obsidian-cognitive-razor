@@ -9,10 +9,13 @@ import { ILogger } from "../types";
 export class LockManager implements ILockManager {
   private locks: Map<string, LockRecord>;
   private logger: ILogger;
+  private readonly LOCK_TIMEOUT_MS = 5 * 60 * 1000; // 5 分钟超时，防止僵尸锁
+  private cleanupInterval: NodeJS.Timeout | null = null;
 
   constructor(logger: ILogger) {
     this.locks = new Map();
     this.logger = logger;
+    this.startCleanup();
     
     this.logger.debug("LockManager", "LockManager 初始化完成");
   }
@@ -25,6 +28,7 @@ export class LockManager implements ILockManager {
    * @returns 锁 ID 或错误
    */
   acquire(key: string, type: 'node' | 'type', taskId: string): Result<string> {
+    this.cleanupExpiredLocks();
     // 检查是否已被锁定
     if (this.locks.has(key)) {
       const existingLock = this.locks.get(key)!;
@@ -47,7 +51,8 @@ export class LockManager implements ILockManager {
       key,
       type,
       taskId,
-      acquiredAt: new Date().toISOString()
+      acquiredAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + this.LOCK_TIMEOUT_MS).toISOString()
     };
 
     // 存储锁
@@ -91,6 +96,7 @@ export class LockManager implements ILockManager {
    * 获取所有活跃锁
    */
   getActiveLocks(): LockRecord[] {
+    this.cleanupExpiredLocks();
     return Array.from(this.locks.values());
   }
 
@@ -102,6 +108,9 @@ export class LockManager implements ILockManager {
 
     for (const lock of locks) {
       if (!lock || !lock.key || !lock.taskId) continue;
+      if (!lock.expiresAt) {
+        lock.expiresAt = new Date(Date.now() + this.LOCK_TIMEOUT_MS).toISOString();
+      }
       this.locks.set(lock.key, lock);
     }
 
@@ -142,5 +151,44 @@ export class LockManager implements ILockManager {
     const count = this.locks.size;
     this.locks.clear();
     this.logger.info("LockManager", `清空所有锁，共 ${count} 个`);
+  }
+
+  /**
+   * 停止清理任务（用于卸载时释放定时器）
+   */
+  dispose(): void {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
+  }
+
+  /**
+   * 定期清理过期锁，避免僵尸锁长期占用
+   */
+  private startCleanup(): void {
+    this.cleanupInterval = setInterval(() => {
+      const released = this.cleanupExpiredLocks();
+      if (released > 0) {
+        this.logger.warn("LockManager", `清理过期锁 ${released} 个`);
+      }
+    }, 60 * 1000);
+  }
+
+  private cleanupExpiredLocks(): number {
+    const now = Date.now();
+    let released = 0;
+
+    for (const [key, lock] of this.locks.entries()) {
+      if (lock.expiresAt) {
+        const expiresAt = new Date(lock.expiresAt).getTime();
+        if (Number.isFinite(expiresAt) && expiresAt < now) {
+          this.locks.delete(key);
+          released++;
+        }
+      }
+    }
+
+    return released;
   }
 }

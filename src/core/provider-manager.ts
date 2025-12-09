@@ -27,6 +27,25 @@ import {
 } from "../types";
 import { RetryHandler, NETWORK_ERROR_CONFIG } from "./retry-handler";
 
+class SecurityUtils {
+  static maskApiKey(apiKey: string): string {
+    if (!apiKey) return "***";
+    if (apiKey.length <= 8) return "***";
+    return `${apiKey.slice(0, 4)}...${apiKey.slice(-4)}`;
+  }
+
+  static sanitizeUrl(raw: string): string {
+    try {
+      const url = new URL(raw);
+      url.searchParams.delete("api_key");
+      url.searchParams.delete("token");
+      return url.toString();
+    } catch {
+      return "[invalid-url]";
+    }
+  }
+}
+
 /**
  * OpenAI API 响应格式
  */
@@ -95,6 +114,7 @@ export class ProviderManager implements IProviderManager {
   // 可用性缓存（遵循 G-08 本地优先，A-NF-01 性能界限）
   private availabilityCache: Map<string, AvailabilityCacheEntry>;
   private static readonly CACHE_TTL_MS = 5 * 60 * 1000; // 5 分钟缓存
+  private static readonly REQUEST_TIMEOUT_MS = 60 * 1000; // 60 秒请求超时
 
   constructor(settingsStore: ISettingsStore, logger: ILogger, retryHandler?: RetryHandler) {
     this.settingsStore = settingsStore;
@@ -130,7 +150,7 @@ export class ProviderManager implements IProviderManager {
    * @param request 聊天请求
    * @returns 聊天响应
    */
-  async chat(request: ChatRequest): Promise<Result<ChatResponse>> {
+  async chat(request: ChatRequest, signal?: AbortSignal): Promise<Result<ChatResponse>> {
     const startTime = Date.now();
     
     // 验证 Provider 配置
@@ -143,6 +163,7 @@ export class ProviderManager implements IProviderManager {
     // 构建请求 URL
     const baseUrl = providerConfig.baseUrl || DEFAULT_ENDPOINTS["openai"];
     const url = `${baseUrl}/chat/completions`;
+    const safeUrl = SecurityUtils.sanitizeUrl(url);
 
     // 构建请求体（OpenAI 标准格式）
     const requestBody = {
@@ -157,13 +178,14 @@ export class ProviderManager implements IProviderManager {
       event: "API_REQUEST",
       providerId: request.providerId,
       model: request.model,
-      url,
+      url: safeUrl,
+      apiKeyMasked: SecurityUtils.maskApiKey(providerConfig.apiKey),
       messageCount: request.messages.length
     });
 
     // 使用 RetryHandler 执行带重试的请求
     const result = await this.retryHandler.executeWithRetry(
-      async () => this.executeChatRequest(url, requestBody, providerConfig.apiKey),
+      async () => this.executeChatRequest(url, requestBody, providerConfig.apiKey, signal),
       {
         ...NETWORK_ERROR_CONFIG,
         onRetry: (attempt, error) => {
@@ -217,7 +239,7 @@ export class ProviderManager implements IProviderManager {
    * @param request 嵌入请求
    * @returns 嵌入响应
    */
-  async embed(request: EmbedRequest): Promise<Result<EmbedResponse>> {
+  async embed(request: EmbedRequest, signal?: AbortSignal): Promise<Result<EmbedResponse>> {
     const startTime = Date.now();
     
     // 验证 Provider 配置
@@ -230,6 +252,7 @@ export class ProviderManager implements IProviderManager {
     // 构建请求 URL
     const baseUrl = providerConfig.baseUrl || DEFAULT_ENDPOINTS["openai"];
     const url = `${baseUrl}/embeddings`;
+    const safeUrl = SecurityUtils.sanitizeUrl(url);
 
     // 构建请求体（OpenAI 标准格式）
     // 支持 dimensions 参数（用于 text-embedding-3-small 等可变维度模型）
@@ -247,13 +270,14 @@ export class ProviderManager implements IProviderManager {
       event: "API_REQUEST",
       providerId: request.providerId,
       model: request.model,
-      url,
+      url: safeUrl,
+      apiKeyMasked: SecurityUtils.maskApiKey(providerConfig.apiKey),
       inputLength: request.input.length
     });
 
     // 使用 RetryHandler 执行带重试的请求
     const result = await this.retryHandler.executeWithRetry(
-      async () => this.executeEmbedRequest(url, requestBody, providerConfig.apiKey),
+      async () => this.executeEmbedRequest(url, requestBody, providerConfig.apiKey, signal),
       {
         ...NETWORK_ERROR_CONFIG,
         onRetry: (attempt, error) => {
@@ -537,8 +561,19 @@ export class ProviderManager implements IProviderManager {
   private async executeChatRequest(
     url: string,
     body: object,
-    apiKey: string
+    apiKey: string,
+    signal?: AbortSignal
   ): Promise<Result<ChatResponse>> {
+    const controller = new AbortController();
+    const onAbort = () => controller.abort(signal?.reason as any);
+    const timeoutId = setTimeout(() => controller.abort(new Error("请求超时")), ProviderManager.REQUEST_TIMEOUT_MS);
+    if (signal) {
+      if (signal.aborted) {
+        clearTimeout(timeoutId);
+        return err("E102", "请求已取消", signal.reason);
+      }
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
     try {
       const response = await fetch(url, {
         method: "POST",
@@ -546,7 +581,9 @@ export class ProviderManager implements IProviderManager {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${apiKey}`
         },
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
+        signal: controller.signal,
+        cache: "no-store"
       });
 
       if (!response.ok) {
@@ -559,17 +596,31 @@ export class ProviderManager implements IProviderManager {
         return err("E100", "API 返回空响应");
       }
 
+      const firstChoice = data.choices[0];
+      const content = firstChoice?.message?.content;
+      if (typeof content !== "string") {
+        return err("E100", "API 返回格式异常：缺少 message.content");
+      }
+
       return ok({
-        content: data.choices[0].message.content,
+        content,
         tokensUsed: data.usage?.total_tokens,
-        finishReason: data.choices[0].finish_reason
+        finishReason: firstChoice?.finish_reason
       });
     } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        return err("E102", "请求已取消或超时", error);
+      }
       // 网络错误
       if (error instanceof TypeError && error.message.includes("fetch")) {
         return err("E102", "网络连接失败", error);
       }
       return err("E100", `请求失败: ${(error as Error).message}`, error);
+    } finally {
+      clearTimeout(timeoutId);
+      if (signal) {
+        signal.removeEventListener("abort", onAbort);
+      }
     }
   }
 
@@ -584,8 +635,19 @@ export class ProviderManager implements IProviderManager {
   private async executeEmbedRequest(
     url: string,
     body: object,
-    apiKey: string
+    apiKey: string,
+    signal?: AbortSignal
   ): Promise<Result<EmbedResponse>> {
+    const controller = new AbortController();
+    const onAbort = () => controller.abort(signal?.reason as any);
+    const timeoutId = setTimeout(() => controller.abort(new Error("请求超时")), ProviderManager.REQUEST_TIMEOUT_MS);
+    if (signal) {
+      if (signal.aborted) {
+        clearTimeout(timeoutId);
+        return err("E102", "请求已取消", signal.reason);
+      }
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
     try {
       const response = await fetch(url, {
         method: "POST",
@@ -593,7 +655,9 @@ export class ProviderManager implements IProviderManager {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${apiKey}`
         },
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
+        signal: controller.signal,
+        cache: "no-store"
       });
 
       if (!response.ok) {
@@ -606,16 +670,29 @@ export class ProviderManager implements IProviderManager {
         return err("E100", "API 返回空响应");
       }
 
+      const first = data.data[0];
+      if (!first || !Array.isArray(first.embedding)) {
+        return err("E100", "API 返回格式异常：缺少 embedding");
+      }
+
       return ok({
-        embedding: data.data[0].embedding,
+        embedding: first.embedding,
         tokensUsed: data.usage?.total_tokens
       });
     } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        return err("E102", "请求已取消或超时", error);
+      }
       // 网络错误
       if (error instanceof TypeError && error.message.includes("fetch")) {
         return err("E102", "网络连接失败", error);
       }
       return err("E100", `请求失败: ${(error as Error).message}`, error);
+    } finally {
+      clearTimeout(timeoutId);
+      if (signal) {
+        signal.removeEventListener("abort", onAbort);
+      }
     }
   }
 

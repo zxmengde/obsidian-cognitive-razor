@@ -1,8 +1,10 @@
 /**
  * IncrementalImproveHandler - 增量改进处理器
  * 
+ * @deprecated 此功能已被弃用，等待重构
+ * 
  * 功能：
- * - 监听 reason:incremental 任务完成
+ * - 监听 reason:incremental 任务完成（已弃用）
  * - 生成 Diff 预览
  * - 处理用户确认
  * - 执行写入和状态降级
@@ -20,7 +22,7 @@ import { Result, ok, err, TaskRecord, CRFrontmatter, NoteState, IVectorIndex, ID
 /**
  * IncrementalImproveHandler 配置
  */
-export interface IncrementalImproveHandlerConfig {
+interface IncrementalImproveHandlerConfig {
   /** Obsidian App 实例 */
   app: App;
   /** TaskQueue 实例 */
@@ -45,6 +47,7 @@ export class IncrementalImproveHandler {
   private storage: FileStorage;
   private vectorIndex: IVectorIndex;
   private duplicateManager: IDuplicateManager;
+  private unsubscribeQueue?: () => void;
 
   constructor(config: IncrementalImproveHandlerConfig) {
     this.app = config.app;
@@ -60,7 +63,8 @@ export class IncrementalImproveHandler {
    */
   public start(): void {
     // 订阅任务完成事件
-    this.taskQueue.subscribe((event) => {
+    this.unsubscribeQueue?.();
+    this.unsubscribeQueue = this.taskQueue.subscribe((event) => {
       if (event.type === "task-completed" && event.taskId) {
         this.handleTaskCompleted(event.taskId);
       }
@@ -68,37 +72,22 @@ export class IncrementalImproveHandler {
   }
 
   /**
+   * 停止监听，释放资源
+   */
+  public stop(): void {
+    if (this.unsubscribeQueue) {
+      this.unsubscribeQueue();
+      this.unsubscribeQueue = undefined;
+    }
+  }
+
+  /**
    * 处理任务完成
+   * 注意：reason:incremental 任务类型已被弃用，此方法暂时保留但不会被调用
    */
   private async handleTaskCompleted(taskId: string): Promise<void> {
-    const task = this.taskQueue.getTask(taskId);
-    if (!task) {
-      return;
-    }
-
-    // 只处理 reason:incremental 任务
-    if (task.taskType !== "reason:incremental") {
-      return;
-    }
-
-    // 如果任务属于 PipelineOrchestrator（包含 pipelineId），交由管线处理
-    if (task.payload?.pipelineId) {
-      return;
-    }
-
-    // 检查任务结果
-    if (!task.result) {
-      console.error("增量改进任务没有结果:", taskId);
-      return;
-    }
-
-    try {
-      await this.showDiffAndConfirm(task);
-    } catch (error) {
-      console.error("处理增量改进任务失败:", error);
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      new Notice(`处理增量改进失败: ${errorMessage}`);
-    }
+    // 功能已弃用，等待重构
+    return;
   }
 
   /**

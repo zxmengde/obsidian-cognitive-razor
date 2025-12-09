@@ -25,6 +25,7 @@ import {
   TaskError,
   TaskType,
   CRType,
+  StandardizedConcept,
   NoteState,
   Result,
   ok,
@@ -38,13 +39,11 @@ import { mapStandardizeOutput } from "./standardize-mapper";
  * 任务管线阶段定义
  * Requirements 8.1: standardizeClassify → enrich → embedding → confirm → reason:new → confirm → write → dedup
  */
-export const TASK_PIPELINE_ORDER: TaskType[] = [
+const TASK_PIPELINE_ORDER: TaskType[] = [
   "standardizeClassify",
   "enrich",
   "embedding",
   "reason:new",
-  "reason:incremental",
-  "reason:merge",
   "ground"
 ];
 
@@ -54,7 +53,7 @@ export const TASK_PIPELINE_ORDER: TaskType[] = [
  * Property 27: Type-Specific Field Completeness
  * Requirements 7.1-7.5
  */
-export const TYPE_REQUIRED_FIELDS: Record<CRType, string[]> = {
+const TYPE_REQUIRED_FIELDS: Record<CRType, string[]> = {
   Domain: [
     "definition",
     "teleology", 
@@ -106,11 +105,37 @@ export const TYPE_REQUIRED_FIELDS: Record<CRType, string[]> = {
   ]
 };
 
+class InputValidator {
+  private readonly MAX_INPUT_LENGTH = 10000;
+  private readonly SUSPICIOUS_PATTERNS = [
+    /ignore\s+previous\s+instructions/i,
+    /system\s*:/i,
+    /\[INST\]/i,
+    /<\|im_start\|>/i
+  ];
+
+  validate(input: string): Result<string> {
+    if (typeof input !== "string") {
+      return err("E001", "输入必须是字符串");
+    }
+    if (input.length > this.MAX_INPUT_LENGTH) {
+      return err("E001", `输入过长: ${input.length} 字符 (最大 ${this.MAX_INPUT_LENGTH})`);
+    }
+    for (const pattern of this.SUSPICIOUS_PATTERNS) {
+      if (pattern.test(input)) {
+        return err("E001", "输入包含可疑指令，请检查后再试");
+      }
+    }
+    const sanitized = input.replace(/[\x00-\x1F\x7F]/g, "").replace(/\s+/g, " ").trim();
+    return ok(sanitized);
+  }
+}
+
 
 /**
  * 扩展的 TaskRunner 依赖接口
  */
-export interface TaskRunnerDependencies {
+interface TaskRunnerDependencies {
   providerManager: IProviderManager;
   promptManager: IPromptManager;
   validator: IValidator;
@@ -125,7 +150,7 @@ export interface TaskRunnerDependencies {
 /**
  * 写入操作上下文
  */
-export interface WriteContext {
+interface WriteContext {
   filePath: string;
   content: string;
   nodeId: string;
@@ -144,6 +169,7 @@ export class TaskRunner implements ITaskRunner {
   private schemaRegistry: ISchemaRegistry;
   private settingsStore?: ISettingsStore;
   private abortControllers: Map<string, AbortController>;
+  private inputValidator: InputValidator;
 
   constructor(deps: TaskRunnerDependencies) {
     this.providerManager = deps.providerManager;
@@ -157,6 +183,7 @@ export class TaskRunner implements ITaskRunner {
     this.schemaRegistry = deps.schemaRegistry || schemaRegistry;
     this.settingsStore = deps.settingsStore;
     this.abortControllers = new Map();
+    this.inputValidator = new InputValidator();
 
     this.logger.debug("TaskRunner", "TaskRunner 初始化完成");
   }
@@ -170,26 +197,24 @@ export class TaskRunner implements ITaskRunner {
   async run(task: TaskRecord): Promise<Result<TaskResult>> {
     const startTime = Date.now();
     
+    const capabilityCheck = await this.validateProviderCapability(task);
+    if (!capabilityCheck.ok) {
+      this.logger.error("TaskRunner", "Provider 能力验证失败", undefined, {
+        taskId: task.id,
+        error: capabilityCheck.error
+      });
+      return capabilityCheck as Result<TaskResult>;
+    }
+
+    const abortController = new AbortController();
+    this.abortControllers.set(task.id, abortController);
+
     try {
       this.logger.info("TaskRunner", `开始执行任务: ${task.id}`, {
         taskType: task.taskType,
         nodeId: task.nodeId,
         attempt: task.attempt
       });
-
-      // A-FUNC-03: 验证 Provider 能力匹配
-      const capabilityCheck = await this.validateProviderCapability(task);
-      if (!capabilityCheck.ok) {
-        this.logger.error("TaskRunner", "Provider 能力验证失败", undefined, {
-          taskId: task.id,
-          error: capabilityCheck.error
-        });
-        return capabilityCheck as Result<TaskResult>;
-      }
-
-      // 创建 AbortController
-      const abortController = new AbortController();
-      this.abortControllers.set(task.id, abortController);
 
       // 根据任务类型分发
       let result: Result<TaskResult>;
@@ -207,21 +232,12 @@ export class TaskRunner implements ITaskRunner {
         case "reason:new":
           result = await this.executeReasonNew(task, abortController.signal);
           break;
-        case "reason:incremental":
-          result = await this.executeReasonIncremental(task, abortController.signal);
-          break;
-        case "reason:merge":
-          result = await this.executeReasonMerge(task, abortController.signal);
-          break;
         case "ground":
           result = await this.executeGround(task, abortController.signal);
           break;
         default:
           result = err("E304", `未知的任务类型: ${task.taskType}`);
       }
-
-      // 清理 AbortController
-      this.abortControllers.delete(task.id);
 
       const elapsedTime = Date.now() - startTime;
 
@@ -248,6 +264,8 @@ export class TaskRunner implements ITaskRunner {
       });
 
       return err("E304", "任务执行异常", error);
+    } finally {
+      this.abortControllers.delete(task.id);
     }
   }
 
@@ -603,10 +621,7 @@ export class TaskRunner implements ITaskRunner {
       return true;
     }
 
-    // 特殊情况：reason:incremental 和 reason:merge 可以独立执行
-    if (currentTaskType === "reason:incremental" || currentTaskType === "reason:merge") {
-      return true;
-    }
+
 
     // 对于新概念创建流程，验证顺序
     // standardizeClassify(0) → enrich(1) → embedding(2) → reason:new(3)
@@ -659,11 +674,16 @@ export class TaskRunner implements ITaskRunner {
   ): Promise<Result<TaskResult>> {
     try {
       const userInput = task.payload.userInput as string;
+      const validated = this.inputValidator.validate(userInput);
+      if (!validated.ok) {
+        return this.createTaskError(task, validated.error!);
+      }
+      const sanitizedInput = validated.value;
 
       // 构建 prompt（CTX_INPUT）
       const slots = {
-        CTX_INPUT: userInput,
-        previous_errors: this.formatErrorHistory(task.errors)
+        CTX_INPUT: sanitizedInput,
+        CTX_LANGUAGE: this.getLanguage()
       };
 
       const promptResult = this.promptManager.build(task.taskType, slots);
@@ -678,7 +698,7 @@ export class TaskRunner implements ITaskRunner {
         messages: [
           { role: "user", content: promptResult.value }
         ]
-      });
+      }, signal);
 
       if (!chatResult.ok) {
         return this.createTaskError(task, chatResult.error!);
@@ -724,7 +744,7 @@ export class TaskRunner implements ITaskRunner {
       const metaContext = this.buildMetaContext(task.payload);
       const slots = {
         CTX_META: metaContext,
-        previous_errors: this.formatErrorHistory(task.errors)
+        CTX_LANGUAGE: this.getLanguage()
       };
 
       const promptResult = this.promptManager.build(task.taskType, slots);
@@ -739,7 +759,7 @@ export class TaskRunner implements ITaskRunner {
         messages: [
           { role: "user", content: promptResult.value }
         ]
-      });
+      }, signal);
 
       if (!chatResult.ok) {
         return this.createTaskError(task, chatResult.error!);
@@ -798,18 +818,24 @@ export class TaskRunner implements ITaskRunner {
       let text = task.payload.text as string | undefined;
 
       if (!text) {
-        const standardized = task.payload.standardizedData as any;
+        const standardized = task.payload.standardizedData as StandardizedConcept | undefined;
         if (!standardized) {
           return this.createTaskError(task, { code: "E001", message: "缺少标准化数据，无法生成嵌入文本" });
         }
 
+        const primaryType = (standardized.primaryType || task.payload.conceptType || "Entity") as CRType;
+        const currentName = standardized.standardNames?.[primaryType];
+        if (!currentName) {
+          return this.createTaskError(task, { code: "E001", message: "标准化名称缺失，无法生成嵌入文本" });
+        }
+
         const signature = createConceptSignature(
           {
-            standardName: standardized.standardName,
-            aliases: standardized.aliases || [],
+            standardName: currentName,
+            aliases: Array.isArray((task.payload as any).aliases) ? (task.payload as any).aliases : [],
             coreDefinition: standardized.coreDefinition
           },
-          standardized.primaryType as CRType,
+          primaryType,
           (task.payload.namingTemplate as string) || "{{chinese}} ({{english}})"
         );
         text = generateSignatureText(signature);
@@ -822,7 +848,7 @@ export class TaskRunner implements ITaskRunner {
         model: "text-embedding-3-small",
         input: text,
         dimensions: embeddingDimension
-      });
+      }, signal);
 
       if (!embedResult.ok) {
         return this.createTaskError(task, embedResult.error!);
@@ -859,9 +885,7 @@ export class TaskRunner implements ITaskRunner {
 
       const slots = {
         CTX_META: this.buildMetaContext(task.payload),
-        CTX_VAULT: this.buildVaultIndexContext(conceptType),
-        CTX_SCHEMA: JSON.stringify(schema, null, 2),
-        previous_errors: this.formatErrorHistory(task.errors)
+        CTX_LANGUAGE: this.getLanguage()
       };
 
       // 传递 conceptType 以选择正确的模板（reason-domain, reason-issue 等）
@@ -878,7 +902,7 @@ export class TaskRunner implements ITaskRunner {
           { role: "user", content: promptResult.value }
         ],
         maxTokens: 4000
-      });
+      }, signal);
 
       if (!chatResult.ok) {
         return this.createTaskError(task, chatResult.error!);
@@ -936,204 +960,7 @@ export class TaskRunner implements ITaskRunner {
   }
 
 
-  /**
-   * 执行 reason:incremental 任务
-   * 包含 Property 10 (Snapshot Before Write) 和 Property 30 (Evergreen Downgrade)
-   */
-  private async executeReasonIncremental(
-    task: TaskRecord,
-    signal: AbortSignal
-  ): Promise<Result<TaskResult>> {
-    try {
-      const currentContent = task.payload.currentContent as string;
-      const currentStatus = task.payload.currentStatus as NoteState | undefined;
-      const conceptType = (task.payload.conceptType as CRType) || (task.payload.noteType as CRType);
-      const schema = this.getSchema(conceptType || "Entity");
 
-      const slots = {
-        CTX_META: this.buildMetaContext(task.payload),
-        CTX_VAULT: this.buildVaultIndexContext(conceptType),
-        CTX_SCHEMA: JSON.stringify(schema, null, 2),
-        CTX_CURRENT: currentContent,
-        CTX_INTENT: task.payload.userIntent as string,
-        previous_errors: this.formatErrorHistory(task.errors)
-      };
-
-      const promptResult = this.promptManager.build(task.taskType, slots, conceptType);
-      if (!promptResult.ok) {
-        return this.createTaskError(task, promptResult.error!);
-      }
-
-      // 调用 LLM
-      const chatResult = await this.providerManager.chat({
-        providerId: task.providerRef || "default",
-        model: "gpt-4o",
-        messages: [
-          { role: "user", content: promptResult.value }
-        ],
-        maxTokens: 4000
-      });
-
-      if (!chatResult.ok) {
-        return this.createTaskError(task, chatResult.error!);
-      }
-
-      // 修复：同时输出 newContent 和 improved_content 以兼容不同消费者
-      const resultData: Record<string, unknown> = {
-        newContent: chatResult.value.content,
-        improved_content: chatResult.value.content // 兼容 IncrementalImproveHandler
-      };
-
-      // Property 10: 创建快照（写入前）
-      if (task.payload.filePath) {
-        const snapshotResult = await this.createSnapshotBeforeWrite({
-          filePath: task.payload.filePath as string,
-          content: chatResult.value.content,
-          nodeId: task.nodeId,
-          taskId: task.id,
-          originalContent: currentContent
-        });
-
-        if (snapshotResult.ok) {
-          resultData.snapshotId = snapshotResult.value;
-        }
-      }
-
-      // Property 30: Evergreen 降级
-      if (currentStatus) {
-        const newStatus = this.handleEvergreenDowngrade(currentStatus);
-        if (newStatus !== currentStatus) {
-          resultData.statusDowngraded = true;
-          resultData.newStatus = newStatus;
-          resultData.previousStatus = currentStatus;
-        }
-      }
-
-      return ok({
-        taskId: task.id,
-        state: "Completed",
-        data: resultData
-      });
-    } catch (error) {
-      this.logger.error("TaskRunner", "执行 reason:incremental 失败", error as Error, {
-        taskId: task.id
-      });
-      return err("E304", "执行 reason:incremental 失败", error);
-    }
-  }
-
-  /**
-   * 执行 reason:merge 任务
-   * 包含 Property 10 (Snapshot Before Write) 和 Property 31 (Merge Flow Completeness)
-   * 
-   * 修复：统一数据契约，支持 noteA/noteB.content 格式（来自 MergeHandler）
-   * 输出结构化字段：merged_name, content, merge_rationale 等
-   */
-  private async executeReasonMerge(
-    task: TaskRecord,
-    signal: AbortSignal
-  ): Promise<Result<TaskResult>> {
-    try {
-      // 兼容两种输入格式：contentA/contentB 或 noteA/noteB.content
-      const noteA = task.payload.noteA as { nodeId: string; name: string; path: string; content: string } | undefined;
-      const noteB = task.payload.noteB as { nodeId: string; name: string; path: string; content: string } | undefined;
-      const contentA = (task.payload.contentA as string) || noteA?.content || "";
-      const contentB = (task.payload.contentB as string) || noteB?.content || "";
-      
-      if (!contentA || !contentB) {
-        return this.createTaskError(task, { code: "E001", message: "缺少合并内容：需要 contentA/contentB 或 noteA/noteB.content" });
-      }
-
-      const conceptType = (task.payload.type as CRType) || "Entity";
-      const schema = this.getSchema(conceptType);
-
-      const slots = {
-        CTX_META: this.buildMetaContext(task.payload),
-        CTX_VAULT: this.buildVaultIndexContext(conceptType),
-        CTX_SCHEMA: JSON.stringify(schema, null, 2),
-        CTX_NOTE_A: contentA,
-        CTX_NOTE_B: contentB,
-        previous_errors: this.formatErrorHistory(task.errors)
-      };
-
-      const promptResult = this.promptManager.build(task.taskType, slots, conceptType);
-      if (!promptResult.ok) {
-        return this.createTaskError(task, promptResult.error!);
-      }
-
-      // 调用 LLM
-      const chatResult = await this.providerManager.chat({
-        providerId: task.providerRef || "default",
-        model: "gpt-4o",
-        messages: [
-          { role: "user", content: promptResult.value }
-        ],
-        maxTokens: 4000
-      });
-
-      if (!chatResult.ok) {
-        return this.createTaskError(task, chatResult.error!);
-      }
-
-      // 解析 LLM 返回的结构化内容
-      let parsedContent: Record<string, unknown>;
-      try {
-        parsedContent = JSON.parse(chatResult.value.content);
-      } catch {
-        // 如果不是 JSON，包装为结构化格式
-        parsedContent = { content: chatResult.value.content };
-      }
-
-      // 构建结构化的合并结果
-      const resultData: Record<string, unknown> = {
-        // 结构化字段（供 MergeHandler 预览使用）
-        merged_name: parsedContent.merged_name || {
-          chinese: noteA?.name || task.payload.nameA || "合并后的概念",
-          english: ""
-        },
-        content: parsedContent,
-        merge_rationale: parsedContent.merge_rationale || "AI 自动合并",
-        preserved_from_a: parsedContent.preserved_from_a || [],
-        preserved_from_b: parsedContent.preserved_from_b || [],
-        conflicts_resolved: parsedContent.conflicts_resolved || [],
-        // 兼容旧格式
-        mergedContent: chatResult.value.content
-      };
-
-      // Property 10: 创建快照（写入前）- 为保留的笔记创建快照
-      const filePath = (task.payload.filePath as string) || noteA?.path;
-      if (filePath) {
-        const snapshotResult = await this.createSnapshotBeforeWrite({
-          filePath,
-          content: chatResult.value.content,
-          nodeId: task.nodeId,
-          taskId: task.id,
-          originalContent: contentA
-        });
-
-        if (snapshotResult.ok) {
-          resultData.snapshotId = snapshotResult.value;
-        }
-      }
-
-      // Property 31: 记录合并信息，供后续完成合并流程使用
-      resultData.keepNodeId = task.payload.keepNodeId || noteA?.nodeId;
-      resultData.deleteNodeId = task.payload.deleteNodeId || noteB?.nodeId;
-      resultData.deleteFilePath = task.payload.deleteFilePath || noteB?.path;
-      resultData.mergeFlowPending = true;
-
-      return ok({
-        taskId: task.id,
-        state: "Completed",
-        data: resultData
-      });
-    } catch (error) {
-      this.logger.error("TaskRunner", "执行 reason:merge 失败", error as Error, {
-        taskId: task.id
-      });
-      return err("E304", "执行 reason:merge 失败", error);
-    }
-  }
 
 
   /**
@@ -1159,7 +986,7 @@ export class TaskRunner implements ITaskRunner {
         CTX_META: this.buildMetaContext(task.payload),
         CTX_CURRENT: currentContent,
         CTX_SOURCES: task.payload.sources as string || "",
-        previous_errors: this.formatErrorHistory(task.errors)
+        CTX_LANGUAGE: this.getLanguage()
       };
 
       const promptResult = this.promptManager.build(task.taskType, slots, conceptType);
@@ -1175,7 +1002,7 @@ export class TaskRunner implements ITaskRunner {
           { role: "user", content: promptResult.value }
         ],
         maxTokens: 2000
-      });
+      }, signal);
 
       if (!chatResult.ok) {
         return this.createTaskError(task, chatResult.error!);
@@ -1228,50 +1055,37 @@ export class TaskRunner implements ITaskRunner {
   // 辅助方法
   // ============================================================================
 
-  /**
-   * 格式化错误历史
-   */
-  private formatErrorHistory(errors?: TaskError[]): string {
-    if (!errors || errors.length === 0) {
-      return "No previous errors";
-    }
 
-    return errors.map((error, index) => 
-      `Attempt ${error.attempt}: [${error.code}] ${error.message}`
-    ).join("\n");
-  }
 
   /**
    * 构建 CTX_META 上下文字符串
+   * 简化格式：仅包含当前选择的类型和对应的标准名称
    */
   private buildMetaContext(payload: Record<string, unknown>): string {
-    const standardized = payload.standardizedData as Record<string, any> | undefined;
-    const enriched = payload.enrichedData as Record<string, any> | undefined;
+    const standardized = payload.standardizedData as StandardizedConcept | undefined;
+    const primaryType = (standardized?.primaryType || payload.conceptType) as CRType | undefined;
+    const standardNames = standardized?.standardNames;
+    const selectedName = primaryType && standardNames ? standardNames[primaryType] : undefined;
 
-    const meta = {
-      standardName: standardized?.standardName,
-      aliases: standardized?.aliases,
-      primaryType: standardized?.primaryType || payload.conceptType,
-      coreDefinition: standardized?.coreDefinition || payload.coreDefinition,
-      tags: enriched?.tags || [],
-      nodeId: payload.nodeId
+    // 简化的元数据格式
+    const meta: Record<string, unknown> = {
+      Type: primaryType || "",
+      standard_name_cn: selectedName?.chinese || "",
+      standard_name_en: selectedName?.english || ""
     };
 
     return JSON.stringify(meta, null, 2);
   }
 
   /**
-   * 构建 CTX_VAULT 占位（简单占位，可扩展为真实索引摘要）
+   * 获取 CTX_LANGUAGE 值
    */
-  private buildVaultIndexContext(type?: CRType): string {
-    if (!this.vectorIndex || !type) {
-      return "";
-    }
-
-    const stats = this.vectorIndex.getStats();
-    const count = (stats.byType as Record<string, number>)[type] || 0;
-    return `Existing ${type} count: ${count}`;
+  private getLanguage(): string {
+    const settings = this.settingsStore?.getSettings();
+    return settings?.language === "en" ? "English" : "Chinese";
   }
+
+
 
   /**
    * 创建任务错误结果
@@ -1320,8 +1134,7 @@ export class TaskRunner implements ITaskRunner {
   /**
    * 获取 Schema
    * 
-   * 遵循设计文档 R-PDD-02：
-   * CTX_SCHEMA 由 SchemaRegistry 根据目标类型动态生成，
+   * 从 SchemaRegistry 根据目标类型获取完整的 JSON Schema，
    * 包含字段定义、类型约束和必填标记
    * 
    * @param conceptType 知识类型
@@ -1445,8 +1258,6 @@ export class TaskRunner implements ITaskRunner {
       case "standardizeClassify":
       case "enrich":
       case "reason:new":
-      case "reason:incremental":
-      case "reason:merge":
       case "ground":
       default:
         return "chat";

@@ -36,6 +36,7 @@ export class SetupWizard extends Modal {
   private baseUrl: string = "";
   private chatModel: string = "gpt-4o";
   private embedModel: string = "text-embedding-3-small";
+  private persistApiKey = true;
   private validation: ValidationState = { status: "idle" };
   private selectedLanguage: "zh" | "en" = "zh";
 
@@ -108,13 +109,27 @@ export class SetupWizard extends Modal {
     // 配置表单
     new Setting(contentEl)
       .setName("API Key")
-      .setDesc(this.selectedLanguage === "zh" ? "您的 API Key（本地存储，不会上传）" : "Your API Key (stored locally, never uploaded)")
+      .setDesc(this.selectedLanguage === "zh" ? "您的 API Key（默认写入本地 data.json，不会上传）" : "Your API Key (stored locally in data.json by default, never uploaded)")
       .addText(text => {
         text
           .setPlaceholder("sk-...")
           .setValue(this.apiKey)
           .onChange(value => this.apiKey = value);
         text.inputEl.type = "password";
+      });
+
+    new Setting(contentEl)
+      .setName(this.selectedLanguage === "zh" ? "仅在本次会话保存" : "Session only")
+      .setDesc(this.selectedLanguage === "zh"
+        ? "关闭本选项后会将 API Key 写入本地 data.json；开启后只保存在内存，重启需重新输入。"
+        : "When enabled, API Key stays in memory only (not written to data.json) and must be re-entered after restart.")
+      .addToggle(toggle => {
+        toggle
+          .setValue(!this.persistApiKey)
+          .onChange(value => {
+            // value 为 true 表示仅会话保存
+            this.persistApiKey = !value;
+          });
       });
 
     new Setting(contentEl)
@@ -231,7 +246,8 @@ export class SetupWizard extends Modal {
         baseUrl: this.baseUrl.trim() || undefined,
         defaultChatModel: this.chatModel,
         defaultEmbedModel: this.embedModel,
-        enabled: true
+        enabled: true,
+        persistApiKey: this.persistApiKey
       };
 
       const result = await this.plugin.settingsStore.addProvider(this.providerId, config);

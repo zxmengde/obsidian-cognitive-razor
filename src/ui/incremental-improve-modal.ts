@@ -1,14 +1,16 @@
 /**
  * IncrementalImproveModal - 增量改进意图输入框
  * 
+ * @deprecated 此功能已被弃用，等待重构
+ * 
  * 功能：
  * - 输入改进意图
- * - 生成 reason:incremental 任务
+ * - 生成 reason:incremental 任务（已弃用）
  */
 
 import { Modal, App, Notice, TFile } from "obsidian";
 import { PipelineOrchestrator } from "../core/pipeline-orchestrator";
-import { CRType, NoteState, Result } from "../types";
+import { CRType, NoteState, Result, err } from "../types";
 
 /**
  * 增量改进模态框
@@ -208,6 +210,7 @@ export class IncrementalImproveModal extends Modal {
 
   /**
    * 创建增量改进任务
+   * @deprecated 功能已弃用，等待重构
    */
   private createIncrementalTask(
     uid: string,
@@ -216,14 +219,7 @@ export class IncrementalImproveModal extends Modal {
     intent: string,
     currentContent: string
   ): Result<string> {
-    return this.pipeline.startIncrementalPipeline({
-      nodeId: uid,
-      filePath: this.file.path,
-      noteType,
-      currentContent,
-      userIntent: intent,
-      currentStatus: status
-    });
+    return err("DEPRECATED", "增量改进功能已被弃用，等待重构");
   }
 
   onClose(): void {

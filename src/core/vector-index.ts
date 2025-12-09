@@ -45,13 +45,7 @@ export class VectorIndex implements IVectorIndex {
     this.dimension = dimension;
     
     // 初始化空桶
-    this.buckets = {
-      Domain: [],
-      Issue: [],
-      Theory: [],
-      Entity: [],
-      Mechanism: [],
-    };
+    this.buckets = this.createEmptyBuckets();
   }
 
   /**
@@ -78,26 +72,19 @@ export class VectorIndex implements IVectorIndex {
         const indexFile: VectorIndexFile = JSON.parse(readResult.value);
         
         // 验证模型和维度
-        if (indexFile.model !== this.model) {
-          return err(
-            "E302",
-            `Index model mismatch: expected ${this.model}, got ${indexFile.model}`,
-            { expected: this.model, actual: indexFile.model }
-          );
-        }
-
-        if (indexFile.dimension !== this.dimension) {
-          return err(
-            "E302",
-            `Index dimension mismatch: expected ${this.dimension}, got ${indexFile.dimension}`,
-            { expected: this.dimension, actual: indexFile.dimension }
-          );
+        if (indexFile.model !== this.model || indexFile.dimension !== this.dimension) {
+          // 模型或维度不匹配时重建索引，避免插件无法使用
+          console.warn(`VectorIndex 模型/维度不匹配，已重建索引。期待 ${this.model}/${this.dimension}，实际 ${indexFile.model}/${indexFile.dimension}`);
+          this.buckets = this.createEmptyBuckets();
+          await this.save();
+          return ok(undefined);
         }
 
         // 加载桶数据
         this.buckets = indexFile.buckets;
       } catch (parseError) {
         // 解析失败，创建新索引
+        this.buckets = this.createEmptyBuckets();
         await this.save();
       }
 
@@ -211,19 +198,19 @@ export class VectorIndex implements IVectorIndex {
 
       const bucket = this.buckets[type];
       
-      // 计算所有条目的相似度
-      const results: Array<{ entry: VectorEntry; similarity: number }> = [];
+      // 使用局部排序，仅维护 topK，避免全量排序阻塞主线程
+      const topResults: Array<{ entry: VectorEntry; similarity: number }> = [];
       
       for (const entry of bucket) {
         const similarity = this.cosineSimilarity(embedding, entry.embedding);
-        results.push({ entry, similarity });
+        if (topResults.length < topK) {
+          topResults.push({ entry, similarity });
+          topResults.sort((a, b) => b.similarity - a.similarity);
+        } else if (similarity > topResults[topResults.length - 1].similarity) {
+          topResults[topResults.length - 1] = { entry, similarity };
+          topResults.sort((a, b) => b.similarity - a.similarity);
+        }
       }
-
-      // 按相似度降序排序
-      results.sort((a, b) => b.similarity - a.similarity);
-
-      // 取前 topK 个结果
-      const topResults = results.slice(0, topK);
 
       // 转换为 SearchResult 格式
       const searchResults: SearchResult[] = topResults.map((r) => ({
@@ -301,6 +288,16 @@ export class VectorIndex implements IVectorIndex {
     if (!writeResult.ok) {
       throw new Error(`Failed to save vector index: ${writeResult.error.message}`);
     }
+  }
+
+  private createEmptyBuckets(): Record<CRType, VectorEntry[]> {
+    return {
+      Domain: [],
+      Issue: [],
+      Theory: [],
+      Entity: [],
+      Mechanism: [],
+    };
   }
 
   /**

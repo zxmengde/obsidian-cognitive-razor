@@ -60,8 +60,6 @@ export type TaskType =
   | "standardizeClassify"    // 标准化和分类
   | "enrich"                 // 内容生成
   | "reason:new"             // 新概念推理
-  | "reason:incremental"     // 增量改进
-  | "reason:merge"           // 合并推理
   | "ground";                // 接地验证
 
 /**
@@ -226,7 +224,7 @@ export interface IndexStats {
 /**
  * Provider 类型（仅支持 OpenAI 标准格式，可通过自定义端点兼容其他服务）
  */
-export type ProviderType = "openai";
+type ProviderType = "openai";
 
 /**
  * Provider 能力
@@ -279,7 +277,7 @@ export interface ChatRequest {
 /**
  * 聊天消息
  */
-export interface ChatMessage {
+interface ChatMessage {
   /** 角色 */
   role: "system" | "user" | "assistant";
   /** 内容 */
@@ -343,6 +341,8 @@ export interface ProviderConfig {
   defaultEmbedModel: string;
   /** 是否启用 */
   enabled: boolean;
+  /** 是否持久化 API Key（false 表示仅存储于会话内存，不写入 data.json） */
+  persistApiKey?: boolean;
 }
 
 /**
@@ -413,6 +413,10 @@ export interface PluginSettings {
   concurrency: number;
   autoRetry: boolean;
   maxRetryAttempts: number;
+  /** 单个任务最大执行时长（毫秒） */
+  taskTimeoutMs: number;
+  /** 任务历史保留上限（仅 Completed/Failed/Cancelled） */
+  maxTaskHistory: number;
   
   /** 快照设置 */
   maxSnapshots: number;
@@ -431,6 +435,9 @@ export interface PluginSettings {
   
   /** 日志级别 */
   logLevel: "debug" | "info" | "warn" | "error";
+
+  /** 日志格式 */
+  logFormat: "json" | "pretty" | "compact";
   
   /** 嵌入向量维度（text-embedding-3-small 支持 512-3072，默认 1536） */
   embeddingDimension: number;
@@ -563,6 +570,8 @@ export interface LockRecord {
   taskId: string;
   /** 获取时间 */
   acquiredAt: string;
+  /** 过期时间（用于僵尸锁清理） */
+  expiresAt?: string;
 }
 
 // ============================================================================
@@ -613,8 +622,9 @@ export interface TaskResult {
 
 /**
  * 任务详情（用于 UI 显示）
+ * 内部使用，不导出
  */
-export interface TaskDetails extends TaskRecord {
+interface TaskDetails extends TaskRecord {
   /** Provider 名称 */
   providerName?: string;
   /** 已用时间（毫秒） */
@@ -646,7 +656,7 @@ export interface QueueStatus {
 /**
  * 队列事件类型
  */
-export type QueueEventType =
+type QueueEventType =
   | "task-added"
   | "task-started"
   | "task-completed"
@@ -679,7 +689,7 @@ export type QueueEventListener = (event: QueueEvent) => void;
 /**
  * 成功结果
  */
-export interface Ok<T> {
+interface Ok<T> {
   ok: true;
   value: T;
 }
@@ -704,50 +714,6 @@ export type Result<T> = Ok<T> | Err;
 // ============================================================================
 // Modal 组件类型
 // ============================================================================
-
-/**
- * 文本输入 Modal 选项
- */
-export interface TextInputModalOptions {
-  /** 标题 */
-  title: string;
-  /** 占位符 */
-  placeholder?: string;
-  /** 默认值 */
-  defaultValue?: string;
-  /** 验证函数 - 返回错误消息或 null */
-  validator?: (value: string) => string | null;
-  /** 提交回调 */
-  onSubmit: (value: string) => void;
-  /** 取消回调 */
-  onCancel?: () => void;
-}
-
-/**
- * 选择选项
- */
-export interface SelectOption {
-  /** 值 */
-  value: string;
-  /** 标签 */
-  label: string;
-  /** 描述 */
-  description?: string;
-}
-
-/**
- * 选择 Modal 选项
- */
-export interface SelectModalOptions {
-  /** 标题 */
-  title: string;
-  /** 选项列表 */
-  options: SelectOption[];
-  /** 选择回调 */
-  onSelect: (value: string) => void;
-  /** 取消回调 */
-  onCancel?: () => void;
-}
 
 /**
  * 确认 Modal 选项
@@ -878,12 +844,12 @@ export interface ITaskQueue {
   /**
    * 暂停队列
    */
-  pause(): void;
+  pause(): Promise<void>;
   
   /**
    * 恢复队列
    */
-  resume(): void;
+  resume(): Promise<void>;
   
   /**
    * 获取队列状态
@@ -978,14 +944,14 @@ export interface IProviderManager {
    * @param request 聊天请求
    * @returns 聊天响应
    */
-  chat(request: ChatRequest): Promise<Result<ChatResponse>>;
+  chat(request: ChatRequest, signal?: AbortSignal): Promise<Result<ChatResponse>>;
   
   /**
    * 调用嵌入 API
    * @param request 嵌入请求
    * @returns 嵌入响应
    */
-  embed(request: EmbedRequest): Promise<Result<EmbedResponse>>;
+  embed(request: EmbedRequest, signal?: AbortSignal): Promise<Result<EmbedResponse>>;
   
   /**
    * 检查 Provider 可用性
@@ -1386,4 +1352,29 @@ export interface ILogger {
    * 清空日志
    */
   clear(): void;
+
+  /**
+   * 设置追踪 ID（可选，用于关联同一操作的多条日志）
+   * @param traceId 追踪 ID，传 null 清除
+   */
+  setTraceId?(traceId: string | null): void;
+
+  /**
+   * 获取当前追踪 ID（可选）
+   * @returns 当前追踪 ID 或 null
+   */
+  getTraceId?(): string | null;
+
+  /**
+   * 开始一个带追踪 ID 的操作（可选）
+   * @param operation 操作名称
+   * @returns 生成的追踪 ID
+   */
+  startTrace?(operation: string): string;
+
+  /**
+   * 结束当前追踪（可选）
+   * @param operation 操作名称
+   */
+  endTrace?(operation: string): void;
 }
