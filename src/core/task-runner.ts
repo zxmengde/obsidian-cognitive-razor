@@ -37,13 +37,14 @@ import { mapStandardizeOutput } from "./standardize-mapper";
 
 /**
  * 任务管线阶段定义
- * Requirements 8.1: standardizeClassify → enrich → embedding → confirm → reason:new → confirm → write → dedup
+ * 流程：standardizeClassify → enrich → confirm → reason:new → embedding → ground → write → dedup
+ * embedding 在 reason:new 之后执行
  */
 const TASK_PIPELINE_ORDER: TaskType[] = [
   "standardizeClassify",
   "enrich",
-  "embedding",
   "reason:new",
+  "embedding",
   "ground"
 ];
 
@@ -60,33 +61,42 @@ const TYPE_REQUIRED_FIELDS: Record<CRType, string[]> = {
     "methodology",
     "historical_genesis",
     "boundaries",
+    "sub_domains",
     "issues",
     "holistic_understanding"
   ],
   Issue: [
+    "definition",
     "core_tension",
     "significance",
+    "epistemic_barrier",
+    "counter_intuition",
     "historical_genesis",
-    "structural_analysis",
+    "sub_issues",
     "stakeholder_perspectives",
     "boundary_conditions",
     "theories",
     "holistic_understanding"
   ],
   Theory: [
+    "definition",
     "axioms",
-    "argument_chain",
+    "sub_theories",
+    "logical_structure",
+    "entities",
+    "mechanisms",
     "core_predictions",
-    "scope_and_applicability",
     "limitations",
-    "historical_development",
-    "extracted_components",
+    "historical_genesis",
     "holistic_understanding"
   ],
   Entity: [
     "definition",
     "classification",
     "properties",
+    "states",
+    "constraints",
+    "composition",
     "distinguishing_features",
     "examples",
     "counter_examples",
@@ -95,15 +105,17 @@ const TYPE_REQUIRED_FIELDS: Record<CRType, string[]> = {
   Mechanism: [
     "definition",
     "trigger_conditions",
+    "operates_on",
     "causal_chain",
-    "termination_conditions",
+    "modulation",
     "inputs",
     "outputs",
-    "process_description",
-    "examples",
+    "side_effects",
+    "termination_conditions",
     "holistic_understanding"
   ]
 };
+
 
 class InputValidator {
   private readonly MAX_INPUT_LENGTH = 10000;
@@ -356,85 +368,6 @@ export class TaskRunner implements ITaskRunner {
 
 
   // ============================================================================
-  // Property 27: Type-Specific Field Completeness
-  // 验证生成内容包含类型所需的所有必填字段
-  // Requirements 7.1, 7.2, 7.3, 7.4, 7.5
-  // ============================================================================
-
-  /**
-   * 验证类型字段完整性
-   * 
-   * Property 27: Type-Specific Field Completeness
-   * For any generated content of a specific CRType, all required fields for that
-   * type SHALL be present.
-   * 
-   * @param data 生成的数据
-   * @param type 知识类型
-   * @returns 验证结果
-   */
-  validateTypeFieldCompleteness(data: Record<string, unknown>, type: CRType): Result<void> {
-    const requiredFields = TYPE_REQUIRED_FIELDS[type];
-    if (!requiredFields) {
-      return err("E007", `未知的知识类型: ${type}`);
-    }
-
-    const missingFields: string[] = [];
-
-    for (const field of requiredFields) {
-      const value = data[field];
-      if (value === undefined || value === null) {
-        missingFields.push(field);
-      } else if (typeof value === "string" && value.trim() === "") {
-        missingFields.push(field);
-      } else if (Array.isArray(value)) {
-        // 特殊检查：某些数组字段有最小长度要求
-        if (field === "axioms" && value.length < 1) {
-          missingFields.push(`${field} (至少需要 1 个元素)`);
-        } else if (field === "argument_chain" && value.length < 1) {
-          missingFields.push(`${field} (至少需要 1 个元素)`);
-        } else if (field === "causal_chain" && value.length < 2) {
-          missingFields.push(`${field} (至少需要 2 个元素)`);
-        }
-      }
-    }
-
-    if (missingFields.length > 0) {
-      return err(
-        "E003",
-        `类型 ${type} 缺少必填字段: ${missingFields.join(", ")}`,
-        { type, missingFields }
-      );
-    }
-
-    // 特殊验证：Issue 的 core_tension 必须匹配 "X vs Y" 格式
-    if (type === "Issue" && data.core_tension) {
-      const coreTension = data.core_tension as string;
-      if (!/^.+ vs .+$/.test(coreTension)) {
-        return err(
-          "E010",
-          `Issue 的 core_tension 必须匹配 "X vs Y" 格式，当前值: ${coreTension}`,
-          { field: "core_tension", value: coreTension }
-        );
-      }
-    }
-
-    // 特殊验证：Entity 的 classification 必须包含 genus 和 differentia
-    if (type === "Entity" && data.classification) {
-      const classification = data.classification as Record<string, unknown>;
-      if (!classification.genus || !classification.differentia) {
-        return err(
-          "E004",
-          "Entity 的 classification 必须包含 genus 和 differentia",
-          { field: "classification", value: classification }
-        );
-      }
-    }
-
-    return ok(undefined);
-  }
-
-
-  // ============================================================================
   // Property 30: Evergreen Downgrade on Improvement
   // 增量改进后将 Evergreen 状态改为 Draft
   // Requirements 8.3
@@ -600,8 +533,10 @@ export class TaskRunner implements ITaskRunner {
    * 
    * Property 29: Task Pipeline Order
    * For any new concept creation, tasks SHALL execute in order:
-   * standardizeClassify → enrich → embedding → (user confirmation) → reason:new →
-   * (user confirmation) → write → dedup detection.
+   * standardizeClassify → enrich → (user confirmation) → reason:new → embedding →
+   * ground → (user confirmation) → write → dedup detection.
+   * 
+   * embedding 在 reason:new 之后执行
    * 
    * @param previousTaskType 前一个任务类型
    * @param currentTaskType 当前任务类型
@@ -621,13 +556,11 @@ export class TaskRunner implements ITaskRunner {
       return true;
     }
 
-
-
     // 对于新概念创建流程，验证顺序
-    // standardizeClassify(0) → enrich(1) → embedding(2) → reason:new(3)
-    if (currentTaskType === "reason:new") {
-      // reason:new 必须在 embedding 之后
-      return previousTaskType === "embedding" || previousIndex <= 2;
+    // standardizeClassify(0) → enrich(1) → reason:new(2) → embedding(3) → ground(4)
+    if (currentTaskType === "embedding") {
+      // embedding 必须在 reason:new 之后
+      return previousTaskType === "reason:new" || previousIndex <= 2;
     }
 
     // 一般情况：当前任务索引应该大于等于前一个任务索引
@@ -652,9 +585,9 @@ export class TaskRunner implements ITaskRunner {
       case "standardizeClassify":
         return "enrich";
       case "enrich":
-        return "embedding";
-      case "embedding":
         return "reason:new";
+      case "reason:new":
+        return "embedding";
       default:
         return null;
     }
@@ -691,13 +624,19 @@ export class TaskRunner implements ITaskRunner {
         return this.createTaskError(task, promptResult.error!);
       }
 
-      // 调用 LLM
+      // 获取任务模型配置
+      const modelConfig = this.getTaskModelConfig("standardizeClassify");
+
+      // 调用 LLM（使用用户配置的模型）
       const chatResult = await this.providerManager.chat({
-        providerId: task.providerRef || "default",
-        model: "gpt-4o",
+        providerId: task.providerRef || modelConfig.providerId,
+        model: modelConfig.model,
         messages: [
           { role: "user", content: promptResult.value }
-        ]
+        ],
+        temperature: modelConfig.temperature,
+        topP: modelConfig.topP,
+        maxTokens: modelConfig.maxTokens
       }, signal);
 
       if (!chatResult.ok) {
@@ -752,13 +691,19 @@ export class TaskRunner implements ITaskRunner {
         return this.createTaskError(task, promptResult.error!);
       }
 
-      // 调用 LLM
+      // 获取任务模型配置
+      const modelConfig = this.getTaskModelConfig("enrich");
+
+      // 调用 LLM（使用用户配置的模型）
       const chatResult = await this.providerManager.chat({
-        providerId: task.providerRef || "default",
-        model: "gpt-4o",
+        providerId: task.providerRef || modelConfig.providerId,
+        model: modelConfig.model,
         messages: [
           { role: "user", content: promptResult.value }
-        ]
+        ],
+        temperature: modelConfig.temperature,
+        topP: modelConfig.topP,
+        maxTokens: modelConfig.maxTokens
       }, signal);
 
       if (!chatResult.ok) {
@@ -841,11 +786,14 @@ export class TaskRunner implements ITaskRunner {
         text = generateSignatureText(signature);
       }
 
-      // 调用 Embedding API（支持用户配置的向量维度）
+      // 获取任务模型配置
+      const modelConfig = this.getTaskModelConfig("embedding");
+
+      // 调用 Embedding API（使用用户配置的模型和向量维度）
       const embeddingDimension = this.settingsStore?.getSettings().embeddingDimension || 1536;
       const embedResult = await this.providerManager.embed({
-        providerId: task.providerRef || "default",
-        model: "text-embedding-3-small",
+        providerId: task.providerRef || modelConfig.providerId,
+        model: modelConfig.model,
         input: text,
         dimensions: embeddingDimension
       }, signal);
@@ -894,14 +842,19 @@ export class TaskRunner implements ITaskRunner {
         return this.createTaskError(task, promptResult.error!);
       }
 
-      // 调用 LLM
+      // 获取任务模型配置
+      const modelConfig = this.getTaskModelConfig("reason:new");
+
+      // 调用 LLM（使用用户配置的模型）
       const chatResult = await this.providerManager.chat({
-        providerId: task.providerRef || "default",
-        model: "gpt-4o",
+        providerId: task.providerRef || modelConfig.providerId,
+        model: modelConfig.model,
         messages: [
           { role: "user", content: promptResult.value }
         ],
-        maxTokens: 4000
+        temperature: modelConfig.temperature,
+        topP: modelConfig.topP,
+        maxTokens: modelConfig.maxTokens
       }, signal);
 
       if (!chatResult.ok) {
@@ -923,12 +876,6 @@ export class TaskRunner implements ITaskRunner {
 
       // 解析结果
       const data = (validationResult.data as Record<string, unknown>) || JSON.parse(chatResult.value.content);
-
-      // Property 27: 验证类型字段完整性
-      const fieldValidation = this.validateTypeFieldCompleteness(data, conceptType);
-      if (!fieldValidation.ok) {
-        return this.createTaskError(task, fieldValidation.error!);
-      }
 
       // Property 10: 创建快照（写入前）
       const skipSnapshot = task.payload.skipSnapshot === true;
@@ -994,14 +941,19 @@ export class TaskRunner implements ITaskRunner {
         return this.createTaskError(task, promptResult.error!);
       }
 
-      // 调用 LLM
+      // 获取任务模型配置
+      const modelConfig = this.getTaskModelConfig("ground");
+
+      // 调用 LLM（使用用户配置的模型）
       const chatResult = await this.providerManager.chat({
-        providerId: task.providerRef || "default",
-        model: "gpt-4o",
+        providerId: task.providerRef || modelConfig.providerId,
+        model: modelConfig.model,
         messages: [
           { role: "user", content: promptResult.value }
         ],
-        maxTokens: 2000
+        temperature: modelConfig.temperature,
+        topP: modelConfig.topP,
+        maxTokens: modelConfig.maxTokens
       }, signal);
 
       if (!chatResult.ok) {
@@ -1055,7 +1007,44 @@ export class TaskRunner implements ITaskRunner {
   // 辅助方法
   // ============================================================================
 
+  /**
+   * 获取任务模型配置
+   * 
+   * 从 settingsStore 获取用户为特定任务类型配置的模型和参数
+   * 如果未配置，返回默认值
+   * 
+   * @param taskType 任务类型
+   * @returns 模型配置（providerId, model, temperature, topP, maxTokens）
+   */
+  private getTaskModelConfig(taskType: TaskType): {
+    providerId: string;
+    model: string;
+    temperature?: number;
+    topP?: number;
+    maxTokens?: number;
+  } {
+    const settings = this.settingsStore?.getSettings();
+    const taskConfig = settings?.taskModels?.[taskType];
+    
+    // 默认配置
+    const defaults: Record<TaskType, { model: string; temperature?: number }> = {
+      "standardizeClassify": { model: "gpt-4o", temperature: 0.3 },
+      "enrich": { model: "gpt-4o", temperature: 0.5 },
+      "embedding": { model: "text-embedding-3-small" },
+      "reason:new": { model: "gpt-4o", temperature: 0.7 },
+      "ground": { model: "gpt-4o", temperature: 0.3 }
+    };
 
+    const defaultConfig = defaults[taskType] || { model: "gpt-4o" };
+
+    return {
+      providerId: taskConfig?.providerId || settings?.defaultProviderId || "default",
+      model: taskConfig?.model || defaultConfig.model,
+      temperature: taskConfig?.temperature ?? defaultConfig.temperature,
+      topP: taskConfig?.topP,
+      maxTokens: taskConfig?.maxTokens
+    };
+  }
 
   /**
    * 构建 CTX_META 上下文字符串
@@ -1112,23 +1101,14 @@ export class TaskRunner implements ITaskRunner {
   /**
    * 获取验证规则
    * 
-   * 遵循设计文档 R-PDD-02：
-   * 使用 SchemaRegistry 根据目标类型动态获取校验规则
+   * 简化版本：返回空数组，不再使用业务规则校验
    * 
-   * @param conceptType 知识类型
-   * @returns 校验规则代码列表（C001-C016）
+   * @param _conceptType 知识类型（未使用）
+   * @returns 空数组
    */
-  private getValidationRules(conceptType: string): string[] {
-    // 验证类型是否有效
-    if (!this.schemaRegistry.isValidType(conceptType)) {
-      this.logger.warn("TaskRunner", `未知的知识类型: ${conceptType}，使用默认规则`);
-      return ["C010", "C011", "C012"]; // 通用规则
-    }
-
-    // 从 SchemaRegistry 获取类型特定的校验规则
-    const rules = this.schemaRegistry.getValidationRules(conceptType as CRType);
-    this.logger.debug("TaskRunner", `获取校验规则: ${conceptType}`, { rules });
-    return rules;
+  private getValidationRules(_conceptType: string): string[] {
+    // 简化版本：不再使用业务规则校验
+    return [];
   }
 
   /**

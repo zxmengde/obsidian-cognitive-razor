@@ -487,8 +487,8 @@ export default class CognitiveRazorPlugin extends Plugin {
 			stats: this.vectorIndex.getStats()
 		});
 
-		// 2. Validator（注入 VectorIndex 用于语义去重）
-		this.validator = new Validator(this.vectorIndex);
+		// 2. Validator
+		this.validator = new Validator();
 		this.logger.debug('CognitiveRazorPlugin', 'Validator 初始化完成');
 
 		// 3. LockManager

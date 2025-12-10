@@ -42,7 +42,13 @@ interface Translations {
     duplicates: {
       title: string;
       sortBy: string;
+      sortSimilarityDesc: string;
+      sortSimilarityAsc: string;
+      sortTimeDesc: string;
+      sortTimeAsc: string;
+      sortByType: string;
       filterBy: string;
+      filterAll: string;
       selectAll: string;
       batchMerge: string;
       batchDismiss: string;
@@ -60,6 +66,7 @@ interface Translations {
       running: string;
       completed: string;
       failed: string;
+      cancelled: string;
       clearCompleted: string;
       clearFailed: string;
       retryFailed: string;
@@ -84,6 +91,15 @@ interface Translations {
       title: string;
       empty: string;
       undo: string;
+      refresh: string;
+      clearAll: string;
+      clearAllConfirmTitle: string;
+      clearAllConfirmMessage: string;
+      moreSnapshots: string;
+      timeJustNow: string;
+      timeMinutesAgo: string;
+      timeHoursAgo: string;
+      timeDaysAgo: string;
     };
     pipeline: {
       id: string;
@@ -92,6 +108,12 @@ interface Translations {
       view: string;
       confirmCreate: string;
       previewWrite: string;
+      groundingResult: string;
+      chineseName: string;
+      englishName: string;
+      autoSelect: string;
+      saveEdit: string;
+      generatedContentPreview: string;
       stages: {
         idle: string;
         standardizing: string;
@@ -106,6 +128,21 @@ interface Translations {
         completed: string;
         failed: string;
       };
+    };
+    typeConfidenceTable: {
+      type: string;
+      standardName: string;
+      confidence: string;
+      action: string;
+    };
+    duplicatePreview: {
+      title: string;
+      similarity: string;
+      type: string;
+      detectedAt: string;
+    };
+    duplicateHistory: {
+      title: string;
     };
     notifications: {
       systemNotInitialized: string;
@@ -136,6 +173,11 @@ interface Translations {
       undoSuccess: string;
       undoSuccessRestored: string;
       confirmCreateFailed: string;
+      confirmCreateWaiting: string;
+      standardizeUpdated: string;
+      mergeDeprecated: string;
+      undoDismissSuccess: string;
+      deletePairSuccess: string;
       writeFailed: string;
       writeSuccess: string;
       writePreviewFailed: string;
@@ -302,6 +344,10 @@ interface Translations {
       title: string;
       message: string;
     };
+    deleteDuplicatePair: {
+      title: string;
+      message: string;
+    };
   };
 
   // 任务类型
@@ -405,7 +451,13 @@ export class I18n {
         duplicates: {
           title: "重复概念",
           sortBy: "排序:",
+          sortSimilarityDesc: "相似度 (高到低)",
+          sortSimilarityAsc: "相似度 (低到高)",
+          sortTimeDesc: "时间 (新到旧)",
+          sortTimeAsc: "时间 (旧到新)",
+          sortByType: "按类型",
           filterBy: "类型:",
+          filterAll: "全部",
           selectAll: "全选",
           batchMerge: "批量合并",
           batchDismiss: "批量忽略",
@@ -423,6 +475,7 @@ export class I18n {
           running: "执行中",
           completed: "已完成",
           failed: "失败",
+          cancelled: "已取消",
           clearCompleted: "清除已完成",
           clearFailed: "清除失败",
           retryFailed: "重试失败",
@@ -444,9 +497,18 @@ export class I18n {
           noTasks: "队列中暂无任务",
         },
         recentOps: {
-          title: "最近操作",
-          empty: "暂无最近操作",
+          title: "操作历史",
+          empty: "暂无可撤销的操作",
           undo: "撤销",
+          refresh: "刷新",
+          clearAll: "清空全部",
+          clearAllConfirmTitle: "确认清空",
+          clearAllConfirmMessage: "确定要清空所有快照吗？此操作不可撤销。",
+          moreSnapshots: "还有 {count} 个更早的快照",
+          timeJustNow: "刚刚",
+          timeMinutesAgo: "{minutes} 分钟前",
+          timeHoursAgo: "{hours} 小时前",
+          timeDaysAgo: "{days} 天前",
         },
         pipeline: {
           id: "ID",
@@ -455,6 +517,12 @@ export class I18n {
           view: "查看",
           confirmCreate: "确认创建",
           previewWrite: "预览写入",
+          groundingResult: "Ground 结果：",
+          chineseName: "中文名称：",
+          englishName: "英文名称：",
+          autoSelect: "自动选择",
+          saveEdit: "保存编辑",
+          generatedContentPreview: "生成内容预览（写入前）",
           stages: {
             idle: "空闲",
             standardizing: "标准化",
@@ -469,6 +537,21 @@ export class I18n {
             completed: "已完成",
             failed: "失败",
           },
+        },
+        typeConfidenceTable: {
+          type: "类型",
+          standardName: "标准名称",
+          confidence: "置信度",
+          action: "操作",
+        },
+        duplicatePreview: {
+          title: "重复概念预览",
+          similarity: "相似度:",
+          type: "类型:",
+          detectedAt: "检测时间:",
+        },
+        duplicateHistory: {
+          title: "重复对历史",
         },
         notifications: {
           systemNotInitialized: "系统未初始化",
@@ -499,6 +582,11 @@ export class I18n {
           undoSuccess: "撤销成功",
           undoSuccessRestored: "撤销成功（文件已恢复）",
           confirmCreateFailed: "确认创建失败",
+          confirmCreateWaiting: "已确认创建，等待内容生成",
+          standardizeUpdated: "已更新标准化结果",
+          mergeDeprecated: "合并功能已被弃用，等待重构",
+          undoDismissSuccess: "已撤销忽略，重复对已恢复到待处理列表",
+          deletePairSuccess: "已删除重复对记录",
           writeFailed: "写入失败",
           writeSuccess: "已写入，支持撤销",
           writePreviewFailed: "无法生成写入预览",
@@ -659,6 +747,10 @@ export class I18n {
           title: "重置设置",
           message: "确定要重置所有设置吗？此操作不可撤销。",
         },
+        deleteDuplicatePair: {
+          title: "确认删除",
+          message: "确定要永久删除这个重复对记录吗？此操作不可撤销。",
+        },
       },
       taskTypes: {
         standardizeClassify: {
@@ -723,7 +815,13 @@ export class I18n {
         duplicates: {
           title: "Duplicate Concepts",
           sortBy: "Sort by:",
+          sortSimilarityDesc: "Similarity (High to Low)",
+          sortSimilarityAsc: "Similarity (Low to High)",
+          sortTimeDesc: "Time (New to Old)",
+          sortTimeAsc: "Time (Old to New)",
+          sortByType: "By Type",
           filterBy: "Type:",
+          filterAll: "All",
           selectAll: "Select All",
           batchMerge: "Batch Merge",
           batchDismiss: "Batch Dismiss",
@@ -741,6 +839,7 @@ export class I18n {
           running: "Running",
           completed: "Completed",
           failed: "Failed",
+          cancelled: "Cancelled",
           clearCompleted: "Clear Completed",
           clearFailed: "Clear Failed",
           retryFailed: "Retry Failed",
@@ -762,9 +861,18 @@ export class I18n {
           noTasks: "No tasks in queue",
         },
         recentOps: {
-          title: "Recent Operations",
-          empty: "No recent operations",
+          title: "Operation History",
+          empty: "No operations to undo",
           undo: "Undo",
+          refresh: "Refresh",
+          clearAll: "Clear All",
+          clearAllConfirmTitle: "Confirm Clear",
+          clearAllConfirmMessage: "Are you sure you want to clear all snapshots? This action cannot be undone.",
+          moreSnapshots: "{count} more older snapshots",
+          timeJustNow: "Just now",
+          timeMinutesAgo: "{minutes} minutes ago",
+          timeHoursAgo: "{hours} hours ago",
+          timeDaysAgo: "{days} days ago",
         },
         pipeline: {
           id: "ID",
@@ -773,6 +881,12 @@ export class I18n {
           view: "View",
           confirmCreate: "Confirm Create",
           previewWrite: "Preview Write",
+          groundingResult: "Grounding Result:",
+          chineseName: "Chinese Name:",
+          englishName: "English Name:",
+          autoSelect: "Auto Select",
+          saveEdit: "Save Edit",
+          generatedContentPreview: "Generated Content Preview (before write)",
           stages: {
             idle: "Idle",
             standardizing: "Standardizing",
@@ -787,6 +901,21 @@ export class I18n {
             completed: "Completed",
             failed: "Failed",
           },
+        },
+        typeConfidenceTable: {
+          type: "Type",
+          standardName: "Standard Name",
+          confidence: "Confidence",
+          action: "Action",
+        },
+        duplicatePreview: {
+          title: "Duplicate Concept Preview",
+          similarity: "Similarity:",
+          type: "Type:",
+          detectedAt: "Detected At:",
+        },
+        duplicateHistory: {
+          title: "Duplicate Pair History",
         },
         notifications: {
           systemNotInitialized: "System not initialized",
@@ -817,6 +946,11 @@ export class I18n {
           undoSuccess: "Undo successful",
           undoSuccessRestored: "Undo successful (file restored)",
           confirmCreateFailed: "Confirm create failed",
+          confirmCreateWaiting: "Creation confirmed, waiting for content generation",
+          standardizeUpdated: "Standardization result updated",
+          mergeDeprecated: "Merge feature is deprecated, pending refactoring",
+          undoDismissSuccess: "Dismiss undone, duplicate pair restored to pending list",
+          deletePairSuccess: "Duplicate pair record deleted",
           writeFailed: "Write failed",
           writeSuccess: "Written, undo available",
           writePreviewFailed: "Cannot generate write preview",
@@ -976,6 +1110,10 @@ export class I18n {
         resetSettings: {
           title: "Reset Settings",
           message: "Are you sure you want to reset all settings? This action cannot be undone.",
+        },
+        deleteDuplicatePair: {
+          title: "Confirm Delete",
+          message: "Are you sure you want to permanently delete this duplicate pair record? This action cannot be undone.",
         },
       },
       taskTypes: {

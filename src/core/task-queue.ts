@@ -1089,9 +1089,30 @@ export class TaskQueue implements ITaskQueue {
     // 启动时不保留任何锁，运行时会在调度阶段重新获取
     this.lockManager.clear();
 
+    // 统计恢复的任务状态
+    const stats = {
+      pending: 0,
+      running: 0,
+      completed: 0,
+      failed: 0,
+      cancelled: 0
+    };
+    
+    for (const task of this.tasks.values()) {
+      switch (task.state) {
+        case "Pending": stats.pending++; break;
+        case "Running": stats.running++; break;
+        case "Completed": stats.completed++; break;
+        case "Failed": stats.failed++; break;
+        case "Cancelled": stats.cancelled++; break;
+      }
+    }
+
     this.logger.info("TaskQueue", "队列状态恢复成功", {
       taskCount: this.tasks.size,
-      paused: this.paused
+      paused: this.paused,
+      stats,
+      recoveredRunning: recoveredRunning.length
     });
 
     // 持久化清理后的状态，避免下一次启动重复恢复

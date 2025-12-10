@@ -166,13 +166,17 @@ export class ProviderManager implements IProviderManager {
     const safeUrl = SecurityUtils.sanitizeUrl(url);
 
     // 构建请求体（OpenAI 标准格式）
-    const requestBody = {
+    // 注意：不设置 max_tokens 时让模型自由输出，避免截断
+    const requestBody: Record<string, unknown> = {
       model: request.model,
       messages: request.messages,
       temperature: request.temperature ?? 0.7,
-      top_p: request.topP ?? 1.0,
-      max_tokens: request.maxTokens
+      top_p: request.topP ?? 1.0
     };
+    // 仅当明确指定 maxTokens 时才添加该字段
+    if (request.maxTokens !== undefined) {
+      requestBody.max_tokens = request.maxTokens;
+    }
 
     this.logger.debug("ProviderManager", "发送聊天请求", {
       event: "API_REQUEST",

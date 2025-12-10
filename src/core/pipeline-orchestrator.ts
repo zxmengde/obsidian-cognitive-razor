@@ -98,8 +98,6 @@ export interface PipelineContext {
   currentStatus?: string;
   /** 快照 ID */
   snapshotId?: string;
-  /** 是否跳过快照/撤销记录（enrich 流程自动执行时使用） */
-  skipSnapshots?: boolean;
   /** 错误信息 */
   error?: { code: string; message: string };
   /** 创建时间 */
@@ -244,6 +242,61 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
   }
 
   /**
+   * 检查是否存在同类型同名的笔记
+   * 
+   * 遵循 G-02 语义唯一性公理：防止创建重复概念
+   * 
+   * @param standardizedData 标准化数据
+   * @param type 知识类型
+   * @returns 检查结果
+   */
+  private checkDuplicateByName(
+    standardizedData: StandardizedConcept,
+    type: CRType
+  ): Result<void> {
+    const settings = this.getSettings();
+    const signature = createConceptSignature(
+      {
+        standardName: standardizedData.standardNames[type],
+        aliases: [],
+        coreDefinition: standardizedData.coreDefinition
+      },
+      type,
+      settings.namingTemplate
+    );
+
+    // 生成目标文件路径
+    const targetPath = generateFilePath(
+      signature.standardName,
+      settings.directoryScheme,
+      type
+    );
+
+    // 检查文件是否已存在
+    const file = this.app.vault.getAbstractFileByPath(targetPath);
+    if (file) {
+      this.logger.warn("PipelineOrchestrator", "检测到同类型同名笔记", {
+        type,
+        name: signature.standardName,
+        path: targetPath,
+        event: "DUPLICATE_NAME_DETECTED"
+      });
+
+      return err(
+        "E400",
+        `已存在同类型同名的笔记：${signature.standardName}\n路径：${targetPath}\n\n请修改概念名称或检查是否为重复创建。`,
+        {
+          type,
+          name: signature.standardName,
+          path: targetPath
+        }
+      );
+    }
+
+    return ok(undefined);
+  }
+
+  /**
    * 前置校验：检查 Provider 和模板是否可用
    * 遵循 A-FUNC-03：任务执行前必须找到匹配的 Provider 与 PDD 模板
    * 
@@ -318,76 +371,14 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
   /**
    * 启动新概念创建管线
    * 
-   * 遵循 A-FUNC-05：任务链从 standardizeClassify 开始
-   * 遵循 A-FUNC-03：入队前进行 Provider/模板前置校验
+   * 修改：standardizeClassify 不进入队列，使用 standardizeDirect 直接执行
+   * 此方法已废弃，保留以兼容旧代码
    */
   startCreatePipeline(userInput: string, type?: CRType): Result<string> {
-    try {
-      // A-FUNC-03: 前置校验 - 检查 Provider 和模板是否可用
-      const prerequisiteCheck = this.validatePrerequisites("standardizeClassify");
-      if (!prerequisiteCheck.ok) {
-        return prerequisiteCheck as Result<string>;
-      }
-
-      const pipelineId = this.generatePipelineId();
-      const nodeId = this.generateNodeId();
-      const now = new Date().toISOString();
-
-      const context: PipelineContext = {
-        kind: "create",
-        pipelineId,
-        nodeId,
-        type: type || "Entity", // 默认类型，会在标准化后更新
-        stage: "standardizing",
-        userInput,
-        skipSnapshots: true,
-        createdAt: now,
-        updatedAt: now
-      };
-
-      this.pipelines.set(pipelineId, context);
-
-      this.logger.info("PipelineOrchestrator", `启动创建管线: ${pipelineId}`, {
-        nodeId,
-        userInput: userInput.substring(0, 50)
-      });
-
-      // 创建 standardizeClassify 任务
-      const taskResult = this.taskQueue.enqueue({
-        nodeId,
-        taskType: "standardizeClassify",
-        state: "Pending",
-        attempt: 0,
-        maxAttempts: 3,
-        providerRef: this.getProviderIdForTask("standardizeClassify"),
-        payload: {
-          userInput,
-          pipelineId
-        }
-      });
-
-      if (!taskResult.ok) {
-        this.pipelines.delete(pipelineId);
-        return err("E304", `创建任务失败: ${taskResult.error.message}`);
-      }
-
-      // 记录任务到管线的映射
-      this.taskToPipeline.set(taskResult.value, pipelineId);
-
-      // 发布事件
-      this.publishEvent({
-        type: "stage_changed",
-        pipelineId,
-        stage: "standardizing",
-        context,
-        timestamp: now
-      });
-
-      return ok(pipelineId);
-    } catch (error) {
-      this.logger.error("PipelineOrchestrator", "启动管线失败", error as Error);
-      return err("E304", "启动管线失败", error);
-    }
+    this.logger.warn("PipelineOrchestrator", "startCreatePipeline 已废弃，请使用 standardizeDirect + startCreatePipelineWithStandardized");
+    
+    // 返回错误，强制使用新流程
+    return err("E304", "请使用 standardizeDirect 方法进行标准化，然后使用 startCreatePipelineWithStandardized 创建管线");
   }
 
   /**
@@ -525,6 +516,17 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
         return prerequisiteCheck as Result<string>;
       }
 
+      // 在 enrich 之前检查重复名称，避免浪费 API 调用
+      // 遵循 G-02 语义唯一性公理：防止创建重复概念
+      const duplicateCheck = this.checkDuplicateByName(standardizedData, selectedType);
+      if (!duplicateCheck.ok) {
+        this.logger.warn("PipelineOrchestrator", "重复名称检查失败，管线未启动", {
+          type: selectedType,
+          error: duplicateCheck.error
+        });
+        return duplicateCheck as Result<string>;
+      }
+
       const pipelineId = this.generatePipelineId();
       const nodeId = this.generateNodeId();
       const now = new Date().toISOString();
@@ -537,7 +539,6 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
         type: selectedType,
         stage: "enriching", // 直接进入 enriching 阶段
         userInput: standardizedData.standardNames[selectedType].chinese,
-        skipSnapshots: true,
         standardizedData: {
           standardNames: standardizedData.standardNames,
           typeConfidences: standardizedData.typeConfidences,
@@ -607,17 +608,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     const { targetPath, previousContent, newContent } = composed.value;
     context.filePath = targetPath;
 
-    if (!context.skipSnapshots) {
-      const snapshotResult = await this.undoManager.createSnapshot(
-        targetPath,
-        previousContent,
-        context.pipelineId,
-        context.nodeId
-      );
-      if (snapshotResult.ok) {
-        context.snapshotId = snapshotResult.value;
-      }
-    }
+    // 创建流程不保存快照（仅增量改进和合并时保存）
 
     await this.atomicWriteVault(targetPath, newContent);
 
@@ -682,16 +673,15 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     const { targetPath, previousContent, newContent } = composed.value;
     context.filePath = targetPath;
 
-    if (!context.skipSnapshots) {
-      const snapshotResult = await this.undoManager.createSnapshot(
-        targetPath,
-        previousContent,
-        context.pipelineId,
-        context.nodeId
-      );
-      if (snapshotResult.ok) {
-        context.snapshotId = snapshotResult.value;
-      }
+    // 增量改进：保存快照
+    const snapshotResult = await this.undoManager.createSnapshot(
+      targetPath,
+      previousContent,
+      context.pipelineId,
+      context.nodeId
+    );
+    if (snapshotResult.ok) {
+      context.snapshotId = snapshotResult.value;
     }
 
     await this.atomicWriteVault(targetPath, newContent);
@@ -728,20 +718,19 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     const { targetPath, previousContent, newContent } = composed.value;
     context.filePath = targetPath;
 
-    if (!context.skipSnapshots) {
-      const snapshotResult = await this.undoManager.createSnapshot(
-        targetPath,
-        previousContent,
-        context.pipelineId,
-        context.nodeId
-      );
-      if (snapshotResult.ok) {
-        context.snapshotId = snapshotResult.value;
-      }
+    // 合并：保存主笔记快照
+    const snapshotResult = await this.undoManager.createSnapshot(
+      targetPath,
+      previousContent,
+      context.pipelineId,
+      context.nodeId
+    );
+    if (snapshotResult.ok) {
+      context.snapshotId = snapshotResult.value;
     }
 
-    // 为被删除笔记创建快照
-    if (context.deleteFilePath && context.deleteContent && !context.skipSnapshots) {
+    // 合并：为被删除笔记创建快照
+    if (context.deleteFilePath && context.deleteContent) {
       await this.undoManager.createSnapshot(
         context.deleteFilePath,
         context.deleteContent,
@@ -976,7 +965,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
           enrichedData: context.enrichedData,
           embedding: context.embedding,
           filePath: context.filePath, // 传递 Stub 文件路径
-          skipSnapshot: context.skipSnapshots,
+          skipSnapshot: true, // 创建流程不保存快照
           userInput: context.userInput
         }
       });
@@ -1039,18 +1028,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
       // 确保目录存在
       await this.ensureVaultDir(targetPath);
 
-      // 创建快照（空内容，因为是新文件）
-      if (!context.skipSnapshots) {
-        const snapshotResult = await this.undoManager.createSnapshot(
-          targetPath,
-          "", // 新文件，原始内容为空
-          `stub-${context.pipelineId}`,
-          context.nodeId
-        );
-        if (snapshotResult.ok) {
-          context.snapshotId = snapshotResult.value;
-        }
-      }
+      // 创建流程不保存快照（仅增量改进和合并时保存）
 
       // 生成仅含 frontmatter 的 Stub 内容
       const frontmatter = generateFrontmatter({
@@ -1422,6 +1400,9 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
   /**
    * 处理丰富完成
+   * 
+   * enrich 完成后直接进入等待创建确认阶段
+   * embedding 将在 reason:new 完成后执行
    */
   private async handleEnrichCompleted(
     context: PipelineContext,
@@ -1443,49 +1424,43 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
     context.enrichedData = result;
 
-    // 进入 embedding 阶段
-    context.stage = "embedding";
+    // 注意：重复名称检查已移至 startCreatePipelineWithStandardized 中
+    // 在 enrich 之前进行检查，避免浪费 API 调用
+
+    // 进入等待创建确认阶段（自动确认）
+    context.stage = "awaiting_create_confirm";
     context.updatedAt = new Date().toISOString();
 
-    // 构建嵌入文本
-    const embeddingText = this.buildEmbeddingText(context);
-
-    // 创建 embedding 任务
-    const taskResult = this.taskQueue.enqueue({
-      nodeId: context.nodeId,
-      taskType: "embedding",
-      state: "Pending",
-      attempt: 0,
-      maxAttempts: 3,
-      providerRef: this.getProviderIdForTask("embedding"),
-      payload: {
+    this.logger.info("PipelineOrchestrator", `自动确认创建并生成内容: ${context.pipelineId}`);
+    const confirmResult = await this.confirmCreate(context.pipelineId);
+    if (!confirmResult.ok) {
+      context.stage = "failed";
+      context.error = { code: confirmResult.error.code, message: confirmResult.error.message };
+      this.publishEvent({
+        type: "pipeline_failed",
         pipelineId: context.pipelineId,
-        text: embeddingText,
-        standardizedData: context.standardizedData,
-        namingTemplate: this.getSettings().namingTemplate
-      }
-    });
-
-    if (taskResult.ok) {
-      this.taskToPipeline.set(taskResult.value, context.pipelineId);
+        stage: "failed",
+        context,
+        timestamp: new Date().toISOString()
+      });
     }
-
-    this.publishEvent({
-      type: "stage_changed",
-      pipelineId: context.pipelineId,
-      stage: "embedding",
-      context,
-      timestamp: context.updatedAt
-    });
   }
 
   /**
    * 处理嵌入完成
+   * 
+   * 注意：此方法已废弃，embedding 现在直接执行不进入队列
+   * 保留此方法以防万一有遗留的 embedding 任务
    */
   private async handleEmbeddingCompleted(
     context: PipelineContext,
     task: TaskRecord
   ): Promise<void> {
+    this.logger.warn("PipelineOrchestrator", "收到 embedding 任务完成事件（不应该发生）", {
+      pipelineId: context.pipelineId,
+      taskId: task.id
+    });
+
     const result = (task.result || task.payload?.result) as Record<string, unknown> | undefined;
     if (result?.embedding) {
       context.embedding = result.embedding as number[];
@@ -1524,8 +1499,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
   /**
    * 处理 reason:new 完成
    * 
-   * 遵循 A-FUNC-05：reason:new 完成后可选执行 ground 阶段
-   * 修改：reason:new 任务无需用户确认，直接写入
+   * reason:new 完成后执行 embedding，然后可选执行 ground 阶段或直接写入
    */
   private async handleReasonNewCompleted(
     context: PipelineContext,
@@ -1548,15 +1522,20 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
       context.filePath = `${fileName}.md`;
     }
 
-    // 检查是否启用 Ground 阶段
-    const settings = this.getSettings();
-    if (settings.enableGrounding) {
-      // 启用 Ground：创建 ground 任务（Ground 完成后需要用户确认）
-      await this.startGroundTask(context);
-    } else {
-      // 未启用 Ground：直接写入，无需用户确认
-      await this.autoConfirmWrite(context);
-    }
+    // reason:new 完成后，执行 embedding
+    context.stage = "embedding";
+    context.updatedAt = new Date().toISOString();
+
+    this.publishEvent({
+      type: "stage_changed",
+      pipelineId: context.pipelineId,
+      stage: "embedding",
+      context,
+      timestamp: context.updatedAt
+    });
+
+    // 直接执行 embedding（不进入队列）
+    await this.executeEmbeddingDirect(context);
   }
 
   /**
@@ -1802,33 +1781,200 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
   private renderValue(value: unknown, fieldName?: string): string {
     if (Array.isArray(value)) {
-      // 检查是否是对象数组（如 issues 或 sub_domains）
+      // 检查是否是对象数组
       if (value.length > 0 && typeof value[0] === "object" && value[0] !== null) {
         const firstItem = value[0] as Record<string, unknown>;
         
-        // 如果对象有 name 和 description 字段，使用特殊格式
-        if ("name" in firstItem && "description" in firstItem) {
-          return value.map(item => {
-            const obj = item as Record<string, unknown>;
-            const name = String(obj.name || "");
-            const description = String(obj.description || "");
-            // 为 name 添加 [[]] wikilink
-            return `- [[${name}]]：${description}`;
-          }).join("\n");
-        }
+        // 根据字段名和对象结构选择渲染方式
+        return this.renderObjectArray(value as Record<string, unknown>[], fieldName);
       }
       
       // 普通数组，每项一行
-      return value.map(v => `- ${this.renderValue(v)}`).join("\n");
+      return value.map(v => `- ${String(v)}`).join("\n");
     }
     
     if (typeof value === "object" && value !== null) {
-      return Object.entries(value as Record<string, unknown>)
-        .map(([k, v]) => `- **${k}**: ${this.renderValue(v)}`)
-        .join("\n");
+      return this.renderObject(value as Record<string, unknown>, fieldName);
     }
     
     return String(value);
+  }
+
+  /**
+   * 渲染对象数组
+   * 根据不同的字段类型选择合适的渲染格式
+   */
+  private renderObjectArray(items: Record<string, unknown>[], fieldName?: string): string {
+    if (items.length === 0) return "";
+
+    const firstItem = items[0];
+
+    // sub_domains, issues, sub_issues, sub_theories: name + description
+    if ("name" in firstItem && "description" in firstItem) {
+      return items.map(item => {
+        const name = String(item.name || "");
+        const description = String(item.description || "");
+        return `- [[${name}]]：${description}`;
+      }).join("\n");
+    }
+
+    // axioms: statement + justification
+    if ("statement" in firstItem && "justification" in firstItem) {
+      return items.map((item, index) => {
+        const statement = String(item.statement || "");
+        const justification = String(item.justification || "");
+        return `### 公理 ${index + 1}：${statement}\n- **理由**：${justification}`;
+      }).join("\n\n");
+    }
+
+    // entities (in Theory): name + role + attributes
+    if ("name" in firstItem && "role" in firstItem && "attributes" in firstItem) {
+      return items.map(item => {
+        const name = String(item.name || "");
+        const role = String(item.role || "");
+        const attributes = String(item.attributes || "");
+        return `- [[${name}]]\n  - **角色**：${role}\n  - **属性**：${attributes}`;
+      }).join("\n");
+    }
+
+    // mechanisms (in Theory): name + process + function
+    if ("name" in firstItem && "process" in firstItem && "function" in firstItem) {
+      return items.map(item => {
+        const name = String(item.name || "");
+        const process = String(item.process || "");
+        const func = String(item.function || "");
+        return `- [[${name}]]\n  - **过程**：${process}\n  - **功能**：${func}`;
+      }).join("\n");
+    }
+
+    // properties (in Entity): name + type + description
+    if ("name" in firstItem && "type" in firstItem && "description" in firstItem) {
+      return items.map(item => {
+        const name = String(item.name || "");
+        const type = String(item.type || "");
+        const description = String(item.description || "");
+        return `- **${name}** (${type})：${description}`;
+      }).join("\n");
+    }
+
+    // states (in Entity): name + description
+    if ("name" in firstItem && "description" in firstItem && !("role" in firstItem)) {
+      return items.map(item => {
+        const name = String(item.name || "");
+        const description = String(item.description || "");
+        return `- **${name}**：${description}`;
+      }).join("\n");
+    }
+
+    // stakeholder_perspectives: stakeholder + perspective
+    if ("stakeholder" in firstItem && "perspective" in firstItem) {
+      return items.map(item => {
+        const stakeholder = String(item.stakeholder || "");
+        const perspective = String(item.perspective || "");
+        return `- **${stakeholder}**：${perspective}`;
+      }).join("\n");
+    }
+
+    // theories (in Issue): name + status + brief
+    if ("name" in firstItem && "status" in firstItem && "brief" in firstItem) {
+      return items.map(item => {
+        const name = String(item.name || "");
+        const status = String(item.status || "");
+        const brief = String(item.brief || "");
+        const statusLabel = this.getTheoryStatusLabel(status);
+        return `- [[${name}]] (${statusLabel})：${brief}`;
+      }).join("\n");
+    }
+
+    // operates_on (in Mechanism): entity + role
+    if ("entity" in firstItem && "role" in firstItem) {
+      return items.map(item => {
+        const entity = String(item.entity || "");
+        const role = String(item.role || "");
+        return `- [[${entity}]]：${role}`;
+      }).join("\n");
+    }
+
+    // causal_chain (in Mechanism): step + description + interaction
+    if ("step" in firstItem && "description" in firstItem && "interaction" in firstItem) {
+      return items.map(item => {
+        const step = item.step;
+        const description = String(item.description || "");
+        const interaction = String(item.interaction || "");
+        return `### 步骤 ${step}\n- **描述**：${description}\n- **交互**：${interaction}`;
+      }).join("\n\n");
+    }
+
+    // modulation (in Mechanism): factor + effect + mechanism
+    if ("factor" in firstItem && "effect" in firstItem && "mechanism" in firstItem) {
+      return items.map(item => {
+        const factor = String(item.factor || "");
+        const effect = String(item.effect || "");
+        const mechanism = String(item.mechanism || "");
+        const effectLabel = this.getModulationEffectLabel(effect);
+        return `- **${factor}** (${effectLabel})：${mechanism}`;
+      }).join("\n");
+    }
+
+    // 默认：渲染为键值对列表
+    return items.map((item, index) => {
+      const entries = Object.entries(item)
+        .map(([k, v]) => `  - **${k}**：${String(v)}`)
+        .join("\n");
+      return `- 项目 ${index + 1}\n${entries}`;
+    }).join("\n");
+  }
+
+  /**
+   * 渲染单个对象
+   */
+  private renderObject(obj: Record<string, unknown>, fieldName?: string): string {
+    // composition (in Entity): has_parts + part_of
+    // 注意：组成结构字段不添加 [[]] 链接，因为这些是描述性内容而非引用
+    if ("has_parts" in obj && "part_of" in obj) {
+      const hasParts = obj.has_parts as string[];
+      const partOf = String(obj.part_of || "");
+      const partsStr = Array.isArray(hasParts) && hasParts.length > 0
+        ? hasParts.join("、")
+        : "无";
+      return `- **组成部分**：${partsStr}\n- **所属系统**：${partOf || "无"}`;
+    }
+
+    // classification (in Entity): genus + differentia
+    if ("genus" in obj && "differentia" in obj) {
+      const genus = String(obj.genus || "");
+      const differentia = String(obj.differentia || "");
+      return `- **属**：${genus}\n- **种差**：${differentia}`;
+    }
+
+    // 默认：渲染为键值对
+    return Object.entries(obj)
+      .map(([k, v]) => `- **${k}**：${String(v)}`)
+      .join("\n");
+  }
+
+  /**
+   * 获取理论状态的中文标签
+   */
+  private getTheoryStatusLabel(status: string): string {
+    const labels: Record<string, string> = {
+      "mainstream": "主流",
+      "marginal": "边缘",
+      "falsified": "已证伪"
+    };
+    return labels[status] || status;
+  }
+
+  /**
+   * 获取调节效果的中文标签
+   */
+  private getModulationEffectLabel(effect: string): string {
+    const labels: Record<string, string> = {
+      "promotes": "促进",
+      "inhibits": "抑制",
+      "regulates": "调节"
+    };
+    return labels[effect] || effect;
   }
 
   /**
@@ -2111,26 +2257,110 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
    * 
    * 遵循设计文档 A-FUNC-03：任务执行前必须找到匹配的 Provider
    * 
+   * 优先级：
+   * 1. 任务特定的 providerId（非空字符串）
+   * 2. 默认 Provider（非空字符串）
+   * 3. 第一个启用的 Provider
+   * 
    * @param taskType 任务类型
    * @returns Provider ID
    */
   private getProviderIdForTask(taskType: TaskType): string {
     const settings = this.getSettings();
     
-    // 从 taskModels 配置中获取 Provider ID
+    // 优先使用任务特定的 providerId
     const taskModel = settings.taskModels[taskType];
-    if (taskModel && taskModel.providerId) {
+    if (taskModel?.providerId && taskModel.providerId.trim() !== "") {
       return taskModel.providerId;
     }
     
-    // 如果任务模型未配置 Provider，使用默认 Provider
-    if (settings.defaultProviderId) {
+    // 回退到默认 Provider
+    if (settings.defaultProviderId && settings.defaultProviderId.trim() !== "") {
       return settings.defaultProviderId;
     }
     
-    // 如果没有默认 Provider，返回空字符串（会在 TaskRunner 中报错）
-    this.logger.warn("PipelineOrchestrator", `任务 ${taskType} 未配置 Provider，且没有默认 Provider`);
+    // 如果都没有，返回第一个启用的 Provider
+    const firstProvider = Object.keys(settings.providers).find(
+      id => settings.providers[id].enabled
+    );
+    
+    if (firstProvider) {
+      this.logger.warn("PipelineOrchestrator", `任务 ${taskType} 未配置 Provider，使用第一个可用 Provider: ${firstProvider}`);
+      return firstProvider;
+    }
+    
+    // 如果没有任何可用 Provider，返回空字符串（会在前置校验中报错）
+    this.logger.error("PipelineOrchestrator", `任务 ${taskType} 未配置 Provider，且没有可用的 Provider`);
     return "";
+  }
+
+  /**
+   * 直接执行 embedding（不进入队列）
+   * 
+   * 在 reason:new 完成后执行，用于生成向量嵌入
+   */
+  private async executeEmbeddingDirect(context: PipelineContext): Promise<void> {
+    try {
+      if (!this.providerManager) {
+        throw new Error("ProviderManager 未初始化");
+      }
+
+      this.logger.info("PipelineOrchestrator", `直接执行 embedding: ${context.pipelineId}`);
+
+      // 构建嵌入文本
+      const embeddingText = this.buildEmbeddingText(context);
+
+      // 获取 Provider 配置和任务模型配置
+      const settings = this.getSettings();
+      const taskConfig = settings.taskModels["embedding"];
+      const providerId = taskConfig?.providerId || this.getProviderIdForTask("embedding");
+      const embeddingModel = taskConfig?.model || "text-embedding-3-small";
+      const embeddingDimension = settings.embeddingDimension || 1536;
+
+      // 直接调用 embedding API（使用用户配置的模型）
+      const embedResult = await this.providerManager.embed({
+        providerId,
+        model: embeddingModel,
+        input: embeddingText,
+        dimensions: embeddingDimension
+      });
+
+      if (!embedResult.ok) {
+        throw new Error(`Embedding 失败: ${embedResult.error.message}`);
+      }
+
+      // 保存 embedding 结果
+      context.embedding = embedResult.value.embedding;
+      context.updatedAt = new Date().toISOString();
+
+      this.logger.info("PipelineOrchestrator", `Embedding 完成: ${context.pipelineId}`, {
+        tokensUsed: embedResult.value.tokensUsed
+      });
+
+      // embedding 完成后，检查是否启用 Ground 阶段
+      const settings2 = this.getSettings();
+      if (settings2.enableGrounding) {
+        // 启用 Ground：创建 ground 任务（Ground 完成后需要用户确认）
+        await this.startGroundTask(context);
+      } else {
+        // 未启用 Ground：直接写入，无需用户确认
+        await this.autoConfirmWrite(context);
+      }
+    } catch (error) {
+      this.logger.error("PipelineOrchestrator", "直接执行 embedding 失败", error as Error);
+      context.stage = "failed";
+      context.error = { 
+        code: "E304", 
+        message: error instanceof Error ? error.message : String(error) 
+      };
+      this.publishEvent({
+        type: "pipeline_failed",
+        pipelineId: context.pipelineId,
+        stage: "failed",
+        context,
+        timestamp: new Date().toISOString()
+      });
+    }
   }
 
   /**

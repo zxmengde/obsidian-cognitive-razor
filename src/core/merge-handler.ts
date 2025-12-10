@@ -357,34 +357,87 @@ export class MergeHandler {
           sections.push(content.core_tension as string);
           sections.push("");
         }
+        if (content.epistemic_barrier) {
+          sections.push("## 认识论障碍");
+          sections.push(content.epistemic_barrier as string);
+          sections.push("");
+        }
+        if (content.theories) {
+          sections.push("## 相关理论");
+          const theories = content.theories as Array<{ name: string; status: string; brief: string }>;
+          theories.forEach(theory => {
+            const statusLabel = this.getTheoryStatusLabel(theory.status);
+            sections.push(`- [[${theory.name}]] (${statusLabel})：${theory.brief}`);
+          });
+          sections.push("");
+        }
         break;
 
       case "Theory":
         if (content.axioms) {
           sections.push("## 公理");
-          const axioms = content.axioms as any[];
+          const axioms = content.axioms as Array<{ statement: string; justification: string }>;
           axioms.forEach((axiom, index) => {
-            sections.push(`### 公理 ${index + 1}: ${axiom.statement}`);
-            sections.push(`**理由**: ${axiom.justification}`);
+            sections.push(`### 公理 ${index + 1}：${axiom.statement}`);
+            sections.push(`- **理由**：${axiom.justification}`);
             sections.push("");
           });
+        }
+        if (content.sub_theories) {
+          sections.push("## 子理论");
+          const subTheories = content.sub_theories as Array<{ name: string; description: string }>;
+          subTheories.forEach(subTheory => {
+            sections.push(`- [[${subTheory.name}]]：${subTheory.description}`);
+          });
+          sections.push("");
+        }
+        if (content.entities) {
+          sections.push("## 核心实体");
+          const entities = content.entities as Array<{ name: string; role: string; attributes: string }>;
+          entities.forEach(entity => {
+            sections.push(`- [[${entity.name}]]`);
+            sections.push(`  - **角色**：${entity.role}`);
+            sections.push(`  - **属性**：${entity.attributes}`);
+          });
+          sections.push("");
+        }
+        if (content.mechanisms) {
+          sections.push("## 核心机制");
+          const mechanisms = content.mechanisms as Array<{ name: string; process: string; function: string }>;
+          mechanisms.forEach(mechanism => {
+            sections.push(`- [[${mechanism.name}]]`);
+            sections.push(`  - **过程**：${mechanism.process}`);
+            sections.push(`  - **功能**：${mechanism.function}`);
+          });
+          sections.push("");
         }
         break;
 
       case "Mechanism":
-        if (content.causal_chain) {
-          sections.push("## 因果链");
-          const chain = content.causal_chain as any[];
-          chain.forEach((step, index) => {
-            sections.push(`${index + 1}. ${step}`);
+        if (content.operates_on) {
+          sections.push("## 作用对象");
+          const operates = content.operates_on as Array<{ entity: string; role: string }>;
+          operates.forEach(obj => {
+            sections.push(`- [[${obj.entity}]]：${obj.role}`);
           });
           sections.push("");
         }
-        if (content.operates_on) {
-          sections.push("## 作用对象");
-          const operates = content.operates_on as string[];
-          operates.forEach(obj => {
-            sections.push(`- ${obj}`);
+        if (content.causal_chain) {
+          sections.push("## 因果链");
+          const chain = content.causal_chain as Array<{ step: number; description: string; interaction: string }>;
+          chain.forEach(step => {
+            sections.push(`### 步骤 ${step.step}`);
+            sections.push(`- **描述**：${step.description}`);
+            sections.push(`- **交互**：${step.interaction}`);
+            sections.push("");
+          });
+        }
+        if (content.modulation) {
+          sections.push("## 调节因素");
+          const modulation = content.modulation as Array<{ factor: string; effect: string; mechanism: string }>;
+          modulation.forEach(mod => {
+            const effectLabel = this.getModulationEffectLabel(mod.effect);
+            sections.push(`- **${mod.factor}** (${effectLabel})：${mod.mechanism}`);
           });
           sections.push("");
         }
@@ -394,6 +447,31 @@ export class MergeHandler {
         if (content.definition) {
           sections.push("## 定义");
           sections.push(content.definition as string);
+          sections.push("");
+        }
+        if (content.classification) {
+          sections.push("## 分类");
+          const classification = content.classification as { genus: string; differentia: string };
+          sections.push(`- **属**：${classification.genus}`);
+          sections.push(`- **种差**：${classification.differentia}`);
+          sections.push("");
+        }
+        if (content.composition) {
+          sections.push("## 组成结构");
+          const composition = content.composition as { has_parts: string[]; part_of: string };
+          const partsStr = Array.isArray(composition.has_parts) && composition.has_parts.length > 0
+            ? composition.has_parts.map(p => `[[${p}]]`).join("、")
+            : "无";
+          sections.push(`- **组成部分**：${partsStr}`);
+          sections.push(`- **所属系统**：${composition.part_of ? `[[${composition.part_of}]]` : "无"}`);
+          sections.push("");
+        }
+        if (content.properties) {
+          sections.push("## 属性");
+          const properties = content.properties as Array<{ name: string; type: string; description: string }>;
+          properties.forEach(prop => {
+            sections.push(`- **${prop.name}** (${prop.type})：${prop.description}`);
+          });
           sections.push("");
         }
         break;
@@ -407,10 +485,50 @@ export class MergeHandler {
           });
           sections.push("");
         }
+        if (content.sub_domains) {
+          sections.push("## 子领域");
+          const subDomains = content.sub_domains as Array<{ name: string; description: string }>;
+          subDomains.forEach(sub => {
+            sections.push(`- [[${sub.name}]]：${sub.description}`);
+          });
+          sections.push("");
+        }
+        if (content.issues) {
+          sections.push("## 核心议题");
+          const issues = content.issues as Array<{ name: string; description: string }>;
+          issues.forEach(issue => {
+            sections.push(`- [[${issue.name}]]：${issue.description}`);
+          });
+          sections.push("");
+        }
         break;
     }
 
     return sections.join("\n");
+  }
+
+  /**
+   * 获取理论状态的中文标签
+   */
+  private getTheoryStatusLabel(status: string): string {
+    const labels: Record<string, string> = {
+      "mainstream": "主流",
+      "marginal": "边缘",
+      "falsified": "已证伪"
+    };
+    return labels[status] || status;
+  }
+
+  /**
+   * 获取调节效果的中文标签
+   */
+  private getModulationEffectLabel(effect: string): string {
+    const labels: Record<string, string> = {
+      "promotes": "促进",
+      "inhibits": "抑制",
+      "regulates": "调节"
+    };
+    return labels[effect] || effect;
   }
 
   /**

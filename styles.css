@@ -1,4743 +1,802 @@
 /**
  * Cognitive Razor - Obsidian Plugin Styles
  * 
- * 样式组织：
- * 1. 全局变量和基础样式
- * 2. WorkbenchPanel 样式
- * 3. QueueView 样式
- * 4. DiffView 样式
- * 5. StatusBadge 样式
- * 6. 通用组件样式
- * 7. 响应式布局
- * 8. 暗色主题适配
+ * Design Philosophy: Obsidian Native
+ * Use native CSS variables for consistency across themes.
  */
 
 /* ========================================
-   1. 全局变量和基础样式
+   1. Scope & Variable Mapping
    ======================================== */
 
-:root {
-  /* 映射到 Obsidian 原生变量，不再定义自定义颜色值 */
+.cr-scope {
+    /* Spacing */
+    --cr-gap-xs: var(--size-4-1, 4px);
+    --cr-gap-sm: var(--size-4-2, 8px);
+    --cr-gap-md: var(--size-4-4, 16px);
+    --cr-gap-lg: var(--size-4-8, 32px);
 
-  /* 间距 - 使用 Obsidian 推荐或保持自定义微调 */
-  --cr-spacing-xs: 4px;
-  --cr-spacing-sm: 8px;
-  --cr-spacing-md: 16px;
-  --cr-spacing-lg: 24px;
-  --cr-spacing-xl: 32px;
+    --cr-padding-card: var(--size-4-4, 16px);
+    --cr-padding-btn: var(--size-4-2, 6px) var(--size-4-3, 12px);
 
-  /* 圆角 - 尝试使用原生变量，如果不存在则回退 */
-  --cr-radius-sm: var(--radius-s, 4px);
-  --cr-radius-md: var(--radius-m, 8px);
-  --cr-radius-lg: 12px;
+    /* Colors - Semantic Mappings */
+    --cr-bg-base: var(--background-primary);
+    --cr-bg-surface: var(--background-secondary);
+    --cr-bg-hover: var(--background-modifier-hover);
+    --cr-bg-accent-subtle: var(--interactive-accent-hover);
+    /* Approximation */
 
-  /* 阴影 */
-  --cr-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-  --cr-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-  --cr-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+    --cr-text-normal: var(--text-normal);
+    --cr-text-muted: var(--text-muted);
+    --cr-text-faint: var(--text-faint);
+    --cr-text-accent: var(--interactive-accent);
+    --cr-text-on-accent: var(--text-on-accent);
+    --cr-text-error: var(--text-error);
+    --cr-text-success: var(--text-success);
+
+    --cr-border: var(--background-modifier-border);
+    --cr-border-focus: var(--interactive-accent);
+
+    /* Status Colors (Derived from Obsidian colors where possible or fallbacks) */
+    --cr-status-success: var(--color-green, #4caf50);
+    --cr-status-warning: var(--color-orange, #ff9800);
+    --cr-status-error: var(--color-red, #f44336);
+    --cr-status-info: var(--color-blue, #2196f3);
+
+    /* Shapes */
+    --cr-radius-card: var(--radius-m, 8px);
+    --cr-radius-btn: var(--radius-s, 4px);
+    --cr-radius-pill: 999px;
+
+    /* Shadows */
+    --cr-shadow-card: var(--shadow-s, 0 1px 2px rgba(0, 0, 0, 0.1));
+    --cr-shadow-floating: var(--shadow-l, 0 10px 30px rgba(0, 0, 0, 0.2));
 }
 
 /* ========================================
-   2. WorkbenchPanel 样式
+   2. Workbench Panel
    ======================================== */
 
 .cr-workbench-panel {
-  padding: var(--cr-spacing-md);
-  height: 100%;
-  overflow-y: auto;
-}
-
-/* 通用 Section 样式 */
-.cr-section {
-  margin-bottom: var(--cr-spacing-lg);
-  padding: var(--cr-spacing-md);
-  background: var(--background-secondary);
-  border-radius: var(--cr-radius-md);
-  border: 1px solid var(--background-modifier-border);
-}
-
-.cr-section h3 {
-  margin: 0 0 var(--cr-spacing-md) 0;
-  font-size: 1.1em;
-  font-weight: 600;
-  color: var(--text-normal);
-}
-
-.cr-section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--cr-spacing-md);
-}
-
-.cr-section-header h3 {
-  margin: 0;
-}
-
-/* 可折叠标题样式 */
-.cr-collapsible-header {
-  cursor: pointer;
-  user-select: none;
-  padding: var(--cr-spacing-sm);
-  margin: calc(-1 * var(--cr-spacing-md));
-  margin-bottom: var(--cr-spacing-md);
-  border-radius: var(--cr-radius-md) var(--cr-radius-md) 0 0;
-  transition: background-color 0.2s ease;
-}
-
-.cr-collapsible-header:hover {
-  background-color: var(--background-modifier-hover);
-}
-
-.cr-collapse-icon {
-  margin-right: var(--cr-spacing-sm);
-  font-size: 0.8em;
-  color: var(--text-muted);
-  transition: transform 0.2s ease;
-}
-
-.cr-section-title {
-  flex: 1;
-  margin: 0 !important;
-}
-
-/* 折叠内容样式 */
-.cr-section-content {
-  overflow: hidden;
-  transition: max-height 0.3s ease, opacity 0.2s ease;
-  max-height: 2000px;
-  opacity: 1;
-}
-
-.cr-section-content.cr-collapsed {
-  max-height: 0;
-  opacity: 0;
-  margin: 0;
-  padding: 0;
-}
-
-/* 折叠状态下的标题样式 */
-.cr-collapsible-header.cr-header-collapsed {
-  margin-bottom: 0;
-  border-radius: var(--cr-radius-md);
-}
-
-/* 创建概念区域 */
-.cr-create-concept .cr-input-container {
-  margin-bottom: var(--cr-spacing-md);
-}
-
-.cr-create-concept .cr-minimal-input {
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.cr-concept-input {
-  width: 100%;
-  min-height: 80px;
-  padding: var(--cr-spacing-sm);
-  font-family: var(--font-text);
-  font-size: 0.95em;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--cr-radius-sm);
-  background: var(--background-primary);
-  color: var(--text-normal);
-  resize: vertical;
-  transition: all 0.2s ease;
-}
-
-.cr-concept-input:focus {
-  outline: none;
-  border-color: var(--interactive-accent);
-  box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
-}
-
-.cr-button-container {
-  display: flex;
-  gap: var(--cr-spacing-sm);
-  justify-content: flex-end;
-}
-
-/* 标准化结果显示 */
-.cr-standardized-result {
-  margin-top: var(--cr-spacing-md);
-  padding: var(--cr-spacing-md);
-  background: var(--background-primary);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--cr-radius-sm);
-  border-left: 3px solid var(--color-green);
-}
-
-.cr-standardized-result h4 {
-  margin: 0 0 var(--cr-spacing-md) 0;
-  font-size: 1em;
-  font-weight: 600;
-  color: var(--text-normal);
-  padding-bottom: var(--cr-spacing-xs);
-  border-bottom: 1px solid var(--background-modifier-border);
-}
-
-.cr-result-row {
-  display: flex;
-  margin-bottom: var(--cr-spacing-sm);
-  padding: var(--cr-spacing-xs) 0;
-}
-
-.cr-result-label {
-  min-width: 80px;
-  font-weight: 500;
-  color: var(--text-muted);
-  font-size: 0.9em;
-}
-
-.cr-result-value {
-  flex: 1;
-  color: var(--text-normal);
-  font-size: 0.9em;
-}
-
-.cr-result-value.cr-chinese {
-  font-weight: 500;
-}
-
-.cr-result-value.cr-english {
-  font-style: italic;
-  color: var(--text-muted);
-}
-
-.cr-aliases-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--cr-spacing-xs);
-}
-
-.cr-alias-tag {
-  padding: 2px 8px;
-  background: var(--background-modifier-border);
-  border-radius: var(--cr-radius-sm);
-  font-size: 0.85em;
-  color: var(--text-muted);
-}
-
-.cr-type-confidences {
-  display: flex;
-  flex-direction: column;
-  gap: var(--cr-spacing-xs);
-}
-
-.cr-confidence-item {
-  display: flex;
-  align-items: center;
-  gap: var(--cr-spacing-sm);
-}
-
-.cr-confidence-label {
-  min-width: 100px;
-  font-size: 0.85em;
-  color: var(--text-muted);
-}
-
-.cr-confidence-bar {
-  flex: 1;
-  height: 6px;
-  background: var(--background-modifier-border);
-  border-radius: 3px;
-  overflow: hidden;
-}
-
-.cr-confidence-fill {
-  height: 100%;
-  background: var(--interactive-accent);
-  border-radius: 3px;
-  transition: width 0.3s ease;
-}
-
-.cr-confidence-value {
-  min-width: 40px;
-  text-align: right;
-  font-size: 0.85em;
-  font-weight: 600;
-  color: var(--text-normal);
-}
-
-/* 暗色主题适配 */
-.theme-dark .cr-standardized-result {
-  background: var(--background-primary-alt);
-}
-
-/* 重复概念面板 */
-.cr-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 20px;
-  height: 20px;
-  padding: 0 6px;
-  font-size: 0.75em;
-  font-weight: 600;
-  color: white;
-  background: var(--interactive-accent);
-  border-radius: 10px;
-}
-
-/* 重复概念控制栏 */
-.cr-header-title-row {
-  display: flex;
-  align-items: center;
-  gap: var(--cr-spacing-sm);
-}
-
-.cr-duplicates-controls {
-  display: flex;
-  gap: var(--cr-spacing-md);
-  align-items: center;
-  flex-wrap: wrap;
-  margin-top: var(--cr-spacing-sm);
-}
-
-.cr-sort-container,
-.cr-filter-container {
-  display: flex;
-  align-items: center;
-  gap: var(--cr-spacing-xs);
-}
-
-.cr-control-label {
-  font-size: 0.85em;
-  color: var(--text-muted);
-  font-weight: 500;
-}
-
-.cr-sort-select,
-.cr-filter-select {
-  padding: 4px 8px;
-  font-size: 0.85em;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--cr-radius-sm);
-  background: var(--background-primary);
-  color: var(--text-normal);
-  cursor: pointer;
-}
-
-.cr-sort-select:focus,
-.cr-filter-select:focus {
-  outline: none;
-  border-color: var(--interactive-accent);
-}
-
-.cr-batch-actions {
-  display: flex;
-  gap: var(--cr-spacing-xs);
-  margin-left: auto;
-}
-
-.cr-btn-small {
-  padding: 4px 12px;
-  font-size: 0.85em;
-}
-
-/* 重复概念列表 - 卡片样式 */
-.cr-duplicates-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--cr-spacing-md);
-}
-
-.cr-duplicate-card {
-  display: flex;
-  gap: var(--cr-spacing-sm);
-  /* 改为更轻量的列表样式 */
-  /* background: var(--background-primary); */
-  /* border: 2px solid var(--background-modifier-border); */
-  padding: var(--cr-spacing-sm);
-  background: transparent;
-  border-bottom: 1px solid var(--background-modifier-border);
-  border-radius: 0;
-  transition: all 0.2s ease;
-  box-shadow: var(--cr-shadow-sm);
-}
-
-/* border-color: var(--interactive-accent-hover); */
-/* box-shadow: var(--cr-shadow-md); */
-.cr-duplicate-card:hover {
-  /* border-color: var(--interactive-accent-hover); */
-  /* box-shadow: var(--cr-shadow-md); */
-  background: var(--background-modifier-hover);
-  transform: none;
-}
-
-.cr-duplicate-checkbox {
-  margin-top: 4px;
-  cursor: pointer;
-}
-
-.cr-duplicate-content {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--cr-spacing-sm);
-}
-
-.cr-duplicate-title-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.cr-duplicate-names {
-  font-weight: 600;
-  font-size: 1em;
-  color: var(--text-normal);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cr-duplicate-meta-row {
-  display: flex;
-  align-items: center;
-  gap: var(--cr-spacing-md);
-  flex-wrap: wrap;
-}
-
-.cr-similarity-bar {
-  flex: 1;
-  min-width: 100px;
-  height: 8px;
-  background: var(--background-modifier-border);
-  border-radius: 4px;
-  overflow: hidden;
-}
-
-.cr-similarity-fill {
-  height: 100%;
-  background: linear-gradient(90deg, var(--color-red) 0%, var(--color-orange) 50%, var(--color-green) 100%);
-  border-radius: 4px;
-  transition: width 0.3s ease;
-}
-
-.cr-similarity-text {
-  font-size: 0.9em;
-  font-weight: 600;
-  color: var(--color-orange);
-  min-width: 45px;
-}
-
-.cr-type-tag {
-  padding: 3px 10px;
-  background: var(--interactive-accent);
-  color: white;
-  border-radius: var(--cr-radius-sm);
-  font-size: 0.85em;
-  font-weight: 500;
-}
-
-.cr-time-text {
-  font-size: 0.85em;
-  color: var(--text-muted);
-}
-
-.cr-duplicate-card-actions {
-  display: flex;
-  gap: var(--cr-spacing-xs);
-  align-items: flex-start;
-}
-
-/* 旧样式保留以兼容 */
-.cr-duplicate-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--cr-spacing-sm);
-  background: var(--background-primary);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--cr-radius-sm);
-  transition: all 0.2s ease;
-}
-
-.cr-duplicate-item:hover {
-  border-color: var(--interactive-accent);
-  box-shadow: var(--cr-shadow-sm);
-}
-
-.cr-duplicate-info {
-  flex: 1;
-  min-width: 0;
-}
-
-.cr-duplicate-meta {
-  display: flex;
-  gap: var(--cr-spacing-sm);
-  font-size: 0.85em;
-  color: var(--text-muted);
-}
-
-.cr-similarity {
-  color: var(--color-orange);
-  font-weight: 500;
-}
-
-.cr-type-badge {
-  padding: 2px 6px;
-  background: var(--background-modifier-border);
-  border-radius: var(--cr-radius-sm);
-  font-size: 0.9em;
-}
-
-.cr-duplicate-actions {
-  display: flex;
-  gap: var(--cr-spacing-xs);
-  margin-left: var(--cr-spacing-sm);
-}
-
-.cr-duplicate-actions button {
-  padding: 4px 12px;
-  font-size: 0.85em;
-}
-
-/* 队列状态区域 */
-.cr-queue-status-content {
-  display: flex;
-  flex-direction: column;
-  gap: var(--cr-spacing-md);
-}
-
-.cr-queue-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
-  gap: var(--cr-spacing-sm);
-}
-
-.cr-queue-indicator {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  gap: var(--cr-spacing-sm);
-  padding: var(--cr-spacing-sm);
-  background: var(--background-primary);
-  border-radius: var(--cr-radius-sm);
-  font-weight: 500;
-}
-
-.cr-status-active {
-  color: var(--color-green);
-}
+    padding: var(--cr-gap-md);
+    height: 100%;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--cr-gap-lg);
+}
+
+/* --- Hero Search Section --- */
+.cr-hero-container {
+    display: flex;
+    justify-content: center;
+    margin-bottom: var(--cr-gap-md);
+}
+
+.cr-search-wrapper {
+    position: relative;
+    width: 100%;
+    max-width: 600px;
+}
+
+.cr-hero-input {
+    width: 100%;
+    height: 40px;
+    /* Slightly smaller to fit better */
+    padding: 0 16px 0 52px;
+    /* Fix overlap: Left padding for icon */
+    /* Adjusted padding */
+    font-size: 1em;
+    border-radius: var(--radius-l);
+    border: 1px solid var(--cr-border);
+    background: var(--cr-bg-surface);
+    color: var(--cr-text-normal);
+    transition: all 0.2s ease;
+    box-shadow: var(--cr-shadow-card);
+    box-sizing: border-box;
+    /* display: flex; REMOVED - Causes text rendering issues on inputs */
+    /* align-items: center; REMOVED */
+}
+
+.cr-hero-input:focus {
+    outline: none;
+    border-color: var(--cr-border-focus);
+    box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
+    background: var(--cr-bg-base);
+    /* display: flex; REMOVED */
+    /* align-items: center; REMOVED */
+}
+
+/* Modal Simple Input Styles */
+.cr-simple-input-modal .modal-content {
+    padding: 30px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.cr-simple-input-title {
+    text-align: center;
+    margin-bottom: 10px;
+    font-size: 1.4em;
+    font-weight: 600;
+}
+
+.cr-simple-input-container {
+    display: flex;
+    align-items: center;
+    position: relative;
+    background: var(--cr-bg-surface);
+    border: 1px solid var(--cr-border);
+    border-radius: var(--radius-l);
+    box-shadow: var(--cr-shadow-card);
+    transition: all 0.2s ease;
+    padding: 4px;
+    /* Space for the button */
+}
+
+.cr-simple-input-container:focus-within {
+    border-color: var(--cr-border-focus);
+    box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
+}
+
+.cr-simple-input {
+    flex: 1;
+    border: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    font-size: 1.2em;
+    height: 48px;
+    padding: 0 16px;
+    width: 100%;
+}
+
+.cr-simple-input:focus {
+    outline: none;
+}
+
+.cr-simple-input-submit {
+    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-m);
+    border: none;
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    margin-right: 4px;
+}
+
+.cr-simple-input-submit:hover {
+    background: var(--interactive-accent-hover);
+    transform: scale(1.05);
+}
+
+/* Search Icon Fix */
+.cr-search-icon {
+    position: absolute;
+    left: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--cr-text-muted);
+    pointer-events: none;
+}
 
-.cr-status-paused {
-  color: var(--color-orange);
+.cr-search-action-btn {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: transparent;
+    color: var(--cr-text-accent);
+    border: none;
+    padding: 4px;
+    cursor: pointer;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s ease;
 }
 
-.cr-stat-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: var(--cr-spacing-sm);
-  background: var(--background-primary);
-  border-radius: var(--cr-radius-sm);
-  border: 1px solid var(--background-modifier-border);
+.cr-search-action-btn:hover {
+    background: var(--cr-bg-hover);
+}
+
+.cr-search-action-btn:disabled,
+.cr-search-action-btn.cr-hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* --- Queue Status Section (Refactored) --- */
+.cr-queue-status-container {
+    display: flex;
+    flex-direction: column;
+    gap: var(--cr-gap-md);
+    margin-bottom: var(--cr-gap-lg);
+}
+
+.cr-queue-control-row {
+    display: flex;
+    align-items: center;
+    gap: var(--cr-gap-md);
+    background: var(--cr-bg-surface);
+    border: 1px solid var(--cr-border);
+    border-radius: var(--cr-radius-card);
+    padding: 12px 16px;
+}
+
+.cr-status-wrapper {
+    display: flex;
+    align-items: center;
+    gap: var(--cr-gap-sm);
+    min-width: 140px;
+}
+
+.cr-queue-toggle-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    color: #fff;
+}
+
+.cr-queue-toggle-btn.is-active {
+    background-color: var(--cr-status-success);
+}
+
+.cr-queue-toggle-btn.is-paused {
+    background-color: var(--cr-status-warning);
+}
+
+.cr-queue-status-text {
+    font-weight: 600;
+    font-size: 0.9em;
+}
+
+.cr-progress-container {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: var(--cr-gap-sm);
+}
+
+.cr-progress-bar {
+    flex: 1;
+    height: 8px;
+    background: var(--background-modifier-border);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.cr-progress-fill {
+    height: 100%;
+    background: var(--interactive-accent);
+    transition: width 0.3s ease;
+}
+
+.cr-progress-text {
+    font-family: var(--font-monospace);
+    font-size: 0.85em;
+    width: 40px;
+    text-align: right;
+}
+
+/* Stats Grid */
+.cr-queue-stats-grid,
+.cr-dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: var(--cr-gap-md);
+    margin-bottom: var(--cr-gap-lg);
+}
+
+/* Stat Cards (Reused mostly but refined) */
+.cr-stat-card {
+    background: var(--cr-bg-surface);
+    border: 1px solid var(--cr-border);
+    border-radius: var(--cr-radius-card);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.cr-stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--cr-shadow-card);
 }
 
 .cr-stat-value {
-  font-size: 1.5em;
-  font-weight: 700;
-  line-height: 1;
-  margin-bottom: var(--cr-spacing-xs);
+    font-size: 2em;
+    font-weight: 700;
+    line-height: 1.1;
+    margin-bottom: var(--cr-gap-xs);
 }
 
 .cr-stat-label {
-  font-size: 0.75em;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+    font-size: 0.85em;
+    color: var(--cr-text-muted);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
+.cr-stat-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-bottom: var(--cr-gap-sm);
+    background: var(--background-modifier-border);
+}
+
+/* Status variants */
 .cr-stat-pending .cr-stat-value {
-  color: var(--color-cyan);
+    color: var(--cr-status-info);
+}
+
+.cr-stat-pending .cr-stat-status-dot {
+    background: var(--cr-status-info);
+    box-shadow: 0 0 8px var(--cr-status-info);
 }
 
 .cr-stat-running .cr-stat-value {
-  color: var(--interactive-accent);
+    color: var(--cr-text-accent);
 }
 
-.cr-stat-completed .cr-stat-value {
-  color: var(--color-green);
+.cr-stat-running .cr-stat-status-dot {
+    background: var(--cr-text-accent);
+    box-shadow: 0 0 8px var(--cr-text-accent);
+    animation: pulse 2s infinite;
 }
 
 .cr-stat-failed .cr-stat-value {
-  color: var(--color-red);
+    color: var(--cr-status-error);
 }
 
-.cr-queue-actions {
-  display: flex;
-  gap: var(--cr-spacing-sm);
-  justify-content: flex-end;
-}
-
-.cr-queue-actions button {
-  padding: 6px 16px;
-  font-size: 0.9em;
-}
-
-/* 最近操作区域 */
-.cr-recent-ops-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--cr-spacing-xs);
-}
-
-.cr-recent-op-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--cr-spacing-sm);
-  background: var(--background-primary);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--cr-radius-sm);
-  transition: all 0.2s ease;
-}
-
-.cr-recent-op-item:hover {
-  border-color: var(--interactive-accent);
-}
-
-.cr-op-info {
-  flex: 1;
-  min-width: 0;
-}
-
-.cr-op-description {
-  font-size: 0.9em;
-  color: var(--text-normal);
-  margin-bottom: var(--cr-spacing-xs);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cr-op-time {
-  font-size: 0.8em;
-  color: var(--text-muted);
-}
-
-.cr-undo-btn {
-  padding: 4px 12px;
-  font-size: 0.85em;
-  color: var(--interactive-accent);
-  background: transparent;
-  border: 1px solid var(--interactive-accent);
-  border-radius: var(--cr-radius-sm);
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.cr-undo-btn:hover {
-  background: var(--interactive-accent);
-  color: white;
-}
-
-/* 空状态 */
-.cr-empty-state {
-  padding: var(--cr-spacing-lg);
-  text-align: center;
-  color: var(--text-muted);
-  font-size: 0.9em;
-}
-
-/* ========================================
-   3. QueueView 样式
-   ======================================== */
-
-.cr-queue-view {
-  padding: var(--cr-spacing-md);
-  height: 100%;
-  overflow-y: auto;
-}
-
-/* 队列头部 */
-.cr-queue-header {
-  display: flex;
-  flex-direction: column;
-  gap: var(--cr-spacing-md);
-  margin-bottom: var(--cr-spacing-lg);
-  padding-bottom: var(--cr-spacing-md);
-  border-bottom: 2px solid var(--background-modifier-border);
-}
-
-.cr-header-title h2 {
-  margin: 0;
-  font-size: 1.5em;
-  font-weight: 600;
-  color: var(--text-normal);
-}
-
-.cr-concurrency-control {
-  display: flex;
-  align-items: center;
-  gap: var(--cr-spacing-sm);
-}
-
-.cr-concurrency-control label {
-  font-size: 0.9em;
-  color: var(--text-muted);
-}
-
-.cr-concurrency-input {
-  width: 60px;
-  padding: 4px 8px;
-  font-size: 0.9em;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--cr-radius-sm);
-  background: var(--background-primary);
-  color: var(--text-normal);
-}
-
-.cr-concurrency-input:focus {
-  outline: none;
-  border-color: var(--interactive-accent);
-}
-
-.cr-header-actions {
-  display: flex;
-  gap: var(--cr-spacing-sm);
-}
-
-.cr-header-actions button {
-  padding: 6px 16px;
-  font-size: 0.9em;
-}
-
-/* 过滤器 */
-.cr-filters {
-  display: flex;
-  gap: var(--cr-spacing-xs);
-  margin-bottom: var(--cr-spacing-md);
-  flex-wrap: wrap;
-}
-
-.cr-filters button {
-  padding: 6px 12px;
-  font-size: 0.85em;
-  color: var(--text-muted);
-  background: var(--background-secondary);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--cr-radius-sm);
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.cr-filters button:hover {
-  color: var(--text-normal);
-  border-color: var(--interactive-accent);
-}
-
-.cr-filters button.cr-filter-active {
-  color: white;
-  background: var(--interactive-accent);
-  border-color: var(--interactive-accent);
-}
-
-/* 任务容器 */
-.cr-tasks-container {
-  display: flex;
-  flex-direction: column;
-  gap: var(--cr-spacing-lg);
-}
-
-.cr-task-group {
-  display: flex;
-  flex-direction: column;
-  gap: var(--cr-spacing-sm);
-}
-
-.cr-group-title {
-  margin: 0;
-  font-size: 1em;
-  font-weight: 600;
-  color: var(--text-normal);
-  padding-bottom: var(--cr-spacing-xs);
-  border-bottom: 1px solid var(--background-modifier-border);
-}
-
-.cr-task-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--cr-spacing-sm);
-}
-
-/* 任务项 */
-.cr-task-item {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  padding: var(--cr-spacing-md);
-  background: var(--background-secondary);
-  border: 1px solid var(--background-modifier-border);
-  border-left: 3px solid var(--background-modifier-border);
-  border-radius: var(--cr-radius-sm);
-  transition: all 0.2s ease;
-}
-
-.cr-task-item:hover {
-  box-shadow: var(--cr-shadow-sm);
-}
-
-.cr-task-pending {
-  border-left-color: var(--color-cyan);
-}
-
-.cr-task-running {
-  border-left-color: var(--interactive-accent);
-}
-
-.cr-task-completed {
-  border-left-color: var(--color-green);
-}
-
-.cr-task-failed {
-  border-left-color: var(--color-red);
-}
-
-.cr-task-cancelled {
-  border-left-color: var(--text-muted);
-}
-
-.cr-task-info {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--cr-spacing-xs);
-}
-
-.cr-task-header {
-  display: flex;
-  align-items: center;
-  gap: var(--cr-spacing-sm);
-}
-
-.cr-task-type {
-  font-weight: 600;
-  color: var(--text-normal);
-}
-
-.cr-task-id {
-  font-family: var(--font-monospace);
-  font-size: 0.8em;
-  color: var(--text-muted);
-  padding: 2px 6px;
-  background: var(--background-modifier-border);
-  border-radius: var(--cr-radius-sm);
-}
-
-.cr-task-node {
-  font-size: 0.85em;
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cr-task-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--cr-spacing-sm);
-  font-size: 0.8em;
-}
-
-.cr-state-badge {
-  padding: 2px 8px;
-  border-radius: var(--cr-radius-sm);
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.cr-state-pending {
-  color: var(--text-accent);
-  background: rgba(59, 130, 246, 0.1);
-}
-
-.cr-state-running {
-  color: var(--interactive-accent);
-  background: rgba(99, 102, 241, 0.1);
-}
-
-.cr-state-completed {
-  color: var(--color-green);
-  background: rgba(16, 185, 129, 0.1);
-}
-
-.cr-state-failed {
-  color: var(--color-red);
-  background: rgba(239, 68, 68, 0.1);
-}
-
-.cr-state-cancelled {
-  color: var(--text-muted);
-  background: rgba(128, 128, 128, 0.1);
-}
-
-.cr-task-time {
-  color: var(--text-muted);
-}
-
-.cr-task-retry {
-  color: var(--color-orange);
-  font-weight: 500;
-}
-
-.cr-task-error {
-  margin-top: var(--cr-spacing-xs);
-  padding: var(--cr-spacing-xs);
-  background: rgba(239, 68, 68, 0.05);
-  border-left: 2px solid var(--color-red);
-  border-radius: var(--cr-radius-sm);
-  font-size: 0.85em;
-}
-
-.cr-error-label {
-  font-weight: 600;
-  color: var(--color-red);
-}
-
-.cr-error-message {
-  color: var(--text-muted);
-}
-
-.cr-task-actions {
-  display: flex;
-  gap: var(--cr-spacing-xs);
-  margin-left: var(--cr-spacing-sm);
-}
-
-.cr-task-actions button {
-  padding: 4px 12px;
-  font-size: 0.85em;
-  white-space: nowrap;
-}
-
-.cr-btn-cancel {
-  color: var(--color-red);
-  border: 1px solid var(--color-red);
-  background: transparent;
-}
-
-.cr-btn-cancel:hover {
-  background: var(--color-red);
-  color: white;
-}
-
-.cr-btn-retry {
-  background: var(--interactive-accent);
-  color: white;
-}
-
-.cr-btn-retry:hover {
-  background: var(--interactive-accent-hover);
-}
-
-.cr-empty-text {
-  font-size: 1.1em;
-  font-weight: 500;
-  margin-bottom: var(--cr-spacing-xs);
-}
-
-.cr-empty-hint {
-  font-size: 0.9em;
-  color: var(--text-faint);
-}
-
-/* ========================================
-   4. DiffView 样式
-   ======================================== */
-
-.cr-diff-view,
-.cr-simple-diff-view {
-  padding: var(--cr-spacing-md);
-}
-
-.cr-diff-view .modal-content,
-.cr-simple-diff-view .modal-content {
-  max-width: 900px;
-  max-height: 80vh;
-  overflow-y: auto;
-}
-
-.cr-diff-header {
-  margin-bottom: var(--cr-spacing-md);
-  padding-bottom: var(--cr-spacing-md);
-  border-bottom: 2px solid var(--background-modifier-border);
-}
-
-.cr-diff-header h2 {
-  margin: 0 0 var(--cr-spacing-xs) 0;
-  font-size: 1.5em;
-  font-weight: 600;
-}
-
-.cr-diff-operation {
-  font-size: 0.9em;
-  color: var(--text-muted);
-}
-
-.cr-diff-filepath {
-  margin-bottom: var(--cr-spacing-md);
-  padding: var(--cr-spacing-sm);
-  background: var(--background-secondary);
-  border-radius: var(--cr-radius-sm);
-  font-family: var(--font-monospace);
-  font-size: 0.85em;
-  color: var(--text-muted);
-}
-
-/* 选择控制 */
-.cr-select-controls {
-  display: flex;
-  gap: var(--cr-spacing-sm);
-  margin-bottom: var(--cr-spacing-md);
-}
-
-.cr-select-controls button {
-  padding: 4px 12px;
-  font-size: 0.85em;
-}
-
-/* 差异容器 */
-.cr-diffs-container {
-  margin-bottom: var(--cr-spacing-lg);
-  max-height: 300px;
-  overflow-y: auto;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--cr-radius-sm);
-  background: var(--background-secondary);
-}
-
-.cr-no-diffs {
-  padding: var(--cr-spacing-lg);
-  text-align: center;
-  color: var(--text-muted);
-}
-
-/* 差异项 */
-.cr-diff-item {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--cr-spacing-sm);
-  padding: var(--cr-spacing-md);
-  border-bottom: 1px solid var(--background-modifier-border);
-  transition: background 0.2s ease;
-}
-
-.cr-diff-item:last-child {
-  border-bottom: none;
-}
-
-.cr-diff-item:hover {
-  background: var(--background-primary);
-}
-
-.cr-diff-checkbox {
-  margin-top: 2px;
-  cursor: pointer;
-}
-
-.cr-diff-info {
-  flex: 1;
-  min-width: 0;
-}
-
-.cr-diff-label-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--cr-spacing-xs);
-}
-
-.cr-diff-label {
-  font-weight: 500;
-  color: var(--text-normal);
-}
-
-.cr-diff-type-badge {
-  padding: 2px 8px;
-  border-radius: var(--cr-radius-sm);
-  font-size: 0.75em;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.cr-type-add {
-  color: var(--color-green);
-  background: rgba(16, 185, 129, 0.1);
-}
-
-.cr-type-remove {
-  color: var(--color-red);
-  background: rgba(239, 68, 68, 0.1);
-}
-
-.cr-type-modify {
-  color: var(--color-orange);
-  background: rgba(245, 158, 11, 0.1);
-}
-
-.cr-diff-change {
-  display: flex;
-  flex-direction: column;
-  gap: var(--cr-spacing-xs);
-  font-size: 0.85em;
-}
-
-.cr-old-value {
-  padding: var(--cr-spacing-xs);
-  background: rgba(239, 68, 68, 0.05);
-  border-left: 2px solid var(--color-red);
-  border-radius: var(--cr-radius-sm);
-  color: var(--text-muted);
-  font-family: var(--font-monospace);
-  overflow-wrap: break-word;
-}
-
-.cr-new-value {
-  padding: var(--cr-spacing-xs);
-  background: rgba(16, 185, 129, 0.05);
-  border-left: 2px solid var(--color-green);
-  border-radius: var(--cr-radius-sm);
-  color: var(--text-muted);
-  font-family: var(--font-monospace);
-  overflow-wrap: break-word;
-}
-
-/* 预览区域 */
-.cr-preview-section {
-  margin-bottom: var(--cr-spacing-lg);
-}
-
-.cr-preview-section h3 {
-  margin: 0 0 var(--cr-spacing-md) 0;
-  font-size: 1.1em;
-  font-weight: 600;
-}
-
-.cr-preview-tabs {
-  display: flex;
-  gap: var(--cr-spacing-xs);
-  margin-bottom: var(--cr-spacing-md);
-  border-bottom: 2px solid var(--background-modifier-border);
-}
-
-.cr-preview-tabs button {
-  padding: var(--cr-spacing-sm) var(--cr-spacing-md);
-  font-size: 0.9em;
-  color: var(--text-muted);
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  margin-bottom: -2px;
-}
-
-.cr-preview-tabs button:hover {
-  color: var(--text-normal);
-}
-
-.cr-preview-tabs button.cr-tab-active {
-  color: var(--interactive-accent);
-  border-bottom-color: var(--interactive-accent);
-  font-weight: 500;
-}
-
-.cr-preview-content {
-  position: relative;
-  min-height: 200px;
-  max-height: 400px;
-  overflow: auto;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--cr-radius-sm);
-  background: var(--background-secondary);
-}
-
-.cr-preview-original,
-.cr-preview-new {
-  margin: 0;
-  padding: var(--cr-spacing-md);
-  font-family: var(--font-monospace);
-  font-size: 0.85em;
-  line-height: 1.6;
-  color: var(--text-normal);
-  white-space: pre-wrap;
-  word-wrap: break-word;
-}
-
-.cr-preview-diff {
-  padding: var(--cr-spacing-md);
-}
-
-/* 统一 Diff 视图（用于写入预览、合并、增量改进等） */
-.cr-unified-diff {
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
-  padding: 8px;
-  background-color: var(--background-secondary);
-  font-family: var(--font-monospace);
-  max-height: 320px;
-  overflow: auto;
-}
-
-.cr-diff-row {
-  display: grid;
-  grid-template-columns: 20px 1fr;
-  gap: 8px;
-  padding: 2px 4px;
-  border-radius: 4px;
-  align-items: center;
-}
-
-.cr-diff-row.cr-add {
-  background: rgba(46, 160, 67, 0.12);
-}
-
-.cr-diff-row.cr-remove {
-  background: rgba(215, 58, 73, 0.12);
-}
-
-.cr-diff-row.cr-context {
-  background: transparent;
-}
-
-.cr-diff-prefix {
-  font-weight: bold;
-  color: var(--text-muted);
-}
-
-.cr-diff-text {
-  white-space: pre-wrap;
-}
-
-/* 并排差异视图 */
-.cr-diff-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--cr-spacing-md);
-}
-
-.cr-diff-panel {
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--cr-radius-sm);
-  overflow: hidden;
-}
-
-.cr-panel-title {
-  padding: var(--cr-spacing-sm);
-  background: var(--background-modifier-border);
-  font-weight: 600;
-  font-size: 0.85em;
-  color: var(--text-muted);
-  text-align: center;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.cr-panel-content {
-  flex: 1;
-  margin: 0;
-  padding: var(--cr-spacing-md);
-  font-family: var(--font-monospace);
-  font-size: 0.85em;
-  line-height: 1.6;
-  color: var(--text-normal);
-  background: var(--background-secondary);
-  overflow: auto;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-}
-
-/* 操作按钮 */
-.cr-diff-actions {
-  display: flex;
-  gap: var(--cr-spacing-sm);
-  justify-content: flex-end;
-  padding-top: var(--cr-spacing-md);
-  border-top: 1px solid var(--background-modifier-border);
-}
-
-.cr-diff-actions button {
-  padding: 8px 20px;
-  font-size: 0.9em;
-}
-
-/* ========================================
-   5. StatusBadge 样式
-   ======================================== */
-
-.cr-status-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  border-radius: var(--cr-radius-sm);
-}
-
-.cr-status-badge:hover {
-  background: var(--background-modifier-border);
-}
-
-.cr-status-badge:focus {
-  outline: 2px solid var(--interactive-accent);
-  outline-offset: 2px;
-}
-
-.cr-status-icon {
-  font-size: 1em;
-  line-height: 1;
-}
-
-.cr-status-count {
-  font-size: 0.85em;
-  font-weight: 600;
-  line-height: 1;
-  min-width: 16px;
-  text-align: center;
-}
-
-.cr-status-count.cr-status-active {
-  color: var(--interactive-accent);
-}
-
-.cr-status-count.cr-status-failed {
-  color: var(--color-red);
-}
-
-.cr-status-count.cr-status-idle {
-  color: var(--color-green);
-}
-
-.cr-status-paused-indicator {
-  font-size: 0.9em;
-  color: var(--color-orange);
-  animation: pulse 2s ease-in-out infinite;
+.cr-stat-failed .cr-stat-status-dot {
+    background: var(--cr-status-error);
 }
 
 @keyframes pulse {
+    0% {
+        opacity: 0.5;
+        transform: scale(0.9);
+    }
 
-  0%,
-  100% {
-    opacity: 1;
-  }
+    50% {
+        opacity: 1;
+        transform: scale(1.1);
+    }
 
-  50% {
-    opacity: 0.5;
-  }
+    100% {
+        opacity: 0.5;
+        transform: scale(0.9);
+    }
+}
+
+/* --- Duplicates List Section --- */
+.cr-duplicates-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--cr-gap-sm);
+}
+
+.cr-section-title {
+    font-size: 1.1em;
+    font-weight: 600;
+    color: var(--cr-text-normal);
+    margin: 0;
+}
+
+.cr-duplicates-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--cr-gap-sm);
+}
+
+.cr-duplicate-item {
+    display: flex;
+    align-items: center;
+    padding: var(--cr-padding-card);
+    background: var(--cr-bg-surface);
+    border: 1px solid var(--cr-border);
+    border-radius: var(--cr-radius-card);
+    transition: background 0.2s ease;
+}
+
+.cr-duplicate-item:hover {
+    background: var(--cr-bg-hover);
+    border-color: var(--cr-border-focus);
+    /* Subtle highlight */
+}
+
+.cr-dup-names {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+/* Collapsible Header Layout */
+.cr-collapsible-header {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    user-select: none;
+    width: 100%;
+    /* Ensure full width */
+}
+
+.cr-section-header-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--cr-gap-sm);
+    margin-left: auto;
+    /* Push to right */
+
+    .cr-dup-name {
+        font-weight: 500;
+        font-size: 0.95em;
+    }
+
+    .cr-dup-similarity {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        width: 120px;
+        padding: 0 var(--cr-gap-md);
+    }
+
+    .cr-similarity-bar-bg {
+        width: 100%;
+        height: 4px;
+        background: var(--background-modifier-border);
+        border-radius: 2px;
+        overflow: hidden;
+        margin-top: 4px;
+    }
+
+    .cr-similarity-fill {
+        height: 100%;
+        border-radius: 2px;
+        /* Gradient set dynamically via JS usually, or specific classes */
+        background: linear-gradient(90deg, var(--cr-status-warning), var(--cr-status-success));
+    }
+
+    .cr-dup-score {
+        font-size: 0.8em;
+        color: var(--cr-text-muted);
+        font-family: var(--font-monospace);
+    }
+
+    .cr-dup-actions {
+        display: flex;
+        gap: var(--cr-gap-sm);
+        opacity: 0;
+        transform: translateX(10px);
+        transition: all 0.2s ease;
+    }
+
+    .cr-duplicate-item:hover .cr-dup-actions {
+        opacity: 1;
+        transform: translateX(0);
+    }
+
+    .cr-icon-btn {
+        background: transparent;
+        border: none;
+        padding: 4px;
+        color: var(--cr-text-muted);
+        cursor: pointer;
+        border-radius: var(--cr-radius-btn);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .cr-icon-btn:hover {
+        background: var(--background-modifier-hover);
+        color: var(--cr-text-normal);
+    }
+
+    .cr-icon-btn.is-accent:hover {
+        color: var(--cr-text-accent);
+        background: var(--cr-bg-accent-subtle);
+    }
+
+    .cr-icon-btn.is-danger:hover {
+        color: var(--cr-text-error);
+        background: var(--background-modifier-error-hover);
+    }
 }
 
 /* ========================================
-   6. 通用组件样式
+   3. Settings Tab
    ======================================== */
 
-/* 按钮样式 */
-.cr-scope button {
-  padding: 6px 16px;
-  font-size: 0.9em;
-  font-weight: 500;
-  color: var(--text-normal);
-  background: var(--background-secondary);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--cr-radius-sm);
-  cursor: pointer;
-  transition: all 0.2s ease;
+/* --- Settings Tab (Horizontal Layout) --- */
+.cr-settings-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
 
-  .cr-scope button:hover {
-    background: var(--background-modifier-border);
-    border-color: var(--interactive-accent);
-  }
+.cr-settings-nav {
+    display: flex;
+    flex-direction: row;
+    border-bottom: 1px solid var(--cr-border);
+    margin-bottom: var(--cr-gap-lg);
+    gap: var(--cr-gap-md);
+    padding: 0 var(--cr-gap-sm);
+    background: var(--cr-bg-surface);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
 
-  .cr-scope button:focus {
-    outline: 2px solid var(--interactive-accent);
-    outline-offset: 2px;
-  }
-
-  .cr-scope button:active {
-    transform: translateY(1px);
-  }
-
-  .cr-scope button.mod-cta {
-    color: white;
-    background: var(--interactive-accent);
-    border-color: var(--interactive-accent);
-  }
-
-  .cr-scope button.mod-cta:hover {
-    background: var(--interactive-accent-hover);
-    border-color: var(--interactive-accent-hover);
-  }
-
-  .cr-scope button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .cr-scope button:disabled:hover {
-    background: var(--background-secondary);
-    border-color: var(--background-modifier-border);
-    transform: none;
-  }
-
-  /* 输入框样式 */
-  .cr-scope input[type="text"],
-  .cr-scope input[type="number"],
-  .cr-scope textarea {
-    padding: var(--cr-spacing-sm);
-    font-family: var(--font-text);
-    font-size: 0.9em;
-    color: var(--text-normal);
-    background: var(--background-primary);
-    border: 1px solid var(--background-modifier-border);
-    border-radius: var(--cr-radius-sm);
+.cr-nav-item {
+    padding: 10px 16px;
+    cursor: pointer;
+    border-radius: var(--cr-radius-sm) var(--cr-radius-sm) 0 0;
+    color: var(--cr-text-muted);
+    font-weight: 500;
     transition: all 0.2s ease;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+}
 
-    .cr-scope input[type="text"]:focus,
-    .cr-scope input[type="number"]:focus,
-    .cr-scope textarea:focus {
-      outline: none;
-      border-color: var(--interactive-accent);
-      box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
-    }
+.cr-nav-item:hover {
+    color: var(--cr-text-normal);
+    background-color: var(--cr-bg-hover);
+}
 
-    /* 复选框样式 */
-    .cr-scope input[type="checkbox"] {
-      width: 16px;
-      height: 16px;
-      cursor: pointer;
-    }
+.cr-nav-item.is-active {
+    color: var(--cr-text-accent);
+    border-bottom-color: var(--cr-text-accent);
+    background-color: transparent;
+}
 
-    /* 滚动条样式 */
-    .cr-workbench-panel::-webkit-scrollbar,
-    .cr-queue-view::-webkit-scrollbar,
-    .cr-diffs-container::-webkit-scrollbar,
-    .cr-preview-content::-webkit-scrollbar,
-    .cr-panel-content::-webkit-scrollbar {
-      width: 8px;
-      height: 8px;
-    }
+/* Settings Content */
+.cr-settings-content {
+    flex: 1;
+    padding: 0 var(--cr-gap-md);
+    overflow-y: auto;
+    min-height: 0;
+    /* Important for scroll */
+}
 
-    .cr-workbench-panel::-webkit-scrollbar-track,
-    .cr-queue-view::-webkit-scrollbar-track,
-    .cr-diffs-container::-webkit-scrollbar-track,
-    .cr-preview-content::-webkit-scrollbar-track,
-    .cr-panel-content::-webkit-scrollbar-track {
-      background: var(--background-secondary);
-    }
+/* Provider Cards */
+.cr-provider-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: var(--cr-gap-md);
+    margin-top: var(--cr-gap-md);
+}
 
-    .cr-workbench-panel::-webkit-scrollbar-thumb,
-    .cr-queue-view::-webkit-scrollbar-thumb,
-    .cr-diffs-container::-webkit-scrollbar-thumb,
-    .cr-preview-content::-webkit-scrollbar-thumb,
-    .cr-panel-content::-webkit-scrollbar-thumb {
-      background: var(--background-modifier-border);
-      border-radius: 4px;
-    }
+.cr-provider-card {
+    background: var(--cr-bg-surface);
+    border: 1px solid var(--cr-border);
+    border-radius: var(--cr-radius-card);
+    overflow: hidden;
+}
 
-    .cr-workbench-panel::-webkit-scrollbar-thumb:hover,
-    .cr-queue-view::-webkit-scrollbar-thumb:hover,
-    .cr-diffs-container::-webkit-scrollbar-thumb:hover,
-    .cr-preview-content::-webkit-scrollbar-thumb:hover,
-    .cr-panel-content::-webkit-scrollbar-thumb:hover {
-      background: var(--interactive-accent);
-    }
+.cr-provider-header {
+    padding: var(--cr-padding-card);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid transparent;
+    /* Hidden by default */
+    cursor: pointer;
+}
 
-    /* ========================================
-   7. 响应式布局
+.cr-provider-card.is-expanded .cr-provider-header {
+    border-bottom-color: var(--cr-border);
+}
+
+.cr-provider-info {
+    display: flex;
+    align-items: center;
+    gap: var(--cr-gap-sm);
+}
+
+.cr-provider-icon {
+    width: 24px;
+    height: 24px;
+    color: var(--cr-text-muted);
+    /* Placeholder icon color */
+}
+
+.cr-provider-name {
+    font-weight: 600;
+    color: var(--cr-text-normal);
+}
+
+.cr-provider-status {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--cr-text-muted);
+}
+
+.cr-provider-status.is-online {
+    background: var(--cr-status-success);
+}
+
+.cr-provider-status.is-offline {
+    background: var(--cr-status-error);
+}
+
+.cr-provider-body {
+    padding: var(--cr-padding-card);
+    background: var(--cr-bg-base);
+    display: none;
+}
+
+.cr-provider-card.is-expanded .cr-provider-body {
+    display: block;
+}
+
+/* ========================================
+   4. Modals
    ======================================== */
 
-    /* 小屏幕适配 (< 768px) */
-    @media (max-width: 768px) {
+/* Minimal Input Modal */
+.cr-minimal-modal .modal {
+    background: rgba(var(--background-primary-rgb), 0.85) !important;
+    /* Requires converted RGB vars or fallback */
+    /* Fallback for native Obsidian vars if RGB not available */
+    background: var(--background-primary) !important;
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--cr-border);
+    box-shadow: var(--cr-shadow-floating);
+    border-radius: var(--radius-l);
+    padding: 0;
+    max-width: 600px;
+    width: 90%;
+    box-sizing: border-box;
+}
 
-      .cr-workbench-panel,
-      .cr-queue-view {
-        padding: var(--cr-spacing-sm);
-      }
+.cr-minimal-modal .modal-content {
+    padding: 20px;
+}
 
-      .cr-section {
-        padding: var(--cr-spacing-sm);
-      }
+.cr-minimal-input-wrapper {
+    display: flex;
+    align-items: center;
+    background: var(--cr-bg-surface);
+    border: 1px solid var(--cr-border);
+    border-radius: var(--cr-radius-card);
+    padding: 8px 12px;
+    box-sizing: border-box;
+}
 
-      .cr-queue-grid {
-        grid-template-columns: repeat(2, 1fr);
-      }
+.cr-minimal-input-wrapper:focus-within {
+    border-color: var(--cr-border-focus);
+    box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
+}
 
-      .cr-queue-indicator {
-        grid-column: 1 / -1;
-      }
+.cr-minimal-input {
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    padding: 8px 0 !important;
+    font-size: 1.2em;
+    flex: 1;
+    width: 100%;
+    /* Ensure width */
+}
 
-      .cr-diff-grid {
-        grid-template-columns: 1fr;
-      }
+.cr-minimal-input:focus {
+    outline: none;
+}
 
-      .cr-task-item {
-        flex-direction: column;
-        align-items: stretch;
-      }
+/* Diff View Colors */
+.cr-diff-added {
+    background-color: rgba(76, 175, 80, 0.15);
+    /* Green tint */
+    border-left: 3px solid var(--cr-status-success);
+}
 
-      .cr-task-actions {
-        margin-left: 0;
-        margin-top: var(--cr-spacing-sm);
-        justify-content: flex-start;
-      }
+.cr-diff-removed {
+    background-color: rgba(244, 67, 54, 0.15);
+    /* Red tint */
+    border-left: 3px solid var(--cr-status-error);
+}
 
-      .cr-duplicate-item {
-        flex-direction: column;
-        align-items: stretch;
-      }
+.theme-light .cr-diff-added {
+    background-color: rgba(76, 175, 80, 0.1);
+}
 
-      .cr-duplicate-actions {
-        margin-left: 0;
-        margin-top: var(--cr-spacing-sm);
-        justify-content: flex-start;
-      }
+.theme-light .cr-diff-removed {
+    background-color: rgba(244, 67, 54, 0.1);
+}
 
-      .cr-header-actions,
-      .cr-queue-actions,
-      .cr-diff-actions {
-        flex-direction: column;
-      }
-
-      .cr-header-actions button,
-      .cr-queue-actions button,
-      .cr-diff-actions button {
-        width: 100%;
-      }
-    }
-
-    /* 中等屏幕适配 (768px - 1024px) */
-    @media (min-width: 768px) and (max-width: 1024px) {
-      .cr-queue-grid {
-        grid-template-columns: repeat(3, 1fr);
-      }
-    }
-
-    /* 大屏幕优化 (> 1024px) */
-    @media (min-width: 1024px) {
-      .cr-queue-grid {
-        grid-template-columns: repeat(5, 1fr);
-      }
-
-      .cr-diff-view .modal-content,
-      .cr-simple-diff-view .modal-content {
-        max-width: 1200px;
-      }
-    }
-
-    /* ========================================
-   8. 暗色主题适配
+/* ========================================
+   5. Utilities & Animations
    ======================================== */
 
-    /* Obsidian 会自动应用 .theme-dark 类到 body */
-    .theme-dark {
-      /* 调整暗色主题下的阴影 */
-      --cr-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
-      --cr-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
-      --cr-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
-    }
-
-    /* 暗色主题下的特殊调整 */
-    .theme-dark .cr-concept-input,
-    .theme-dark .cr-concurrency-input,
-    .theme-dark .cr-scope input[type="text"],
-    .theme-dark .cr-scope input[type="number"],
-    .theme-dark .cr-scope textarea {
-      background: var(--background-primary-alt);
-    }
-
-    .theme-dark .cr-duplicate-item:hover,
-    .theme-dark .cr-task-item:hover,
-    .theme-dark .cr-recent-op-item:hover {
-      background: var(--background-primary-alt);
-    }
-
-    .theme-dark .cr-task-error {
-      background: rgba(239, 68, 68, 0.1);
-    }
-
-    .theme-dark .cr-old-value {
-      background: rgba(239, 68, 68, 0.1);
-    }
-
-    .theme-dark .cr-new-value {
-      background: rgba(16, 185, 129, 0.1);
-    }
-
-    /* 暗色主题下的按钮调整 */
-    .theme-dark .cr-scope button {
-      background: var(--background-modifier-form-field);
-    }
-
-    .theme-dark .cr-scope button:hover {
-      background: var(--background-modifier-form-field-highlighted);
-    }
-
-    .theme-dark .cr-scope button.mod-cta {
-      background: var(--interactive-accent);
-    }
-
-    .theme-dark .cr-scope button.mod-cta:hover {
-      background: var(--interactive-accent-hover);
-    }
-
-    /* 暗色主题下的状态徽章 */
-    .theme-dark .cr-state-pending {
-      background: rgba(59, 130, 246, 0.15);
-    }
-
-    .theme-dark .cr-state-running {
-      background: rgba(99, 102, 241, 0.15);
-    }
-
-    .theme-dark .cr-state-completed {
-      background: rgba(16, 185, 129, 0.15);
-    }
-
-    .theme-dark .cr-state-failed {
-      background: rgba(239, 68, 68, 0.15);
-    }
-
-    .theme-dark .cr-state-cancelled {
-      background: rgba(128, 128, 128, 0.15);
-    }
-
-    .theme-dark .cr-type-add {
-      background: rgba(16, 185, 129, 0.15);
-    }
-
-    .theme-dark .cr-type-remove {
-      background: rgba(239, 68, 68, 0.15);
-    }
-
-    .theme-dark .cr-type-modify {
-      background: rgba(245, 158, 11, 0.15);
-    }
-
-    /* ========================================
-   9. 可访问性增强
-   ======================================== */
-
-    /* 焦点可见性 */
-    .cr-scope *:focus-visible {
-      outline: 2px solid var(--interactive-accent);
-      outline-offset: 2px;
-    }
-
-    /* 减少动画（尊重用户偏好） */
-    @media (prefers-reduced-motion: reduce) {
-
-      .cr-scope *,
-      .cr-scope *::before,
-      .cr-scope *::after {
-        animation-duration: 0.01ms !important;
-        animation-iteration-count: 1 !important;
-        transition-duration: 0.01ms !important;
-        scroll-behavior: auto !important;
-      }
-    }
-
-    /* 高对比度模式支持 */
-    @media (prefers-contrast: high) {
-
-      .cr-section,
-      .cr-task-item,
-      .cr-duplicate-item,
-      .cr-recent-op-item,
-      .cr-standardized-result {
-        border-width: 2px;
-      }
-
-      .cr-scope button {
-        border-width: 2px;
-      }
-
-      .cr-concept-input,
-      .cr-concurrency-input,
-      .cr-intent-input,
-      .cr-scope input[type="text"],
-      .cr-scope input[type="number"],
-      .cr-scope textarea {
-        border-width: 2px;
-      }
-
-      .cr-confidence-bar,
-      .cr-progress-bar {
-        border: 1px solid var(--text-normal);
-      }
-    }
-
-    /* 屏幕阅读器专用文本 */
-    .sr-only {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      padding: 0;
-      margin: -1px;
-      overflow: hidden;
-      clip: rect(0, 0, 0, 0);
-      white-space: nowrap;
-      border-width: 0;
-    }
-
-    /* 跳过链接（键盘导航） */
-    .skip-link {
-      position: absolute;
-      top: -40px;
-      left: 0;
-      background: var(--interactive-accent);
-      color: white;
-      padding: 8px;
-      text-decoration: none;
-      z-index: 100;
-    }
-
-    .skip-link:focus {
-      top: 0;
-    }
-
-    /* ========================================
-   10. 实用工具类
-   ======================================== */
-
-    /* 间距工具类 */
-    .cr-mt-xs {
-      margin-top: var(--cr-spacing-xs);
-    }
-
-    .cr-mt-sm {
-      margin-top: var(--cr-spacing-sm);
-    }
-
-    .cr-mt-md {
-      margin-top: var(--cr-spacing-md);
-    }
-
-    .cr-mt-lg {
-      margin-top: var(--cr-spacing-lg);
-    }
-
-    .cr-mb-xs {
-      margin-bottom: var(--cr-spacing-xs);
-    }
-
-    .cr-mb-sm {
-      margin-bottom: var(--cr-spacing-sm);
-    }
-
-    .cr-mb-md {
-      margin-bottom: var(--cr-spacing-md);
-    }
-
-    .cr-mb-lg {
-      margin-bottom: var(--cr-spacing-lg);
-    }
-
-    .cr-p-xs {
-      padding: var(--cr-spacing-xs);
-    }
-
-    .cr-p-sm {
-      padding: var(--cr-spacing-sm);
-    }
-
-    .cr-p-md {
-      padding: var(--cr-spacing-md);
-    }
-
-    .cr-p-lg {
-      padding: var(--cr-spacing-lg);
-    }
-
-    /* 文本工具类 */
-    .cr-text-center {
-      text-align: center;
-    }
-
-    .cr-text-right {
-      text-align: right;
-    }
-
-    .cr-text-left {
-      text-align: left;
-    }
-
-    .cr-text-bold {
-      font-weight: 600;
-    }
-
-    .cr-text-normal {
-      font-weight: 400;
-    }
-
-    .cr-text-sm {
-      font-size: 0.85em;
-    }
-
-    .cr-text-md {
-      font-size: 0.95em;
-    }
-
-    .cr-text-lg {
-      font-size: 1.1em;
-    }
-
-    .cr-text-muted {
-      color: var(--text-muted);
-    }
-
-    .cr-text-faint {
-      color: var(--text-faint);
-    }
-
-    .cr-text-error {
-      color: var(--color-red);
-    }
-
-    .cr-text-success {
-      color: var(--color-green);
-    }
-
-    .cr-text-warning {
-      color: var(--color-orange);
-    }
-
-    /* 布局工具类 */
-    .cr-flex {
-      display: flex;
-    }
-
-    .cr-flex-col {
-      flex-direction: column;
-    }
-
-    .cr-flex-center {
-      align-items: center;
-      justify-content: center;
-    }
-
-    .cr-flex-between {
-      justify-content: space-between;
-    }
-
-    .cr-flex-end {
-      justify-content: flex-end;
-    }
-
-    .cr-flex-wrap {
-      flex-wrap: wrap;
-    }
-
-    .cr-flex-1 {
-      flex: 1;
-    }
-
-    .cr-gap-xs {
-      gap: var(--cr-spacing-xs);
-    }
-
-    .cr-gap-sm {
-      gap: var(--cr-spacing-sm);
-    }
-
-    .cr-gap-md {
-      gap: var(--cr-spacing-md);
-    }
-
-    .cr-gap-lg {
-      gap: var(--cr-spacing-lg);
-    }
-
-    /* 显示工具类 */
-    .cr-hidden {
-      display: none;
-    }
-
-    .cr-visible {
-      display: block;
-    }
-
-    .cr-invisible {
-      visibility: hidden;
-    }
-
-    /* 溢出工具类 */
-    .cr-overflow-auto {
-      overflow: auto;
-    }
-
-    .cr-overflow-hidden {
-      overflow: hidden;
-    }
-
-    .cr-overflow-scroll {
-      overflow: scroll;
-    }
-
-    .cr-truncate {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    /* 圆角工具类 */
-    .cr-rounded-sm {
-      border-radius: var(--cr-radius-sm);
-    }
-
-    .cr-rounded-md {
-      border-radius: var(--cr-radius-md);
-    }
-
-    .cr-rounded-lg {
-      border-radius: var(--cr-radius-lg);
-    }
-
-    .cr-rounded-full {
-      border-radius: 9999px;
-    }
-
-    /* 阴影工具类 */
-    .cr-shadow-sm {
-      box-shadow: var(--cr-shadow-sm);
-    }
-
-    .cr-shadow-md {
-      box-shadow: var(--cr-shadow-md);
-    }
-
-    .cr-shadow-lg {
-      box-shadow: var(--cr-shadow-lg);
-    }
-
-    .cr-shadow-none {
-      box-shadow: none;
-    }
-
-    /* 边框工具类 */
-    .cr-border {
-      border: 1px solid var(--background-modifier-border);
-    }
-
-    .cr-border-t {
-      border-top: 1px solid var(--background-modifier-border);
-    }
-
-    .cr-border-b {
-      border-bottom: 1px solid var(--background-modifier-border);
-    }
-
-    .cr-border-l {
-      border-left: 1px solid var(--background-modifier-border);
-    }
-
-    .cr-border-r {
-      border-right: 1px solid var(--background-modifier-border);
-    }
-
-    /* 禁用状态 */
-    .cr-disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-      pointer-events: none;
-    }
-
-    /* 交互状态 */
-    .cr-clickable {
-      cursor: pointer;
-      transition: all 0.2s ease;
-    }
-
-    .cr-clickable:hover {
-      opacity: 0.8;
-    }
-
-    .cr-clickable:active {
-      transform: scale(0.98);
-    }
-
-    /* ========================================
-   15. 打印样式
-   ======================================== */
-
-    @media print {
-
-      .cr-workbench-panel,
-      .cr-queue-view {
-        padding: 0;
-      }
-
-      .cr-section {
-        page-break-inside: avoid;
-      }
-
-      .cr-task-actions,
-      .cr-duplicate-actions,
-      .cr-queue-actions,
-      .cr-diff-actions,
-      .cr-modal-actions,
-      .cr-undo-btn,
-      .cr-scope button {
-        display: none;
-      }
-
-      .cr-task-item,
-      .cr-duplicate-item {
-        border: 1px solid #000;
-      }
-
-      /* 打印时显示链接 */
-      .cr-scope a[href]:after {
-        content: " (" attr(href) ")";
-      }
-
-      /* 避免在元素内部分页 */
-      .cr-task-item,
-      .cr-duplicate-item,
-      .cr-recent-op-item,
-      .cr-standardized-result {
-        page-break-inside: avoid;
-      }
-    }
-
-    /* ========================================
-   11. 加载和过渡动画
-   ======================================== */
-
-    /* 淡入动画 */
-    @keyframes fadeIn {
-      from {
-        opacity: 0;
-        transform: translateY(10px);
-      }
-
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
-    }
-
-    .cr-task-item,
-    .cr-duplicate-item,
-    .cr-recent-op-item,
-    .cr-standardized-result {
-      animation: fadeIn 0.3s ease-out;
-    }
-
-    /* 加载指示器 */
-    .cr-loading {
-      display: inline-block;
-      width: 16px;
-      height: 16px;
-      border: 2px solid var(--background-modifier-border);
-      border-top-color: var(--interactive-accent);
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-    }
-
-    .cr-loading-large {
-      width: 32px;
-      height: 32px;
-      border-width: 3px;
-    }
-
-    @keyframes spin {
-      to {
+.cr-loading-spinner {
+    border: 2px solid var(--cr-bg-surface);
+    border-top: 2px solid var(--cr-text-accent);
+    border-radius: 50%;
+    width: 16px;
+    height: 16px;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% {
+        transform: rotate(0deg);
+    }
+
+    100% {
         transform: rotate(360deg);
-      }
     }
-
-    /* 加载状态容器 */
-    .cr-loading-container {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: var(--cr-spacing-md);
-      padding: var(--cr-spacing-xl);
-      color: var(--text-muted);
-    }
-
-    .cr-loading-text {
-      font-size: 0.9em;
-      color: var(--text-muted);
-    }
-
-    /* 进度条 */
-    .cr-progress-bar {
-      width: 100%;
-      height: 4px;
-      background: var(--background-modifier-border);
-      border-radius: 2px;
-      overflow: hidden;
-      margin: var(--cr-spacing-sm) 0;
-    }
-
-    .cr-progress-fill {
-      height: 100%;
-      background: var(--interactive-accent);
-      border-radius: 2px;
-      transition: width 0.3s ease;
-    }
-
-    .cr-progress-indeterminate {
-      animation: progress-indeterminate 1.5s ease-in-out infinite;
-    }
-
-    @keyframes progress-indeterminate {
-      0% {
-        transform: translateX(-100%);
-      }
-
-      100% {
-        transform: translateX(400%);
-      }
-    }
-
-    /* 成功/错误提示动画 */
-    .cr-toast {
-      position: fixed;
-      bottom: 20px;
-      right: 20px;
-      padding: var(--cr-spacing-md);
-      background: var(--background-secondary);
-      border: 1px solid var(--background-modifier-border);
-      border-radius: var(--cr-radius-md);
-      box-shadow: var(--cr-shadow-lg);
-      animation: slideIn 0.3s ease-out;
-      z-index: 1000;
-    }
-
-    @keyframes slideIn {
-      from {
-        transform: translateX(100%);
-        opacity: 0;
-      }
-
-      to {
-        transform: translateX(0);
-        opacity: 1;
-      }
-    }
-
-    .cr-toast.cr-toast-success {
-      border-left: 4px solid var(--color-green);
-    }
-
-    .cr-toast.cr-toast-error {
-      border-left: 4px solid var(--color-red);
-    }
-
-    .cr-toast.cr-toast-warning {
-      border-left: 4px solid var(--color-orange);
-    }
-
-    .cr-toast.cr-toast-info {
-      border-left: 4px solid var(--text-accent);
-    }
-
-    /* 骨架屏加载 */
-    .cr-skeleton {
-      background: linear-gradient(90deg,
-          var(--background-modifier-border) 25%,
-          var(--background-secondary) 50%,
-          var(--background-modifier-border) 75%);
-      background-size: 200% 100%;
-      animation: skeleton-loading 1.5s ease-in-out infinite;
-      border-radius: var(--cr-radius-sm);
-    }
-
-    @keyframes skeleton-loading {
-      0% {
-        background-position: 200% 0;
-      }
-
-      100% {
-        background-position: -200% 0;
-      }
-    }
-
-    .cr-skeleton-text {
-      height: 1em;
-      margin-bottom: 0.5em;
-    }
-
-    .cr-skeleton-title {
-      height: 1.5em;
-      width: 60%;
-      margin-bottom: 1em;
-    }
-
-    .cr-skeleton-button {
-      height: 36px;
-      width: 100px;
-    }
-
-    /* ========================================
-   12. Modal 组件样式
-   ======================================== */
-
-    /* Modal 容器 - 使用插件特定前缀避免影响 Obsidian 原生界面 */
-    .cr-modal {
-      padding: var(--cr-spacing-lg);
-    }
-
-    /* 注意：不要使用全局 .modal-content 样式，会影响 Obsidian 设置界面 */
-    /* 插件的 modal 样式应该使用特定的类名前缀 */
-    .cr-modal .modal-content {
-      max-width: 600px;
-      margin: 0 auto;
-    }
-
-    .cr-scope .modal h2 {
-      margin: 0 0 var(--cr-spacing-md) 0;
-      font-size: 1.5em;
-      font-weight: 600;
-      color: var(--text-normal);
-    }
-
-    /* Modal 输入容器 */
-    .cr-scope .modal-input-container {
-      margin-bottom: var(--cr-spacing-md);
-    }
-
-    .cr-scope .modal-input {
-      width: 100%;
-      padding: var(--cr-spacing-sm);
-      font-family: var(--font-text);
-      font-size: 0.95em;
-      border: 1px solid var(--background-modifier-border);
-      border-radius: var(--cr-radius-sm);
-      background: var(--background-primary);
-      color: var(--text-normal);
-      transition: all 0.2s ease;
-    }
-
-    .cr-scope .modal-input:focus {
-      outline: none;
-      border-color: var(--interactive-accent);
-      box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
-    }
-
-    /* Modal 错误消息 */
-    .cr-scope .modal-error {
-      margin-top: 0.5em;
-      padding: var(--cr-spacing-xs);
-      color: var(--color-red);
-      font-size: 0.85em;
-      background: rgba(239, 68, 68, 0.05);
-      border-left: 2px solid var(--color-red);
-      border-radius: var(--cr-radius-sm);
-    }
-
-    /* Modal 按钮容器 */
-    .cr-scope .modal-button-container {
-      display: flex;
-      gap: var(--cr-spacing-sm);
-      justify-content: flex-end;
-      margin-top: var(--cr-spacing-md);
-    }
-
-    .cr-scope .modal-button-container button {
-      padding: 8px 20px;
-      font-size: 0.9em;
-    }
-
-    /* Modal 选项列表 */
-    .cr-scope .modal-options-list {
-      display: flex;
-      flex-direction: column;
-      gap: var(--cr-spacing-sm);
-      margin-bottom: var(--cr-spacing-md);
-    }
-
-    .cr-scope .modal-option-item {
-      padding: var(--cr-spacing-md);
-      background: var(--background-secondary);
-      border: 1px solid var(--background-modifier-border);
-      border-radius: var(--cr-radius-sm);
-      transition: all 0.2s ease;
-    }
-
-    .cr-scope .modal-option-item:hover {
-      border-color: var(--interactive-accent);
-      box-shadow: var(--cr-shadow-sm);
-    }
-
-    .cr-scope .modal-option-button {
-      width: 100%;
-      padding: var(--cr-spacing-sm);
-      font-size: 1em;
-      font-weight: 500;
-      text-align: left;
-      color: var(--text-normal);
-      background: transparent;
-      border: none;
-      cursor: pointer;
-    }
-
-    .cr-scope .modal-option-button:hover {
-      color: var(--interactive-accent);
-    }
-
-    .cr-scope .modal-option-description {
-      margin-top: 0.25em;
-      font-size: 0.9em;
-      color: var(--text-muted);
-    }
-
-    /* Modal 消息 */
-    .cr-scope .modal-message {
-      margin-bottom: 1em;
-      padding: var(--cr-spacing-md);
-      background: var(--background-secondary);
-      border-radius: var(--cr-radius-sm);
-      color: var(--text-normal);
-      line-height: 1.6;
-    }
-
-    /* Modal 表单 */
-    .cr-scope .modal-form {
-      display: flex;
-      flex-direction: column;
-      gap: var(--cr-spacing-md);
-    }
-
-    .cr-scope .modal-form .setting-item {
-      border: none;
-      padding: 0;
-    }
-
-    .cr-scope .modal-form .setting-item-info {
-      flex: 1;
-    }
-
-    .cr-scope .modal-form .setting-item-control {
-      flex: 1;
-    }
-
-    .cr-scope .modal-form .setting-item-control input {
-      width: 100%;
-    }
-
-    /* Provider Config Modal 特殊样式 */
-    .cr-scope .modal-form input[type="password"] {
-      font-family: monospace;
-      letter-spacing: 2px;
-    }
-
-    /* 暗色主题下的 Modal 样式 */
-    .theme-dark .cr-scope .modal-input {
-      background: var(--background-primary-alt);
-    }
-
-    .theme-dark .cr-scope .modal-option-item {
-      background: var(--background-primary-alt);
-    }
-
-    .theme-dark .cr-scope .modal-option-item:hover {
-      background: var(--background-modifier-hover);
-    }
-
-    .theme-dark .cr-scope .modal-message {
-      background: var(--background-primary-alt);
-    }
-
-    .theme-dark .cr-scope .modal-error {
-      background: rgba(239, 68, 68, 0.1);
-    }
-
-    /* Modal 响应式布局 - 使用插件特定前缀 */
-    @media (max-width: 768px) {
-      .cr-modal {
-        padding: var(--cr-spacing-md);
-      }
-
-      .cr-modal .modal-content {
-        max-width: 100%;
-      }
-
-      .cr-scope .modal-button-container {
-        flex-direction: column;
-      }
-
-      .cr-scope .modal-button-container button {
-        width: 100%;
-      }
-    }
-
-    /* ========================================
-   13. IncrementalImproveModal 样式
-   ======================================== */
-
-    .cr-incremental-improve-modal .modal-content {
-      max-width: 700px;
-    }
-
-    /* 文件信息 */
-    .cr-file-info {
-      margin-bottom: var(--cr-spacing-md);
-      padding: var(--cr-spacing-md);
-      background: var(--background-secondary);
-      border-radius: var(--cr-radius-sm);
-      border-left: 3px solid var(--interactive-accent);
-    }
-
-    .cr-file-name {
-      font-weight: 600;
-      color: var(--text-normal);
-      margin-bottom: var(--cr-spacing-xs);
-    }
-
-    .cr-file-path {
-      font-size: 0.85em;
-      color: var(--text-muted);
-      font-family: var(--font-monospace);
-    }
-
-    /* 描述文本 */
-    .cr-description {
-      margin-bottom: var(--cr-spacing-md);
-      color: var(--text-muted);
-      line-height: 1.6;
-    }
-
-    /* 输入容器 */
-    .cr-input-container {
-      margin-bottom: var(--cr-spacing-md);
-    }
-
-    .cr-input-container label {
-      display: block;
-      margin-bottom: var(--cr-spacing-xs);
-      font-weight: 500;
-      color: var(--text-normal);
-    }
-
-    /* 意图输入框 */
-    .cr-intent-input {
-      width: 100%;
-      min-height: 120px;
-      padding: var(--cr-spacing-sm);
-      font-family: var(--font-text);
-      font-size: 0.95em;
-      line-height: 1.6;
-      border: 1px solid var(--background-modifier-border);
-      border-radius: var(--cr-radius-sm);
-      background: var(--background-primary);
-      color: var(--text-normal);
-      resize: vertical;
-      transition: all 0.2s ease;
-    }
-
-    .cr-intent-input:focus {
-      outline: none;
-      border-color: var(--interactive-accent);
-      box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
-    }
-
-    .cr-intent-input::placeholder {
-      color: var(--text-faint);
-      line-height: 1.6;
-    }
-
-    /* 提示信息 */
-    .cr-hint {
-      padding: var(--cr-spacing-sm);
-      background: rgba(99, 102, 241, 0.05);
-      border-left: 3px solid var(--interactive-accent);
-      border-radius: var(--cr-radius-sm);
-      font-size: 0.9em;
-      color: var(--text-muted);
-      margin-bottom: var(--cr-spacing-md);
-    }
-
-    /* Modal 操作按钮 */
-    .cr-modal-actions {
-      display: flex;
-      gap: var(--cr-spacing-sm);
-      justify-content: flex-end;
-      margin-top: var(--cr-spacing-lg);
-    }
-
-    .cr-modal-actions button {
-      padding: 8px 20px;
-      font-size: 0.9em;
-    }
-
-    /* 暗色主题适配 */
-    .theme-dark .cr-file-info {
-      background: var(--background-primary-alt);
-    }
-
-    .theme-dark .cr-intent-input {
-      background: var(--background-primary-alt);
-    }
-
-    .theme-dark .cr-hint {
-      background: rgba(99, 102, 241, 0.1);
-    }
-
-    /* ========================================
-   14. SetupWizard 样式（精简版）
-   ======================================== */
-
-    /* SetupWizard modal 容器 */
-    .cr-setup-wizard-modal {
-      width: 90vw;
-      max-width: 500px;
-    }
-
-    .cr-setup-wizard-modal .modal-content {
-      width: 100%;
-      max-width: none;
-    }
-
-    .cr-setup-wizard {
-      max-width: 450px;
-      margin: 0 auto;
-      padding: var(--cr-spacing-lg);
-    }
-
-    /* 标题 */
-    .cr-wizard-title {
-      text-align: center;
-      margin-bottom: var(--cr-spacing-md);
-      color: var(--text-normal);
-      font-size: 1.4em;
-    }
-
-    /* 欢迎页面 */
-    .cr-wizard-intro {
-      text-align: center;
-      color: var(--text-normal);
-      line-height: 1.6;
-      margin-bottom: var(--cr-spacing-sm);
-    }
-
-    .cr-wizard-hint {
-      text-align: center;
-      color: var(--text-muted);
-      font-size: 0.9em;
-      margin-bottom: var(--cr-spacing-lg);
-    }
-
-    /* 配置提示 */
-    .cr-config-hint {
-      margin-bottom: var(--cr-spacing-lg);
-      padding: var(--cr-spacing-sm) var(--cr-spacing-md);
-      background: rgba(99, 102, 241, 0.05);
-      border-radius: var(--cr-radius-md);
-      border-left: 3px solid var(--text-accent);
-      font-size: 0.9em;
-      color: var(--text-muted);
-      text-align: center;
-    }
-
-    .cr-config-hint a {
-      color: var(--interactive-accent);
-      text-decoration: none;
-    }
-
-    .cr-config-hint a:hover {
-      text-decoration: underline;
-    }
-
-    /* 高级选项折叠 */
-    .cr-advanced-toggle {
-      margin: var(--cr-spacing-md) 0;
-      text-align: center;
-    }
-
-    .cr-btn-link {
-      background: none;
-      border: none;
-      color: var(--text-muted);
-      cursor: pointer;
-      font-size: 0.85em;
-      padding: var(--cr-spacing-xs) var(--cr-spacing-sm);
-    }
-
-    .cr-btn-link:hover {
-      color: var(--interactive-accent);
-    }
-
-    .cr-advanced-section {
-      margin-top: var(--cr-spacing-sm);
-      padding-top: var(--cr-spacing-sm);
-      border-top: 1px solid var(--background-modifier-border);
-    }
-
-    .cr-hidden {
-      display: none;
-    }
-
-    /* 完成页面 */
-    .cr-wizard-success {
-      text-align: center;
-      color: var(--color-green);
-      font-size: 1.1em;
-      margin-bottom: var(--cr-spacing-md);
-    }
-
-    /* 按钮 */
-    .cr-wizard-buttons {
-      display: flex;
-      gap: var(--cr-spacing-sm);
-      justify-content: center;
-      margin-top: var(--cr-spacing-lg);
-    }
-
-    .cr-btn-secondary {
-      background: transparent;
-      border: 1px solid var(--background-modifier-border);
-      color: var(--text-muted);
-    }
-
-    .cr-btn-secondary:hover {
-      background: var(--background-secondary);
-      border-color: var(--interactive-accent);
-      color: var(--text-normal);
-    }
-
-    /* 响应式布局 */
-    @media (max-width: 768px) {
-      .cr-setup-wizard {
-        padding: var(--cr-spacing-md);
-      }
-
-      .cr-wizard-buttons {
-        flex-direction: column;
-      }
-
-      .cr-wizard-buttons button {
-        width: 100%;
-      }
-    }
-
-    /* 暗色主题适配 */
-    .theme-dark .cr-config-hint {
-      background: rgba(99, 102, 241, 0.1);
-    }
-
-    /* ========================================
-   撤销通知样式
-   ======================================== */
-
-    .undo-notification-container {
-      display: flex;
-      align-items: center;
-      gap: var(--cr-spacing-md);
-      padding: var(--cr-spacing-sm);
-    }
-
-    .undo-notification-message {
-      flex: 1;
-      color: var(--text-normal);
-    }
-
-    .undo-notification-button {
-      padding: var(--cr-spacing-xs) var(--cr-spacing-md);
-      background-color: var(--interactive-accent);
-      color: white;
-      border: none;
-      border-radius: var(--cr-radius-sm);
-      cursor: pointer;
-      font-size: 14px;
-      font-weight: 500;
-      transition: background-color 0.2s;
-    }
-
-    .undo-notification-button:hover {
-      background-color: var(--interactive-accent-hover);
-    }
-
-    .undo-notification-button:active {
-      transform: scale(0.98);
-    }
-
-    /* ========================================
-   撤销历史视图样式
-   ======================================== */
-
-    .undo-history-empty {
-      padding: var(--cr-spacing-lg);
-      text-align: center;
-      color: var(--text-muted);
-      font-style: italic;
-    }
-
-    .undo-history-list {
-      display: flex;
-      flex-direction: column;
-      gap: var(--cr-spacing-sm);
-      padding: var(--cr-spacing-md);
-    }
-
-    /* ========================================
-   超级极简输入框（最简设计）
-   ======================================== */
-
-    /* 极简输入容器 - 只有输入框和按钮 */
-    .cr-minimal-input {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 6px 8px 6px 14px;
-      background: var(--background-secondary);
-      border: 1px solid var(--background-modifier-border);
-      border-radius: 20px;
-      transition: all 0.15s ease;
-      margin-bottom: var(--cr-spacing-md);
-    }
-
-    .cr-minimal-input:hover {
-      border-color: var(--interactive-accent);
-      background: var(--background-primary);
-    }
-
-    .cr-minimal-input:focus-within {
-      border-color: var(--interactive-accent);
-      background: var(--background-primary);
-      box-shadow: 0 0 0 1px var(--interactive-accent);
-    }
-
-    /* 输入框 - 完全透明 */
-    .cr-minimal-input-field {
-      flex: 1;
-      width: 100%;
-      padding: 0;
-      font-family: var(--font-text);
-      font-size: 14px;
-      border: none;
-      background: transparent;
-      color: var(--text-normal);
-      outline: none;
-      min-width: 0;
-      box-sizing: border-box;
-    }
-
-    .cr-minimal-input-field::placeholder {
-      color: var(--text-faint);
-    }
-
-    /* 提交按钮 - 小圆形按钮 */
-    .cr-minimal-submit-btn {
-      flex-shrink: 0;
-      width: 28px;
-      height: 28px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 0;
-      background: var(--interactive-accent);
-      border: none;
-      border-radius: 50%;
-      color: var(--text-on-accent);
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-
-    .cr-minimal-submit-btn:hover {
-      transform: scale(1.08);
-      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
-    }
-
-    .cr-minimal-submit-btn:active {
-      transform: scale(0.95);
-    }
-
-    .cr-minimal-submit-btn svg {
-      width: 16px;
-      height: 16px;
-    }
-
-    /* Modal 样式 - 极简 */
-    .cr-minimal-modal .modal-content {
-      max-width: 600px;
-      width: 90vw;
-      padding: var(--cr-spacing-lg);
-    }
-
-    /* 全宽输入框 */
-    .cr-minimal-input-fullwidth {
-      width: 100% !important;
-      margin: 0 !important;
-      box-sizing: border-box;
-    }
-
-    /* 暗色主题适配 */
-    .theme-dark .cr-minimal-input {
-      background: var(--background-primary-alt);
-    }
-
-    .theme-dark .cr-minimal-input:hover,
-    .theme-dark .cr-minimal-input:focus-within {
-      background: var(--background-modifier-hover);
-    }
-
-    /* 响应式布局 */
-    @media (max-width: 768px) {
-      .cr-minimal-input {
-        padding: 5px 6px 5px 12px;
-      }
-
-      .cr-minimal-input-field {
-        font-size: 13px;
-      }
-
-      .cr-minimal-submit-btn {
-        width: 26px;
-        height: 26px;
-      }
-    }
-
-    .undo-history-item {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: var(--cr-spacing-md);
-      background-color: var(--background-secondary);
-      border: 1px solid var(--background-modifier-border);
-      border-radius: var(--cr-radius-md);
-      transition: all 0.2s;
-    }
-
-    .undo-history-item:hover {
-      background-color: var(--background-modifier-hover);
-      border-color: var(--interactive-accent);
-    }
-
-    .undo-history-item-info {
-      display: flex;
-      flex-direction: column;
-      gap: var(--cr-spacing-xs);
-      flex: 1;
-    }
-
-    .undo-history-item-operation {
-      font-weight: 600;
-      color: var(--text-normal);
-      font-size: 14px;
-    }
-
-    .undo-history-item-path {
-      color: var(--text-muted);
-      font-size: 12px;
-      font-family: var(--font-monospace);
-    }
-
-    .undo-history-item-time {
-      color: var(--text-faint);
-      font-size: 11px;
-    }
-
-    .undo-history-item-actions {
-      display: flex;
-      gap: var(--cr-spacing-sm);
-    }
-
-    .undo-history-item-button {
-      padding: var(--cr-spacing-xs) var(--cr-spacing-md);
-      background-color: var(--interactive-accent);
-      color: white;
-      border: none;
-      border-radius: var(--cr-radius-sm);
-      cursor: pointer;
-      font-size: 12px;
-      font-weight: 500;
-      transition: all 0.2s;
-    }
-
-    .undo-history-item-button:hover {
-      background-color: var(--interactive-accent-hover);
-    }
-
-    .undo-history-item-button-secondary {
-      padding: var(--cr-spacing-xs) var(--cr-spacing-md);
-      background-color: transparent;
-      color: var(--text-muted);
-      border: 1px solid var(--background-modifier-border);
-      border-radius: var(--cr-radius-sm);
-      cursor: pointer;
-      font-size: 12px;
-      font-weight: 500;
-      transition: all 0.2s;
-    }
-
-    .undo-history-item-button-secondary:hover {
-      background-color: var(--background-secondary);
-      border-color: var(--interactive-accent);
-      color: var(--text-normal);
-    }
-
-    /* 快照详情模态框 */
-    .snapshot-detail-row {
-      margin-bottom: var(--cr-spacing-md);
-      padding: var(--cr-spacing-sm);
-      background-color: var(--background-secondary);
-      border-radius: var(--cr-radius-sm);
-    }
-
-    .snapshot-detail-row strong {
-      color: var(--text-normal);
-      margin-right: var(--cr-spacing-sm);
-    }
-
-    .snapshot-detail-row span {
-      color: var(--text-muted);
-      font-family: var(--font-monospace);
-      font-size: 13px;
-    }
-
-    .cr-scope .modal-button-container {
-      display: flex;
-      justify-content: flex-end;
-      gap: var(--cr-spacing-sm);
-      margin-top: var(--cr-spacing-lg);
-    }
-
-    .cr-scope .modal-button-container button {
-      padding: var(--cr-spacing-sm) var(--cr-spacing-lg);
-      border-radius: var(--cr-radius-sm);
-      cursor: pointer;
-      font-size: 14px;
-      font-weight: 500;
-      transition: all 0.2s;
-    }
-
-    /* 暗色主题适配 */
-    .theme-dark .undo-history-item {
-      background-color: var(--background-primary-alt);
-    }
-
-    .theme-dark .undo-history-item:hover {
-      background-color: var(--background-modifier-hover);
-    }
-
-    .theme-dark .snapshot-detail-row {
-      background-color: var(--background-primary-alt);
-    }
-
-    /* ========================================
-   重复概念预览 Modal（改进版）
-   ======================================== */
-
-    .cr-duplicate-preview-modal .modal-content {
-      max-width: 1200px;
-      max-height: 85vh;
-    }
-
-    .cr-preview-header {
-      margin-bottom: var(--cr-spacing-lg);
-      padding-bottom: var(--cr-spacing-md);
-      border-bottom: 2px solid var(--background-modifier-border);
-    }
-
-    .cr-preview-meta-card {
-      margin-bottom: var(--cr-spacing-lg);
-      padding: var(--cr-spacing-md);
-      background: var(--background-secondary);
-      border-radius: var(--cr-radius-md);
-      border-left: 3px solid var(--interactive-accent);
-    }
-
-    .cr-meta-row {
-      display: flex;
-      align-items: center;
-      gap: var(--cr-spacing-md);
-      margin-bottom: var(--cr-spacing-sm);
-    }
-
-    .cr-meta-row:last-child {
-      margin-bottom: 0;
-    }
-
-    .cr-meta-label {
-      min-width: 80px;
-      font-weight: 600;
-      font-size: 0.9em;
-      color: var(--text-muted);
-    }
-
-    .cr-meta-value {
-      flex: 1;
-      display: flex;
-      align-items: center;
-      gap: var(--cr-spacing-sm);
-      color: var(--text-normal);
-    }
-
-    .cr-similarity-bar-large {
-      flex: 1;
-      height: 12px;
-      background: var(--background-modifier-border);
-      border-radius: 6px;
-      overflow: hidden;
-      max-width: 300px;
-    }
-
-    .cr-similarity-percentage {
-      font-weight: 600;
-      color: var(--color-orange);
-      min-width: 50px;
-    }
-
-    .cr-type-tag-large {
-      padding: 4px 12px;
-      background: var(--interactive-accent);
-      color: white;
-      border-radius: var(--cr-radius-sm);
-      font-size: 0.9em;
-      font-weight: 500;
-    }
-
-    .cr-preview-tabs {
-      display: flex;
-      gap: var(--cr-spacing-xs);
-      margin-bottom: var(--cr-spacing-md);
-      border-bottom: 2px solid var(--background-modifier-border);
-    }
-
-    .cr-tab-button {
-      padding: var(--cr-spacing-sm) var(--cr-spacing-md);
-      font-size: 0.9em;
-      color: var(--text-muted);
-      background: transparent;
-      border: none;
-      border-bottom: 2px solid transparent;
-      cursor: pointer;
-      transition: all 0.2s ease;
-      margin-bottom: -2px;
-    }
-
-    .cr-tab-button:hover {
-      color: var(--text-normal);
-    }
-
-    .cr-tab-button.cr-tab-active {
-      color: var(--interactive-accent);
-      border-bottom-color: var(--interactive-accent);
-      font-weight: 600;
-    }
-
-    .cr-side-by-side-view {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: var(--cr-spacing-md);
-      margin-bottom: var(--cr-spacing-lg);
-    }
-
-    .cr-preview-panel {
-      display: flex;
-      flex-direction: column;
-      border: 1px solid var(--background-modifier-border);
-      border-radius: var(--cr-radius-md);
-      overflow: hidden;
-      background: var(--background-secondary);
-    }
-
-    .cr-panel-header {
-      padding: var(--cr-spacing-md);
-      background: var(--background-modifier-border);
-      border-bottom: 1px solid var(--background-modifier-border);
-    }
-
-    .cr-panel-title {
-      margin: 0 0 var(--cr-spacing-xs) 0;
-      font-size: 1em;
-      font-weight: 600;
-      color: var(--text-normal);
-    }
-
-    .cr-panel-path {
-      font-size: 0.85em;
-      color: var(--text-muted);
-      font-family: var(--font-monospace);
-    }
-
-    .cr-panel-content {
-      flex: 1;
-      margin: 0;
-      padding: var(--cr-spacing-md);
-      font-family: var(--font-monospace);
-      font-size: 0.85em;
-      line-height: 1.6;
-      color: var(--text-normal);
-      background: var(--background-primary);
-      overflow: auto;
-      max-height: 400px;
-      white-space: pre-wrap;
-      word-wrap: break-word;
-    }
-
-    .cr-diff-view {
-      padding: var(--cr-spacing-lg);
-      background: var(--background-secondary);
-      border: 1px solid var(--background-modifier-border);
-      border-radius: var(--cr-radius-md);
-      min-height: 200px;
-      margin-bottom: var(--cr-spacing-lg);
-    }
-
-    .cr-placeholder-text {
-      text-align: center;
-      color: var(--text-muted);
-      font-style: italic;
-      padding: var(--cr-spacing-xl);
-    }
-
-    /* 确认对话框样式 */
-    .cr-confirm-dialog .modal-content {
-      max-width: 500px;
-    }
-
-    .cr-confirm-message {
-      margin: var(--cr-spacing-md) 0;
-      line-height: 1.6;
-      color: var(--text-normal);
-    }
-
-    /* 合并历史 Modal 样式 */
-    .cr-merge-history-modal .modal-content {
-      max-width: 800px;
-      max-height: 80vh;
-    }
-
-    .cr-history-container {
-      margin-bottom: var(--cr-spacing-lg);
-    }
-
-    .cr-history-tabs {
-      display: flex;
-      gap: var(--cr-spacing-xs);
-      margin-bottom: var(--cr-spacing-md);
-      border-bottom: 2px solid var(--background-modifier-border);
-    }
-
-    .cr-history-list {
-      min-height: 300px;
-      max-height: 500px;
-      overflow-y: auto;
-      padding: var(--cr-spacing-md);
-      background: var(--background-secondary);
-      border: 1px solid var(--background-modifier-border);
-      border-radius: var(--cr-radius-md);
-    }
-
-    .cr-error-text {
-      color: var(--color-red);
-      text-align: center;
-      padding: var(--cr-spacing-lg);
-    }
-
-    /* 响应式布局 */
-    @media (max-width: 768px) {
-      .cr-duplicates-controls {
-        flex-direction: column;
-        align-items: stretch;
-      }
-
-      .cr-batch-actions {
-        margin-left: 0;
-        justify-content: stretch;
-      }
-
-      .cr-batch-actions button {
-        flex: 1;
-      }
-
-      .cr-duplicate-card {
-        flex-direction: column;
-      }
-
-      .cr-duplicate-card-actions {
-        justify-content: stretch;
-      }
-
-      .cr-duplicate-card-actions button {
-        flex: 1;
-      }
-
-      .cr-side-by-side-view {
-        grid-template-columns: 1fr;
-      }
-
-      .cr-meta-row {
-        flex-direction: column;
-        align-items: stretch;
-      }
-
-      .cr-meta-label {
-        min-width: auto;
-      }
-    }
-
-    /* 暗色主题适配 */
-    .theme-dark .cr-duplicate-card {
-      background: var(--background-primary-alt);
-    }
-
-    .theme-dark .cr-preview-meta-card {
-      background: var(--background-primary-alt);
-    }
-
-    .theme-dark .cr-preview-panel {
-      background: var(--background-primary-alt);
-    }
-
-    .theme-dark .cr-panel-content {
-      background: var(--background-primary);
-    }
-
-    .theme-dark .cr-diff-view {
-      background: var(--background-primary-alt);
-    }
-
-    .theme-dark .cr-history-list {
-      background: var(--background-primary-alt);
-    }
-
-    /* 历史项样式 */
-    .cr-history-item {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: var(--cr-spacing-md);
-      background: var(--background-primary);
-      border: 1px solid var(--background-modifier-border);
-      border-radius: var(--cr-radius-md);
-      margin-bottom: var(--cr-spacing-sm);
-      transition: all 0.2s ease;
-    }
-
-    .cr-history-item:hover {
-      border-color: var(--interactive-accent);
-      box-shadow: var(--cr-shadow-sm);
-    }
-
-    .cr-history-info {
-      flex: 1;
-      min-width: 0;
-    }
-
-    .cr-history-names {
-      font-weight: 600;
-      color: var(--text-normal);
-      margin-bottom: var(--cr-spacing-xs);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .cr-history-meta {
-      display: flex;
-      gap: var(--cr-spacing-md);
-      flex-wrap: wrap;
-      font-size: 0.85em;
-    }
-
-    .cr-history-similarity {
-      color: var(--color-orange);
-      font-weight: 500;
-    }
-
-    .cr-history-type {
-      padding: 2px 8px;
-      background: var(--background-modifier-border);
-      border-radius: var(--cr-radius-sm);
-      color: var(--text-muted);
-    }
-
-    .cr-history-time {
-      color: var(--text-muted);
-    }
-
-    .cr-history-actions {
-      display: flex;
-      gap: var(--cr-spacing-xs);
-      margin-left: var(--cr-spacing-md);
-    }
-
-    /* 暗色主题适配 */
-    .theme-dark .cr-history-item {
-      background: var(--background-primary-alt);
-    }
-
-
-    /* ========================================
-   16. DiffView 增强样式 - 行号和语法高亮
-   ======================================== */
-
-    /* 内容包装器 */
-    .cr-panel-content-wrapper {
-      display: flex;
-      flex: 1;
-      overflow: auto;
-      background: var(--background-secondary);
-    }
-
-    /* 行号列 */
-    .cr-line-numbers {
-      display: flex;
-      flex-direction: column;
-      background: var(--background-modifier-border);
-      border-right: 1px solid var(--background-modifier-border);
-      padding: var(--cr-spacing-sm) var(--cr-spacing-xs);
-      user-select: none;
-      min-width: 40px;
-    }
-
-    .cr-line-number {
-      font-family: var(--font-monospace);
-      font-size: 0.8em;
-      color: var(--text-faint);
-      text-align: right;
-      line-height: 1.6;
-      padding: 0 var(--cr-spacing-xs);
-    }
-
-    /* 内容行列 */
-    .cr-content-lines {
-      display: flex;
-      flex-direction: column;
-      flex: 1;
-      padding: var(--cr-spacing-sm);
-      overflow-x: auto;
-    }
-
-    .cr-content-line {
-      font-family: var(--font-monospace);
-      font-size: 0.85em;
-      line-height: 1.6;
-      color: var(--text-normal);
-      white-space: pre;
-      min-height: 1.6em;
-    }
-
-    /* 语法高亮 */
-    .cr-syntax-heading {
-      color: var(--interactive-accent);
-      font-weight: 600;
-    }
-
-    .cr-syntax-list {
-      color: var(--text-normal);
-    }
-
-    .cr-syntax-code-fence {
-      color: var(--text-muted);
-      background: rgba(99, 102, 241, 0.05);
-    }
-
-    .cr-syntax-quote {
-      color: var(--text-muted);
-      border-left: 3px solid var(--interactive-accent);
-      padding-left: var(--cr-spacing-xs);
-    }
-
-    .cr-syntax-link {
-      color: var(--text-accent);
-    }
-
-    /* 暗色主题适配 */
-    .theme-dark .cr-panel-content-wrapper {
-      background: var(--background-primary-alt);
-    }
-
-    .theme-dark .cr-line-numbers {
-      background: var(--background-modifier-border);
-    }
-
-    .theme-dark .cr-syntax-code-fence {
-      background: rgba(99, 102, 241, 0.1);
-    }
-
-    /* ========================================
-   17. 撤销通知增强样式
-   ======================================== */
-
-    .cr-undo-notification {
-      min-width: 350px;
-      max-width: 500px;
-    }
-
-    .undo-notification-container {
-      display: flex;
-      align-items: center;
-      gap: var(--cr-spacing-md);
-      padding: var(--cr-spacing-sm);
-    }
-
-    .undo-notification-icon {
-      font-size: 2em;
-      color: var(--interactive-accent);
-      line-height: 1;
-      flex-shrink: 0;
-    }
-
-    .undo-notification-content {
-      flex: 1;
-      min-width: 0;
-    }
-
-    .undo-notification-message {
-      font-weight: 500;
-      color: var(--text-normal);
-      margin-bottom: var(--cr-spacing-xs);
-    }
-
-    .undo-notification-file {
-      font-size: 0.85em;
-      color: var(--text-muted);
-      font-family: var(--font-monospace);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .undo-notification-button {
-      padding: 6px 16px;
-      font-size: 0.9em;
-      font-weight: 500;
-      color: white;
-      background: var(--interactive-accent);
-      border: none;
-      border-radius: var(--cr-radius-sm);
-      cursor: pointer;
-      transition: all 0.2s ease;
-      flex-shrink: 0;
-    }
-
-    .undo-notification-button:hover {
-      background: var(--interactive-accent-hover);
-      transform: translateY(-1px);
-    }
-
-    .undo-notification-button:active {
-      transform: translateY(0);
-    }
-
-    .undo-notification-progress {
-      position: absolute;
-      bottom: 0;
-      left: 0;
-      right: 0;
-      height: 3px;
-      background: var(--background-modifier-border);
-      overflow: hidden;
-    }
-
-    .undo-notification-progress-fill {
-      height: 100%;
-      width: 100%;
-      background: var(--interactive-accent);
-      transition: width linear;
-    }
-
-    /* ========================================
-   18. 撤销历史视图增强样式
-   ======================================== */
-
-    .undo-history-header {
-      display: flex;
-      flex-direction: column;
-      gap: var(--cr-spacing-md);
-      margin-bottom: var(--cr-spacing-lg);
-      padding-bottom: var(--cr-spacing-md);
-      border-bottom: 2px solid var(--background-modifier-border);
-    }
-
-    .undo-history-header h4 {
-      margin: 0;
-      font-size: 1.2em;
-      font-weight: 600;
-      color: var(--text-normal);
-    }
-
-    .undo-history-toolbar {
-      display: flex;
-      align-items: center;
-      gap: var(--cr-spacing-sm);
-      flex-wrap: wrap;
-    }
-
-    .undo-history-batch-btn,
-    .undo-history-clear-btn {
-      padding: 6px 12px;
-      font-size: 0.85em;
-    }
-
-    .undo-history-clear-btn {
-      color: var(--color-red);
-      border-color: var(--color-red);
-    }
-
-    .undo-history-clear-btn:hover {
-      background: var(--color-red);
-      color: white;
-    }
-
-    .undo-history-stats {
-      margin-left: auto;
-      display: flex;
-      align-items: center;
-      gap: var(--cr-spacing-sm);
-    }
-
-    .undo-history-count {
-      font-size: 0.9em;
-      color: var(--text-muted);
-      padding: 4px 12px;
-      background: var(--background-secondary);
-      border-radius: var(--cr-radius-sm);
-    }
-
-    .undo-history-checkbox {
-      width: 18px;
-      height: 18px;
-      cursor: pointer;
-      flex-shrink: 0;
-    }
-
-    .undo-history-item {
-      display: flex;
-      align-items: center;
-      gap: var(--cr-spacing-sm);
-    }
-
-    /* 确认对话框样式 */
-    .undo-confirm-warning {
-      margin-bottom: var(--cr-spacing-lg);
-      padding: var(--cr-spacing-md);
-      background: rgba(245, 158, 11, 0.05);
-      border-left: 3px solid var(--color-orange);
-      border-radius: var(--cr-radius-sm);
-    }
-
-    .undo-confirm-warning p {
-      margin: 0 0 var(--cr-spacing-sm) 0;
-      color: var(--text-normal);
-      line-height: 1.6;
-    }
-
-    .undo-confirm-danger {
-      color: var(--color-red) !important;
-      font-weight: 600;
-    }
-
-    .undo-confirm-info {
-      margin-bottom: var(--cr-spacing-lg);
-      padding: var(--cr-spacing-md);
-      background: var(--background-secondary);
-      border-radius: var(--cr-radius-sm);
-    }
-
-    .undo-confirm-detail {
-      margin-bottom: var(--cr-spacing-xs);
-      font-size: 0.9em;
-      color: var(--text-muted);
-      font-family: var(--font-monospace);
-    }
-
-    .undo-confirm-detail:last-child {
-      margin-bottom: 0;
-    }
-
-    .cr-scope .mod-warning {
-      background: var(--color-orange);
-      border-color: var(--color-orange);
-      color: white;
-    }
-
-    .cr-scope .mod-warning:hover {
-      background: var(--color-red);
-      border-color: var(--color-red);
-    }
-
-    /* 暗色主题适配 */
-    .theme-dark .undo-confirm-warning {
-      background: rgba(245, 158, 11, 0.1);
-    }
-
-    .theme-dark .undo-confirm-info {
-      background: var(--background-primary-alt);
-    }
-
-    .theme-dark .undo-history-count {
-      background: var(--background-primary-alt);
-    }
-
-    /* ========================================
-   19. IncrementalImproveModal 增强样式
-   ======================================== */
-
-    .cr-hints-section {
-      display: flex;
-      flex-direction: column;
-      gap: var(--cr-spacing-md);
-      margin-bottom: var(--cr-spacing-md);
-    }
-
-    .cr-hint-primary {
-      padding: var(--cr-spacing-sm);
-      background: rgba(99, 102, 241, 0.05);
-      border-left: 3px solid var(--interactive-accent);
-      border-radius: var(--cr-radius-sm);
-      font-size: 0.9em;
-      color: var(--text-muted);
-      line-height: 1.6;
-    }
-
-    .cr-hint-secondary {
-      padding: var(--cr-spacing-xs) var(--cr-spacing-sm);
-      background: var(--background-secondary);
-      border-radius: var(--cr-radius-sm);
-      font-size: 0.85em;
-      color: var(--text-faint);
-      text-align: center;
-    }
-
-    .cr-examples {
-      padding: var(--cr-spacing-md);
-      background: var(--background-secondary);
-      border-radius: var(--cr-radius-md);
-      border: 1px solid var(--background-modifier-border);
-    }
-
-    .cr-examples-title {
-      margin-bottom: var(--cr-spacing-sm);
-      font-weight: 600;
-      font-size: 0.9em;
-      color: var(--text-normal);
-    }
-
-    .cr-examples-list {
-      margin: 0;
-      padding: 0;
-      list-style: none;
-    }
-
-    .cr-examples-list li {
-      display: flex;
-      align-items: flex-start;
-      gap: var(--cr-spacing-sm);
-      margin-bottom: var(--cr-spacing-sm);
-      padding: var(--cr-spacing-xs);
-      border-radius: var(--cr-radius-sm);
-      transition: background 0.2s ease;
-    }
-
-    .cr-examples-list li:hover {
-      background: var(--background-primary);
-    }
-
-    .cr-examples-list li:last-child {
-      margin-bottom: 0;
-    }
-
-    .cr-example-icon {
-      font-size: 1.2em;
-      line-height: 1;
-      flex-shrink: 0;
-    }
-
-    .cr-example-text {
-      flex: 1;
-      font-size: 0.85em;
-      color: var(--text-muted);
-      line-height: 1.5;
-    }
-
-    /* 暗色主题适配 */
-    .theme-dark .cr-hint-primary {
-      background: rgba(99, 102, 241, 0.1);
-    }
-
-    .theme-dark .cr-examples {
-      background: var(--background-primary-alt);
-    }
-
-    .theme-dark .cr-examples-list li:hover {
-      background: var(--background-primary);
-    }
-
-    /* ========================================
-   20. 移动端优化
-   ======================================== */
-
-    /* 触摸友好的按钮尺寸 */
-    @media (max-width: 768px) {
-      .cr-scope button {
-        min-height: 44px;
-        padding: 8px 16px;
-      }
-
-      .cr-btn-small {
-        min-height: 36px;
-        padding: 6px 12px;
-      }
-
-      /* 增大触摸目标 */
-      .cr-task-actions button,
-      .cr-duplicate-actions button,
-      .cr-duplicate-card-actions button {
-        min-height: 44px;
-      }
-
-      /* 优化输入框 */
-      .cr-scope input[type="text"],
-      .cr-scope input[type="number"],
-      .cr-scope textarea,
-      .cr-concept-input,
-      .cr-intent-input {
-        font-size: 16px;
-        /* 防止 iOS 自动缩放 */
-      }
-
-      /* 优化复选框 */
-      .cr-scope input[type="checkbox"],
-      .cr-duplicate-checkbox,
-      .cr-diff-checkbox,
-      .cr-undo-history-checkbox {
-        width: 20px;
-        height: 20px;
-      }
-
-      /* 优化滚动区域 */
-      .cr-workbench-panel,
-      .cr-queue-view,
-      .cr-diffs-container,
-      .cr-preview-content,
-      .cr-panel-content {
-        -webkit-overflow-scrolling: touch;
-      }
-
-      /* 优化模态框 - 使用插件特定前缀 */
-      .cr-modal {
-        padding: var(--cr-spacing-sm);
-      }
-
-      .cr-modal .modal-content {
-        max-width: 100%;
-        padding: var(--cr-spacing-md);
-      }
-
-      /* 优化表格和网格 */
-      .cr-queue-grid {
-        grid-template-columns: 1fr 1fr;
-      }
-
-      .cr-feature-grid,
-      .cr-preset-grid,
-      .cr-provider-grid {
-        grid-template-columns: 1fr;
-      }
-
-      /* 优化并排视图 */
-      .cr-side-by-side-view,
-      .cr-diff-grid {
-        grid-template-columns: 1fr;
-      }
-
-      /* 优化进度指示器 */
-      .cr-progress-indicator {
-        overflow-x: auto;
-        padding-bottom: var(--cr-spacing-sm);
-      }
-
-      /* 优化标签页 */
-      .cr-preview-tabs,
-      .cr-history-tabs {
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-      }
-
-      /* 优化工具栏 */
-      .cr-duplicates-controls,
-      .cr-undo-history-toolbar {
-        flex-direction: column;
-        align-items: stretch;
-      }
-
-      .cr-batch-actions,
-      .cr-undo-history-stats {
-        margin-left: 0;
-        width: 100%;
-      }
-
-      /* 优化卡片 */
-      .cr-duplicate-card,
-      .cr-task-item,
-      .cr-recent-op-item,
-      .cr-undo-history-item {
-        padding: var(--cr-spacing-sm);
-      }
-
-      /* 优化元数据行 */
-      .cr-duplicate-meta-row,
-      .cr-task-meta,
-      .cr-meta-row {
-        flex-direction: column;
-        align-items: stretch;
-        gap: var(--cr-spacing-xs);
-      }
-
-      /* 优化按钮组 */
-      .cr-button-container,
-      .cr-queue-actions,
-      .cr-diff-actions,
-      .cr-modal-actions,
-      .cr-wizard-buttons {
-        flex-direction: column;
-      }
-
-      .cr-button-container button,
-      .cr-queue-actions button,
-      .cr-diff-actions button,
-      .cr-modal-actions button,
-      .cr-wizard-buttons button {
-        width: 100%;
-      }
-    }
-
-    /* 横屏模式优化 */
-    @media (max-width: 768px) and (orientation: landscape) {
-
-      .cr-workbench-panel,
-      .cr-queue-view {
-        padding: var(--cr-spacing-xs);
-      }
-
-      .cr-section {
-        padding: var(--cr-spacing-xs);
-        margin-bottom: var(--cr-spacing-md);
-      }
-
-      .cr-modal {
-        padding: var(--cr-spacing-xs);
-      }
-
-      .cr-modal .modal-content {
-        max-height: 90vh;
-        overflow-y: auto;
-      }
-    }
-
-    /* 平板优化 (768px - 1024px) */
-    @media (min-width: 768px) and (max-width: 1024px) {
-      .cr-queue-grid {
-        grid-template-columns: repeat(3, 1fr);
-      }
-
-      .cr-feature-grid,
-      .cr-preset-grid,
-      .cr-provider-grid {
-        grid-template-columns: repeat(2, 1fr);
-      }
-
-      .cr-side-by-side-view,
-      .cr-diff-grid {
-        grid-template-columns: 1fr 1fr;
-      }
-    }
-
-    /* ========================================
-   21. 性能优化
-   ======================================== */
-
-    /* 使用 GPU 加速的动画 */
-    .cr-task-item,
-    .cr-duplicate-card,
-    .cr-duplicate-item,
-    .cr-recent-op-item,
-    .cr-undo-history-item,
-    .cr-feature-card,
-    .cr-provider-card,
-    .cr-preset-card {
-      will-change: transform;
-    }
-
-    /* 减少重绘 */
-    .cr-confidence-fill,
-    .cr-similarity-fill,
-    .cr-progress-fill {
-      will-change: width;
-    }
-
-    /* 优化滚动性能 */
-    .cr-workbench-panel,
-    .cr-queue-view,
-    .cr-diffs-container,
-    .cr-preview-content,
-    .cr-panel-content,
-    .cr-history-list {
-      contain: layout style paint;
-    }
-
-    /* 延迟加载图片 */
-    .cr-scope img[loading="lazy"] {
-      opacity: 0;
-      transition: opacity 0.3s ease;
-    }
-
-    .cr-scope img[loading="lazy"].loaded {
-      opacity: 1;
-    }
-
-    /* ========================================
-   22. 打印优化
-   ======================================== */
-
-    @media print {
-
-      /* 隐藏交互元素 */
-      .cr-task-actions,
-      .cr-duplicate-actions,
-      .cr-duplicate-card-actions,
-      .cr-queue-actions,
-      .cr-diff-actions,
-      .cr-modal-actions,
-      .cr-wizard-buttons,
-      .cr-undo-btn,
-      .cr-undo-notification-button,
-      .cr-undo-history-item-actions,
-      .cr-scope button {
-        display: none !important;
-      }
-
-      /* 优化布局 */
-      .cr-workbench-panel,
-      .cr-queue-view {
-        padding: 0;
-      }
-
-      .cr-section,
-      .cr-task-item,
-      .cr-duplicate-card,
-      .cr-duplicate-item {
-        page-break-inside: avoid;
-        border: 1px solid #000;
-        margin-bottom: 10px;
-      }
-
-      /* 优化颜色 */
-      .cr-state-badge,
-      .cr-type-badge,
-      .cr-type-tag {
-        border: 1px solid #000;
-        background: white !important;
-        color: #000 !important;
-      }
-
-      /* 显示链接 */
-      .cr-scope a[href]:after {
-        content: " (" attr(href) ")";
-        font-size: 0.8em;
-        color: #666;
-      }
-
-      /* 优化并排视图 */
-      .cr-side-by-side-view,
-      .cr-diff-grid {
-        grid-template-columns: 1fr 1fr;
-      }
-
-      /* 隐藏装饰性元素 */
-      .cr-loading,
-      .cr-spinner-large,
-      .cr-progress-bar,
-      .cr-undo-notification-progress {
-        display: none !important;
-      }
-    }
-
-    /* ========================================
-   23. 辅助功能增强
-   ======================================== */
-
-    /* 键盘焦点指示器 */
-    .cr-scope *:focus-visible {
-      outline: 2px solid var(--interactive-accent);
-      outline-offset: 2px;
-      border-radius: var(--cr-radius-sm);
-    }
-
-    /* 跳过导航链接 */
-    .skip-to-content {
-      position: absolute;
-      top: -40px;
-      left: 0;
-      background: var(--interactive-accent);
-      color: white;
-      padding: 8px 16px;
-      text-decoration: none;
-      z-index: 1000;
-      border-radius: var(--cr-radius-sm);
-    }
-
-    .skip-to-content:focus {
-      top: 10px;
-      left: 10px;
-    }
-
-    /* 屏幕阅读器专用文本 */
-    .sr-only {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      padding: 0;
-      margin: -1px;
-      overflow: hidden;
-      clip: rect(0, 0, 0, 0);
-      white-space: nowrap;
-      border-width: 0;
-    }
-
-    /* 高对比度模式 */
-    @media (prefers-contrast: high) {
-
-      .cr-section,
-      .cr-task-item,
-      .cr-duplicate-card,
-      .cr-duplicate-item,
-      .cr-recent-op-item,
-      .cr-undo-history-item,
-      .cr-standardized-result,
-      .cr-scope .modal-option-item,
-      .cr-feature-card,
-      .cr-provider-card {
-        border-width: 2px;
-        border-color: currentColor;
-      }
-
-      .cr-scope button {
-        border-width: 2px;
-        border-color: currentColor;
-      }
-
-      .cr-concept-input,
-      .cr-intent-input,
-      .cr-scope .modal-input,
-      .cr-scope input[type="text"],
-      .cr-scope input[type="number"],
-      .cr-scope textarea {
-        border-width: 2px;
-        border-color: currentColor;
-      }
-
-      .cr-confidence-bar,
-      .cr-similarity-bar,
-      .cr-progress-bar {
-        border: 1px solid currentColor;
-      }
-
-      /* 增强颜色对比 */
-      .cr-state-badge,
-      .cr-type-badge,
-      .cr-type-tag {
-        border: 1px solid currentColor;
-      }
-    }
-
-    /* 减少动画（尊重用户偏好） */
-    @media (prefers-reduced-motion: reduce) {
-
-      .cr-scope *,
-      .cr-scope *::before,
-      .cr-scope *::after {
-        animation-duration: 0.01ms !important;
-        animation-iteration-count: 1 !important;
-        transition-duration: 0.01ms !important;
-        scroll-behavior: auto !important;
-      }
-
-      .cr-task-item,
-      .cr-duplicate-card,
-      .cr-duplicate-item,
-      .cr-recent-op-item,
-      .cr-undo-history-item {
-        animation: none !important;
-      }
-    }
-
-    /* 强制颜色模式（Windows 高对比度） */
-    @media (forced-colors: active) {
-
-      .cr-section,
-      .cr-task-item,
-      .cr-duplicate-card,
-      .cr-duplicate-item,
-      .cr-recent-op-item,
-      .cr-undo-history-item {
-        border: 1px solid CanvasText;
-      }
-
-      .cr-scope button {
-        border: 1px solid ButtonText;
-      }
-
-      .cr-state-badge,
-      .cr-type-badge,
-      .cr-type-tag {
-        border: 1px solid CanvasText;
-        forced-color-adjust: none;
-      }
-    }
-
-    /* ========================================
-   24. 浏览器兼容性修复
-   ======================================== */
-
-    /* Safari 修复 */
-    @supports (-webkit-appearance: none) {
-
-      /* 修复 Safari 的 flex 布局问题 */
-      .cr-task-item,
-      .cr-duplicate-card,
-      .cr-duplicate-item {
-        -webkit-box-orient: horizontal;
-        -webkit-box-direction: normal;
-      }
-
-      /* 修复 Safari 的滚动问题 */
-      .cr-workbench-panel,
-      .cr-queue-view,
-      .cr-diffs-container,
-      .cr-preview-content,
-      .cr-panel-content {
-        -webkit-overflow-scrolling: touch;
-      }
-
-      /* 修复 Safari 的输入框样式 */
-      .cr-scope input[type="text"],
-      .cr-scope input[type="number"],
-      .cr-scope textarea {
-        -webkit-appearance: none;
-        appearance: none;
-      }
-    }
-
-    /* Firefox 修复 */
-    @-moz-document url-prefix() {
-
-      /* 修复 Firefox 的滚动条样式 */
-      .cr-workbench-panel,
-      .cr-queue-view,
-      .cr-diffs-container,
-      .cr-preview-content,
-      .cr-panel-content {
-        scrollbar-width: thin;
-        scrollbar-color: var(--background-modifier-border) var(--background-secondary);
-      }
-    }
-
-    /* Edge 修复 */
-    @supports (-ms-ime-align: auto) {
-
-      /* 修复 Edge 的 grid 布局问题 */
-      .cr-queue-grid,
-      .cr-feature-grid,
-      .cr-preset-grid,
-      .cr-provider-grid {
-        display: -ms-grid;
-      }
-    }
-
-    /* ========================================
-   25. 实用工具类补充
-   ======================================== */
-
-    /* 显示/隐藏工具类 */
-    .cr-show-mobile {
-      display: none;
-    }
-
-    @media (max-width: 768px) {
-      .cr-hide-mobile {
-        display: none !important;
-      }
-
-      .cr-show-mobile {
-        display: block;
-      }
-    }
-
-    .cr-show-tablet {
-      display: none;
-    }
-
-    @media (min-width: 768px) and (max-width: 1024px) {
-      .cr-hide-tablet {
-        display: none !important;
-      }
-
-      .cr-show-tablet {
-        display: block;
-      }
-    }
-
-    .cr-show-desktop {
-      display: none;
-    }
-
-    @media (min-width: 1024px) {
-      .cr-hide-desktop {
-        display: none !important;
-      }
-
-      .cr-show-desktop {
-        display: block;
-      }
-    }
-
-    /* 位置工具类 */
-    .cr-relative {
-      position: relative;
-    }
-
-    .cr-absolute {
-      position: absolute;
-    }
-
-    .cr-fixed {
-      position: fixed;
-    }
-
-    .cr-sticky {
-      position: sticky;
-      top: 0;
-    }
-
-    /* Z-index 工具类 */
-    .cr-z-0 {
-      z-index: 0;
-    }
-
-    .cr-z-10 {
-      z-index: 10;
-    }
-
-    .cr-z-20 {
-      z-index: 20;
-    }
-
-    .cr-z-30 {
-      z-index: 30;
-    }
-
-    .cr-z-40 {
-      z-index: 40;
-    }
-
-    .cr-z-50 {
-      z-index: 50;
-    }
-
-    /* 宽度工具类 */
-    .cr-w-full {
-      width: 100%;
-    }
-
-    .cr-w-auto {
-      width: auto;
-    }
-
-    .cr-w-fit {
-      width: fit-content;
-    }
-
-    /* 高度工具类 */
-    .cr-h-full {
-      height: 100%;
-    }
-
-    .cr-h-auto {
-      height: auto;
-    }
-
-    .cr-h-fit {
-      height: fit-content;
-    }
-
-    /* 最小/最大宽度 */
-    .cr-min-w-0 {
-      min-width: 0;
-    }
-
-    .cr-max-w-full {
-      max-width: 100%;
-    }
-
-    /* 最小/最大高度 */
-    .cr-min-h-0 {
-      min-height: 0;
-    }
-
-    .cr-max-h-full {
-      max-height: 100%;
-    }
-
-    /* 光标工具类 */
-    .cr-cursor-pointer {
-      cursor: pointer;
-    }
-
-    .cr-cursor-not-allowed {
-      cursor: not-allowed;
-    }
-
-    .cr-cursor-default {
-      cursor: default;
-    }
-
-    /* 用户选择工具类 */
-    .cr-select-none {
-      user-select: none;
-    }
-
-    .cr-select-text {
-      user-select: text;
-    }
-
-    .cr-select-all {
-      user-select: all;
-    }
-
-    /* 指针事件工具类 */
-    .cr-pointer-events-none {
-      pointer-events: none;
-    }
-
-    .cr-pointer-events-auto {
-      pointer-events: auto;
-    }
-
-    /* 透明度工具类 */
-    .cr-opacity-0 {
-      opacity: 0;
-    }
-
-    .cr-opacity-50 {
-      opacity: 0.5;
-    }
-
-    .cr-opacity-75 {
-      opacity: 0.75;
-    }
-
-    .cr-opacity-100 {
-      opacity: 1;
-    }
-
-    /* 过渡工具类 */
-    .cr-transition {
-      transition: all 0.2s ease;
-    }
-
-    .cr-transition-fast {
-      transition: all 0.1s ease;
-    }
-
-    .cr-transition-slow {
-      transition: all 0.3s ease;
-    }
-
-    .cr-transition-none {
-      transition: none;
-    }
-
-    /* ========================================
-   26. 主题变量扩展（暗色主题）
-   ======================================== */
-
-    /* .theme-dark block removed as we use native variables */
-
-    /* 暗色主题下的全局调整 */
-    .theme-dark .cr-concept-input,
-    .theme-dark .cr-intent-input,
-    .theme-dark .cr-concurrency-input,
-    .theme-dark .cr-scope .modal-input,
-    .theme-dark .cr-scope input[type="text"],
-    .theme-dark .cr-scope input[type="number"],
-    .theme-dark .cr-scope textarea {
-      background: var(--background-primary-alt);
-    }
-
-    .theme-dark .cr-duplicate-item:hover,
-    .theme-dark .cr-task-item:hover,
-    .theme-dark .cr-recent-op-item:hover,
-    .theme-dark .cr-undo-history-item:hover,
-    .theme-dark .cr-history-item:hover {
-      background: var(--background-primary-alt);
-    }
-
-    .theme-dark .cr-task-error {
-      background: rgba(239, 68, 68, 0.1);
-    }
-
-    .theme-dark .cr-old-value {
-      background: rgba(239, 68, 68, 0.1);
-    }
-
-    .theme-dark .cr-new-value {
-      background: rgba(16, 185, 129, 0.1);
-    }
-
-    .theme-dark .cr-scope button {
-      background: var(--background-modifier-form-field);
-    }
-
-    .theme-dark .cr-scope button:hover {
-      background: var(--background-modifier-form-field-highlighted);
-    }
-
-    .theme-dark .cr-scope button.mod-cta {
-      background: var(--interactive-accent);
-    }
-
-    .theme-dark .cr-scope button.mod-cta:hover {
-      background: var(--interactive-accent-hover);
-    }
-
-    /* 暗色主题下的状态徽章 */
-    .theme-dark .cr-state-pending {
-      background: rgba(59, 130, 246, 0.15);
-    }
-
-    .theme-dark .cr-state-running {
-      background: rgba(99, 102, 241, 0.15);
-    }
-
-    .theme-dark .cr-state-completed {
-      background: rgba(16, 185, 129, 0.15);
-    }
-
-    .theme-dark .cr-state-failed {
-      background: rgba(239, 68, 68, 0.15);
-    }
-
-    .theme-dark .cr-state-cancelled {
-      background: rgba(128, 128, 128, 0.15);
-    }
-
-    .theme-dark .cr-type-add {
-      background: rgba(16, 185, 129, 0.15);
-    }
-
-    .theme-dark .cr-type-remove {
-      background: rgba(239, 68, 68, 0.15);
-    }
-
-    .theme-dark .cr-type-modify {
-      background: rgba(245, 158, 11, 0.15);
-    }
-
-    /* ========================================
-   27. 最终优化和修复
-   ======================================== */
-
-    /* 确保所有交互元素都有合适的光标 */
-    .cr-scope button,
-    .cr-scope .cr-clickable,
-    .cr-scope .cr-task-item,
-    .cr-scope .cr-duplicate-card,
-    .cr-scope .cr-duplicate-item,
-    .cr-scope .cr-recent-op-item,
-    .cr-scope .cr-undo-history-item,
-    .cr-scope .cr-history-item,
-    .cr-scope .cr-modal-option-button,
-    .cr-scope .cr-tab-button,
-    .cr-scope .cr-filter-button {
-      cursor: pointer;
-    }
-
-    /* 确保禁用状态正确显示 */
-    .cr-scope button:disabled,
-    .cr-disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-      pointer-events: none;
-    }
-
-    /* 确保加载状态正确显示 */
-    .cr-loading-container,
-    .cr-wizard-loading {
-      min-height: 200px;
-    }
-
-    /* 确保空状态正确显示 */
-    .cr-empty-state,
-    .cr-empty-text {
-      min-height: 100px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-    }
-
-    /* 确保错误状态正确显示 */
-    .cr-error-text,
-    .cr-validation-error,
-    .cr-scope .modal-error {
-      color: var(--color-red);
-    }
-
-    /* 确保成功状态正确显示 */
-    .cr-validation-success {
-      color: var(--color-green);
-    }
-
-    /* 确保所有圆角一致 */
-    .cr-section,
-    .cr-task-item,
-    .cr-duplicate-card,
-    .cr-duplicate-item,
-    .cr-recent-op-item,
-    .cr-undo-history-item,
-    .cr-history-item,
-    .cr-standardized-result,
-    .cr-scope .modal-option-item,
-    .cr-feature-card,
-    .cr-provider-card,
-    .cr-preset-card,
-    .cr-preview-panel,
-    .cr-diff-view {
-      border-radius: var(--cr-radius-md);
-    }
-
-    /* 确保所有间距一致 */
-    .cr-section,
-    .cr-task-item,
-    .cr-duplicate-card,
-    .cr-recent-op-item,
-    .cr-undo-history-item,
-    .cr-history-item {
-      margin-bottom: var(--cr-spacing-md);
-    }
-
-    /* 最后的清理 */
-    .cr-scope * {
-      box-sizing: border-box;
-    }
-
-    /* 确保滚动条在所有浏览器中一致 */
-    .cr-scope ::-webkit-scrollbar {
-      width: 8px;
-      height: 8px;
-    }
-
-    .cr-scope ::-webkit-scrollbar-track {
-      background: var(--background-secondary);
-    }
-
-    .cr-scope ::-webkit-scrollbar-thumb {
-      background: var(--background-modifier-border);
-      border-radius: 4px;
-    }
-
-    .cr-scope ::-webkit-scrollbar-thumb:hover {
-      background: var(--interactive-accent);
-    }
-
-    /* ========================================
-   27. Modern Search Bar (Google/Bing Style)
-   ======================================== */
-
-    .cr-modern-search-container {
-      display: flex;
-      align-items: center;
-      width: 100%;
-      max-width: 680px;
-      /* Slightly wider for modern feel */
-      margin: var(--cr-spacing-md) auto;
-      padding: 8px 16px;
-      background: var(--background-primary);
-      border: 1px solid var(--background-modifier-border);
-      border-radius: 24px;
-      /* Pill shape */
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-
-    .theme-dark .cr-modern-search-container {
-      background: var(--background-primary-alt);
-      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-    }
-
-    .cr-modern-search-container:hover {
-      box-shadow: 0 3px 6px rgba(0, 0, 0, 0.08);
-      border-color: var(--background-modifier-border-hover);
-    }
-
-    .theme-dark .cr-modern-search-container:hover {
-      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
-    }
-
-    .cr-modern-search-container:focus-within {
-      background: var(--background-primary);
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-      border-color: var(--interactive-accent);
-    }
-
-    .theme-dark .cr-modern-search-container:focus-within {
-      background: var(--background-primary);
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-    }
-
-    .cr-search-icon {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: var(--text-muted);
-      margin-right: 12px;
-      opacity: 0.7;
-    }
-
-    .cr-modern-search-input {
-      flex: 1;
-      border: none !important;
-      background: transparent !important;
-      padding: 0 !important;
-      font-size: 1.1em;
-      line-height: 1.5;
-      color: var(--text-normal);
-      box-shadow: none !important;
-    }
-
-    .cr-modern-search-input:focus {
-      outline: none;
-      box-shadow: none !important;
-    }
-
-    .cr-modern-search-input::placeholder {
-      color: var(--text-faint);
-    }
-
-    .cr-search-action-btn {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: transparent;
-      border: none;
-      color: var(--interactive-accent);
-      padding: 8px;
-      margin-left: 8px;
-      border-radius: 50%;
-      cursor: pointer;
-      transition: background 0.2s ease;
-      width: 36px;
-      height: 36px;
-    }
-
-    .cr-search-action-btn:hover {
-      background: var(--background-modifier-hover);
-    }
-
-    .cr-search-action-btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-      filter: grayscale(1);
-    }
-
-    /* ========================================
-   28. Settings Panel Refinements
-   ======================================== */
-
-    /* Enhance details container */
-    details.cr-settings-details {
-      border: 1px solid var(--background-modifier-border);
-      border-radius: var(--cr-radius-md);
-      margin-bottom: var(--cr-spacing-lg);
-      overflow: hidden;
-      background: var(--background-secondary);
-      transition: all 0.2s ease;
-    }
-
-    /* Header style */
-    summary.cr-settings-summary {
-      padding: 12px 20px;
-      background: var(--background-secondary);
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      outline: none;
-      user-select: none;
-      min-height: 48px;
-      /* Touch target size */
-    }
-
-    summary.cr-settings-summary:hover {
-      background: var(--background-modifier-hover);
-    }
-
-    /* Remove default marker */
-    summary.cr-settings-summary::-webkit-details-marker {
-      display: none;
-    }
-
-    summary.cr-settings-summary::marker {
-      display: none;
-    }
-
-    /* Header text */
-    .cr-settings-header {
-      margin: 0 !important;
-      border: none !important;
-      padding: 0 !important;
-      font-size: 1.1em;
-      font-weight: 600;
-      color: var(--text-normal);
-      flex: 1;
-    }
-
-    /* Indicator icon */
-    .cr-settings-indicator {
-      color: var(--text-muted);
-      transition: transform 0.2s ease;
-      display: flex;
-      align-items: center;
-    }
-
-    details[open] .cr-settings-indicator {
-      transform: rotate(90deg);
-    }
-
-    /* Content area */
-    .cr-settings-content-wrapper {
-      padding: var(--cr-spacing-md) 20px;
-      background: var(--background-primary);
-      border-top: 1px solid var(--background-modifier-border);
-      animation: slideDown 0.2s ease-out;
-    }
-
-    @keyframes slideDown {
-      from {
-        opacity: 0;
-        transform: translateY(-10px);
-      }
-
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
-    }
-
-    /* Fix setting items inside wrapper */
-    .cr-settings-content-wrapper .setting-item {
-      border-bottom: 1px solid var(--background-modifier-border);
-    }
-
-    .cr-settings-content-wrapper .setting-item:last-child {
-      border-bottom: none;
-    }
+}
+
+.cr-hidden {
+    display: none !important;
+}
+
+/* Recent Ops Styles */
+.cr-recent-ops-toolbar {
+    /* display: flex;  Moved to header, this might be unused or for sidebar actions */
+    display: none;
+}
+
+.cr-section-header-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--cr-gap-sm);
+    margin-left: auto;
+    /* Push to right */
+}
+
+.cr-header-btn {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--cr-text-muted);
+    padding: 4px 8px;
+    font-size: 0.85em;
+    border-radius: var(--radius-s);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.cr-header-btn:hover {
+    background: var(--cr-bg-hover);
+    color: var(--cr-text-normal);
+}
+
+.cr-btn-small {
+    padding: 6px 14px;
+    font-size: 0.9em;
+    border-radius: var(--radius-s);
+    background: var(--cr-bg-surface);
+    border: 1px solid var(--cr-border);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    color: var(--cr-text-muted);
+}
+
+.cr-btn-small:hover {
+    background: var(--cr-bg-hover);
+    color: var(--cr-text-normal);
+    border-color: var(--cr-border-focus);
+}

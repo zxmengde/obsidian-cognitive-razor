@@ -27,14 +27,31 @@ interface PromptTemplate {
 
 /**
  * 必需的提示词区块（A-PDD-01 区块序公理）
- * 模板必须包含且仅包含这些区块，按顺序排列
+ * 模板必须包含这些核心区块
+ * 
+ * 注意：新的模板结构使用以下区块：
+ * - <system_instructions>: 系统指令和角色定义
+ * - <context_slots>: 上下文槽位（变量占位符）
+ * - <task_instruction> 或 <task>: 任务说明
+ * - <output_schema>: 输出格式定义
+ * 
+ * 可选区块：
+ * - <writing_style>: 写作风格指南（reason 类任务）
+ * - <naming_morphology>: 命名规范（某些任务）
+ * - <philosophical_core>: 哲学核心（reason 类任务）
  */
 const REQUIRED_BLOCKS = [
-  "<system>",
-  "<context>",
-  "<task>",
-  "<output_schema>",
-  "<reminder>"
+  "<system_instructions>",
+  "<context_slots>",
+  "<output_schema>"
+] as const;
+
+/**
+ * 任务指令区块（至少需要其中之一）
+ */
+const TASK_BLOCKS = [
+  "<task_instruction>",
+  "<task>"
 ] as const;
 
 /**
@@ -68,8 +85,13 @@ const TASK_SLOT_MAPPING: Record<TaskType, { required: string[]; optional: string
 
 
 /**
- * 验证模板区块顺序
- * 遵循 A-PDD-01：区块必须按 system → context → task → output_schema → error_history → reminder 顺序排列
+ * 验证模板区块结构
+ * 遵循 A-PDD-01：模板必须包含必需的区块
+ * 
+ * 新的模板结构（2025-12-09更新）：
+ * - 必需区块：<system_instructions>, <context_slots>, <output_schema>
+ * - 任务区块：<task_instruction> 或 <task>（至少一个）
+ * - 可选区块：<writing_style>, <naming_morphology>, <philosophical_core> 等
  * 
  * @param content 模板内容
  * @returns 验证结果，包含是否有效和错误信息
@@ -91,19 +113,34 @@ function validateBlockOrder(content: string): { valid: boolean; error?: string; 
     };
   }
 
-  // 验证区块顺序
-  const blockPositions = REQUIRED_BLOCKS.map(block => ({
-    block,
-    position: content.indexOf(block)
-  }));
+  // 检查任务区块（至少需要一个）
+  const hasTaskBlock = TASK_BLOCKS.some(block => content.includes(block));
+  if (!hasTaskBlock) {
+    return {
+      valid: false,
+      error: `模板缺少任务区块，需要 ${TASK_BLOCKS.join(" 或 ")} 中的至少一个`,
+      missingBlocks: [...TASK_BLOCKS]
+    };
+  }
 
-  for (let i = 1; i < blockPositions.length; i++) {
-    if (blockPositions[i].position <= blockPositions[i - 1].position) {
-      return {
-        valid: false,
-        error: `模板区块顺序错误: ${blockPositions[i - 1].block} 应在 ${blockPositions[i].block} 之前`
-      };
-    }
+  // 验证基本顺序：system_instructions 应该在最前面
+  const systemPos = content.indexOf("<system_instructions>");
+  const contextPos = content.indexOf("<context_slots>");
+  const schemaPos = content.indexOf("<output_schema>");
+
+  if (systemPos === -1 || contextPos === -1 || schemaPos === -1) {
+    return {
+      valid: false,
+      error: "无法找到必需区块的位置"
+    };
+  }
+
+  // system_instructions 应该在 context_slots 之前
+  if (systemPos > contextPos) {
+    return {
+      valid: false,
+      error: "<system_instructions> 应该在 <context_slots> 之前"
+    };
   }
 
   return { valid: true };

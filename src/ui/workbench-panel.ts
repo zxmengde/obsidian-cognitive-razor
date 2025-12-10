@@ -100,6 +100,27 @@ export class WorkbenchPanel extends ItemView {
   }
 
   /**
+   * Helper to resolve i18n keys
+   */
+  private t(path: string): string {
+    if (!this.plugin) return path;
+    try {
+      const keys = path.split('.');
+      let current: any = this.plugin.getI18n().t();
+      for (const key of keys) {
+        if (current && typeof current === 'object' && key in current) {
+          current = current[key];
+        } else {
+          return path;
+        }
+      }
+      return typeof current === 'string' ? current : path;
+    } catch (e) {
+      return path;
+    }
+  }
+
+  /**
    * 设置插件引用
    * 自动从插件组件中获取 TaskQueue 和 MergeHandler
    */
@@ -178,72 +199,51 @@ export class WorkbenchPanel extends ItemView {
     this.pendingConceptInput = null;
   }
   /**
-   * 渲染创建概念区域（可折叠）
-   * Requirements: 5.1
-   * 
-   * 修改：使用 Modern Search Bar 设计 (Google/Bing 风格)
+   * 渲染创建概念区域
+   * Redesigned as "Search Hero Section"
    */
   private renderCreateConceptSection(container: HTMLElement): void {
-    const section = container.createDiv({ cls: "cr-section cr-create-concept" });
+    // 容器使用 cr-hero-container 布局
+    const heroContainer = container.createDiv({ cls: "cr-hero-container" });
+    const wrapper = heroContainer.createDiv({ cls: "cr-search-wrapper" });
 
-    // 可折叠标题 (保持原样)
-    const header = this.createCollapsibleHeader(
-      section,
-      this.t("workbench.createConcept.title"),
-      "createConcept"
-    );
-
-    // 内容容器（可折叠）
-    const content = section.createDiv({ cls: "cr-section-content" });
-    this.sectionContents.set("createConcept", content);
-
-    // 根据折叠状态设置显示
-    if (this.collapseState.createConcept) {
-      content.addClass("cr-collapsed");
-    }
-
-    // Modern Search Container
-    const searchContainer = content.createDiv({ cls: "cr-modern-search-container" });
-
-    // 1. Search Icon (Left)
-    const searchIcon = searchContainer.createDiv({ cls: "cr-search-icon" });
+    // 1. Search Icon
+    const searchIcon = wrapper.createDiv({ cls: "cr-search-icon" });
     searchIcon.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>`;
 
-    // 2. Input Field
-    this.conceptInput = searchContainer.createEl("input", {
+    // 2. Big Input Field
+    this.conceptInput = wrapper.createEl("input", {
       type: "text",
-      cls: "cr-modern-search-input",
+      cls: "cr-hero-input",
       attr: {
-        placeholder: this.t("workbench.createConcept.placeholder"),
-        "aria-label": this.t("workbench.createConcept.placeholder")
+        placeholder: this.t("workbench.createConcept.placeholder") || "Create or Search Concept...",
       }
     });
 
-    // 3. Action Button (Right)
-    this.standardizeBtn = searchContainer.createEl("button", {
-      cls: "cr-search-action-btn",
+    // 3. Action Button (Inside Input)
+    this.standardizeBtn = wrapper.createEl("button", {
+      cls: "cr-search-action-btn cr-hidden", // 默认隐藏，输入内容后显示
       attr: {
         "aria-label": this.t("workbench.createConcept.startButton"),
         "title": "Standardize (Enter)"
       }
     });
-    // Initial Icon: Arrow Right
-    this.standardizeBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>`;
+    this.standardizeBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>`;
 
-    this.standardizeBtn.addEventListener("click", () => {
-      this.handleStandardize();
-    });
+    // Event Listeners
+    if (this.standardizeBtn) {
+      this.standardizeBtn.addEventListener("click", () => this.handleStandardize());
+    }
 
-    // 标准化结果容器
-    this.standardizedResultContainer = content.createDiv({ cls: "cr-standardized-result" });
-    this.standardizedResultContainer.style.display = "none";
-
-    // 类型置信度表格容器
-    this.typeConfidenceTableContainer = content.createDiv({ cls: "cr-type-confidence-table" });
-    this.typeConfidenceTableContainer.style.display = "none";
-
-    // 支持 Enter 键触发标准化
     if (this.conceptInput) {
+      this.conceptInput.addEventListener("input", () => {
+        if (this.conceptInput?.value.trim()) {
+          this.standardizeBtn?.removeClass("cr-hidden");
+        } else {
+          this.standardizeBtn?.addClass("cr-hidden");
+        }
+      });
+
       this.conceptInput.addEventListener("keydown", (e: KeyboardEvent) => {
         if (e.key === "Enter") {
           e.preventDefault();
@@ -251,152 +251,23 @@ export class WorkbenchPanel extends ItemView {
         }
       });
     }
-  }
 
-  private t(path: string): string {
-    if (!this.plugin) return path;
+    // 结果容器（保持原有逻辑，但隐藏初始显示）
+    this.standardizedResultContainer = container.createDiv({ cls: "cr-standardized-result" });
+    this.standardizedResultContainer.style.display = "none";
 
-    const i18n = this.plugin.getComponents().i18n;
-    if (!i18n) return path;
-
-    const translations = i18n.t();
-    const keys = path.split('.');
-    let value: any = translations;
-
-    for (const key of keys) {
-      value = value?.[key];
-      if (value === undefined) return path;
-    }
-
-    return typeof value === 'string' ? value : path;
+    this.typeConfidenceTableContainer = container.createDiv({ cls: "cr-type-confidence-table" });
+    this.typeConfidenceTableContainer.style.display = "none";
   }
 
   /**
-   * 渲染重复概念面板（可折叠）
-   * Requirements: 5.1, 5.2
-   */
-  private renderDuplicatesSection(container: HTMLElement): void {
-    const section = container.createDiv({ cls: "cr-section cr-duplicates" });
-
-    // 可折叠标题（带徽章）
-    const header = this.createCollapsibleHeader(
-      section,
-      this.t("workbench.duplicates.title"),
-      "duplicates",
-      true // 显示徽章
-    );
-
-    // 徽章已在 createCollapsibleHeader 中创建
-
-    // 内容容器（可折叠）
-    const content = section.createDiv({ cls: "cr-section-content" });
-    this.sectionContents.set("duplicates", content);
-
-    // 根据折叠状态设置显示
-    if (this.collapseState.duplicates) {
-      content.addClass("cr-collapsed");
-    }
-
-    // 控制按钮组
-    const controls = content.createDiv({ cls: "cr-duplicates-controls" });
-
-    // 排序选择器
-    const sortContainer = controls.createDiv({ cls: "cr-sort-container" });
-    sortContainer.createEl("label", {
-      text: this.t("workbench.duplicates.sortBy"),
-      cls: "cr-control-label"
-    });
-    const sortSelect = sortContainer.createEl("select", { cls: "cr-sort-select" });
-    sortSelect.createEl("option", { text: this.t("workbench.duplicates.sortBy") + " " + this.t("workbench.queueStatus.completed"), value: "similarity-desc" });
-    sortSelect.createEl("option", { text: this.t("workbench.duplicates.sortBy") + " (Low to High)", value: "similarity-asc" });
-    sortSelect.createEl("option", { text: "Time (New to Old)", value: "time-desc" });
-    sortSelect.createEl("option", { text: "Time (Old to New)", value: "time-asc" });
-    sortSelect.createEl("option", { text: this.t("workbench.queueStatus.type"), value: "type" });
-    sortSelect.addEventListener("change", () => {
-      this.currentSortOrder = sortSelect.value as DuplicateSortOrder;
-      this.refreshDuplicates();
-    });
-
-    // 类型筛选器
-    const filterContainer = controls.createDiv({ cls: "cr-filter-container" });
-    filterContainer.createEl("label", {
-      text: this.t("workbench.duplicates.filterBy"),
-      cls: "cr-control-label"
-    });
-    const filterSelect = filterContainer.createEl("select", { cls: "cr-filter-select" });
-    filterSelect.createEl("option", { text: "All", value: "all" });
-    filterSelect.createEl("option", { text: "Domain", value: "Domain" });
-    filterSelect.createEl("option", { text: "Issue", value: "Issue" });
-    filterSelect.createEl("option", { text: "Theory", value: "Theory" });
-    filterSelect.createEl("option", { text: "Entity", value: "Entity" });
-    filterSelect.createEl("option", { text: "Mechanism", value: "Mechanism" });
-    filterSelect.addEventListener("change", () => {
-      this.currentTypeFilter = filterSelect.value as CRType | "all";
-      this.refreshDuplicates();
-    });
-
-    // 批量操作按钮
-    const batchActions = content.createDiv({ cls: "cr-batch-actions" });
-
-    const selectAllBtn = batchActions.createEl("button", {
-      text: this.t("workbench.duplicates.selectAll"),
-      cls: "cr-btn-small",
-      attr: { "aria-label": this.t("workbench.duplicates.selectAll") }
-    });
-    selectAllBtn.addEventListener("click", () => this.handleSelectAll());
-
-    const batchMergeBtn = batchActions.createEl("button", {
-      text: this.t("workbench.duplicates.batchMerge"),
-      cls: "cr-btn-small mod-cta",
-      attr: { "aria-label": this.t("workbench.duplicates.batchMerge") }
-    });
-    batchMergeBtn.addEventListener("click", () => this.handleBatchMerge());
-
-    const batchDismissBtn = batchActions.createEl("button", {
-      text: this.t("workbench.duplicates.batchDismiss"),
-      cls: "cr-btn-small",
-      attr: { "aria-label": this.t("workbench.duplicates.batchDismiss") }
-    });
-    batchDismissBtn.addEventListener("click", () => this.handleBatchDismiss());
-
-    const viewHistoryBtn = batchActions.createEl("button", {
-      text: this.t("workbench.duplicates.viewHistory"),
-      cls: "cr-btn-small",
-      attr: { "aria-label": this.t("workbench.duplicates.viewHistory") }
-    });
-    viewHistoryBtn.addEventListener("click", () => this.handleViewMergeHistory());
-
-    // 内容容器
-    this.duplicatesContainer = content.createDiv({ cls: "cr-duplicates-list" });
-    this.renderEmptyDuplicates();
-  }
-
-  /**
-   * 渲染队列状态区域（可折叠）
-   * Requirements: 5.1
+   * 渲染队列状态区域
+   * Redesigned as "Dashboard Grid"
    */
   private renderQueueStatusSection(container: HTMLElement): void {
-    const section = container.createDiv({ cls: "cr-section cr-queue-status" });
-
-    // 可折叠标题
-    this.createCollapsibleHeader(
-      section,
-      this.t("workbench.queueStatus.title"),
-      "queueStatus"
-    );
-
-    // 内容容器（可折叠）
-    const content = section.createDiv({ cls: "cr-section-content" });
-    this.sectionContents.set("queueStatus", content);
-
-    // 根据折叠状态设置显示
-    if (this.collapseState.queueStatus) {
-      content.addClass("cr-collapsed");
-    }
-
-    // 状态容器
-    this.queueStatusContainer = content.createDiv({ cls: "cr-queue-status-content" });
-    this.queueStatusContainer.setAttr("aria-live", "polite");
+    // 使用 Dashboard Grid 布局，不再折叠
+    this.queueStatusContainer = container.createDiv({ cls: "cr-dashboard-grid" });
+    // 初始化状态 (Status cards will be injected by renderQueueStatus)
     this.renderQueueStatus({
       paused: false,
       pending: 0,
@@ -404,13 +275,35 @@ export class WorkbenchPanel extends ItemView {
       completed: 0,
       failed: 0
     });
-
-    // 管线状态容器
-    this.pipelineStatusContainer = content.createDiv({ cls: "cr-pipeline-status" });
-    this.pipelineStatusContainer.setAttr("aria-live", "polite");
-    this.pipelineStatusContainer.createEl("h4", { text: this.t("workbench.queueStatus.currentPipeline") });
-    this.pipelineStatusContainer.createDiv({ cls: "cr-pipeline-list" });
   }
+
+  /**
+   * 渲染重复概念面板
+   * Redesigned as "Clean List"
+   */
+  private renderDuplicatesSection(container: HTMLElement): void {
+    const section = container.createDiv({ cls: "cr-duplicates-section" });
+
+    // Header
+    const header = section.createDiv({ cls: "cr-duplicates-header" });
+    header.createEl("h3", { text: this.t("workbench.duplicates.title"), cls: "cr-section-title" });
+
+    // Controls (Sort/Filter - Simplified for now, can expand later)
+    // 这里暂时省略复杂的 Select 控件，为了保持界面清洁。
+    // 如果需要保留筛选功能，建议使用 Icon Menu 或 Popover。
+
+    const refreshBtn = header.createEl("button", {
+      cls: "cr-icon-btn",
+      attr: { "aria-label": "Refresh" }
+    });
+    refreshBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"></path><path d="M1 20v-6h6"></path><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>`;
+    refreshBtn.onclick = () => this.refreshDuplicates();
+
+    // List Container
+    this.duplicatesContainer = section.createDiv({ cls: "cr-duplicates-list" });
+    this.renderEmptyDuplicates();
+  }
+
 
   /**
    * 渲染最近操作区域（可折叠）
@@ -421,44 +314,48 @@ export class WorkbenchPanel extends ItemView {
   private renderRecentOpsSection(container: HTMLElement): void {
     const section = container.createDiv({ cls: "cr-section cr-recent-ops" });
 
-    // 可折叠标题
-    this.createCollapsibleHeader(
+    // Create header with actions
+    const header = this.createCollapsibleHeader(
       section,
-      "操作历史",
+      this.t("workbench.recentOps.title"),
       "recentOps"
     );
 
-    // 内容容器（可折叠）
+    // Add actions to header
+    const actionsContainer = header.createDiv({ cls: "cr-section-header-actions" });
+
+    // Refresh Button
+    const refreshBtn = actionsContainer.createEl("button", {
+      text: this.t("workbench.recentOps.refresh"),
+      cls: "cr-header-btn",
+      attr: { "aria-label": this.t("workbench.recentOps.refresh") }
+    });
+    refreshBtn.onclick = (e) => {
+      e.stopPropagation(); // Prevent collapse
+      this.refreshRecentOps();
+    };
+
+    // Clear All Button
+    const clearAllBtn = actionsContainer.createEl("button", {
+      text: this.t("workbench.recentOps.clearAll"),
+      cls: "cr-header-btn",
+      attr: { "aria-label": this.t("workbench.recentOps.clearAll") }
+    });
+    clearAllBtn.onclick = (e) => {
+      e.stopPropagation(); // Prevent collapse
+      this.handleClearAllSnapshots();
+    };
+
+
+    // Content Container
     const content = section.createDiv({ cls: "cr-section-content" });
     this.sectionContents.set("recentOps", content);
 
-    // 根据折叠状态设置显示
     if (this.collapseState.recentOps) {
       content.addClass("cr-collapsed");
     }
 
-    // 工具栏
-    const toolbar = content.createDiv({ cls: "cr-recent-ops-toolbar" });
-
-    const refreshBtn = toolbar.createEl("button", {
-      text: "刷新",
-      cls: "cr-btn-small",
-      attr: { "aria-label": "刷新操作历史" }
-    });
-    refreshBtn.addEventListener("click", () => {
-      this.refreshRecentOps();
-    });
-
-    const clearAllBtn = toolbar.createEl("button", {
-      text: "清空全部",
-      cls: "cr-btn-small",
-      attr: { "aria-label": "清空所有快照" }
-    });
-    clearAllBtn.addEventListener("click", () => {
-      this.handleClearAllSnapshots();
-    });
-
-    // 操作列表容器
+    // Operation List
     this.recentOpsContainer = content.createDiv({ cls: "cr-recent-ops-list" });
     this.refreshRecentOps();
   }
@@ -672,10 +569,10 @@ export class WorkbenchPanel extends ItemView {
     // 表头
     const thead = table.createEl("thead");
     const headerRow = thead.createEl("tr");
-    headerRow.createEl("th", { text: "类型" });
-    headerRow.createEl("th", { text: "标准名称" });
-    headerRow.createEl("th", { text: "置信度" });
-    headerRow.createEl("th", { text: "操作" });
+    headerRow.createEl("th", { text: this.t("workbench.typeConfidenceTable.type") });
+    headerRow.createEl("th", { text: this.t("workbench.typeConfidenceTable.standardName") });
+    headerRow.createEl("th", { text: this.t("workbench.typeConfidenceTable.confidence") });
+    headerRow.createEl("th", { text: this.t("workbench.typeConfidenceTable.action") });
 
     // 表体
     const tbody = table.createEl("tbody");
@@ -842,7 +739,7 @@ export class WorkbenchPanel extends ItemView {
       if (ctx.groundingResult) {
         const ground = summary.createDiv({ cls: "cr-grounding" });
         ground.setAttr("aria-live", "polite");
-        ground.createEl("div", { text: "Ground 结果：", cls: "cr-muted" });
+        ground.createEl("div", { text: this.t("workbench.pipeline.groundingResult"), cls: "cr-muted" });
         ground.createEl("div", { text: `${ctx.groundingResult.overall_assessment ?? "unknown"}` });
       }
 
@@ -873,14 +770,14 @@ export class WorkbenchPanel extends ItemView {
 
       const currentName = ctx.standardizedData.standardNames[ctx.type];
 
-      form.createEl("label", { text: "中文名称：" });
+      form.createEl("label", { text: this.t("workbench.pipeline.chineseName") });
       const nameCnInput = form.createEl("input", {
         type: "text",
         value: currentName.chinese,
         cls: "cr-input"
       });
 
-      form.createEl("label", { text: "英文名称：" });
+      form.createEl("label", { text: this.t("workbench.pipeline.englishName") });
       const nameEnInput = form.createEl("input", {
         type: "text",
         value: currentName.english,
@@ -892,13 +789,13 @@ export class WorkbenchPanel extends ItemView {
       const types = typeOptions.length > 0
         ? typeOptions
         : ["Domain", "Issue", "Theory", "Entity", "Mechanism"];
-      typeSelect.createEl("option", { text: "自动选择", value: "" });
+      typeSelect.createEl("option", { text: this.t("workbench.pipeline.autoSelect"), value: "" });
       types.forEach((type) => {
         typeSelect.createEl("option", { text: type, value: type });
       });
       typeSelect.value = ctx.type || ctx.standardizedData.primaryType || "";
 
-      const saveBtn = form.createEl("button", { text: "保存编辑", cls: "cr-btn-small" });
+      const saveBtn = form.createEl("button", { text: this.t("workbench.pipeline.saveEdit"), cls: "cr-btn-small" });
       saveBtn.addEventListener("click", async () => {
         const updatedNames = { ...ctx.standardizedData!.standardNames };
         updatedNames[ctx.type] = {
@@ -928,7 +825,7 @@ export class WorkbenchPanel extends ItemView {
     // 内容预览（生成后）
     if (ctx.generatedContent) {
       const preview = this.standardizedResultContainer.createDiv({ cls: "cr-generated-preview" });
-      preview.createEl("h5", { text: "生成内容预览（写入前）" });
+      preview.createEl("h5", { text: this.t("workbench.pipeline.generatedContentPreview") });
       const text = typeof ctx.generatedContent === "string"
         ? ctx.generatedContent
         : JSON.stringify(ctx.generatedContent, null, 2);
@@ -938,32 +835,32 @@ export class WorkbenchPanel extends ItemView {
     const actions = this.standardizedResultContainer.createDiv({ cls: "cr-button-container" });
 
     if (ctx.stage === "awaiting_create_confirm") {
-      const confirmBtn = actions.createEl("button", { text: "确认创建 Stub", cls: "mod-cta cr-btn-small" });
+      const confirmBtn = actions.createEl("button", { text: this.t("workbench.pipeline.confirmCreate"), cls: "mod-cta cr-btn-small" });
       confirmBtn.addEventListener("click", async () => {
         const po = this.plugin?.getComponents().pipelineOrchestrator;
         if (!po) return;
         const result = await po.confirmCreate(ctx.pipelineId);
         if (!result.ok) {
-          new Notice(`确认创建失败: ${result.error.message}`);
+          new Notice(`${this.t("workbench.notifications.confirmCreateFailed")}: ${result.error.message}`);
         } else {
-          new Notice("已确认创建，等待内容生成");
+          new Notice(this.t("workbench.notifications.confirmCreateWaiting"));
         }
       });
     } else if (ctx.stage === "awaiting_write_confirm") {
-      const previewBtn = actions.createEl("button", { text: "预览并确认写入", cls: "mod-cta cr-btn-small" });
+      const previewBtn = actions.createEl("button", { text: this.t("workbench.pipeline.previewWrite"), cls: "mod-cta cr-btn-small" });
       previewBtn.addEventListener("click", () => this.showWritePreview(ctx));
     } else if (ctx.stage === "failed" && ctx.error) {
       actions.createEl("div", {
-        text: `失败: ${ctx.error.message}`,
+        text: `${this.t("workbench.queueStatus.failed")}: ${ctx.error.message}`,
         cls: "cr-error-text"
       });
     } else if (ctx.stage === "completed") {
       if (ctx.snapshotId) {
-        const undoBtn = actions.createEl("button", { text: "撤销写入", cls: "cr-btn-small" });
+        const undoBtn = actions.createEl("button", { text: this.t("workbench.recentOps.undo"), cls: "cr-btn-small" });
         undoBtn.addEventListener("click", () => this.handleUndo(ctx.snapshotId!));
-        actions.createEl("span", { text: `快照: ${ctx.snapshotId}`, cls: "cr-muted" });
+        actions.createEl("span", { text: `Snapshot: ${ctx.snapshotId}`, cls: "cr-muted" });
       } else {
-        actions.createEl("span", { text: "已完成", cls: "cr-muted" });
+        actions.createEl("span", { text: this.t("workbench.queueStatus.completed"), cls: "cr-muted" });
       }
     }
   }
@@ -979,10 +876,10 @@ export class WorkbenchPanel extends ItemView {
     const po = this.plugin.getComponents().pipelineOrchestrator;
     const result = po.updateStandardizedData(pipelineId, updates);
     if (result.ok) {
-      new Notice("已更新标准化结果");
+      new Notice(this.t("workbench.notifications.standardizeUpdated"));
       this.renderPipelinePreview();
     } else {
-      new Notice(`更新失败: ${result.error.message}`);
+      new Notice(`${this.t("common.error")}: ${result.error.message}`);
     }
   }
 
@@ -1041,7 +938,7 @@ export class WorkbenchPanel extends ItemView {
     this.duplicatesContainer.empty();
 
     // 更新徽章数量
-    const badge = this.containerEl.querySelector(".cr-duplicates .cr-badge");
+    const badge = this.containerEl.querySelector(".cr-duplicates-header .cr-badge");
     if (badge) {
       badge.textContent = sortedDuplicates.length.toString();
     }
@@ -1051,108 +948,88 @@ export class WorkbenchPanel extends ItemView {
       return;
     }
 
-    // 渲染重复对列表（卡片样式）
-    // 渲染重复对列表（List View 模式）
+    // 渲染重复对列表
+    const list = this.duplicatesContainer.createDiv({ cls: "cr-duplicates-list-inner" });
+
     sortedDuplicates.forEach(pair => {
-      // 列表项容器 - 使用 cr-duplicate-card 类但样式已修改为列表项
-      const item = this.duplicatesContainer!.createDiv({ cls: "cr-duplicate-card" });
-
-      // 1. 选择框
-      const checkbox = item.createEl("input", {
-        type: "checkbox",
-        cls: "cr-duplicate-checkbox",
-        attr: { "aria-label": `Select ${pair.noteA.name} and ${pair.noteB.name}` }
-      });
-      checkbox.checked = this.selectedDuplicates.has(pair.id);
-      checkbox.addEventListener("change", (e) => {
-        e.stopPropagation();
-        if (checkbox.checked) {
-          this.selectedDuplicates.add(pair.id);
-        } else {
-          this.selectedDuplicates.delete(pair.id);
-        }
-      });
-
-      // 2. 主要内容区 (点击预览)
-      const content = item.createDiv({ cls: "cr-duplicate-content cr-clickable" });
-
-      // Flex 布局行
-      const row = content.createDiv({ cls: "cr-duplicate-row" });
-      row.style.display = "flex";
-      row.style.alignItems = "center";
-      row.style.gap = "var(--cr-spacing-md)";
-      row.style.width = "100%";
-
-      // 名称
-      const namesDigest = row.createEl("span", {
-        text: `${pair.noteA.name} · ${pair.noteB.name}`,
-        cls: "cr-duplicate-names",
-        attr: { "title": `${pair.noteA.path}\n${pair.noteB.path}` }
-      });
-      namesDigest.style.flex = "1";
-      namesDigest.style.fontSize = "0.95em";
-      namesDigest.style.fontWeight = "500";
-      // namesDigest.style.color = "var(--text-normal)"; // 已由 CSS 处理
-
-      // 相似度 Pill
-      const similarityPill = row.createEl("span", {
-        cls: "cr-similarity-pill",
-        text: `${(pair.similarity * 100).toFixed(0)}%`
-      });
-      similarityPill.style.fontWeight = "600";
-      similarityPill.style.fontSize = "0.85em";
-      similarityPill.style.padding = "2px 6px";
-      similarityPill.style.borderRadius = "4px";
-      similarityPill.style.backgroundColor = "var(--background-modifier-border)";
-      similarityPill.style.color = pair.similarity > 0.8 ? "var(--color-green)" : "var(--color-orange)";
-
-      // 类型 Badge
-      row.createEl("span", {
-        text: pair.type.substring(0, 1), // 仅显示首字母
-        cls: "cr-type-tag",
-        attr: { "title": pair.type }
-      });
-
-      // 点击事件
-      content.addEventListener("click", () => {
-        this.handleShowDuplicatePreview(pair);
-      });
-
-      // 3. 悬浮操作按钮 (Actions)
-      const actions = item.createDiv({ cls: "cr-duplicate-card-actions" });
-      actions.style.opacity = "0"; // 默认隐藏
-      actions.style.transition = "opacity 0.2s ease";
-
-      // Merge Button (Icon)
-      const mergeBtn = actions.createEl("button", {
-        cls: "cr-icon-btn", // 需要在 CSS 中确保这个类有合适的样式，或者内联
-        attr: { "aria-label": this.t("workbench.duplicates.merge"), "title": this.t("workbench.duplicates.merge") }
-      });
-      mergeBtn.addClass("cr-btn-small"); // 复用现有类
-      mergeBtn.style.padding = "4px";
-      mergeBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 9l3 3-3 3"></path><line x1="15" y1="4" x2="15" y2="20"></line></svg>`;
-      mergeBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        this.handleMergeDuplicate(pair);
-      });
-
-      // Dismiss Button (Icon)
-      const dismissBtn = actions.createEl("button", {
-        cls: "cr-icon-btn",
-        attr: { "aria-label": this.t("workbench.duplicates.dismiss"), "title": this.t("workbench.duplicates.dismiss") }
-      });
-      dismissBtn.addClass("cr-btn-small");
-      dismissBtn.style.padding = "4px";
-      dismissBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
-      dismissBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        this.handleDismissDuplicate(pair);
-      });
-
-      // Hover effect logic
-      item.addEventListener("mouseenter", () => { actions.style.opacity = "1"; });
-      item.addEventListener("mouseleave", () => { actions.style.opacity = "0"; });
+      this.renderDuplicateItem(list, pair);
     });
+  }
+
+  /**
+   * 渲染单个重复对项目
+   */
+  private renderDuplicateItem(container: HTMLElement, pair: DuplicatePair): void {
+    const item = container.createDiv({ cls: "cr-duplicate-item" });
+
+    // Checkbox
+    const checkboxWrapper = item.createDiv({ cls: "cr-checkbox-wrapper" });
+    const checkbox = checkboxWrapper.createEl("input", {
+      type: "checkbox",
+      cls: "cr-duplicate-checkbox"
+    });
+    // 检查是否已选中
+    if (this.selectedDuplicates.has(pair.id)) {
+      checkbox.checked = true;
+    }
+    checkbox.addEventListener("change", (e) => {
+      if ((e.target as HTMLInputElement).checked) {
+        this.selectedDuplicates.add(pair.id);
+      } else {
+        this.selectedDuplicates.delete(pair.id);
+      }
+    });
+
+    // Status Bar (Similarity)
+    const statusBar = item.createDiv({ cls: "cr-duplicate-status-bar" });
+    const fill = statusBar.createDiv({ cls: "cr-status-fill" });
+    fill.style.width = `${pair.similarity * 100}%`;
+    // Color based on similarity
+    if (pair.similarity > 0.9) fill.style.backgroundColor = "var(--color-red)";
+    else if (pair.similarity > 0.8) fill.style.backgroundColor = "var(--color-orange)";
+    else fill.style.backgroundColor = "var(--color-yellow)";
+
+    // Content
+    const content = item.createDiv({ cls: "cr-duplicate-content" });
+
+    // Header (Notes)
+    const header = content.createDiv({ cls: "cr-duplicate-header" });
+    header.createDiv({ cls: "cr-duplicate-note", text: pair.noteA.name });
+    header.createDiv({ cls: "cr-duplicate-arrow", text: "↔" });
+    header.createDiv({ cls: "cr-duplicate-note", text: pair.noteB.name });
+
+    // Metadata
+    const meta = content.createDiv({ cls: "cr-duplicate-meta" });
+    meta.createSpan({ cls: "cr-meta-tag", text: pair.type });
+    meta.createSpan({ cls: "cr-meta-text", text: `${(pair.similarity * 100).toFixed(0)}%` });
+
+    // Actions (Hover)
+    const actions = item.createDiv({ cls: "cr-duplicate-actions" });
+
+    const mergeBtn = actions.createEl("button", {
+      cls: "cr-icon-btn",
+      attr: { "aria-label": this.t("workbench.duplicates.merge") }
+    });
+    mergeBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 9l3 3-3 3"></path><line x1="15" y1="4" x2="15" y2="20"></line></svg>`;
+    mergeBtn.onclick = (e) => { e.stopPropagation(); this.handleMergeDuplicate(pair); };
+
+    const dismissBtn = actions.createEl("button", {
+      cls: "cr-icon-btn",
+      attr: { "aria-label": this.t("workbench.duplicates.dismiss") }
+    });
+    dismissBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
+    dismissBtn.onclick = (e) => { e.stopPropagation(); this.handleDismissDuplicate(pair); };
+
+    // Click to preview
+    item.onclick = (e) => {
+      // Avoid triggering if clicking checkbox or buttons
+      if (e.target === checkbox || actions.contains(e.target as Node)) return;
+      this.handleShowDuplicatePreview(pair);
+    };
+
+    // Hover effect
+    item.addEventListener("mouseenter", () => { actions.style.opacity = "1"; });
+    item.addEventListener("mouseleave", () => { actions.style.opacity = "0"; });
   }
 
   /**
@@ -1229,7 +1106,7 @@ export class WorkbenchPanel extends ItemView {
     let failCount = 0;
 
     // 注意：合并功能已被弃用，等待重构
-    new Notice("合并功能已被弃用，等待重构");
+    new Notice(this.t("workbench.notifications.mergeDeprecated"));
     return;
 
     new Notice(`${this.t("workbench.notifications.batchMergeComplete")}: ${successCount} / ${failCount}`);
@@ -1381,101 +1258,63 @@ export class WorkbenchPanel extends ItemView {
     this.queueStatusContainer.empty();
 
     const grid = this.queueStatusContainer.createDiv({
-      cls: "cr-queue-grid",
-      attr: { role: "region", "aria-label": "队列统计信息" }
+      cls: "cr-queue-status-container",
+      attr: { role: "region", "aria-label": this.t("workbench.queueStatus.title") }
     });
 
-    // 状态指示器
-    const statusIndicator = grid.createDiv({ cls: "cr-queue-indicator" });
-    const statusIcon = statusIndicator.createEl("span", {
-      cls: status.paused ? "cr-status-paused" : "cr-status-active",
-      attr: {
-        "aria-label": status.paused ? this.t("workbench.queueStatus.queuePaused") : this.t("workbench.queueStatus.queueRunning"),
-        role: "status"
-      }
-    });
-    statusIcon.textContent = status.paused ? "⏸" : "▶";
-    statusIndicator.createEl("span", {
-      text: status.paused ? this.t("workbench.queueStatus.paused") : this.t("workbench.queueStatus.active"),
-      attr: { "aria-hidden": "true" }
-    });
+    // 1. Status & Control Row (Flex Row)
+    const controlRow = this.queueStatusContainer.createDiv({ cls: "cr-queue-control-row" });
 
-    // 统计信息
-    this.createStatItem(grid, this.t("workbench.queueStatus.pending"), status.pending, "cr-stat-pending");
-    this.createStatItem(grid, this.t("workbench.queueStatus.running"), status.running, "cr-stat-running");
-    this.createStatItem(grid, this.t("workbench.queueStatus.completed"), status.completed, "cr-stat-completed");
-    this.createStatItem(grid, this.t("workbench.queueStatus.failed"), status.failed, "cr-stat-failed");
-
-    // 操作按钮
-    const actions = this.queueStatusContainer.createDiv({
-      cls: "cr-queue-actions",
-      attr: { role: "group", "aria-label": "队列操作" }
-    });
-
-    const toggleBtn = actions.createEl("button", {
-      text: status.paused ? this.t("workbench.queueStatus.resumeQueue") : this.t("workbench.queueStatus.pauseQueue"),
+    // Status Indicator & Toggle
+    const statusWrapper = controlRow.createDiv({ cls: "cr-status-wrapper" });
+    const toggleBtn = statusWrapper.createEl("button", {
+      cls: `cr-queue-toggle-btn ${status.paused ? "is-paused" : "is-active"}`,
       attr: {
         "aria-label": status.paused ? this.t("workbench.queueStatus.resumeQueue") : this.t("workbench.queueStatus.pauseQueue"),
-        tabindex: "0"
+        "title": status.paused ? "Resume Queue" : "Pause Queue"
       }
     });
-    toggleBtn.addEventListener("click", () => {
-      this.handleToggleQueue();
-    });
-    // 键盘支持
-    toggleBtn.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        this.handleToggleQueue();
-      }
+    toggleBtn.innerHTML = status.paused
+      ? `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>`
+      : `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>`;
+    toggleBtn.onclick = () => this.handleToggleQueue();
+
+    statusWrapper.createSpan({
+      cls: "cr-queue-status-text",
+      text: status.paused ? this.t("workbench.queueStatus.queuePaused") : this.t("workbench.queueStatus.queueRunning")
     });
 
-    const viewBtn = actions.createEl("button", {
-      text: this.t("workbench.queueStatus.viewDetails"),
-      attr: {
-        "aria-label": this.t("workbench.queueStatus.viewDetails"),
-        tabindex: "0"
-      }
-    });
-    viewBtn.addEventListener("click", () => {
-      this.handleViewQueue();
-    });
-    // 键盘支持
-    viewBtn.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        this.handleViewQueue();
-      }
-    });
+    // Progress Bar (Flex Grow)
+    const total = status.pending + status.running + status.completed + status.failed;
+    const progress = total > 0 ? ((status.completed + status.failed) / total) * 100 : 0;
+
+    const progressContainer = controlRow.createDiv({ cls: "cr-progress-container" });
+    const progressBar = progressContainer.createDiv({ cls: "cr-progress-bar" });
+    progressBar.createDiv({ cls: "cr-progress-fill" }).style.width = `${progress}%`;
+    progressContainer.createSpan({ cls: "cr-progress-text", text: `${Math.round(progress)}%` });
+
+    // 2. Statistics Grid (Uniform 4 columns)
+    const statsGrid = this.queueStatusContainer.createDiv({ cls: "cr-queue-stats-grid" });
+    this.createStatCard(statsGrid, this.t("workbench.queueStatus.pending"), status.pending, "pending");
+    this.createStatCard(statsGrid, this.t("workbench.queueStatus.running"), status.running, "running");
+    this.createStatCard(statsGrid, this.t("workbench.queueStatus.completed"), status.completed, "completed");
+    this.createStatCard(statsGrid, this.t("workbench.queueStatus.failed"), status.failed, "failed");
+
+    // Details Link
+    // const detailsLink = this.queueStatusContainer.createEl("a", { 
+    //   cls: "cr-queue-details-link", 
+    //   text: this.t("workbench.queueStatus.viewDetails") 
+    // });
+    // detailsLink.onclick = () => this.handleViewQueue();
   }
 
   /**
-   * 创建统计项
-   * 遵循 A-NF-04：添加 aria-label 支持屏幕阅读器
+   * 创建统计卡片
    */
-  private createStatItem(
-    container: HTMLElement,
-    label: string,
-    value: number,
-    className: string
-  ): void {
-    const item = container.createDiv({
-      cls: `cr-stat-item ${className}`,
-      attr: {
-        role: "group",
-        "aria-label": `${label}: ${value}`
-      }
-    });
-    item.createEl("div", {
-      text: value.toString(),
-      cls: "cr-stat-value",
-      attr: { "aria-hidden": "true" }
-    });
-    item.createEl("div", {
-      text: label,
-      cls: "cr-stat-label",
-      attr: { "aria-hidden": "true" }
-    });
+  private createStatCard(container: HTMLElement, label: string, value: number, type: string): void {
+    const card = container.createDiv({ cls: `cr-card cr-stat-card cr-stat-${type}` });
+    card.createDiv({ cls: "cr-stat-value", text: value.toString() });
+    card.createDiv({ cls: "cr-stat-label", text: label });
   }
 
   /**
@@ -1485,7 +1324,7 @@ export class WorkbenchPanel extends ItemView {
     if (!this.recentOpsContainer) return;
 
     this.recentOpsContainer.createEl("div", {
-      text: "暂无可撤销的操作",
+      text: this.t("workbench.recentOps.empty"),
       cls: "cr-empty-state"
     });
   }
@@ -1529,9 +1368,9 @@ export class WorkbenchPanel extends ItemView {
 
       // 撤销按钮
       const undoBtn = item.createEl("button", {
-        text: "撤销",
+        text: this.t("workbench.recentOps.undo"),
         cls: "cr-undo-btn cr-btn-small",
-        attr: { "aria-label": `撤销: ${description}` }
+        attr: { "aria-label": `${this.t("workbench.recentOps.undo")}: ${description}` }
       });
       undoBtn.addEventListener("click", async () => {
         await this.handleUndoSnapshot(snapshot.id);
@@ -1541,7 +1380,8 @@ export class WorkbenchPanel extends ItemView {
     // 如果有更多快照，显示提示
     if (snapshots.length > 10) {
       const moreHint = this.recentOpsContainer.createDiv({ cls: "cr-more-hint" });
-      moreHint.textContent = `还有 ${snapshots.length - 10} 个更早的快照`;
+      const moreCount = snapshots.length - 10;
+      moreHint.textContent = this.t("workbench.recentOps.moreSnapshots").replace("{count}", String(moreCount));
     }
   }
 
@@ -1573,7 +1413,7 @@ export class WorkbenchPanel extends ItemView {
    */
   private async handleUndoSnapshot(snapshotId: string): Promise<void> {
     if (!this.plugin) {
-      new Notice("插件未初始化");
+      new Notice(this.t("workbench.notifications.pluginNotInitialized"));
       return;
     }
 
@@ -1583,7 +1423,7 @@ export class WorkbenchPanel extends ItemView {
       // 恢复快照
       const restoreResult = await undoManager.restoreSnapshot(snapshotId);
       if (!restoreResult.ok) {
-        new Notice(`撤销失败: ${restoreResult.error.message}`);
+        new Notice(`${this.t("workbench.notifications.undoFailed")}: ${restoreResult.error.message}`);
         return;
       }
 
@@ -1593,11 +1433,11 @@ export class WorkbenchPanel extends ItemView {
       const file = this.app.vault.getAbstractFileByPath(snapshot.path);
       if (file && file instanceof TFile) {
         await this.app.vault.modify(file, snapshot.content);
-        new Notice("撤销成功");
+        new Notice(this.t("workbench.notifications.undoSuccess"));
       } else {
         // 文件不存在，创建文件
         await this.app.vault.create(snapshot.path, snapshot.content);
-        new Notice("撤销成功（文件已恢复）");
+        new Notice(this.t("workbench.notifications.undoSuccessRestored"));
       }
 
       // 删除快照
@@ -1608,7 +1448,7 @@ export class WorkbenchPanel extends ItemView {
     } catch (error) {
       console.error("撤销操作失败:", error);
       const errorMessage = error instanceof Error ? error.message : String(error);
-      new Notice(`撤销失败: ${errorMessage}`);
+      new Notice(`${this.t("workbench.notifications.undoFailed")}: ${errorMessage}`);
     }
   }
 
@@ -1617,13 +1457,13 @@ export class WorkbenchPanel extends ItemView {
    */
   private async handleClearAllSnapshots(): Promise<void> {
     if (!this.plugin) {
-      new Notice("插件未初始化");
+      new Notice(this.t("workbench.notifications.pluginNotInitialized"));
       return;
     }
 
     const confirmed = await this.showConfirmDialog(
-      "确认清空",
-      "确定要清空所有快照吗？此操作不可撤销。"
+      this.t("workbench.recentOps.clearAllConfirmTitle"),
+      this.t("workbench.recentOps.clearAllConfirmMessage")
     );
 
     if (!confirmed) return;
@@ -1632,10 +1472,10 @@ export class WorkbenchPanel extends ItemView {
     const result = await undoManager.clearAllSnapshots();
 
     if (result.ok) {
-      new Notice(`已清空 ${result.value} 个快照`);
+      new Notice(`${this.t("workbench.notifications.clearComplete")} (${result.value})`);
       await this.refreshRecentOps();
     } else {
-      new Notice(`清空失败: ${result.error.message}`);
+      new Notice(`${this.t("common.error")}: ${result.error.message}`);
     }
   }
 
@@ -1681,14 +1521,14 @@ export class WorkbenchPanel extends ItemView {
     const diff = now.getTime() - date.getTime();
 
     const minutes = Math.floor(diff / 60000);
-    if (minutes < 1) return "刚刚";
-    if (minutes < 60) return `${minutes} 分钟前`;
+    if (minutes < 1) return this.t("workbench.recentOps.timeJustNow");
+    if (minutes < 60) return this.t("workbench.recentOps.timeMinutesAgo").replace("{minutes}", String(minutes));
 
     const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours} 小时前`;
+    if (hours < 24) return this.t("workbench.recentOps.timeHoursAgo").replace("{hours}", String(hours));
 
     const days = Math.floor(hours / 24);
-    return `${days} 天前`;
+    return this.t("workbench.recentOps.timeDaysAgo").replace("{days}", String(days));
   }
 
   /**
@@ -1730,7 +1570,7 @@ export class WorkbenchPanel extends ItemView {
    */
   private async handleUndoFromToast(snapshotId: string): Promise<void> {
     if (!this.plugin) {
-      new Notice("插件未初始化");
+      new Notice(this.t("workbench.notifications.pluginNotInitialized"));
       return;
     }
 
@@ -1740,7 +1580,7 @@ export class WorkbenchPanel extends ItemView {
       // 恢复快照
       const restoreResult = await undoManager.restoreSnapshot(snapshotId);
       if (!restoreResult.ok) {
-        new Notice(`撤销失败: ${restoreResult.error.message}`);
+        new Notice(`${this.t("workbench.notifications.undoFailed")}: ${restoreResult.error.message}`);
         return;
       }
 
@@ -1750,19 +1590,22 @@ export class WorkbenchPanel extends ItemView {
       const file = this.app.vault.getAbstractFileByPath(snapshot.path);
       if (file && file instanceof TFile) {
         await this.app.vault.modify(file, snapshot.content);
-        new Notice("撤销成功");
+        new Notice(this.t("workbench.notifications.undoSuccess"));
       } else {
         // 文件不存在，创建文件
         await this.app.vault.create(snapshot.path, snapshot.content);
-        new Notice("撤销成功（文件已恢复）");
+        new Notice(this.t("workbench.notifications.undoSuccessRestored"));
       }
 
       // 删除快照
       await undoManager.deleteSnapshot(snapshotId);
+
+      // 刷新操作历史列表
+      await this.refreshRecentOps();
     } catch (error) {
       console.error("撤销操作失败:", error);
       const errorMessage = error instanceof Error ? error.message : String(error);
-      new Notice(`撤销失败: ${errorMessage}`);
+      new Notice(`${this.t("workbench.notifications.undoFailed")}: ${errorMessage}`);
     }
   }
 
@@ -1773,7 +1616,7 @@ export class WorkbenchPanel extends ItemView {
    */
   private async handleMergeDuplicate(pair: DuplicatePair): Promise<void> {
     if (!this.plugin) {
-      new Notice("插件未初始化");
+      new Notice(this.t("workbench.notifications.pluginNotInitialized"));
       return;
     }
 
@@ -1783,12 +1626,12 @@ export class WorkbenchPanel extends ItemView {
       const fileB = this.app.vault.getAbstractFileByPath(pair.noteB.path);
 
       if (!fileA || !(fileA instanceof TFile)) {
-        new Notice(`文件不存在: ${pair.noteA.path}`);
+        new Notice(`${this.t("workbench.notifications.fileNotFound")}: ${pair.noteA.path}`);
         return;
       }
 
       if (!fileB || !(fileB instanceof TFile)) {
-        new Notice(`文件不存在: ${pair.noteB.path}`);
+        new Notice(`${this.t("workbench.notifications.fileNotFound")}: ${pair.noteB.path}`);
         return;
       }
 
@@ -1800,7 +1643,7 @@ export class WorkbenchPanel extends ItemView {
     } catch (error) {
       console.error("显示合并预览失败:", error);
       const errorMessage = error instanceof Error ? error.message : String(error);
-      new Notice(`显示合并预览失败: ${errorMessage}`);
+      new Notice(`${this.t("workbench.notifications.previewFailed")}: ${errorMessage}`);
     }
   }
 
@@ -1815,7 +1658,7 @@ export class WorkbenchPanel extends ItemView {
   ): void {
     const diffView = new SimpleDiffView(
       this.app,
-      `合并预览: ${pair.noteA.name} ↔ ${pair.noteB.name}`,
+      `${this.t("workbench.duplicates.merge")}: ${pair.noteA.name} ↔ ${pair.noteB.name}`,
       contentA,
       contentB,
       async () => {
@@ -1824,7 +1667,7 @@ export class WorkbenchPanel extends ItemView {
       },
       () => {
         // 用户取消合并
-        new Notice("已取消合并");
+        new Notice(this.t("workbench.notifications.mergeCancelled"));
       }
     );
 
@@ -1841,7 +1684,7 @@ export class WorkbenchPanel extends ItemView {
     }
 
     // 注意：合并功能已被弃用，等待重构
-    new Notice("合并功能已被弃用，等待重构");
+    new Notice(this.t("workbench.notifications.mergeDeprecated"));
     return;
   }
 
@@ -1952,6 +1795,12 @@ export class WorkbenchPanel extends ItemView {
           event.context.filePath
         );
       }
+      
+      // 管线失败时显示错误通知
+      if (event.type === "pipeline_failed" && event.context.error) {
+        new Notice(event.context.error.message, 8000); // 显示8秒
+      }
+      
       this.updatePipelineContexts(po.getActivePipelines());
     });
   }
@@ -2195,7 +2044,7 @@ export class WorkbenchPanel extends ItemView {
       Running: this.t("workbench.queueStatus.running"),
       Completed: this.t("workbench.queueStatus.completed"),
       Failed: this.t("workbench.queueStatus.failed"),
-      Cancelled: "Cancelled"
+      Cancelled: this.t("workbench.queueStatus.cancelled")
     };
     return labels[state] || state;
   }
@@ -2290,7 +2139,7 @@ export class WorkbenchPanel extends ItemView {
       }
     });
 
-    new Notice(`已清除 ${clearedCount} 个失败的任务`);
+    new Notice(`${this.t("workbench.notifications.clearComplete")} (${clearedCount})`);
 
     // 刷新详情显示
     const detailsContainer = this.queueStatusContainer?.querySelector(".cr-queue-details") as HTMLElement;
@@ -2306,7 +2155,7 @@ export class WorkbenchPanel extends ItemView {
    */
   private async handleUndo(operationId: string): Promise<void> {
     if (!this.plugin) {
-      new Notice("插件未初始化");
+      new Notice(this.t("workbench.notifications.pluginNotInitialized"));
       return;
     }
 
@@ -2320,15 +2169,25 @@ export class WorkbenchPanel extends ItemView {
         const file = this.plugin.app.vault.getAbstractFileByPath(snapshot.path);
         if (file instanceof TFile) {
           await this.plugin.app.vault.modify(file, snapshot.content);
-          new Notice("撤销成功");
+          // 删除快照
+          await undoManager.deleteSnapshot(operationId);
+          // 刷新列表
+          await this.refreshRecentOps();
+          new Notice(this.t("workbench.notifications.undoSuccess"));
         } else {
-          new Notice("文件不存在，无法撤销");
+          // 文件不存在，创建文件
+          await this.plugin.app.vault.create(snapshot.path, snapshot.content);
+          // 删除快照
+          await undoManager.deleteSnapshot(operationId);
+          // 刷新列表
+          await this.refreshRecentOps();
+          new Notice(this.t("workbench.notifications.undoSuccessRestored"));
         }
       } catch (error) {
-        new Notice(`撤销失败: ${error instanceof Error ? error.message : String(error)}`);
+        new Notice(`${this.t("workbench.notifications.undoFailed")}: ${error instanceof Error ? error.message : String(error)}`);
       }
     } else {
-      new Notice(`撤销失败: ${result.error.message}`);
+      new Notice(`${this.t("workbench.notifications.undoFailed")}: ${result.error.message}`);
     }
   }
 }
@@ -2606,16 +2465,37 @@ class MergeHistoryModal extends Modal {
     this.plugin = plugin;
   }
 
+  /**
+   * 获取翻译文本
+   */
+  private t(path: string): string {
+    if (!this.plugin) return path;
+
+    const i18n = this.plugin.getComponents().i18n;
+    if (!i18n) return path;
+
+    const translations = i18n.t();
+    const keys = path.split('.');
+    let value: unknown = translations;
+
+    for (const key of keys) {
+      value = (value as Record<string, unknown>)?.[key];
+      if (value === undefined) return path;
+    }
+
+    return typeof value === 'string' ? value : path;
+  }
+
   async onOpen(): Promise<void> {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("cr-merge-history-modal");
     contentEl.addClass("cr-scope");
 
-    contentEl.createEl("h2", { text: "重复对历史" });
+    contentEl.createEl("h2", { text: this.t("workbench.duplicateHistory.title") });
 
     if (!this.plugin) {
-      contentEl.createEl("p", { text: "插件未初始化", cls: "cr-error-text" });
+      contentEl.createEl("p", { text: this.t("workbench.notifications.pluginNotInitialized"), cls: "cr-error-text" });
       return;
     }
 
@@ -2623,7 +2503,7 @@ class MergeHistoryModal extends Modal {
     const duplicateManager = components.duplicateManager;
 
     if (!duplicateManager) {
-      contentEl.createEl("p", { text: "重复管理器未初始化", cls: "cr-error-text" });
+      contentEl.createEl("p", { text: this.t("workbench.notifications.duplicateManagerNotInitialized"), cls: "cr-error-text" });
       return;
     }
 
@@ -2754,10 +2634,10 @@ class MergeHistoryModal extends Modal {
     const result = await duplicateManager.updateStatus(pairId, "pending");
 
     if (result.ok) {
-      new Notice("已撤销忽略，重复对已恢复到待处理列表");
+      new Notice(this.t("workbench.notifications.undoDismissSuccess"));
       await this.renderList();
     } else {
-      new Notice(`撤销失败: ${result.error.message}`);
+      new Notice(`${this.t("workbench.notifications.undoFailed")}: ${result.error.message}`);
     }
   }
 
@@ -2767,8 +2647,8 @@ class MergeHistoryModal extends Modal {
     const confirmed = await new Promise<boolean>((resolve) => {
       const modal = new ConfirmDialog(
         this.app,
-        "确认删除",
-        "确定要永久删除这个重复对记录吗？此操作不可撤销。",
+        this.t("confirmDialogs.deleteDuplicatePair.title"),
+        this.t("confirmDialogs.deleteDuplicatePair.message"),
         resolve
       );
       modal.open();
@@ -2784,10 +2664,10 @@ class MergeHistoryModal extends Modal {
     const result = await duplicateManager.removePair(pairId);
 
     if (result.ok) {
-      new Notice("已删除重复对记录");
+      new Notice(this.t("workbench.notifications.deletePairSuccess"));
       await this.renderList();
     } else {
-      new Notice(`删除失败: ${result.error.message}`);
+      new Notice(`${this.t("common.error")}: ${result.error.message}`);
     }
   }
 
