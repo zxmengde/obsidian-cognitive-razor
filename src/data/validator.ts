@@ -1,9 +1,4 @@
-/**
- * Validator 实现
- * 验证 AI 输出，包括 JSON 解析和基本 Schema 校验
- *
- * 简化版本：移除业务规则校验，只保留核心功能
- */
+/** Validator - 验证 AI 输出，包括 JSON 解析和 Schema 校验 */
 
 import {
   IValidator,
@@ -12,20 +7,9 @@ import {
   ValidationContext,
 } from "../types";
 
-/**
- * Validator 实现类
- *
- * 只做 JSON 解析和基本 Schema 校验
- */
+/** Validator 实现类 */
 export class Validator implements IValidator {
-  /**
-   * 验证输出
-   *
-   * 验证顺序：
-   * 1. JSON 解析 → E001
-   * 2. Schema 校验 → E002
-   * 3. 必填字段检查 → E003
-   */
+  /** 验证输出 */
   async validate(
     output: string,
     schema: object,
@@ -57,10 +41,7 @@ export class Validator implements IValidator {
     };
   }
 
-  /**
-   * 容错 JSON 解析：支持直接 JSON、```json ``` 代码块，以及包含前后缀文本的情况
-   * 增强：尝试修复常见的 JSON 格式错误
-   */
+  /** 容错 JSON 解析 */
   private tryParseJson(
     output: string
   ):
@@ -126,11 +107,7 @@ export class Validator implements IValidator {
     return { ok: false, error: buildParseError() };
   }
 
-  /**
-   * 清理 JSON 字符串，修复常见的格式错误
-   * - 移除数组元素之间的非法字符（如 },g { 中的 g）
-   * - 修复尾随逗号
-   */
+  /** 清理 JSON 字符串 */
   private cleanJsonString(json: string): string {
     let cleaned = json;
     
@@ -146,10 +123,7 @@ export class Validator implements IValidator {
     return cleaned;
   }
 
-  /**
-   * Schema 校验（简化版，使用基本类型检查）
-   * 返回 E002 错误
-   */
+  /** Schema 校验 */
   private validateSchema(
     data: Record<string, unknown>,
     schema: object
@@ -210,10 +184,7 @@ export class Validator implements IValidator {
     return errors;
   }
 
-  /**
-   * 必填字段检查
-   * 返回 E003 错误
-   */
+  /** 必填字段检查 */
   private validateRequiredFields(
     data: Record<string, unknown>,
     schema: object

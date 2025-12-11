@@ -1,7 +1,4 @@
-/**
- * 重复管理器
- * 负责检测和管理重复概念
- */
+/** 重复管理器：检测和管理重复概念 */
 
 import {
   IDuplicateManager,
@@ -9,6 +6,7 @@ import {
   IFileStorage,
   ILogger,
   ISettingsStore,
+  ILockManager,
   DuplicatePair,
   DuplicatePairStatus,
   DuplicatePairsStore,
@@ -23,6 +21,7 @@ export class DuplicateManager implements IDuplicateManager {
   private fileStorage: IFileStorage;
   private logger: ILogger;
   private settingsStore: ISettingsStore;
+  private lockManager: ILockManager;
   private storePath: string;
   private store: DuplicatePairsStore | null;
   private listeners: Array<(pairs: DuplicatePair[]) => void>;
@@ -32,12 +31,14 @@ export class DuplicateManager implements IDuplicateManager {
     fileStorage: IFileStorage,
     logger: ILogger,
     settingsStore: ISettingsStore,
+    lockManager: ILockManager,
     storePath: string = "data/duplicate-pairs.json"
   ) {
     this.vectorIndex = vectorIndex;
     this.fileStorage = fileStorage;
     this.logger = logger;
     this.settingsStore = settingsStore;
+    this.lockManager = lockManager;
     this.storePath = storePath;
     this.store = null;
     this.listeners = [];
@@ -47,9 +48,7 @@ export class DuplicateManager implements IDuplicateManager {
     });
   }
 
-  /**
-   * 初始化（加载存储）
-   */
+  /** 初始化（加载存储） */
   async initialize(): Promise<Result<void>> {
     try {
       const exists = await this.fileStorage.exists(this.storePath);
@@ -101,18 +100,25 @@ export class DuplicateManager implements IDuplicateManager {
     }
   }
 
-  /**
-   * 检测重复概念
-   * @param nodeId 概念 UID
-   * @param type 知识类型
-   * @param embedding 向量嵌入
-   * @returns 重复对列表
-   */
+  /** 检测重复概念 */
   async detect(
     nodeId: string,
     type: CRType,
     embedding: number[]
   ): Promise<Result<DuplicatePair[]>> {
+    // 获取类型锁，防止同类型的并发去重检测
+    const typeLockKey = `type:${type}`;
+    const lockResult = this.lockManager.acquire(typeLockKey, "type", nodeId);
+    if (!lockResult.ok) {
+      this.logger.warn("DuplicateManager", "类型锁冲突，跳过去重检测", {
+        nodeId,
+        type,
+        error: lockResult.error
+      });
+      // 类型锁冲突时返回空数组，不阻塞流程
+      return ok([]);
+    }
+
     try {
       if (!this.store) {
         return err("E304", "重复管理器未初始化");
@@ -232,12 +238,13 @@ export class DuplicateManager implements IDuplicateManager {
         type
       });
       return err("E304", "检测重复失败", error);
+    } finally {
+      // 释放类型锁
+      this.lockManager.release(lockResult.value);
     }
   }
 
-  /**
-   * 获取待处理的重复对
-   */
+  /** 获取待处理的重复对 */
   getPendingPairs(): DuplicatePair[] {
     if (!this.store) {
       this.logger.warn("DuplicateManager", "重复管理器未初始化");
@@ -247,10 +254,7 @@ export class DuplicateManager implements IDuplicateManager {
     return this.store.pairs.filter(p => p.status === "pending");
   }
 
-  /**
-   * 标记为非重复
-   * @param pairId 重复对 ID
-   */
+  /** 标记为非重复 */
   async markAsNonDuplicate(pairId: string): Promise<Result<void>> {
     try {
       if (!this.store) {
@@ -291,11 +295,7 @@ export class DuplicateManager implements IDuplicateManager {
     }
   }
 
-  /**
-   * 开始合并
-   * @param pairId 重复对 ID
-   * @returns 合并任务 ID
-   */
+  /** 开始合并 */
   async startMerge(pairId: string): Promise<Result<string>> {
     try {
       if (!this.store) {
@@ -336,11 +336,7 @@ export class DuplicateManager implements IDuplicateManager {
     }
   }
 
-  /**
-   * 完成合并
-   * @param pairId 重复对 ID
-   * @param keepNodeId 保留的概念 UID
-   */
+  /** 完成合并 */
   async completeMerge(pairId: string, keepNodeId: string): Promise<Result<void>> {
     try {
       if (!this.store) {
@@ -390,11 +386,7 @@ export class DuplicateManager implements IDuplicateManager {
     }
   }
 
-  /**
-   * 订阅重复对变更
-   * @param listener 监听器
-   * @returns 取消订阅函数
-   */
+  /** 订阅重复对变更 */
   subscribe(listener: (pairs: DuplicatePair[]) => void): () => void {
     this.listeners.push(listener);
 
@@ -412,11 +404,7 @@ export class DuplicateManager implements IDuplicateManager {
     };
   }
 
-  /**
-   * 更新重复对状态
-   * @param pairId 重复对 ID
-   * @param status 新状态
-   */
+  /** 更新重复对状态 */
   async updateStatus(pairId: string, status: DuplicatePairStatus): Promise<Result<void>> {
     try {
       if (!this.store) {
@@ -453,10 +441,7 @@ export class DuplicateManager implements IDuplicateManager {
     }
   }
 
-  /**
-   * 移除重复对
-   * @param pairId 重复对 ID
-   */
+  /** 移除重复对 */
   async removePair(pairId: string): Promise<Result<void>> {
     try {
       if (!this.store) {
@@ -492,9 +477,7 @@ export class DuplicateManager implements IDuplicateManager {
     }
   }
 
-  /**
-   * 获取已合并的重复对
-   */
+  /** 获取已合并的重复对 */
   getMergedPairs(): DuplicatePair[] {
     if (!this.store) {
       this.logger.warn("DuplicateManager", "重复管理器未初始化");
@@ -504,9 +487,7 @@ export class DuplicateManager implements IDuplicateManager {
     return this.store.pairs.filter(p => p.status === "merged");
   }
 
-  /**
-   * 获取已忽略的重复对
-   */
+  /** 获取已忽略的重复对 */
   getDismissedPairs(): DuplicatePair[] {
     if (!this.store) {
       this.logger.warn("DuplicateManager", "重复管理器未初始化");
@@ -516,13 +497,7 @@ export class DuplicateManager implements IDuplicateManager {
     return this.store.pairs.filter(p => p.status === "dismissed");
   }
 
-  // ============================================================================
-  // 私有辅助方法
-  // ============================================================================
-
-  /**
-   * 创建空存储
-   */
+  /** 创建空存储 */
   private createEmptyStore(): DuplicatePairsStore {
     return {
       version: "1.0.0",
@@ -531,9 +506,7 @@ export class DuplicateManager implements IDuplicateManager {
     };
   }
 
-  /**
-   * 保存存储
-   */
+  /** 保存存储 */
   private async saveStore(): Promise<Result<void>> {
     if (!this.store) {
       return err("E304", "存储未初始化");
@@ -553,19 +526,14 @@ export class DuplicateManager implements IDuplicateManager {
     return writeResult;
   }
 
-  /**
-   * 生成重复对 ID
-   * 确保 ID 的唯一性和一致性（无论 A、B 顺序如何）
-   */
+  /** 生成重复对 ID（确保唯一性和一致性） */
   private generatePairId(nodeIdA: string, nodeIdB: string): string {
     // 按字典序排序，确保 ID 一致
     const [first, second] = [nodeIdA, nodeIdB].sort();
     return `${first}--${second}`;
   }
 
-  /**
-   * 通知所有监听器
-   */
+  /** 通知所有监听器 */
   private notifyListeners(): void {
     if (!this.store) {
       return;

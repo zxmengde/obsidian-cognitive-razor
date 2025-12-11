@@ -86,6 +86,7 @@ interface Translations {
       progress: string;
       actions: string;
       noTasks: string;
+      noteName: string;
     };
     recentOps: {
       title: string;
@@ -175,7 +176,6 @@ interface Translations {
       confirmCreateFailed: string;
       confirmCreateWaiting: string;
       standardizeUpdated: string;
-      mergeDeprecated: string;
       undoDismissSuccess: string;
       deletePairSuccess: string;
       writeFailed: string;
@@ -188,6 +188,24 @@ interface Translations {
   // 设置面板
   settings: {
     title: string;
+    tabs?: {
+      general: string;
+      providers: string;
+      knowledge: string;
+      system: string;
+    };
+    groups?: {
+      interface: string;
+      deduplication: string;
+      performance: string;
+      directory: string;
+      typeDirectories: string;
+      vectorEmbedding: string;
+      taskModels: string;
+      snapshots: string;
+      logging: string;
+      dataManagement: string;
+    };
     language: {
       name: string;
       desc: string;
@@ -219,6 +237,7 @@ interface Translations {
       addButton: string;
       addDesc: string;
       noProvider: string;
+      addFirstProvider?: string;
       defaultProvider: string;
       defaultProviderDesc: string;
       testConnection: string;
@@ -259,6 +278,7 @@ interface Translations {
         low: string;
         medium: string;
         high: string;
+        advancedParams: string;
       };
       temperature: {
         name: string;
@@ -294,6 +314,12 @@ interface Translations {
         autoRetryDesc: string;
         maxRetryAttempts: string;
         maxRetryAttemptsDesc: string;
+        taskTimeout: string;
+        taskTimeoutDesc: string;
+        maxTaskHistory: string;
+        maxTaskHistoryDesc: string;
+        providerTimeout: string;
+        providerTimeoutDesc: string;
       };
       logging: {
         title: string;
@@ -376,6 +402,15 @@ interface Translations {
 
   // 知识类型
   crTypes: {
+    Domain: string;
+    Issue: string;
+    Theory: string;
+    Entity: string;
+    Mechanism: string;
+  };
+
+  // 知识类型目录描述
+  crTypeDirectories: {
     Domain: string;
     Issue: string;
     Theory: string;
@@ -495,6 +530,7 @@ export class I18n {
           progress: "进度",
           actions: "操作",
           noTasks: "队列中暂无任务",
+          noteName: "笔记名",
         },
         recentOps: {
           title: "操作历史",
@@ -584,7 +620,6 @@ export class I18n {
           confirmCreateFailed: "确认创建失败",
           confirmCreateWaiting: "已确认创建，等待内容生成",
           standardizeUpdated: "已更新标准化结果",
-          mergeDeprecated: "合并功能已被弃用，等待重构",
           undoDismissSuccess: "已撤销忽略，重复对已恢复到待处理列表",
           deletePairSuccess: "已删除重复对记录",
           writeFailed: "写入失败",
@@ -595,6 +630,24 @@ export class I18n {
       },
       settings: {
         title: "Cognitive Razor 设置",
+        tabs: {
+          general: "通用",
+          providers: "AI Providers",
+          knowledge: "知识库",
+          system: "系统"
+        },
+        groups: {
+          interface: "界面",
+          deduplication: "去重",
+          performance: "性能",
+          directory: "目录结构",
+          typeDirectories: "类型目录",
+          vectorEmbedding: "向量嵌入",
+          taskModels: "任务模型配置",
+          snapshots: "快照与撤销",
+          logging: "日志",
+          dataManagement: "数据管理"
+        },
         language: {
           name: "语言",
           desc: "选择界面语言",
@@ -626,6 +679,7 @@ export class I18n {
           addButton: "添加 Provider",
           addDesc: "配置 AI 服务提供商（支持 OpenAI 标准格式，可通过自定义端点兼容其他服务）",
           noProvider: "尚未配置任何 Provider。请添加至少一个 Provider 以使用插件功能。",
+          addFirstProvider: "点击上方按钮添加您的第一个 AI Provider",
           defaultProvider: "默认 Provider",
           defaultProviderDesc: "选择默认使用的 AI Provider",
           testConnection: "测试连接",
@@ -666,6 +720,7 @@ export class I18n {
             low: "低",
             medium: "中",
             high: "高",
+            advancedParams: "高级参数配置",
           },
           temperature: {
             name: "Temperature",
@@ -701,6 +756,12 @@ export class I18n {
             autoRetryDesc: "任务失败时自动重试",
             maxRetryAttempts: "最大重试次数",
             maxRetryAttemptsDesc: "任务失败时的最大重试次数",
+            taskTimeout: "任务超时时间",
+            taskTimeoutDesc: "单个任务的最大执行时长（毫秒，默认 1800000 = 30分钟）",
+            maxTaskHistory: "任务历史上限",
+            maxTaskHistoryDesc: "保留的已完成/失败/取消任务数量上限（默认 300）",
+            providerTimeout: "Provider 请求超时",
+            providerTimeoutDesc: "API 请求的超时时间（毫秒，默认 1800000 = 30分钟）",
           },
           logging: {
             title: "日志设置",
@@ -781,6 +842,13 @@ export class I18n {
         Entity: "实体",
         Mechanism: "机制",
       },
+      crTypeDirectories: {
+        Domain: "知识领域的存储目录。默认: 1-领域，支持相对路径如 CR/1-领域",
+        Issue: "问题议题的存储目录。默认: 2-议题，支持相对路径如 CR/2-议题",
+        Theory: "理论学说的存储目录。默认: 3-理论，支持相对路径如 CR/3-理论",
+        Entity: "实体对象的存储目录。默认: 4-实体，支持相对路径如 CR/4-实体",
+        Mechanism: "机制原理的存储目录。默认: 5-机制，支持相对路径如 CR/5-机制",
+      },
     };
   }
 
@@ -859,6 +927,7 @@ export class I18n {
           progress: "Progress",
           actions: "Actions",
           noTasks: "No tasks in queue",
+          noteName: "Note Name",
         },
         recentOps: {
           title: "Operation History",
@@ -948,7 +1017,6 @@ export class I18n {
           confirmCreateFailed: "Confirm create failed",
           confirmCreateWaiting: "Creation confirmed, waiting for content generation",
           standardizeUpdated: "Standardization result updated",
-          mergeDeprecated: "Merge feature is deprecated, pending refactoring",
           undoDismissSuccess: "Dismiss undone, duplicate pair restored to pending list",
           deletePairSuccess: "Duplicate pair record deleted",
           writeFailed: "Write failed",
@@ -959,6 +1027,24 @@ export class I18n {
       },
       settings: {
         title: "Cognitive Razor Settings",
+        tabs: {
+          general: "General",
+          providers: "AI Providers",
+          knowledge: "Knowledge",
+          system: "System"
+        },
+        groups: {
+          interface: "Interface",
+          deduplication: "Deduplication",
+          performance: "Performance",
+          directory: "Directory Structure",
+          typeDirectories: "Type Directories",
+          vectorEmbedding: "Vector Embedding",
+          taskModels: "Task Models",
+          snapshots: "Snapshots & Undo",
+          logging: "Logging",
+          dataManagement: "Data Management"
+        },
         language: {
           name: "Language",
           desc: "Select interface language",
@@ -990,6 +1076,7 @@ export class I18n {
           addButton: "Add Provider",
           addDesc: "Configure AI service provider (supports OpenAI standard format, compatible with other services via custom endpoint)",
           noProvider: "No provider configured yet. Please add at least one provider to use plugin features.",
+          addFirstProvider: "Click the button above to add your first AI Provider",
           defaultProvider: "Default Provider",
           defaultProviderDesc: "Select the default AI provider",
           testConnection: "Test Connection",
@@ -1030,6 +1117,7 @@ export class I18n {
             low: "Low",
             medium: "Medium",
             high: "High",
+            advancedParams: "Advanced Parameters",
           },
           temperature: {
             name: "Temperature",
@@ -1065,6 +1153,12 @@ export class I18n {
             autoRetryDesc: "Automatically retry failed tasks",
             maxRetryAttempts: "Max Retry Attempts",
             maxRetryAttemptsDesc: "Maximum number of retry attempts for failed tasks",
+            taskTimeout: "Task Timeout",
+            taskTimeoutDesc: "Maximum execution time for a single task (milliseconds, default 1800000 = 30 minutes)",
+            maxTaskHistory: "Max Task History",
+            maxTaskHistoryDesc: "Maximum number of completed/failed/cancelled tasks to retain (default 300)",
+            providerTimeout: "Provider Request Timeout",
+            providerTimeoutDesc: "Timeout for API requests (milliseconds, default 1800000 = 30 minutes)",
           },
           logging: {
             title: "Logging Settings",
@@ -1144,6 +1238,13 @@ export class I18n {
         Theory: "Theory",
         Entity: "Entity",
         Mechanism: "Mechanism",
+      },
+      crTypeDirectories: {
+        Domain: "Storage directory for knowledge domains. Default: 1-领域, supports relative paths like CR/1-领域",
+        Issue: "Storage directory for issues. Default: 2-议题, supports relative paths like CR/2-议题",
+        Theory: "Storage directory for theories. Default: 3-理论, supports relative paths like CR/3-理论",
+        Entity: "Storage directory for entities. Default: 4-实体, supports relative paths like CR/4-实体",
+        Mechanism: "Storage directory for mechanisms. Default: 5-机制, supports relative paths like CR/5-机制",
       },
     };
   }

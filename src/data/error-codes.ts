@@ -1,26 +1,15 @@
 /**
  * 错误码定义
- * 
- * 遵循设计文档 section 6.5.1 定义的错误码系统
- * 
- * 错误码范围：
- * - E001-E010: 内容错误（可重试）
- * - E100-E102: 网络错误（可重试，指数退避）
- * - E103: 认证错误（终止）
- * - E200-E201: 安全/能力错误（终止）
- * - E300-E304: 文件系统错误（终止）
- * 
- * **Validates: Requirements 6.5**
+ * E001-E010: 内容错误（可重试）
+ * E100-E102: 网络错误（可重试）
+ * E103: 认证错误（终止）
+ * E200-E201: 安全/能力错误（终止）
+ * E300-E304: 文件系统错误（终止）
  */
 
-// ============================================================================
 // 错误码枚举
-// ============================================================================
 
-/**
- * 内容错误码 (E001-E010)
- * 这些错误可以通过重试（附加错误历史）来修复
- */
+/** 内容错误码 (E001-E010) - 可重试 */
 export const ContentErrorCodes = {
   /** 输出非 JSON 或解析失败 */
   E001: "E001",
@@ -44,10 +33,7 @@ export const ContentErrorCodes = {
   E010: "E010",
 } as const;
 
-/**
- * 网络错误码 (E100-E102)
- * 这些错误可以通过指数退避重试来恢复
- */
+/** 网络错误码 (E100-E102) - 可重试 */
 export const NetworkErrorCodes = {
   /** Provider 返回 5xx/4xx */
   E100: "E100",
@@ -57,19 +43,13 @@ export const NetworkErrorCodes = {
   E102: "E102",
 } as const;
 
-/**
- * 认证错误码 (E103)
- * 终止错误，不重试
- */
+/** 认证错误码 (E103) - 终止错误 */
 export const AuthErrorCodes = {
   /** 认证失败 (401/403) */
   E103: "E103",
 } as const;
 
-/**
- * 能力错误码 (E200-E201)
- * 终止错误，不重试
- */
+/** 能力错误码 (E200-E201) - 终止错误 */
 export const CapabilityErrorCodes = {
   /** 触发安全边界 */
   E200: "E200",
@@ -77,10 +57,7 @@ export const CapabilityErrorCodes = {
   E201: "E201",
 } as const;
 
-/**
- * 文件系统错误码 (E300-E304)
- * 终止错误，不重试
- */
+/** 文件系统错误码 (E300-E304) - 终止错误 */
 export const FileSystemErrorCodes = {
   /** 文件写入失败 */
   E300: "E300",
@@ -94,9 +71,7 @@ export const FileSystemErrorCodes = {
   E304: "E304",
 } as const;
 
-// ============================================================================
 // 错误码类型
-// ============================================================================
 
 export type ContentErrorCode = typeof ContentErrorCodes[keyof typeof ContentErrorCodes];
 export type NetworkErrorCode = typeof NetworkErrorCodes[keyof typeof NetworkErrorCodes];
@@ -112,13 +87,9 @@ export type ErrorCode =
   | CapabilityErrorCode 
   | FileSystemErrorCode;
 
-// ============================================================================
 // 错误码信息
-// ============================================================================
 
-/**
- * 错误码详细信息
- */
+/** 错误码详细信息 */
 export interface ErrorCodeInfo {
   /** 错误码 */
   code: ErrorCode;
@@ -134,9 +105,7 @@ export interface ErrorCodeInfo {
   fixSuggestion?: string;
 }
 
-/**
- * 错误码信息映射表
- */
+/** 错误码信息映射表 */
 export const ERROR_CODE_INFO: Record<ErrorCode, ErrorCodeInfo> = {
   // 内容错误 (E001-E010)
   E001: {
@@ -317,20 +286,14 @@ export const ERROR_CODE_INFO: Record<ErrorCode, ErrorCodeInfo> = {
   },
 };
 
-// ============================================================================
 // 辅助函数
-// ============================================================================
 
-/**
- * 检查是否为有效的错误码
- */
+/** 检查是否为有效的错误码 */
 export function isValidErrorCode(code: string): code is ErrorCode {
   return code in ERROR_CODE_INFO;
 }
 
-/**
- * 获取错误码信息
- */
+/** 获取错误码信息 */
 export function getErrorCodeInfo(code: string): ErrorCodeInfo | undefined {
   if (isValidErrorCode(code)) {
     return ERROR_CODE_INFO[code];
@@ -338,67 +301,49 @@ export function getErrorCodeInfo(code: string): ErrorCodeInfo | undefined {
   return undefined;
 }
 
-/**
- * 检查错误码是否可重试
- */
+/** 检查错误码是否可重试 */
 export function isRetryableErrorCode(code: string): boolean {
   const info = getErrorCodeInfo(code);
   return info?.retryable ?? false;
 }
 
-/**
- * 获取错误码的修复建议
- */
+/** 获取错误码的修复建议 */
 export function getFixSuggestion(code: string): string | undefined {
   const info = getErrorCodeInfo(code);
   return info?.fixSuggestion;
 }
 
-/**
- * 检查是否为内容错误 (E001-E010)
- */
+/** 检查是否为内容错误 (E001-E010) */
 export function isContentErrorCode(code: string): boolean {
   return code in ContentErrorCodes || /^E00[1-9]$|^E010$/.test(code);
 }
 
-/**
- * 检查是否为网络错误 (E100-E102)
- */
+/** 检查是否为网络错误 (E100-E102) */
 export function isNetworkErrorCode(code: string): boolean {
   return code in NetworkErrorCodes || /^E10[0-2]$/.test(code);
 }
 
-/**
- * 检查是否为认证错误 (E103)
- */
+/** 检查是否为认证错误 (E103) */
 export function isAuthErrorCode(code: string): boolean {
   return code === "E103";
 }
 
-/**
- * 检查是否为能力错误 (E200-E201)
- */
+/** 检查是否为能力错误 (E200-E201) */
 export function isCapabilityErrorCode(code: string): boolean {
   return code in CapabilityErrorCodes || /^E20[0-1]$/.test(code);
 }
 
-/**
- * 检查是否为文件系统错误 (E300-E304)
- */
+/** 检查是否为文件系统错误 (E300-E304) */
 export function isFileSystemErrorCode(code: string): boolean {
   return code in FileSystemErrorCodes || /^E30[0-4]$/.test(code);
 }
 
-/**
- * 检查是否为终止错误（不可重试）
- */
+/** 检查是否为终止错误（不可重试） */
 export function isTerminalErrorCode(code: string): boolean {
   return isAuthErrorCode(code) || isCapabilityErrorCode(code) || isFileSystemErrorCode(code);
 }
 
-/**
- * 获取所有错误码列表
- */
+/** 获取所有错误码列表 */
 export function getAllErrorCodes(): ErrorCode[] {
   return Object.keys(ERROR_CODE_INFO) as ErrorCode[];
 }

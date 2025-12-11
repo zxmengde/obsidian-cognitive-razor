@@ -1,9 +1,4 @@
-/**
- * 提示词管理器
- * 负责加载、验证和构建提示词模板
- * 
- * 遵循设计文档 A-PDD-01 至 A-PDD-11 公理
- */
+/** 提示词管理器：加载、验证和构建提示词模板 */
 
 import {
   IPromptManager,
@@ -15,9 +10,7 @@ import {
   err
 } from "../types";
 
-/**
- * 提示词模板结构
- */
+/** 提示词模板结构 */
 interface PromptTemplate {
   id: string;
   content: string;
@@ -25,39 +18,20 @@ interface PromptTemplate {
   optionalSlots: string[];
 }
 
-/**
- * 必需的提示词区块（A-PDD-01 区块序公理）
- * 模板必须包含这些核心区块
- * 
- * 注意：新的模板结构使用以下区块：
- * - <system_instructions>: 系统指令和角色定义
- * - <context_slots>: 上下文槽位（变量占位符）
- * - <task_instruction> 或 <task>: 任务说明
- * - <output_schema>: 输出格式定义
- * 
- * 可选区块：
- * - <writing_style>: 写作风格指南（reason 类任务）
- * - <naming_morphology>: 命名规范（某些任务）
- * - <philosophical_core>: 哲学核心（reason 类任务）
- */
+/** 必需的提示词区块 */
 const REQUIRED_BLOCKS = [
   "<system_instructions>",
   "<context_slots>",
   "<output_schema>"
 ] as const;
 
-/**
- * 任务指令区块（至少需要其中之一）
- */
+/** 任务指令区块（至少需要其中之一） */
 const TASK_BLOCKS = [
   "<task_instruction>",
   "<task>"
 ] as const;
 
-/**
- * 任务-槽位映射表（设计文档 6.2 节）
- * 定义每种任务类型允许使用的槽位
- */
+/** 任务-槽位映射表：定义每种任务类型允许使用的槽位 */
 const TASK_SLOT_MAPPING: Record<TaskType, { required: string[]; optional: string[] }> = {
   "embedding": {
     required: ["CTX_INPUT"],
@@ -84,18 +58,7 @@ const TASK_SLOT_MAPPING: Record<TaskType, { required: string[]; optional: string
 
 
 
-/**
- * 验证模板区块结构
- * 遵循 A-PDD-01：模板必须包含必需的区块
- * 
- * 新的模板结构（2025-12-09更新）：
- * - 必需区块：<system_instructions>, <context_slots>, <output_schema>
- * - 任务区块：<task_instruction> 或 <task>（至少一个）
- * - 可选区块：<writing_style>, <naming_morphology>, <philosophical_core> 等
- * 
- * @param content 模板内容
- * @returns 验证结果，包含是否有效和错误信息
- */
+/** 验证模板区块结构 */
 function validateBlockOrder(content: string): { valid: boolean; error?: string; missingBlocks?: string[] } {
   // 检查所有必需区块是否存在
   const missingBlocks: string[] = [];
@@ -146,13 +109,7 @@ function validateBlockOrder(content: string): { valid: boolean; error?: string; 
   return { valid: true };
 }
 
-/**
- * 检测未替换的变量
- * 遵循 A-PDD-02：构建阶段所有 {{ }} 变量必须被完全替换
- * 
- * @param content 模板内容
- * @returns 未替换的变量列表
- */
+/** 检测未替换的变量 */
 function findUnreplacedVariables(content: string): string[] {
   const regex = /\{\{([^}]+)\}\}/g;
   const unreplaced: string[] = [];
@@ -165,14 +122,7 @@ function findUnreplacedVariables(content: string): string[] {
   return unreplaced;
 }
 
-/**
- * 验证槽位是否符合任务-槽位映射表
- * 遵循 A-PDD-04：每个任务只能使用映射表规定的上下文槽位组合
- * 
- * @param taskType 任务类型
- * @param providedSlots 提供的槽位
- * @returns 验证结果
- */
+/** 验证槽位是否符合任务-槽位映射表 */
 function validateSlots(
   taskType: TaskType,
   providedSlots: string[]
@@ -209,15 +159,7 @@ function validateSlots(
   };
 }
 
-/**
- * 替换模板中的变量
- * 使用简单的字符串替换，避免正则表达式的特殊字符问题
- * 
- * @param template 模板内容
- * @param varName 变量名
- * @param value 替换值
- * @returns 替换后的内容
- */
+/** 替换模板中的变量 */
 function replaceVariable(template: string, varName: string, value: string): string {
   const placeholder = "{{" + varName + "}}";
   // 使用 split + join 替代正则表达式，避免特殊字符问题
@@ -230,6 +172,7 @@ export class PromptManager implements IPromptManager {
   private logger: ILogger;
   private promptsDir: string;
   private templateCache: Map<string, PromptTemplate>;
+  private baseComponentsCache: Map<string, string>;
 
   constructor(
     fileStorage: IFileStorage,
@@ -240,21 +183,14 @@ export class PromptManager implements IPromptManager {
     this.logger = logger;
     this.promptsDir = promptsDir;
     this.templateCache = new Map();
+    this.baseComponentsCache = new Map();
 
     this.logger.debug("PromptManager", "PromptManager 初始化完成", {
       promptsDir
     });
   }
 
-  /**
-   * 构建 prompt
-   * 遵循 A-PDD-01 至 A-PDD-04 公理
-   * 
-   * @param taskType 任务类型
-   * @param slots 上下文槽位
-   * @param conceptType 知识类型（可选，用于 reason:new 任务选择正确的模板）
-   * @returns 完整的 prompt
-   */
+  /** 构建 prompt */
   build(taskType: TaskType, slots: Record<string, string>, conceptType?: string): Result<string> {
     try {
       // 获取模板 ID（对于 reason:new 任务，根据知识类型选择模板）
@@ -322,13 +258,7 @@ export class PromptManager implements IPromptManager {
     }
   }
 
-  /**
-   * 验证模板
-   * 遵循 A-PDD-01: 验证区块顺序
-   * 
-   * @param templateId 模板 ID
-   * @returns 是否有效
-   */
+  /** 验证模板 */
   validateTemplate(templateId: string): Result<boolean> {
     try {
       const templateResult = this.loadTemplate(templateId);
@@ -362,39 +292,19 @@ export class PromptManager implements IPromptManager {
     }
   }
 
-  /**
-   * 获取必需槽位
-   * @param taskType 任务类型
-   * @returns 必需槽位列表
-   */
+  /** 获取必需槽位 */
   getRequiredSlots(taskType: TaskType): string[] {
     const mapping = TASK_SLOT_MAPPING[taskType];
     return mapping ? mapping.required : [];
   }
 
-  /**
-   * 获取可选槽位
-   * @param taskType 任务类型
-   * @returns 可选槽位列表
-   */
+  /** 获取可选槽位 */
   getOptionalSlots(taskType: TaskType): string[] {
     const mapping = TASK_SLOT_MAPPING[taskType];
     return mapping ? mapping.optional : [];
   }
 
-  // ============================================================================
-  // 私有辅助方法
-  // ============================================================================
-
-  /**
-   * 获取模板 ID
-   * 
-   * 对于 reason:new 任务，需要根据知识类型选择对应的模板
-   * 
-   * @param taskType 任务类型
-   * @param conceptType 知识类型（可选，用于 reason:new 任务）
-   * @returns 模板 ID
-   */
+  /** 获取模板 ID（对于 reason:new 任务，根据知识类型选择模板） */
   resolveTemplateId(taskType: TaskType, conceptType?: string): string {
     // 将任务类型映射到模板文件名
     const mapping: Record<TaskType, string> = {
@@ -420,16 +330,12 @@ export class PromptManager implements IPromptManager {
     return mapping[taskType] || taskType;
   }
 
-  /**
-   * 判断模板是否已缓存（用于入队前硬校验）
-   */
+  /** 判断模板是否已缓存（用于入队前硬校验） */
   hasTemplate(templateId: string): boolean {
     return this.templateCache.has(templateId);
   }
 
-  /**
-   * 加载模板
-   */
+  /** 加载模板 */
   private loadTemplate(templateId: string): Result<PromptTemplate> {
     // 检查缓存
     if (this.templateCache.has(templateId)) {
@@ -443,9 +349,67 @@ export class PromptManager implements IPromptManager {
     return err("E002", `模板未加载: ${templateId}，请先调用 preloadTemplate 或 preloadAllTemplates`);
   }
 
-  /**
-   * 预加载模板（应在初始化时调用）
-   */
+  /** 预加载基础组件 */
+  private async preloadBaseComponent(componentName: string): Promise<Result<string>> {
+    // 检查缓存
+    if (this.baseComponentsCache.has(componentName)) {
+      return ok(this.baseComponentsCache.get(componentName)!);
+    }
+
+    try {
+      const componentPath = `${this.promptsDir}/_base/${componentName}.md`;
+      const readResult = await this.fileStorage.read(componentPath);
+
+      if (!readResult.ok) {
+        this.logger.warn("PromptManager", `基础组件不存在: ${componentName}`, {
+          componentPath
+        });
+        return readResult;
+      }
+
+      const content = readResult.value;
+      this.baseComponentsCache.set(componentName, content);
+
+      this.logger.debug("PromptManager", `基础组件已加载: ${componentName}`);
+      return ok(content);
+    } catch (error) {
+      this.logger.error("PromptManager", "加载基础组件失败", error as Error, {
+        componentName
+      });
+      return err("E002", "加载基础组件失败", error);
+    }
+  }
+
+  /** 替换模板中的基础组件引用 */
+  private async injectBaseComponents(content: string): Promise<Result<string>> {
+    let processedContent = content;
+    const componentMapping: Record<string, string> = {
+      "{{BASE_WRITING_STYLE}}": "writing-style",
+      "{{BASE_ANTI_PATTERNS}}": "anti-patterns",
+      "{{BASE_TERMINOLOGY}}": "terminology",
+      "{{BASE_OUTPUT_FORMAT}}": "output-format"
+    };
+
+    for (const [placeholder, componentName] of Object.entries(componentMapping)) {
+      if (processedContent.includes(placeholder)) {
+        const componentResult = await this.preloadBaseComponent(componentName);
+        
+        if (componentResult.ok) {
+          processedContent = processedContent.split(placeholder).join(componentResult.value);
+          this.logger.debug("PromptManager", `已注入基础组件: ${componentName}`);
+        } else {
+          // 如果基础组件加载失败，保留占位符（向后兼容）
+          this.logger.warn("PromptManager", `跳过基础组件注入: ${componentName}`, {
+            error: componentResult.error
+          });
+        }
+      }
+    }
+
+    return ok(processedContent);
+  }
+
+  /** 预加载模板（应在初始化时调用） */
   async preloadTemplate(templateId: string): Promise<Result<void>> {
     try {
       const templatePath = `${this.promptsDir}/${templateId}.md`;
@@ -460,7 +424,14 @@ export class PromptManager implements IPromptManager {
         return readResult;
       }
 
-      const content = readResult.value;
+      let content = readResult.value;
+
+      // 注入基础组件
+      const injectionResult = await this.injectBaseComponents(content);
+      if (!injectionResult.ok) {
+        return injectionResult as Result<void>;
+      }
+      content = injectionResult.value;
 
       // A-PDD-01: 验证模板结构
       const blockValidation = validateBlockOrder(content);
@@ -500,9 +471,7 @@ export class PromptManager implements IPromptManager {
     }
   }
 
-  /**
-   * 预加载所有模板
-   */
+  /** 预加载所有模板 */
   async preloadAllTemplates(): Promise<Result<void>> {
     const templateIds = [
       "standardizeClassify",
@@ -543,9 +512,7 @@ export class PromptManager implements IPromptManager {
     return ok(undefined);
   }
 
-  /**
-   * 提取槽位
-   */
+  /** 提取槽位 */
   private extractSlots(content: string): { required: string[]; optional: string[] } {
     const allSlots = new Set<string>();
     const regex = /\{\{([^}]+)\}\}/g;
@@ -568,16 +535,41 @@ export class PromptManager implements IPromptManager {
 
 
 
-  /**
-   * 清除模板缓存（用于测试）
-   */
-  clearCache(): void {
-    this.templateCache.clear();
+  /** 预加载所有基础组件 */
+  async preloadAllBaseComponents(): Promise<Result<void>> {
+    const componentNames = ["writing-style", "anti-patterns", "terminology", "output-format"];
+    const errors: string[] = [];
+
+    for (const componentName of componentNames) {
+      const result = await this.preloadBaseComponent(componentName);
+      if (!result.ok) {
+        errors.push(`${componentName}: ${result.error.message}`);
+      }
+    }
+
+    if (errors.length > 0) {
+      this.logger.warn("PromptManager", "部分基础组件加载失败", {
+        failedCount: errors.length,
+        errors
+      });
+      // 不返回错误，因为基础组件是可选的
+    }
+
+    this.logger.info("PromptManager", "基础组件预加载完成", {
+      loadedCount: this.baseComponentsCache.size,
+      totalCount: componentNames.length
+    });
+
+    return ok(undefined);
   }
 
-  /**
-   * 直接设置模板（用于测试）
-   */
+  /** 清除模板缓存（用于测试） */
+  clearCache(): void {
+    this.templateCache.clear();
+    this.baseComponentsCache.clear();
+  }
+
+  /** 直接设置模板（用于测试） */
   setTemplate(templateId: string, template: PromptTemplate): void {
     this.templateCache.set(templateId, template);
   }

@@ -1,14 +1,3 @@
-/**
- * 任务管线编排器
- *
- * 负责协调任务链的执行，包括用户确认步骤
- *
- * 遵循设计文档 A-FUNC-05：
- * 任务链遵循固定顺序：standardizeClassify → enrich → embedding → 确认创建 → reason:new → 确认写入 → 去重检测
- * （现需求调整：standardize/enrich 流程自动确认创建与写入）
- *
- * 当前实现：标准创建/丰富流程自动执行写入，不生成撤销快照
- */
 
 import {
   ITaskQueue,
@@ -37,6 +26,7 @@ import { generateFrontmatter, generateMarkdownContent } from "./frontmatter-util
 import { createConceptSignature, generateFilePath } from "./naming-utils";
 import { FieldDescription, schemaRegistry } from "./schema-registry";
 import { mapStandardizeOutput } from "./standardize-mapper";
+import { generateUUID } from "../data/validators";
 
 /**
  * 管线阶段
@@ -558,12 +548,13 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
       });
 
       // 创建 enrich 任务
+      const settings = this.getSettings();
       const taskResult = this.taskQueue.enqueue({
         nodeId,
         taskType: "enrich",
         state: "Pending",
         attempt: 0,
-        maxAttempts: 3,
+        maxAttempts: settings.maxRetryAttempts,
         providerRef: this.getProviderIdForTask("enrich"),
         payload: {
           pipelineId,
@@ -813,7 +804,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
         taskType: "ground",
         state: "Pending",
         attempt: 0,
-        maxAttempts: 3,
+        maxAttempts: settings.maxRetryAttempts,
         providerRef: this.getProviderIdForTask("ground"),
         payload: {
           pipelineId: context.pipelineId,
@@ -886,7 +877,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
         taskType: "ground",
         state: "Pending",
         attempt: 0,
-        maxAttempts: 3,
+        maxAttempts: settings.maxRetryAttempts,
         providerRef: this.getProviderIdForTask("ground"),
         payload: {
           pipelineId: context.pipelineId,
@@ -950,12 +941,13 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
       context.updatedAt = new Date().toISOString();
 
       // 3. 创建 reason:new 任务
+      const settings = this.getSettings();
       const taskResult = this.taskQueue.enqueue({
         nodeId: context.nodeId,
         taskType: "reason:new",
         state: "Pending",
         attempt: 0,
-        maxAttempts: 3,
+        maxAttempts: settings.maxRetryAttempts,
         providerRef: this.getProviderIdForTask("reason:new"),
         payload: {
           pipelineId,
@@ -1032,7 +1024,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
       // 生成仅含 frontmatter 的 Stub 内容
       const frontmatter = generateFrontmatter({
-        uid: context.nodeId,
+        crUid: context.nodeId,
         type: context.type,
         status: "Stub", // Stub 状态
         aliases: context.enrichedData?.aliases,
@@ -1370,12 +1362,13 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     context.updatedAt = new Date().toISOString();
 
     // 创建 enrich 任务
+    const settings = this.getSettings();
     const taskResult = this.taskQueue.enqueue({
       nodeId: context.nodeId,
       taskType: "enrich",
       state: "Pending",
       attempt: 0,
-      maxAttempts: 3,
+      maxAttempts: settings.maxRetryAttempts,
       providerRef: this.getProviderIdForTask("enrich"),
       payload: {
         pipelineId: context.pipelineId,
@@ -1554,12 +1547,13 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
       ? context.generatedContent
       : JSON.stringify(context.generatedContent, null, 2);
 
+    const settings = this.getSettings();
     const taskResult = this.taskQueue.enqueue({
       nodeId: context.nodeId,
       taskType: "ground",
       state: "Pending",
       attempt: 0,
-      maxAttempts: 3,
+      maxAttempts: settings.maxRetryAttempts,
       providerRef: this.getProviderIdForTask("ground"),
       payload: {
         pipelineId: context.pipelineId,
@@ -1809,12 +1803,15 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
     const firstItem = items[0];
 
-    // sub_domains, issues, sub_issues, sub_theories: name + description
-    if ("name" in firstItem && "description" in firstItem) {
+    // 优先匹配更具体的结构，避免被通用规则覆盖
+
+    // properties (in Entity): name + type + description
+    if ("name" in firstItem && "type" in firstItem && "description" in firstItem) {
       return items.map(item => {
         const name = String(item.name || "");
+        const type = String(item.type || "");
         const description = String(item.description || "");
-        return `- [[${name}]]：${description}`;
+        return `- **${name}** (${type})：${description}`;
       }).join("\n");
     }
 
@@ -1847,22 +1844,14 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
       }).join("\n");
     }
 
-    // properties (in Entity): name + type + description
-    if ("name" in firstItem && "type" in firstItem && "description" in firstItem) {
+    // theories (in Issue): name + status + brief
+    if ("name" in firstItem && "status" in firstItem && "brief" in firstItem) {
       return items.map(item => {
         const name = String(item.name || "");
-        const type = String(item.type || "");
-        const description = String(item.description || "");
-        return `- **${name}** (${type})：${description}`;
-      }).join("\n");
-    }
-
-    // states (in Entity): name + description
-    if ("name" in firstItem && "description" in firstItem && !("role" in firstItem)) {
-      return items.map(item => {
-        const name = String(item.name || "");
-        const description = String(item.description || "");
-        return `- **${name}**：${description}`;
+        const status = String(item.status || "");
+        const brief = String(item.brief || "");
+        const statusLabel = this.getTheoryStatusLabel(status);
+        return `- [[${name}]] (${statusLabel})：${brief}`;
       }).join("\n");
     }
 
@@ -1875,33 +1864,24 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
       }).join("\n");
     }
 
-    // theories (in Issue): name + status + brief
-    if ("name" in firstItem && "status" in firstItem && "brief" in firstItem) {
-      return items.map(item => {
-        const name = String(item.name || "");
-        const status = String(item.status || "");
-        const brief = String(item.brief || "");
-        const statusLabel = this.getTheoryStatusLabel(status);
-        return `- [[${name}]] (${statusLabel})：${brief}`;
-      }).join("\n");
-    }
-
     // operates_on (in Mechanism): entity + role
+    // 修改格式：- 主体：实体名 / - 客体：实体名
     if ("entity" in firstItem && "role" in firstItem) {
       return items.map(item => {
         const entity = String(item.entity || "");
         const role = String(item.role || "");
-        return `- [[${entity}]]：${role}`;
+        return `- ${role}：${entity}`;
       }).join("\n");
     }
 
     // causal_chain (in Mechanism): step + description + interaction
+    // 修改格式：### 步骤 N：interaction\n- description
     if ("step" in firstItem && "description" in firstItem && "interaction" in firstItem) {
       return items.map(item => {
         const step = item.step;
         const description = String(item.description || "");
         const interaction = String(item.interaction || "");
-        return `### 步骤 ${step}\n- **描述**：${description}\n- **交互**：${interaction}`;
+        return `### 步骤 ${step}：${interaction}\n- ${description}`;
       }).join("\n\n");
     }
 
@@ -1913,6 +1893,25 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
         const mechanism = String(item.mechanism || "");
         const effectLabel = this.getModulationEffectLabel(effect);
         return `- **${factor}** (${effectLabel})：${mechanism}`;
+      }).join("\n");
+    }
+
+    // states (in Entity): name + description (without role/type)
+    // 必须在通用 name+description 规则之前
+    if ("name" in firstItem && "description" in firstItem && !("role" in firstItem) && !("type" in firstItem)) {
+      return items.map(item => {
+        const name = String(item.name || "");
+        const description = String(item.description || "");
+        return `- **${name}**：${description}`;
+      }).join("\n");
+    }
+
+    // sub_domains, issues, sub_issues, sub_theories: name + description (通用规则)
+    if ("name" in firstItem && "description" in firstItem) {
+      return items.map(item => {
+        const name = String(item.name || "");
+        const description = String(item.description || "");
+        return `- [[${name}]]：${description}`;
       }).join("\n");
     }
 
@@ -1998,8 +1997,8 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
       const value = line.substring(colonIndex + 1).trim();
 
       switch (key) {
-        case "uid":
-          frontmatter.uid = value;
+        case "crUid":
+          frontmatter.crUid = value;
           break;
         case "type":
           frontmatter.type = value as CRType;
@@ -2019,7 +2018,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
       }
     }
 
-    return frontmatter.uid && frontmatter.type && frontmatter.status
+    return frontmatter.crUid && frontmatter.type && frontmatter.status
       ? (frontmatter as CRFrontmatter)
       : null;
   }
@@ -2027,7 +2026,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
   private buildFrontmatterString(frontmatter: CRFrontmatter): string {
     const lines = [
       "---",
-      `uid: ${frontmatter.uid}`,
+      `crUid: ${frontmatter.crUid}`,
       `type: ${frontmatter.type}`,
       `status: ${frontmatter.status}`,
       `created: ${frontmatter.created}`,
@@ -2216,7 +2215,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
       );
 
       const frontmatter = generateFrontmatter({
-        uid: context.nodeId,
+        crUid: context.nodeId,
         type: context.type,
         status: "Draft",
         aliases: context.enrichedData?.aliases,
@@ -2374,11 +2373,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
    * 生成节点 ID (UUID v4)
    */
   private generateNodeId(): string {
-    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-      const r = Math.random() * 16 | 0;
-      const v = c === "x" ? r : (r & 0x3 | 0x8);
-      return v.toString(16);
-    });
+    return generateUUID();
   }
 
   /**

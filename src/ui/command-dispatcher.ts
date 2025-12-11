@@ -15,7 +15,6 @@
  */
 
 import { Plugin, Notice, MarkdownView, TFile, Menu } from "obsidian";
-import { IncrementalImproveModal } from "./incremental-improve-modal";
 import { SimpleInputModal } from "./simple-input-modal";
 import { WorkbenchPanel, WORKBENCH_VIEW_TYPE } from "./workbench-panel";
 import { TaskQueue } from "../core/task-queue";
@@ -104,15 +103,8 @@ export class CommandDispatcher {
           return;
         }
 
-        // 添加增量改进菜单项
-        menu.addItem((item) => {
-          item
-            .setTitle("增量改进笔记")
-            .setIcon("edit")
-            .onClick(async () => {
-              await this.improveNoteFromFile(file);
-            });
-        });
+        // 文件菜单项可以在这里添加
+        // 目前增量改进功能已弃用
       })
     );
   }
@@ -340,26 +332,6 @@ export class CommandDispatcher {
   // - clearCompletedTasks (通过工作台操作)
   // - retryFailedTasks (通过工作台操作)
   // - enrichNote (通过文件菜单触发)
-  // - improveNote (通过文件菜单触发)
-
-  /**
-   * 从文件触发增量改进
-   */
-  private async improveNoteFromFile(file: TFile): Promise<void> {
-    const components = this.plugin.getComponents();
-    if (!components.pipelineOrchestrator) {
-      new Notice("管线编排器未初始化");
-      return;
-    }
-
-    // 打开增量改进模态框
-    const modal = new IncrementalImproveModal(
-      this.plugin.app,
-      file,
-      components.pipelineOrchestrator
-    );
-    modal.open();
-  }
 
   // 已移除的命令实现方法：
   // - checkDuplicates (重复管理已整合到工作台)

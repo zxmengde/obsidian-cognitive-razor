@@ -1,43 +1,33 @@
-/**
- * FileStorage 实现
- * 提供原子化文件操作，确保数据完整性
- * 
- * 遵循设计文档 A-FUNC-07 本地优先存储要求：
- * - 目录结构初始化
- * - 原子写入（临时文件 + 重命名）
- * - 数据完整性校验
- */
+/** FileStorage - 提供原子化文件操作，确保数据完整性 */
 
 import { 
   IFileStorage, 
   Result, 
   ok, 
   err,
+  Err,
   QueueStateFile,
-  VectorIndexFile,
   DuplicatePairsStore,
-  SnapshotIndex
+  SnapshotIndex,
+  ConceptVector,
+  VectorIndexMeta,
+  CRType
 } from "../types";
 import { Vault } from "obsidian";
 
-/**
- * 数据目录路径常量
- */
+/** 数据目录路径常量 */
 export const DATA_DIR = "data";
 export const SNAPSHOTS_DIR = `${DATA_DIR}/snapshots`;
+export const VECTORS_DIR = `${DATA_DIR}/vectors`;
 
-/**
- * 数据文件路径常量
- */
+/** 数据文件路径常量 */
 export const QUEUE_STATE_FILE = `${DATA_DIR}/queue-state.json`;
-export const VECTOR_INDEX_FILE = `${DATA_DIR}/vector-index.json`;
+export const VECTOR_INDEX_META_FILE = `${VECTORS_DIR}/index.json`;
 export const DUPLICATE_PAIRS_FILE = `${DATA_DIR}/duplicate-pairs.json`;
 export const SNAPSHOTS_INDEX_FILE = `${SNAPSHOTS_DIR}/index.json`;
 export const APP_LOG_FILE = `${DATA_DIR}/app.log`;
 
-/**
- * 默认队列状态
- */
+/** 默认队列状态 */
 export const DEFAULT_QUEUE_STATE: QueueStateFile = {
   version: "1.0.0",
   tasks: [],
@@ -51,25 +41,7 @@ export const DEFAULT_QUEUE_STATE: QueueStateFile = {
   locks: [],
 };
 
-/**
- * 默认向量索引
- */
-export const DEFAULT_VECTOR_INDEX: VectorIndexFile = {
-  version: "1.0.0",
-  model: "text-embedding-3-small",
-  dimension: 1536,
-  buckets: {
-    Domain: [],
-    Issue: [],
-    Theory: [],
-    Entity: [],
-    Mechanism: [],
-  },
-  metadata: {
-    totalCount: 0,
-    lastUpdated: new Date().toISOString(),
-  },
-};
+
 
 /**
  * 默认重复对存储
@@ -93,36 +65,37 @@ export const DEFAULT_SNAPSHOT_INDEX: SnapshotIndex = {
 };
 
 /**
- * FileStorage 实现类
- * 
- * 功能特性：
- * - 目录结构初始化（Requirements 1.1）
- * - 原子写入（Requirements 2.8）
- * - 数据完整性校验
- * 
- * 遵循设计文档 A-FUNC-07：
- * - 所有路径相对于插件目录（通过 basePath 注入）
- * - 运行时数据存储在 data/ 子目录
+ * 默认向量索引元数据
  */
+export const DEFAULT_VECTOR_INDEX_META: VectorIndexMeta = {
+  version: "2.0",
+  lastUpdated: Date.now(),
+  stats: {
+    totalConcepts: 0,
+    byType: {
+      Domain: 0,
+      Issue: 0,
+      Theory: 0,
+      Entity: 0,
+      Mechanism: 0,
+    },
+  },
+  concepts: {},
+};
+
+/** FileStorage 实现类 - 目录初始化、原子写入、数据完整性校验 */
 export class FileStorage implements IFileStorage {
   private vault: Vault;
   private basePath: string;
   private initialized = false;
 
-  /**
-   * 构造函数
-   * @param vault Obsidian Vault 实例
-   * @param basePath 插件根目录路径（如 .obsidian/plugins/obsidian-cognitive-razor）
-   */
+  /** 构造函数 */
   constructor(vault: Vault, basePath?: string) {
     this.vault = vault;
     this.basePath = basePath || "";
   }
 
-  /**
-   * 解析完整路径
-   * 将相对路径转换为相对于插件目录的完整路径
-   */
+  /** 解析完整路径 */
   private resolvePath(relativePath: string): string {
     if (!this.basePath) {
       return relativePath;
@@ -130,13 +103,7 @@ export class FileStorage implements IFileStorage {
     return `${this.basePath}/${relativePath}`;
   }
 
-  /**
-   * 初始化目录结构
-   * 遵循 Requirements 1.1：创建 data/, data/snapshots/ 目录
-   * 并初始化 queue-state.json, vector-index.json, duplicate-pairs.json, snapshots/index.json
-   * 
-   * @returns 初始化结果
-   */
+  /** 初始化目录结构 */
   async initialize(): Promise<Result<void>> {
     try {
       // 1. 创建目录结构（使用 resolvePath 解析完整路径）
@@ -150,19 +117,26 @@ export class FileStorage implements IFileStorage {
         return snapshotsDirResult;
       }
 
-      // 2. 初始化数据文件（如果不存在）
-      // 注意：queue-state.json 总是重新创建，以确保文件存在且格式正确
-      const queueStateContent = JSON.stringify(DEFAULT_QUEUE_STATE, null, 2);
-      const queueStateResult = await this.write(QUEUE_STATE_FILE, queueStateContent);
-      if (!queueStateResult.ok) {
-        console.error(`[FileStorage] Failed to initialize queue-state.json`, queueStateResult.error);
-        return queueStateResult;
+      const vectorsDirResult = await this.ensureDir(VECTORS_DIR);
+      if (!vectorsDirResult.ok) {
+        return vectorsDirResult;
       }
-      
+
+      // 为每个类型创建子目录
+      const types: CRType[] = ["Domain", "Issue", "Theory", "Entity", "Mechanism"];
+      for (const type of types) {
+        const typeDirResult = await this.ensureDir(`${VECTORS_DIR}/${type}`);
+        if (!typeDirResult.ok) {
+          return typeDirResult;
+        }
+      }
+
+      // 2. 初始化数据文件（如果不存在）
       const initResults = await Promise.all([
-        this.initializeFileIfNotExists(VECTOR_INDEX_FILE, DEFAULT_VECTOR_INDEX),
+        this.initializeFileIfNotExists(QUEUE_STATE_FILE, DEFAULT_QUEUE_STATE),
         this.initializeFileIfNotExists(DUPLICATE_PAIRS_FILE, DEFAULT_DUPLICATE_PAIRS),
         this.initializeFileIfNotExists(SNAPSHOTS_INDEX_FILE, DEFAULT_SNAPSHOT_INDEX),
+        this.initializeFileIfNotExists(VECTOR_INDEX_META_FILE, DEFAULT_VECTOR_INDEX_META),
       ]);
 
       // 检查是否有初始化失败
@@ -183,16 +157,12 @@ export class FileStorage implements IFileStorage {
     }
   }
 
-  /**
-   * 检查是否已初始化
-   */
+  /** 检查是否已初始化 */
   isInitialized(): boolean {
     return this.initialized;
   }
 
-  /**
-   * 如果文件不存在则初始化
-   */
+  /** 如果文件不存在则初始化 */
   private async initializeFileIfNotExists<T>(
     path: string,
     defaultContent: T
@@ -203,16 +173,15 @@ export class FileStorage implements IFileStorage {
       const writeResult = await this.write(path, content);
       if (!writeResult.ok) {
         // 记录写入失败的详细信息
-        console.error(`[FileStorage] Failed to initialize file: ${path}`, writeResult.error);
+        const error = writeResult as Err;
+        console.error(`[FileStorage] Failed to initialize file: ${path}`, error.error.message);
       }
       return writeResult;
     }
     return ok(undefined);
   }
 
-  /**
-   * 读取文件
-   */
+  /** 读取文件 */
   async read(path: string): Promise<Result<string>> {
     try {
       const fullPath = this.resolvePath(path);
@@ -227,10 +196,7 @@ export class FileStorage implements IFileStorage {
     }
   }
 
-  /**
-   * 写入文件（普通写入，不使用原子操作）
-   * 对于非关键数据使用此方法
-   */
+  /** 写入文件（普通写入） */
   async write(path: string, content: string): Promise<Result<void>> {
     try {
       const fullPath = this.resolvePath(path);
@@ -242,6 +208,8 @@ export class FileStorage implements IFileStorage {
         if (!dirResult.ok) {
           return dirResult;
         }
+        // ensureDir 已经确保目录存在，无需再次验证
+        // 移除多余的 stat 检查，避免文件系统同步延迟导致的误报
       }
 
       await this.vault.adapter.write(fullPath, content);
@@ -255,20 +223,7 @@ export class FileStorage implements IFileStorage {
     }
   }
 
-  /**
-   * 原子写入文件
-   * 遵循 Requirements 2.8：写入临时文件 .tmp → 校验完整性 → 重命名为目标文件
-   * 
-   * 用于关键数据写入（如快照恢复），确保数据完整性
-   * 
-   * 原子性保证：
-   * - 如果操作成功，目标文件包含新内容
-   * - 如果操作失败，目标文件保持原状（如果存在）
-   * 
-   * @param path 目标文件路径
-   * @param content 文件内容
-   * @returns 写入结果
-   */
+  /** 原子写入文件（临时文件 + 校验 + 重命名） */
   async atomicWrite(path: string, content: string): Promise<Result<void>> {
     const fullPath = this.resolvePath(path);
     const tempPath = `${fullPath}.tmp`;
@@ -371,10 +326,7 @@ export class FileStorage implements IFileStorage {
     }
   }
 
-  /**
-   * 校验写入完整性
-   * 读取临时文件并与原始内容比较
-   */
+  /** 校验写入完整性 */
   private async verifyWriteIntegrity(
     tempPath: string,
     expectedContent: string
@@ -400,10 +352,7 @@ export class FileStorage implements IFileStorage {
     }
   }
 
-  /**
-   * 清理临时文件
-   * 注意：tempPath 应该是完整路径（已经通过 resolvePath 处理）
-   */
+  /** 清理临时文件 */
   private async cleanupTempFile(tempPath: string): Promise<void> {
     try {
       // 直接使用 vault.adapter，因为 tempPath 已经是完整路径
@@ -414,9 +363,7 @@ export class FileStorage implements IFileStorage {
     }
   }
 
-  /**
-   * 删除文件
-   */
+  /** 删除文件 */
   async delete(path: string): Promise<Result<void>> {
     try {
       const exists = await this.exists(path);
@@ -436,9 +383,7 @@ export class FileStorage implements IFileStorage {
     }
   }
 
-  /**
-   * 检查文件是否存在
-   */
+  /** 检查文件是否存在 */
   async exists(path: string): Promise<boolean> {
     try {
       const fullPath = this.resolvePath(path);
@@ -449,15 +394,19 @@ export class FileStorage implements IFileStorage {
     }
   }
 
-  /**
-   * 确保目录存在
-   */
+  /** 确保目录存在 */
   async ensureDir(path: string): Promise<Result<void>> {
     try {
       const fullPath = this.resolvePath(path);
-      const exists = await this.exists(path);
-      if (exists) {
-        return ok(undefined);
+      
+      // 检查目录是否已存在
+      try {
+        const stat = await this.vault.adapter.stat(fullPath);
+        if (stat && stat.type === "folder") {
+          return ok(undefined);
+        }
+      } catch {
+        // 目录不存在，继续创建
       }
       
       // 递归创建父目录
@@ -470,10 +419,54 @@ export class FileStorage implements IFileStorage {
         currentPath = currentPath ? `${currentPath}/${part}` : part;
         
         try {
-          await this.vault.adapter.stat(currentPath);
+          const stat = await this.vault.adapter.stat(currentPath);
+          // 如果路径存在但不是目录，报错
+          if (stat && stat.type !== "folder") {
+            return err(
+              "E301",
+              `Path exists but is not a directory: ${currentPath}`
+            );
+          }
+          // 路径存在且是目录，继续下一级
         } catch {
-          await this.vault.adapter.mkdir(currentPath);
+          // 路径不存在，创建目录
+          try {
+            await this.vault.adapter.mkdir(currentPath);
+          } catch (mkdirError: unknown) {
+            // 如果创建失败，检查是否是因为目录已存在（并发创建）
+            try {
+              const stat = await this.vault.adapter.stat(currentPath);
+              if (stat && stat.type === "folder") {
+                // 目录已存在，继续
+                continue;
+              }
+            } catch {
+              // 确实创建失败
+              return err(
+                "E301",
+                `Failed to create directory: ${currentPath}`,
+                mkdirError
+              );
+            }
+          }
         }
+      }
+      
+      // 最终验证目录确实存在
+      try {
+        const finalStat = await this.vault.adapter.stat(fullPath);
+        if (!finalStat || finalStat.type !== "folder") {
+          return err(
+            "E301",
+            `Directory was not created successfully: ${path}`
+          );
+        }
+      } catch (verifyError) {
+        return err(
+          "E301",
+          `Failed to verify directory creation: ${path}`,
+          verifyError
+        );
       }
       
       return ok(undefined);
@@ -481,6 +474,108 @@ export class FileStorage implements IFileStorage {
       return err(
         "E301",
         `Failed to create directory: ${path}`,
+        error
+      );
+    }
+  }
+
+  /** 写入向量文件 */
+  async writeVectorFile(
+    type: CRType,
+    conceptId: string,
+    data: ConceptVector
+  ): Promise<Result<void>> {
+    const path = `${VECTORS_DIR}/${type}/${conceptId}.json`;
+    const content = JSON.stringify(data, null, 2);
+    return this.write(path, content);
+  }
+
+  /**
+   * 读取向量文件
+   * @param type 知识类型
+   * @param conceptId 概念 UID
+   */
+  async readVectorFile(
+    type: CRType,
+    conceptId: string
+  ): Promise<Result<ConceptVector>> {
+    const path = `${VECTORS_DIR}/${type}/${conceptId}.json`;
+    const readResult = await this.read(path);
+    
+    if (!readResult.ok) {
+      return readResult as Result<ConceptVector>;
+    }
+
+    try {
+      const data: ConceptVector = JSON.parse(readResult.value);
+      return ok(data);
+    } catch (error) {
+      return err(
+        "E300",
+        `Failed to parse vector file: ${path}`,
+        error
+      );
+    }
+  }
+
+  /**
+   * 删除向量文件
+   * @param type 知识类型
+   * @param conceptId 概念 UID
+   */
+  async deleteVectorFile(
+    type: CRType,
+    conceptId: string
+  ): Promise<Result<void>> {
+    const path = `${VECTORS_DIR}/${type}/${conceptId}.json`;
+    return this.delete(path);
+  }
+
+  /**
+   * 读取向量索引元数据
+   */
+  async readVectorIndexMeta(): Promise<Result<VectorIndexMeta>> {
+    const readResult = await this.read(VECTOR_INDEX_META_FILE);
+    
+    if (!readResult.ok) {
+      return readResult as Result<VectorIndexMeta>;
+    }
+
+    try {
+      const meta: VectorIndexMeta = JSON.parse(readResult.value);
+      return ok(meta);
+    } catch (error) {
+      return err(
+        "E300",
+        `Failed to parse vector index meta`,
+        error
+      );
+    }
+  }
+
+  /**
+   * 写入向量索引元数据
+   */
+  async writeVectorIndexMeta(meta: VectorIndexMeta): Promise<Result<void>> {
+    const content = JSON.stringify(meta, null, 2);
+    return this.write(VECTOR_INDEX_META_FILE, content);
+  }
+
+  /**
+   * 重命名文件
+   * @param oldPath 原路径
+   * @param newPath 新路径
+   */
+  async rename(oldPath: string, newPath: string): Promise<Result<void>> {
+    try {
+      const fullOldPath = this.resolvePath(oldPath);
+      const fullNewPath = this.resolvePath(newPath);
+      await this.vault.adapter.rename(fullOldPath, fullNewPath);
+      return ok(undefined);
+    } catch (error) {
+      return err(
+        "E300",
+        `Failed to rename file: ${oldPath} -> ${newPath}`,
         error
       );
     }

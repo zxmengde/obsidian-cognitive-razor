@@ -41,40 +41,50 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
     const content = containerEl.createDiv({ cls: "cr-settings-content" });
 
     switch (this.activeTab) {
-      case "general": this.renderGeneralTab(content); break;
-      case "providers": this.renderProvidersTab(content); break;
-      case "tasks": this.renderTaskModelsTab(content); break;
-      case "knowledge": this.renderKnowledgeTab(content); break;
-      case "system": this.renderSystemTab(content); break;
+      case "general": 
+        this.renderGeneralTab(content); 
+        break;
+      case "providers": 
+        this.renderProvidersTab(content); 
+        break;
+      case "knowledge": 
+        this.renderKnowledgeTab(content); 
+        break;
+      case "system": 
+        this.renderSystemTab(content); 
+        break;
+      case "tasks":
+        // 任务模型配置已合并到知识库标签页
+        this.renderKnowledgeTab(content);
+        break;
     }
   }
 
   /**
-   * Render Horizontal Navigation
+   * 渲染导航栏 - 简化版
    */
   private renderNav(container: HTMLElement): void {
-    const t = this.plugin.getI18n().t().settings;
-
-    // Nav Container
+    const t = this.plugin.getI18n().t();
     const nav = container.createDiv({ cls: "cr-settings-nav" });
-
-    const tabs: { id: SettingsTabId; name: string; advanced?: boolean }[] = [
-      { id: "general", name: t.title.replace(" 设置", "").replace(" Settings", "") || "常规" }, // Simplify title for tab
-      { id: "providers", name: t.provider.title.replace(" 配置", "").replace(" Configuration", "") || "AI Provider" },
-      { id: "tasks", name: t.advanced.taskModels.title.replace(" 配置", "").replace(" Configuration", "") || "任务模型" }, // Shorten
-      { id: "knowledge", name: t.advanced.directoryScheme.title.replace("方案", "").replace(" Scheme", "") || "目录" },
-      { id: "system", name: t.importExport.title }
+    
+    const tabs: { id: SettingsTabId; name: string; icon: string }[] = [
+      { id: "general", name: t.settings.tabs?.general || "通用", icon: "settings" },
+      { id: "providers", name: t.settings.tabs?.providers || "AI Providers", icon: "bot" },
+      { id: "knowledge", name: t.settings.tabs?.knowledge || "知识库", icon: "folder" },
+      { id: "system", name: t.settings.tabs?.system || "系统", icon: "wrench" }
     ];
 
-    const isAdvanced = this.plugin.settings.advancedMode;
-
     tabs.forEach(tab => {
-      if (tab.advanced && !isAdvanced) return;
-
       const item = nav.createDiv({
         cls: `cr-nav-item ${this.activeTab === tab.id ? "is-active" : ""}`
       });
-      item.textContent = tab.name;
+      
+      // 图标
+      const icon = item.createSpan({ cls: "cr-nav-icon" });
+      icon.innerHTML = this.getIconSvg(tab.icon);
+      
+      // 文字
+      item.createSpan({ text: tab.name, cls: "cr-nav-text" });
 
       item.onclick = () => {
         this.activeTab = tab.id;
@@ -84,87 +94,277 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
   }
 
   /**
-   * Tab: General Settings
+   * 获取图标 SVG
+   */
+  private getIconSvg(name: string): string {
+    const icons: Record<string, string> = {
+      settings: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M12 1v6m0 6v6m5.2-13.2l-4.2 4.2m0 6l4.2 4.2M23 12h-6m-6 0H1m18.2 5.2l-4.2-4.2m-6 0l-4.2 4.2"></path></svg>',
+      bot: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"></rect><circle cx="12" cy="5" r="2"></circle><path d="M12 7v4m-4 4h.01M16 15h.01"></path></svg>',
+      folder: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>',
+      wrench: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg>'
+    };
+    return icons[name] || icons.settings;
+  }
+
+  /**
+   * 基础设置标签页 - 重新组织
    */
   private renderGeneralTab(container: HTMLElement): void {
     const i18n = this.plugin.getI18n();
     const t = i18n.t();
 
-    container.createEl("h2", { text: t.settings.language.name }); // Using Language as section title or just General?
-
-    // Language
-    new Setting(container)
-      .setName(t.settings.language.name)
-      .setDesc(t.settings.language.desc)
-      .addDropdown(dropdown => {
-        dropdown
-          .addOption("zh", t.settings.language.zh)
-          .addOption("en", t.settings.language.en)
-          .setValue(this.plugin.settings.language)
-          .onChange(async (value) => {
-            const lang = value as "zh" | "en";
-            await this.plugin.settingsStore.update({ language: lang });
-            i18n.setLanguage(lang);
-            new Notice(formatMessage(t.notices.languageChanged, {
-              language: lang === "zh" ? t.settings.language.zh : t.settings.language.en
-            }));
-            this.display();
+    // 界面设置组
+    this.renderSettingGroup(container, t.settings.groups?.interface || "界面", [
+      {
+        name: t.settings.language.name,
+        desc: t.settings.language.desc,
+        control: (setting) => {
+          setting.addDropdown(dropdown => {
+            dropdown
+              .addOption("zh", t.settings.language.zh)
+              .addOption("en", t.settings.language.en)
+              .setValue(this.plugin.settings.language)
+              .onChange(async (value) => {
+                const lang = value as "zh" | "en";
+                await this.plugin.settingsStore.update({ language: lang });
+                i18n.setLanguage(lang);
+                new Notice(formatMessage(t.notices.languageChanged, {
+                  language: lang === "zh" ? t.settings.language.zh : t.settings.language.en
+                }));
+                this.display();
+              });
           });
-      });
+        }
+      }
+    ]);
 
-    container.createEl("h3", { text: "Basic Parameters" });
-
-    // Similarity Threshold
-    new Setting(container)
-      .setName(t.settings.similarityThreshold.name)
-      .setDesc(t.settings.similarityThreshold.desc)
-      .addSlider(slider => {
-        slider
-          .setLimits(0.5, 1.0, 0.05)
-          .setValue(this.plugin.settings.similarityThreshold)
-          .setDynamicTooltip()
-          .onChange(async (value) => {
-            await this.plugin.settingsStore.update({ similarityThreshold: value });
+    // 去重设置组
+    this.renderSettingGroup(container, t.settings.groups?.deduplication || "去重", [
+      {
+        name: t.settings.similarityThreshold.name,
+        desc: t.settings.similarityThreshold.desc,
+        control: (setting) => {
+          const valueDisplay = setting.controlEl.createDiv({ cls: "cr-slider-value" });
+          valueDisplay.textContent = this.plugin.settings.similarityThreshold.toFixed(2);
+          
+          setting.addSlider(slider => {
+            slider
+              .setLimits(0.5, 1.0, 0.05)
+              .setValue(this.plugin.settings.similarityThreshold)
+              .setDynamicTooltip()
+              .onChange(async (value) => {
+                await this.plugin.settingsStore.update({ similarityThreshold: value });
+                valueDisplay.textContent = value.toFixed(2);
+              });
           });
-      });
-
-    // Advanced Mode Toggle
-    new Setting(container)
-      .setName(t.settings.advancedMode.name)
-      .setDesc(t.settings.advancedMode.desc)
-      .addToggle(toggle => {
-        toggle
-          .setValue(this.plugin.settings.advancedMode)
-          .onChange(async (value) => {
-            await this.plugin.settingsStore.update({ advancedMode: value });
-            // If turning off advanced mode while in an advanced tab, switch to general
-            if (!value && (this.activeTab === "tasks" || this.activeTab === "knowledge")) {
-              this.activeTab = "general";
-            }
-            this.display();
+        }
+      },
+      {
+        name: t.settings.advanced.deduplication.topK,
+        desc: t.settings.advanced.deduplication.topKDesc,
+        control: (setting) => {
+          setting.addText(text => {
+            text
+              .setValue(this.plugin.settings.topK.toString())
+              .setPlaceholder("10")
+              .onChange(async (val) => {
+                const num = parseInt(val);
+                if (!isNaN(num) && num > 0) {
+                  await this.plugin.settingsStore.update({ topK: num });
+                }
+              });
+            text.inputEl.style.width = "80px";
           });
-      });
+        }
+      }
+    ]);
+
+    // 性能设置组
+    this.renderSettingGroup(container, t.settings.groups?.performance || "性能", [
+      {
+        name: t.settings.concurrency.name,
+        desc: t.settings.concurrency.desc,
+        control: (setting) => {
+          setting.addText(text => {
+            text
+              .setValue(this.plugin.settings.concurrency.toString())
+              .setPlaceholder("3")
+              .onChange(async (val) => {
+                const num = parseInt(val);
+                if (!isNaN(num) && num > 0) {
+                  await this.plugin.settingsStore.update({ concurrency: num });
+                }
+              });
+            text.inputEl.style.width = "80px";
+          });
+        }
+      },
+      {
+        name: t.settings.advanced.queue.autoRetry,
+        desc: t.settings.advanced.queue.autoRetryDesc,
+        control: (setting) => {
+          setting.addToggle(toggle => {
+            toggle
+              .setValue(this.plugin.settings.autoRetry)
+              .onChange(async (val) => {
+                await this.plugin.settingsStore.update({ autoRetry: val });
+              });
+          });
+        }
+      },
+      {
+        name: t.settings.advanced.queue.maxRetryAttempts,
+        desc: t.settings.advanced.queue.maxRetryAttemptsDesc,
+        control: (setting) => {
+          setting.addText(text => {
+            text
+              .setValue(this.plugin.settings.maxRetryAttempts.toString())
+              .setPlaceholder("3")
+              .onChange(async (val) => {
+                const num = parseInt(val);
+                if (!isNaN(num) && num >= 0) {
+                  await this.plugin.settingsStore.update({ maxRetryAttempts: num });
+                }
+              });
+            text.inputEl.style.width = "80px";
+          });
+        }
+      },
+      {
+        name: t.settings.advanced.queue.taskTimeout || "任务超时时间",
+        desc: t.settings.advanced.queue.taskTimeoutDesc || "单个任务的最大执行时长（毫秒，默认 1800000 = 30分钟）",
+        control: (setting) => {
+          setting.addText(text => {
+            text
+              .setValue((this.plugin.settings.taskTimeoutMs || 1800000).toString())
+              .setPlaceholder("1800000")
+              .onChange(async (val) => {
+                const num = parseInt(val);
+                if (!isNaN(num) && num >= 1000) {
+                  await this.plugin.settingsStore.update({ taskTimeoutMs: num });
+                }
+              });
+            text.inputEl.style.width = "120px";
+          });
+        }
+      },
+      {
+        name: t.settings.advanced.queue.maxTaskHistory || "任务历史上限",
+        desc: t.settings.advanced.queue.maxTaskHistoryDesc || "保留的已完成/失败/取消任务数量上限（默认 300）",
+        control: (setting) => {
+          setting.addText(text => {
+            text
+              .setValue((this.plugin.settings.maxTaskHistory || 300).toString())
+              .setPlaceholder("300")
+              .onChange(async (val) => {
+                const num = parseInt(val);
+                if (!isNaN(num) && num >= 50) {
+                  await this.plugin.settingsStore.update({ maxTaskHistory: num });
+                }
+              });
+            text.inputEl.style.width = "80px";
+          });
+        }
+      },
+      {
+        name: t.settings.advanced.queue.providerTimeout || "Provider 请求超时",
+        desc: t.settings.advanced.queue.providerTimeoutDesc || "API 请求的超时时间（毫秒，默认 60000 = 60秒）",
+        control: (setting) => {
+          setting.addText(text => {
+            text
+              .setValue((this.plugin.settings.providerTimeoutMs || 60000).toString())
+              .setPlaceholder("60000")
+              .onChange(async (val) => {
+                const num = parseInt(val);
+                if (!isNaN(num) && num >= 1000) {
+                  await this.plugin.settingsStore.update({ providerTimeoutMs: num });
+                }
+              });
+            text.inputEl.style.width = "120px";
+          });
+        }
+      }
+    ]);
   }
 
   /**
-   * Tab: AI Providers
+   * 渲染设置组
+   */
+  private renderSettingGroup(
+    container: HTMLElement,
+    title: string,
+    settings: Array<{
+      name: string;
+      desc: string;
+      control: (setting: Setting) => void;
+    }>
+  ): void {
+    const group = container.createDiv({ cls: "cr-setting-group" });
+    group.createEl("h3", { text: title, cls: "cr-setting-group-title" });
+
+    settings.forEach(({ name, desc, control }) => {
+      const setting = new Setting(group).setName(name).setDesc(desc);
+      control(setting);
+    });
+  }
+
+  /**
+   * 渲染可折叠设置组
+   */
+  private renderCollapsibleGroup(
+    container: HTMLElement,
+    title: string,
+    settings: Array<{
+      name: string;
+      desc: string;
+      control: (setting: Setting) => void;
+    }>
+  ): void {
+    const group = container.createDiv({ cls: "cr-setting-group cr-collapsible-group" });
+    
+    const header = group.createDiv({ cls: "cr-setting-group-header" });
+    const icon = header.createSpan({ cls: "cr-collapse-icon", text: "▶" });
+    header.createEl("h3", { text: title, cls: "cr-setting-group-title" });
+
+    const content = group.createDiv({ cls: "cr-setting-group-content cr-collapsed" });
+
+    header.onclick = () => {
+      const isCollapsed = content.hasClass("cr-collapsed");
+      if (isCollapsed) {
+        content.removeClass("cr-collapsed");
+        icon.textContent = "▼";
+      } else {
+        content.addClass("cr-collapsed");
+        icon.textContent = "▶";
+      }
+    };
+
+    settings.forEach(({ name, desc, control }) => {
+      const setting = new Setting(content).setName(name).setDesc(desc);
+      control(setting);
+    });
+  }
+
+  /**
+   * Tab: AI Providers - 列表形式
    */
   private renderProvidersTab(container: HTMLElement): void {
     const i18n = this.plugin.getI18n();
     const t = i18n.t();
 
-    // Header & Add Button
+    // Header with Add Button
     const header = container.createDiv({ cls: "cr-flex-row" });
     header.style.justifyContent = "space-between";
     header.style.alignItems = "center";
-    header.style.marginBottom = "var(--cr-gap-md)";
+    header.style.marginBottom = "var(--size-4-4)";
     header.createEl("h2", { text: t.settings.provider.title, attr: { style: "margin: 0" } });
 
     const addBtn = header.createEl("button", { text: t.settings.provider.addButton, cls: "mod-cta" });
     addBtn.onclick = () => this.showAddProviderModal();
 
-    // Default Provider Picker
     const providers = this.plugin.settings.providers;
+
+    // Default Provider Selection
     if (Object.keys(providers).length > 0) {
       new Setting(container)
         .setName(t.settings.provider.defaultProvider)
@@ -182,88 +382,167 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
         });
     }
 
-    // Provider List (Grid Card Layout)
+    // Provider List
     if (Object.keys(providers).length === 0) {
-      container.createEl("div", { cls: "cr-empty-state", text: t.settings.provider.noProvider });
+      const emptyState = container.createDiv({ cls: "cr-empty-state" });
+      emptyState.createEl("p", { text: t.settings.provider.noProvider });
+      emptyState.createEl("p", { 
+        text: t.settings.provider.addFirstProvider || "点击上方按钮添加您的第一个 AI Provider",
+        cls: "cr-text-muted"
+      });
     } else {
-      const grid = container.createDiv({ cls: "cr-provider-grid" });
       Object.entries(providers).forEach(([id, config]) => {
-        this.renderProviderCard(grid, id, config as ProviderConfig);
+        this.renderProviderItem(container, id, config as ProviderConfig);
       });
     }
   }
 
   /**
-   * Render a single Provider Card
+   * 渲染单个 Provider 项（列表形式）
    */
-  private renderProviderCard(container: HTMLElement, id: string, config: ProviderConfig): void {
+  private renderProviderItem(container: HTMLElement, id: string, config: ProviderConfig): void {
     const t = this.plugin.getI18n().t();
-    const card = container.createDiv({ cls: "cr-provider-card" });
-
-    // Header
-    const header = card.createDiv({ cls: "cr-provider-header" });
-    const info = header.createDiv({ cls: "cr-provider-info" });
-    // Status dot
-    const statusDot = info.createDiv({
-      cls: `cr-provider-status ${config.enabled ? 'is-online' : 'is-offline'}`,
-      attr: { title: config.enabled ? t.settings.provider.enabled : t.settings.provider.disabled }
-    });
-    info.createSpan({ text: id, cls: "cr-provider-name" });
-
-    // Toggle Switch (Inline)
-    const toggleWrapper = header.createDiv();
-    const toggle = toggleWrapper.createEl("input", { type: "checkbox" }); // Standard HTML checkbox for custom styling or use .setting-item-control but harder here.
-    // Using a simple toggle logic simulation or just an edit button.
-    // Let's use an edit button to expand details.
-
-    // We can use a simplified internal setting for toggle
-    const toggleSetting = new Setting(header)
+    
+    // Provider 名称和启用状态
+    const nameSetting = new Setting(container)
+      .setName(id)
+      .setDesc(`${t.settings.provider.model}: ${config.defaultChatModel}`)
       .addToggle(toggle => {
-        toggle.setValue(config.enabled).onChange(async (val) => {
-          await this.plugin.settingsStore.updateProvider(id, { enabled: val });
-          new Notice(formatMessage(t.notices.providerUpdated, { id }));
-          this.display(); // Refresh to update status dot
-        });
+        toggle
+          .setValue(config.enabled)
+          .onChange(async (val) => {
+            await this.plugin.settingsStore.updateProvider(id, { enabled: val });
+            new Notice(formatMessage(t.notices.providerUpdated, { id }));
+          });
       });
-    toggleSetting.controlEl.style.margin = "0"; // Reset margin
-    toggleSetting.infoEl.remove(); // Remove label space
 
-    // Expand/Collapse logic
-    card.onclick = (e) => {
-      if ((e.target as HTMLElement).tagName.toLowerCase() === 'input') return; // Don't toggle if clicking switch
-      if (card.hasClass("is-expanded")) card.removeClass("is-expanded");
-      else card.addClass("is-expanded");
-    };
+    // 操作按钮
+    nameSetting.addButton(btn => {
+      btn
+        .setButtonText(t.settings.provider.testConnection)
+        .onClick(() => this.testProviderConnection(id));
+    });
 
-    // Body (Expanded)
-    const body = card.createDiv({ cls: "cr-provider-body" });
+    nameSetting.addButton(btn => {
+      btn
+        .setButtonText(t.common.edit)
+        .onClick(() => this.showEditProviderModal(id, config));
+    });
 
-    // Info Details
-    body.createDiv({ text: `${t.settings.provider.model}: ${config.defaultChatModel}`, cls: "cr-text-muted" });
-
-    // Actions
-    const actions = body.createDiv({ cls: "cr-flex-row", attr: { style: "gap: 8px; margin-top: 12px;" } });
-
-    const testBtn = actions.createEl("button", { text: t.settings.provider.testConnection });
-    testBtn.onclick = (e) => { e.stopPropagation(); this.testProviderConnection(id); };
-
-    const editBtn = actions.createEl("button", { text: t.common.edit });
-    editBtn.onclick = (e) => { e.stopPropagation(); this.showEditProviderModal(id, config); };
-
-    const deleteBtn = actions.createEl("button", { text: t.common.delete, cls: "mod-warning" });
-    deleteBtn.onclick = (e) => { e.stopPropagation(); this.showDeleteProviderConfirm(id); };
+    nameSetting.addButton(btn => {
+      btn
+        .setButtonText(t.common.delete)
+        .setWarning()
+        .onClick(() => this.showDeleteProviderConfirm(id));
+    });
   }
 
   /**
-   * Tab: Task Models (Advanced)
+   * 知识库标签页 - 合并目录和任务模型配置
    */
-  private renderTaskModelsTab(container: HTMLElement): void {
+  private renderKnowledgeTab(container: HTMLElement): void {
     const t = this.plugin.getI18n().t();
 
-    container.createEl("h2", { text: t.settings.advanced.taskModels.title });
-    container.createEl("p", { text: t.settings.advanced.taskModels.desc, cls: "setting-item-description" });
+    // 目录结构设置
+    const dirGroup = container.createDiv({ cls: "cr-setting-group" });
+    dirGroup.createEl("h3", { text: t.settings.groups?.directory || "目录结构", cls: "cr-setting-group-title" });
 
+    // 命名模板
+    new Setting(dirGroup)
+      .setName(t.settings.advanced.namingTemplate.name)
+      .setDesc(t.settings.advanced.namingTemplate.desc)
+      .addText(text => {
+        text
+          .setPlaceholder("{{chinese}} ({{english}})")
+          .setValue(this.plugin.settings.namingTemplate)
+          .onChange(async (val) => {
+            await this.plugin.settingsStore.update({ namingTemplate: val });
+          });
+        text.inputEl.style.width = "300px";
+      });
+
+    // 类型目录映射
+    const typeGroup = container.createDiv({ cls: "cr-setting-group" });
+    typeGroup.createEl("h3", { text: t.settings.groups?.typeDirectories || "类型目录", cls: "cr-setting-group-title" });
+
+    const crTypes: Array<{ key: CRType; name: string; desc: string }> = [
+      { 
+        key: "Domain", 
+        name: `${t.crTypes.Domain} (Domain)`, 
+        desc: t.crTypeDirectories.Domain
+      },
+      { 
+        key: "Issue", 
+        name: `${t.crTypes.Issue} (Issue)`, 
+        desc: t.crTypeDirectories.Issue
+      },
+      { 
+        key: "Theory", 
+        name: `${t.crTypes.Theory} (Theory)`, 
+        desc: t.crTypeDirectories.Theory
+      },
+      { 
+        key: "Entity", 
+        name: `${t.crTypes.Entity} (Entity)`, 
+        desc: t.crTypeDirectories.Entity
+      },
+      { 
+        key: "Mechanism", 
+        name: `${t.crTypes.Mechanism} (Mechanism)`, 
+        desc: t.crTypeDirectories.Mechanism
+      }
+    ];
+
+    crTypes.forEach(crType => {
+      new Setting(typeGroup)
+        .setName(crType.name)
+        .setDesc(crType.desc)
+        .addText(text => {
+          text
+            .setPlaceholder(this.plugin.settings.directoryScheme[crType.key])
+            .setValue(this.plugin.settings.directoryScheme[crType.key])
+            .onChange(async (val) => {
+              const ds = { ...this.plugin.settings.directoryScheme };
+              ds[crType.key] = val;
+              await this.plugin.settingsStore.update({ directoryScheme: ds });
+            });
+          text.inputEl.style.width = "200px";
+        });
+    });
+
+    // 向量嵌入设置
+    this.renderSettingGroup(container, t.settings.groups?.vectorEmbedding || "向量嵌入", [
+      {
+        name: t.settings.advanced.embedding.dimension,
+        desc: t.settings.advanced.embedding.dimensionDesc,
+        control: (setting) => {
+          setting.addDropdown(dropdown => {
+            ["256", "512", "1024", "1536", "3072"].forEach(d => dropdown.addOption(d, d));
+            dropdown
+              .setValue((this.plugin.settings.embeddingDimension ?? 1536).toString())
+              .onChange(async (val) => {
+                await this.plugin.settingsStore.update({ embeddingDimension: parseInt(val) });
+                new Notice(t.settings.advanced.embedding.dimensionWarning);
+              });
+          });
+        }
+      }
+    ]);
+
+    // 任务模型配置
+    this.renderTaskModelsSection(container);
+  }
+
+  /**
+   * 任务模型配置区域
+   */
+  private renderTaskModelsSection(container: HTMLElement): void {
+    const t = this.plugin.getI18n().t();
     const providerIds = Object.keys(this.plugin.settings.providers);
+
+    const taskGroup = container.createDiv({ cls: "cr-setting-group" });
+    taskGroup.createEl("h3", { text: t.settings.groups?.taskModels || "任务模型配置", cls: "cr-setting-group-title" });
+
     const taskTypes: Array<{ key: string; name: string; desc: string }> = [
       { key: "standardizeClassify", name: t.taskTypes.standardizeClassify.name, desc: t.taskTypes.standardizeClassify.desc },
       { key: "enrich", name: t.taskTypes.enrich.name, desc: t.taskTypes.enrich.desc },
@@ -272,251 +551,270 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
       { key: "ground", name: t.taskTypes.ground.name, desc: t.taskTypes.ground.desc }
     ];
 
-    for (const taskType of taskTypes) {
+    taskTypes.forEach(taskType => {
       const taskConfig = this.plugin.settings.taskModels[taskType.key as keyof typeof this.plugin.settings.taskModels];
+      
+      const setting = new Setting(taskGroup)
+        .setName(taskType.name)
+        .setDesc(taskType.desc);
 
-      // Group each task config in a box?
-      const group = container.createDiv({ cls: "cr-card", attr: { style: "padding: 16px; margin-bottom: 16px;" } });
-      group.createEl("h4", { text: taskType.name, attr: { style: "margin-top: 0;" } });
-      group.createEl("p", { text: taskType.desc, cls: "cr-text-muted", attr: { style: "margin-bottom: 16px;" } });
-
-      new Setting(group)
-        .setName(t.settings.advanced.taskModels.providerAndModel)
-        .addDropdown(dropdown => {
-          if (providerIds.length === 0) dropdown.addOption("", t.settings.advanced.taskModels.configureProviderFirst);
-          else {
-            dropdown.addOption("", t.settings.advanced.taskModels.useDefaultProvider);
-            providerIds.forEach(id => dropdown.addOption(id, id));
-          }
-          dropdown.setValue(taskConfig?.providerId || "")
-            .onChange(async (val) => {
-              const taskModels = { ...this.plugin.settings.taskModels };
-              taskModels[taskType.key as keyof typeof taskModels] = { ...taskConfig, providerId: val };
-              await this.plugin.settingsStore.update({ taskModels });
-            });
-        })
-        .addText(text => {
-          text.setPlaceholder(t.settings.advanced.taskModels.modelNamePlaceholder)
-            .setValue(taskConfig?.model || "")
-            .onChange(async (val) => {
-              const taskModels = { ...this.plugin.settings.taskModels };
-              taskModels[taskType.key as keyof typeof taskModels] = { ...taskConfig, model: val };
-              await this.plugin.settingsStore.update({ taskModels });
-            });
-        });
-
-      // Params (Temp/TopP)
-      if (taskType.key !== "embedding") {
-        // Use a sub-setting look or just inline?
-        new Setting(group)
-          .setName("Temperature / Top P")
-          .addSlider(slider => {
-            slider.setLimits(0, 2, 0.1).setValue(taskConfig?.temperature ?? 0.7)
-              .setDynamicTooltip().onChange(async (val) => {
-                const tm = { ...this.plugin.settings.taskModels };
-                tm[taskType.key as keyof typeof tm] = { ...taskConfig, temperature: val };
-                await this.plugin.settingsStore.update({ taskModels: tm });
-              });
-          })
-          .addSlider(slider => {
-            slider.setLimits(0, 1, 0.05).setValue(taskConfig?.topP ?? 1)
-              .setDynamicTooltip().onChange(async (val) => {
-                const tm = { ...this.plugin.settings.taskModels };
-                tm[taskType.key as keyof typeof tm] = { ...taskConfig, topP: val };
-                await this.plugin.settingsStore.update({ taskModels: tm });
-              });
+      // Provider 选择
+      setting.addDropdown(dropdown => {
+        if (providerIds.length === 0) {
+          dropdown.addOption("", t.settings.advanced.taskModels.configureProviderFirst);
+        } else {
+          dropdown.addOption("", t.settings.advanced.taskModels.useDefaultProvider);
+          providerIds.forEach(id => dropdown.addOption(id, id));
+        }
+        dropdown
+          .setValue(taskConfig?.providerId || "")
+          .onChange(async (val) => {
+            const taskModels = { ...this.plugin.settings.taskModels };
+            taskModels[taskType.key as keyof typeof taskModels] = { ...taskConfig, providerId: val };
+            await this.plugin.settingsStore.update({ taskModels });
           });
+      });
+
+      // 模型名称
+      setting.addText(text => {
+        text
+          .setPlaceholder(t.settings.advanced.taskModels.modelNamePlaceholder)
+          .setValue(taskConfig?.model || "")
+          .onChange(async (val) => {
+            const taskModels = { ...this.plugin.settings.taskModels };
+            taskModels[taskType.key as keyof typeof taskModels] = { ...taskConfig, model: val };
+            await this.plugin.settingsStore.update({ taskModels });
+          });
+        text.inputEl.style.width = "150px";
+      });
+    });
+
+    // 高级参数配置（可折叠）
+    this.renderCollapsibleGroup(container, t.settings.advanced.taskModels.advancedParams || "高级参数配置", [
+      {
+        name: t.settings.advanced.temperature.name,
+        desc: t.settings.advanced.temperature.desc,
+        control: (setting) => {
+          const taskTypeSelect = setting.controlEl.createEl("select", { cls: "dropdown" });
+          taskTypes.forEach(tt => {
+            const option = taskTypeSelect.createEl("option", { value: tt.key, text: tt.name });
+          });
+          
+          const tempInput = setting.controlEl.createEl("input", { 
+            type: "text", 
+            attr: { placeholder: "0.7", style: "width: 80px; margin-left: 8px;" }
+          });
+          
+          const updateTemp = () => {
+            const selectedTask = taskTypeSelect.value as keyof typeof this.plugin.settings.taskModels;
+            const config = this.plugin.settings.taskModels[selectedTask];
+            tempInput.value = config?.temperature?.toString() || "";
+          };
+          
+          taskTypeSelect.addEventListener("change", updateTemp);
+          updateTemp();
+          
+          tempInput.addEventListener("blur", async () => {
+            const selectedTask = taskTypeSelect.value as keyof typeof this.plugin.settings.taskModels;
+            const num = parseFloat(tempInput.value);
+            if (!isNaN(num) && num >= 0 && num <= 2) {
+              const taskModels = { ...this.plugin.settings.taskModels };
+              const config = taskModels[selectedTask];
+              taskModels[selectedTask] = { ...config, temperature: num };
+              await this.plugin.settingsStore.update({ taskModels });
+            }
+          });
+        }
+      },
+      {
+        name: t.settings.advanced.reasoningEffort.name,
+        desc: t.settings.advanced.reasoningEffort.desc,
+        control: (setting) => {
+          const taskTypeSelect = setting.controlEl.createEl("select", { cls: "dropdown" });
+          taskTypes.forEach(tt => {
+            const option = taskTypeSelect.createEl("option", { value: tt.key, text: tt.name });
+          });
+          
+          const effortSelect = setting.controlEl.createEl("select", { 
+            cls: "dropdown",
+            attr: { style: "margin-left: 8px;" }
+          });
+          effortSelect.createEl("option", { value: "", text: t.settings.advanced.taskModels.notSet });
+          effortSelect.createEl("option", { value: "low", text: t.settings.advanced.taskModels.low });
+          effortSelect.createEl("option", { value: "medium", text: t.settings.advanced.taskModels.medium });
+          effortSelect.createEl("option", { value: "high", text: t.settings.advanced.taskModels.high });
+          
+          const updateEffort = () => {
+            const selectedTask = taskTypeSelect.value as keyof typeof this.plugin.settings.taskModels;
+            const config = this.plugin.settings.taskModels[selectedTask];
+            effortSelect.value = config?.reasoning_effort || "";
+          };
+          
+          taskTypeSelect.addEventListener("change", updateEffort);
+          updateEffort();
+          
+          effortSelect.addEventListener("change", async () => {
+            const selectedTask = taskTypeSelect.value as keyof typeof this.plugin.settings.taskModels;
+            const value = effortSelect.value as "low" | "medium" | "high" | "";
+            const taskModels = { ...this.plugin.settings.taskModels };
+            const config = taskModels[selectedTask];
+            taskModels[selectedTask] = { 
+              ...config, 
+              reasoning_effort: value || undefined 
+            };
+            await this.plugin.settingsStore.update({ taskModels });
+          });
+        }
       }
-    }
+    ]);
   }
 
-  /**
-   * Tab: Knowledge Scheme (Advanced)
-   */
-  private renderKnowledgeTab(container: HTMLElement): void {
-    const t = this.plugin.getI18n().t();
 
-    container.createEl("h2", { text: t.settings.advanced.directoryScheme.title });
-    container.createEl("p", { text: t.settings.advanced.directoryScheme.desc, cls: "setting-item-description" });
-
-    // Naming Template
-    new Setting(container)
-      .setName(t.settings.advanced.namingTemplate.name)
-      .setDesc(t.settings.advanced.namingTemplate.desc)
-      .addText(text => {
-        text.setPlaceholder("{{chinese}} ({{english}})")
-          .setValue(this.plugin.settings.namingTemplate)
-          .onChange(async (val) => await this.plugin.settingsStore.update({ namingTemplate: val }));
-        text.inputEl.style.width = "100%";
-      });
-
-    container.createEl("h3", { text: "Directories" });
-
-    const crTypes: Array<{ key: CRType; name: string }> = [
-      { key: "Domain", name: `${t.crTypes.Domain} (Domain)` },
-      { key: "Issue", name: `${t.crTypes.Issue} (Issue)` },
-      { key: "Theory", name: `${t.crTypes.Theory} (Theory)` },
-      { key: "Entity", name: `${t.crTypes.Entity} (Entity)` },
-      { key: "Mechanism", name: `${t.crTypes.Mechanism} (Mechanism)` }
-    ];
-
-    for (const crType of crTypes) {
-      new Setting(container)
-        .setName(crType.name)
-        .addText(text => {
-          text.setPlaceholder(`Default: ${this.plugin.settings.directoryScheme[crType.key]}`)
-            .setValue(this.plugin.settings.directoryScheme[crType.key])
-            .onChange(async (val) => {
-              const ds = { ...this.plugin.settings.directoryScheme };
-              ds[crType.key] = val;
-              await this.plugin.settingsStore.update({ directoryScheme: ds });
-            });
-        });
-    }
-
-    // Embedding Params
-    container.createEl("h3", { text: t.settings.advanced.embedding.title });
-    new Setting(container)
-      .setName(t.settings.advanced.embedding.dimension)
-      .setDesc(t.settings.advanced.embedding.dimensionDesc)
-      .addDropdown(dropdown => {
-        ["256", "512", "1024", "1536", "3072"].forEach(d => dropdown.addOption(d, d));
-        dropdown.setValue((this.plugin.settings.embeddingDimension ?? 1536).toString())
-          .onChange(async (val) => {
-            await this.plugin.settingsStore.update({ embeddingDimension: parseInt(val) });
-            new Notice(t.settings.advanced.embedding.dimensionWarning);
-          });
-      });
-
-    // Deduplication Params
-    container.createEl("h3", { text: t.settings.advanced.deduplication.title });
-    new Setting(container)
-      .setName(t.settings.advanced.deduplication.topK)
-      .setDesc(t.settings.advanced.deduplication.topKDesc)
-      .addText(text => {
-        text.setValue(this.plugin.settings.topK.toString())
-          .onChange(async (val) => {
-            const num = parseInt(val);
-            if (!isNaN(num)) await this.plugin.settingsStore.update({ topK: num });
-          });
-      });
-  }
 
   /**
-   * Tab: System Settings
+   * 系统标签页 - 重新组织
    */
   private renderSystemTab(container: HTMLElement): void {
     const t = this.plugin.getI18n().t();
 
-    container.createEl("h2", { text: "System & Maintenance" });
-
-    // Concurrency
-    new Setting(container)
-      .setName(t.settings.concurrency.name)
-      .setDesc(t.settings.concurrency.desc)
-      .addText(text => {
-        text.setValue(this.plugin.settings.concurrency.toString())
-          .onChange(async (val) => await this.plugin.settingsStore.update({ concurrency: parseInt(val) || 1 }));
-      });
-
-    new Setting(container)
-      .setName(t.settings.advanced.queue.autoRetry)
-      .setDesc(t.settings.advanced.queue.autoRetryDesc)
-      .addToggle(toggle => {
-        toggle.setValue(this.plugin.settings.autoRetry)
-          .onChange(async (val) => await this.plugin.settingsStore.update({ autoRetry: val }));
-      });
-
-    // Snapshots
-    container.createEl("h3", { text: "Undo / Snapshots" });
-    new Setting(container)
-      .setName(t.settings.maxSnapshots.name)
-      .setDesc(t.settings.maxSnapshots.desc)
-      .addText(text => {
-        text.setValue(this.plugin.settings.maxSnapshots.toString())
-          .onChange(async (val) => await this.plugin.settingsStore.update({ maxSnapshots: parseInt(val) || 100 }));
-      });
-
-    new Setting(container)
-      .setName(t.settings.maxSnapshotAgeDays.name)
-      .setDesc(t.settings.maxSnapshotAgeDays.desc)
-      .addText(text => {
-        text.setValue((this.plugin.settings.maxSnapshotAgeDays ?? 30).toString())
-          .onChange(async (val) => await this.plugin.settingsStore.update({ maxSnapshotAgeDays: parseInt(val) || 30 }));
-      });
-
-    // Logging
-    container.createEl("h3", { text: t.settings.advanced.logging.title });
-    new Setting(container)
-      .setName(t.settings.advanced.logging.logLevel)
-      .addDropdown(dropdown => {
-        (["debug", "info", "warn", "error"] as const).forEach(level => {
-          dropdown.addOption(level, t.settings.advanced.logging.levels[level]);
-        });
-        dropdown.setValue(this.plugin.settings.logLevel)
-          .onChange(async (val) => {
-            await this.plugin.settingsStore.update({ logLevel: val as "debug" | "info" | "warn" | "error" });
-            new Notice(formatMessage(t.notices.logLevelChanged, { level: val }));
+    // 快照管理
+    this.renderSettingGroup(container, t.settings.groups?.snapshots || "快照与撤销", [
+      {
+        name: t.settings.maxSnapshots.name,
+        desc: t.settings.maxSnapshots.desc,
+        control: (setting) => {
+          setting.addText(text => {
+            text
+              .setValue(this.plugin.settings.maxSnapshots.toString())
+              .setPlaceholder("100")
+              .onChange(async (val) => {
+                const num = parseInt(val);
+                if (!isNaN(num) && num > 0) {
+                  await this.plugin.settingsStore.update({ maxSnapshots: num });
+                }
+              });
+            text.inputEl.style.width = "80px";
           });
-      });
+        }
+      },
+      {
+        name: t.settings.maxSnapshotAgeDays.name,
+        desc: t.settings.maxSnapshotAgeDays.desc,
+        control: (setting) => {
+          setting.addText(text => {
+            text
+              .setValue((this.plugin.settings.maxSnapshotAgeDays ?? 30).toString())
+              .setPlaceholder("30")
+              .onChange(async (val) => {
+                const num = parseInt(val);
+                if (!isNaN(num) && num > 0) {
+                  await this.plugin.settingsStore.update({ maxSnapshotAgeDays: num });
+                }
+              });
+            text.inputEl.style.width = "80px";
+          });
+        }
+      }
+    ]);
 
-    new Setting(container)
-      .setName(t.settings.advanced.logging.clearLogs)
-      .addButton(btn => {
-        btn.setButtonText(t.settings.advanced.logging.clearLogs).setWarning()
-          .onClick(async () => await this.clearLogs());
-      });
+    // 日志管理
+    this.renderSettingGroup(container, t.settings.groups?.logging || "日志", [
+      {
+        name: t.settings.advanced.logging.logLevel,
+        desc: t.settings.advanced.logging.logLevelDesc,
+        control: (setting) => {
+          setting.addDropdown(dropdown => {
+            (["debug", "info", "warn", "error"] as const).forEach(level => {
+              dropdown.addOption(level, t.settings.advanced.logging.levels[level]);
+            });
+            dropdown
+              .setValue(this.plugin.settings.logLevel)
+              .onChange(async (val) => {
+                await this.plugin.settingsStore.update({ logLevel: val as "debug" | "info" | "warn" | "error" });
+                new Notice(formatMessage(t.notices.logLevelChanged, { level: val }));
+              });
+          });
+        }
+      },
+      {
+        name: t.settings.advanced.logging.clearLogs,
+        desc: t.settings.advanced.logging.clearLogsDesc,
+        control: (setting) => {
+          setting.addButton(btn => {
+            btn
+              .setButtonText(t.settings.advanced.logging.clearLogs)
+              .setWarning()
+              .onClick(async () => await this.clearLogs());
+          });
+        }
+      }
+    ]);
 
-    // Import/Export
-    container.createEl("h3", { text: t.settings.importExport.title });
-    new Setting(container)
-      .setName(t.settings.importExport.export)
-      .setDesc(t.settings.importExport.exportDesc)
-      .addButton(btn => {
-        btn.setButtonText(t.settings.importExport.export).onClick(async () => {
-          const result = await this.plugin.settingsStore.export();
-          if (result.ok) {
-            const blob = new Blob([result.value], { type: "application/json" });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = "cognitive-razor-settings.json";
-            a.click();
-            URL.revokeObjectURL(url);
-            new Notice(t.notices.settingsExported);
-          } else new Notice(`${t.common.error}: ${result.error.message}`);
-        });
-      });
-
-    new Setting(container)
-      .setName(t.settings.importExport.import)
-      .setDesc(t.settings.importExport.importDesc)
-      .addButton(btn => {
-        btn.setButtonText(t.settings.importExport.import).onClick(() => {
-          const input = document.createElement("input");
-          input.type = "file";
-          input.accept = ".json";
-          input.onchange = async (e: Event) => {
-            const file = (e.target as HTMLInputElement).files?.[0];
-            if (file) {
-              const text = await file.text();
-              const result = await this.plugin.settingsStore.import(text);
+    // 数据管理
+    this.renderSettingGroup(container, t.settings.groups?.dataManagement || "数据管理", [
+      {
+        name: t.settings.importExport.export,
+        desc: t.settings.importExport.exportDesc,
+        control: (setting) => {
+          setting.addButton(btn => {
+            btn.setButtonText(t.settings.importExport.export).onClick(async () => {
+              const result = await this.plugin.settingsStore.export();
               if (result.ok) {
-                new Notice(t.notices.settingsImported);
-                this.display();
-              } else new Notice(result.error.message);
-            }
-          };
-          input.click();
-        });
-      });
-
-    new Setting(container)
-      .setName(t.settings.importExport.reset)
-      .addButton(btn => {
-        btn.setButtonText(t.settings.importExport.reset).setWarning()
-          .onClick(() => this.showResetSettingsConfirm());
-      });
+                const blob = new Blob([result.value], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = "cognitive-razor-settings.json";
+                a.click();
+                URL.revokeObjectURL(url);
+                new Notice(t.notices.settingsExported);
+              } else {
+                new Notice(`${t.common.error}: ${result.error.message}`);
+              }
+            });
+          });
+        }
+      },
+      {
+        name: t.settings.importExport.import,
+        desc: t.settings.importExport.importDesc,
+        control: (setting) => {
+          setting.addButton(btn => {
+            btn.setButtonText(t.settings.importExport.import).onClick(() => {
+              const input = document.createElement("input");
+              input.type = "file";
+              input.accept = ".json";
+              input.onchange = async (e: Event) => {
+                const file = (e.target as HTMLInputElement).files?.[0];
+                if (file) {
+                  const text = await file.text();
+                  const result = await this.plugin.settingsStore.import(text);
+                  if (result.ok) {
+                    new Notice(t.notices.settingsImported);
+                    this.display();
+                  } else {
+                    new Notice(result.error.message);
+                  }
+                }
+              };
+              input.click();
+            });
+          });
+        }
+      },
+      {
+        name: t.settings.importExport.reset,
+        desc: t.settings.importExport.resetDesc,
+        control: (setting) => {
+          setting.addButton(btn => {
+            btn
+              .setButtonText(t.settings.importExport.reset)
+              .setWarning()
+              .onClick(() => this.showResetSettingsConfirm());
+          });
+        }
+      }
+    ]);
   }
 
   /* ================= Helpers ================= */

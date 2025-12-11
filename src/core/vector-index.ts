@@ -1,7 +1,4 @@
-/**
- * VectorIndex 实现
- * 按类型分桶存储向量，支持同类型相似度检索
- */
+/** VectorIndex - 按类型分桶存储向量，支持延迟加载和增量更新 */
 
 import {
   IVectorIndex,
@@ -9,85 +6,72 @@ import {
   SearchResult,
   IndexStats,
   CRType,
-  VectorIndexFile,
   Result,
   ok,
   err,
+  Err,
   IFileStorage,
+  ConceptVector,
+  VectorIndexMeta,
+  ConceptMeta,
 } from "../types";
+import { VECTORS_DIR, DEFAULT_VECTOR_INDEX_META } from "../data/file-storage";
 
-/**
- * VectorIndex 实现类
- */
+/** VectorIndex 实现类 - 分桶存储、延迟加载、增量更新 */
 export class VectorIndex implements IVectorIndex {
-  private indexFilePath: string;
   private fileStorage: IFileStorage;
-  private buckets: Record<CRType, VectorEntry[]>;
   private model: string;
   private dimension: number;
+  
+  // 元数据索引（轻量级，始终在内存中）
+  private indexMeta: VectorIndexMeta | null = null;
+  
+  // 向量缓存（按需加载）
+  private loadedVectors: Map<string, ConceptVector> = new Map();
 
-  /**
-   * 构造函数
-   * @param indexFilePath 索引文件路径
-   * @param fileStorage 文件存储实例
-   * @param model 嵌入模型标识
-   * @param dimension 向量维度
-   */
+  /** 构造函数 */
   constructor(
-    indexFilePath: string,
     fileStorage: IFileStorage,
     model: string = "text-embedding-3-small",
     dimension: number = 1536
   ) {
-    this.indexFilePath = indexFilePath;
     this.fileStorage = fileStorage;
     this.model = model;
     this.dimension = dimension;
-    
-    // 初始化空桶
-    this.buckets = this.createEmptyBuckets();
   }
 
-  /**
-   * 加载索引
-   */
+  /** 加载索引元数据 */
   async load(): Promise<Result<void>> {
     try {
-      const exists = await this.fileStorage.exists(this.indexFilePath);
-      
-      if (!exists) {
-        // 索引文件不存在，创建新索引
-        await this.save();
-        return ok(undefined);
+      // 确保向量目录存在
+      const ensureDirResult = await this.fileStorage.ensureDir(VECTORS_DIR);
+      if (!ensureDirResult.ok) {
+        return ensureDirResult;
       }
 
-      const readResult = await this.fileStorage.read(this.indexFilePath);
-      if (!readResult.ok) {
-        // 文件读取失败，创建新索引
-        await this.save();
-        return ok(undefined);
-      }
-
-      try {
-        const indexFile: VectorIndexFile = JSON.parse(readResult.value);
-        
-        // 验证模型和维度
-        if (indexFile.model !== this.model || indexFile.dimension !== this.dimension) {
-          // 模型或维度不匹配时重建索引，避免插件无法使用
-          console.warn(`VectorIndex 模型/维度不匹配，已重建索引。期待 ${this.model}/${this.dimension}，实际 ${indexFile.model}/${indexFile.dimension}`);
-          this.buckets = this.createEmptyBuckets();
-          await this.save();
-          return ok(undefined);
+      // 为每个类型创建子目录
+      const types: CRType[] = ["Domain", "Issue", "Theory", "Entity", "Mechanism"];
+      for (const type of types) {
+        const typeDirResult = await this.fileStorage.ensureDir(`${VECTORS_DIR}/${type}`);
+        if (!typeDirResult.ok) {
+          return typeDirResult;
         }
-
-        // 加载桶数据
-        this.buckets = indexFile.buckets;
-      } catch (parseError) {
-        // 解析失败，创建新索引
-        this.buckets = this.createEmptyBuckets();
-        await this.save();
       }
 
+      // 读取元数据索引
+      const metaResult = await this.fileStorage.readVectorIndexMeta();
+      
+      if (!metaResult.ok) {
+        // 索引不存在，创建新索引
+        this.indexMeta = { ...DEFAULT_VECTOR_INDEX_META };
+        const saveResult = await this.saveIndexMeta();
+        if (!saveResult.ok) {
+          return saveResult;
+        }
+        return ok(undefined);
+      }
+
+      this.indexMeta = metaResult.value;
       return ok(undefined);
     } catch (error) {
       return err(
@@ -98,11 +82,13 @@ export class VectorIndex implements IVectorIndex {
     }
   }
 
-  /**
-   * 添加或更新向量条目
-   */
+  /** 添加或更新向量条目 */
   async upsert(entry: VectorEntry): Promise<Result<void>> {
     try {
+      if (!this.indexMeta) {
+        return err("E300", "Vector index not loaded");
+      }
+
       // 验证向量维度
       if (entry.embedding.length !== this.dimension) {
         return err(
@@ -112,21 +98,72 @@ export class VectorIndex implements IVectorIndex {
         );
       }
 
-      const bucket = this.buckets[entry.type];
+      const now = Date.now();
+      const isUpdate = entry.uid in this.indexMeta.concepts;
+
+      // 归一化向量（性能优化：预先归一化，计算相似度时只需点积）
+      const normalizedEmbedding = this.normalize(entry.embedding);
+
+      // 构建概念向量数据
+      const conceptVector: ConceptVector = {
+        id: entry.uid,
+        name: entry.name,
+        type: entry.type,
+        embedding: normalizedEmbedding,
+        metadata: {
+          createdAt: isUpdate 
+            ? this.indexMeta.concepts[entry.uid]?.lastModified || now 
+            : now,
+          updatedAt: now,
+          embeddingModel: this.model,
+          dimensions: this.dimension,
+        },
+      };
+
+      // 写入向量文件
+      const writeResult = await this.fileStorage.writeVectorFile(
+        entry.type,
+        entry.uid,
+        conceptVector
+      );
       
-      // 查找是否已存在
-      const existingIndex = bucket.findIndex((e) => e.uid === entry.uid);
-      
-      if (existingIndex >= 0) {
-        // 更新现有条目
-        bucket[existingIndex] = entry;
-      } else {
-        // 添加新条目
-        bucket.push(entry);
+      if (!writeResult.ok) {
+        return writeResult;
       }
 
-      // 保存索引
-      await this.save();
+      // 更新元数据索引
+      const oldType = this.indexMeta.concepts[entry.uid]?.type;
+      
+      // 如果类型变更，需要删除旧文件并更新统计
+      if (isUpdate && oldType && oldType !== entry.type) {
+        await this.fileStorage.deleteVectorFile(oldType, entry.uid);
+        this.indexMeta.stats.byType[oldType]--;
+        this.indexMeta.stats.byType[entry.type]++;
+      } else if (!isUpdate) {
+        // 新增概念
+        this.indexMeta.stats.totalConcepts++;
+        this.indexMeta.stats.byType[entry.type]++;
+      }
+
+      this.indexMeta.concepts[entry.uid] = {
+        id: entry.uid,
+        name: entry.name,
+        type: entry.type,
+        filePath: `${entry.type}/${entry.uid}.json`,
+        lastModified: now,
+        hasEmbedding: true,
+      };
+
+      this.indexMeta.lastUpdated = now;
+
+      // 更新缓存
+      this.loadedVectors.set(entry.uid, conceptVector);
+
+      // 保存元数据索引
+      const saveResult = await this.saveIndexMeta();
+      if (!saveResult.ok) {
+        return saveResult;
+      }
 
       return ok(undefined);
     } catch (error) {
@@ -138,26 +175,15 @@ export class VectorIndex implements IVectorIndex {
     }
   }
 
-  /**
-   * 删除向量条目
-   */
+  /** 删除向量条目 */
   async delete(uid: string): Promise<Result<void>> {
     try {
-      let found = false;
-
-      // 在所有桶中查找并删除
-      for (const type of Object.keys(this.buckets) as CRType[]) {
-        const bucket = this.buckets[type];
-        const index = bucket.findIndex((e) => e.uid === uid);
-        
-        if (index >= 0) {
-          bucket.splice(index, 1);
-          found = true;
-          break;
-        }
+      if (!this.indexMeta) {
+        return err("E300", "Vector index not loaded");
       }
 
-      if (!found) {
+      const meta = this.indexMeta.concepts[uid];
+      if (!meta) {
         return err(
           "E004",
           `Vector entry not found: ${uid}`,
@@ -165,8 +191,26 @@ export class VectorIndex implements IVectorIndex {
         );
       }
 
-      // 保存索引
-      await this.save();
+      // 删除向量文件
+      const deleteResult = await this.fileStorage.deleteVectorFile(meta.type, uid);
+      if (!deleteResult.ok) {
+        return deleteResult;
+      }
+
+      // 更新元数据索引
+      delete this.indexMeta.concepts[uid];
+      this.indexMeta.stats.totalConcepts--;
+      this.indexMeta.stats.byType[meta.type]--;
+      this.indexMeta.lastUpdated = Date.now();
+
+      // 从缓存中移除
+      this.loadedVectors.delete(uid);
+
+      // 保存元数据索引
+      const saveResult = await this.saveIndexMeta();
+      if (!saveResult.ok) {
+        return saveResult;
+      }
 
       return ok(undefined);
     } catch (error) {
@@ -178,15 +222,17 @@ export class VectorIndex implements IVectorIndex {
     }
   }
 
-  /**
-   * 搜索相似概念（仅在同类型桶内检索）
-   */
+  /** 搜索相似概念（同类型桶内检索） */
   async search(
     type: CRType,
     embedding: number[],
     topK: number
   ): Promise<Result<SearchResult[]>> {
     try {
+      if (!this.indexMeta) {
+        return err("E300", "Vector index not loaded");
+      }
+
       // 验证向量维度
       if (embedding.length !== this.dimension) {
         return err(
@@ -196,28 +242,39 @@ export class VectorIndex implements IVectorIndex {
         );
       }
 
-      const bucket = this.buckets[type];
+      // 归一化查询向量
+      const normalizedQuery = this.normalize(embedding);
+
+      // 加载该类型的所有向量
+      const vectorsResult = await this.loadVectorsByType(type);
+      if (!vectorsResult.ok) {
+        return vectorsResult as Result<SearchResult[]>;
+      }
+
+      const vectors = vectorsResult.value;
+
+      // 使用局部排序，仅维护 topK
+      const topResults: Array<{ vector: ConceptVector; similarity: number }> = [];
       
-      // 使用局部排序，仅维护 topK，避免全量排序阻塞主线程
-      const topResults: Array<{ entry: VectorEntry; similarity: number }> = [];
-      
-      for (const entry of bucket) {
-        const similarity = this.cosineSimilarity(embedding, entry.embedding);
+      for (const vector of vectors) {
+        // 使用点积计算相似度（向量已归一化）
+        const similarity = this.dotProduct(normalizedQuery, vector.embedding);
+        
         if (topResults.length < topK) {
-          topResults.push({ entry, similarity });
+          topResults.push({ vector, similarity });
           topResults.sort((a, b) => b.similarity - a.similarity);
         } else if (similarity > topResults[topResults.length - 1].similarity) {
-          topResults[topResults.length - 1] = { entry, similarity };
+          topResults[topResults.length - 1] = { vector, similarity };
           topResults.sort((a, b) => b.similarity - a.similarity);
         }
       }
 
       // 转换为 SearchResult 格式
       const searchResults: SearchResult[] = topResults.map((r) => ({
-        uid: r.entry.uid,
+        uid: r.vector.id,
         similarity: r.similarity,
-        name: r.entry.name,
-        path: r.entry.path,
+        name: r.vector.name,
+        path: this.indexMeta!.concepts[r.vector.id]?.filePath || "",
       }));
 
       return ok(searchResults);
@@ -230,101 +287,162 @@ export class VectorIndex implements IVectorIndex {
     }
   }
 
-  /**
-   * 获取索引统计信息
-   */
+  /** 获取索引统计信息 */
   getStats(): IndexStats {
-    const byType: Record<CRType, number> = {
-      Domain: this.buckets.Domain.length,
-      Issue: this.buckets.Issue.length,
-      Theory: this.buckets.Theory.length,
-      Entity: this.buckets.Entity.length,
-      Mechanism: this.buckets.Mechanism.length,
-    };
-
-    const totalEntries = Object.values(byType).reduce((sum, count) => sum + count, 0);
+    if (!this.indexMeta) {
+      return {
+        totalEntries: 0,
+        byType: {
+          Domain: 0,
+          Issue: 0,
+          Theory: 0,
+          Entity: 0,
+          Mechanism: 0,
+        },
+        lastUpdated: new Date().toISOString(),
+      };
+    }
 
     return {
-      totalEntries,
-      byType,
-      lastUpdated: new Date().toISOString(),
+      totalEntries: this.indexMeta.stats.totalConcepts,
+      byType: { ...this.indexMeta.stats.byType },
+      lastUpdated: new Date(this.indexMeta.lastUpdated).toISOString(),
     };
   }
 
-  /**
-   * 根据 UID 获取条目
-   */
+  /** 根据 UID 获取条目 */
   getEntry(uid: string): VectorEntry | undefined {
-    for (const type of Object.keys(this.buckets) as CRType[]) {
-      const bucket = this.buckets[type];
-      const entry = bucket.find(e => e.uid === uid);
-      if (entry) {
-        return { ...entry };
-      }
+    if (!this.indexMeta) {
+      return undefined;
     }
+
+    const meta = this.indexMeta.concepts[uid];
+    if (!meta) {
+      return undefined;
+    }
+
+    // 如果已缓存，从缓存返回
+    const cached = this.loadedVectors.get(uid);
+    if (cached) {
+      return {
+        uid: cached.id,
+        type: cached.type,
+        embedding: cached.embedding,
+        name: cached.name,
+        path: meta.filePath,
+        updated: new Date(cached.metadata.updatedAt).toISOString(),
+      };
+    }
+
+    // 否则返回元数据（不包含向量）
     return undefined;
   }
 
-  /**
-   * 保存索引到文件
-   */
-  private async save(): Promise<void> {
-    const stats = this.getStats();
-    
-    const indexFile: VectorIndexFile = {
-      version: "1.0.0",
-      model: this.model,
-      dimension: this.dimension,
-      buckets: this.buckets,
-      metadata: {
-        totalCount: stats.totalEntries,
-        lastUpdated: stats.lastUpdated,
-      },
-    };
+  /** 延迟加载：按类型加载向量 */
+  private async loadVectorsByType(type: CRType): Promise<Result<ConceptVector[]>> {
+    try {
+      if (!this.indexMeta) {
+        return err("E300", "Vector index not loaded");
+      }
 
-    const content = JSON.stringify(indexFile, null, 2);
-    const writeResult = await this.fileStorage.write(this.indexFilePath, content);
-    
-    if (!writeResult.ok) {
-      throw new Error(`Failed to save vector index: ${writeResult.error.message}`);
+      const vectors: ConceptVector[] = [];
+
+      // 获取该类型的所有概念
+      const conceptMetas = Object.values(this.indexMeta.concepts).filter(
+        (meta) => meta.type === type
+      );
+
+      // 加载向量文件
+      for (const meta of conceptMetas) {
+        // 检查缓存
+        let vector = this.loadedVectors.get(meta.id);
+        
+        if (!vector) {
+          // 从文件加载
+          const readResult = await this.fileStorage.readVectorFile(type, meta.id);
+          if (readResult.ok) {
+            vector = readResult.value;
+            this.loadedVectors.set(meta.id, vector);
+          } else {
+            // 文件读取失败，跳过该向量
+            const error = readResult as Err;
+            console.warn(`Failed to load vector file for ${meta.id}:`, error.error.message);
+            continue;
+          }
+        }
+
+        vectors.push(vector);
+      }
+
+      return ok(vectors);
+    } catch (error) {
+      return err(
+        "E300",
+        `Failed to load vectors for type: ${type}`,
+        error
+      );
     }
   }
 
-  private createEmptyBuckets(): Record<CRType, VectorEntry[]> {
-    return {
-      Domain: [],
-      Issue: [],
-      Theory: [],
-      Entity: [],
-      Mechanism: [],
-    };
+  /**
+   * 保存元数据索引
+   */
+  private async saveIndexMeta(): Promise<Result<void>> {
+    if (!this.indexMeta) {
+      return err("E300", "Index meta not initialized");
+    }
+
+    const writeResult = await this.fileStorage.writeVectorIndexMeta(this.indexMeta);
+    if (!writeResult.ok) {
+      return writeResult;
+    }
+
+    return ok(undefined);
   }
 
   /**
-   * 计算余弦相似度
+   * 归一化向量
+   * @param vector 原始向量
+   * @returns 归一化后的向量（模长为 1）
    */
-  private cosineSimilarity(a: number[], b: number[]): number {
+  private normalize(vector: number[]): number[] {
+    let norm = 0;
+    for (let i = 0; i < vector.length; i++) {
+      norm += vector[i] * vector[i];
+    }
+    norm = Math.sqrt(norm);
+
+    // 零向量直接返回
+    if (norm === 0) {
+      return vector;
+    }
+
+    // 归一化
+    const normalized = new Array(vector.length);
+    for (let i = 0; i < vector.length; i++) {
+      normalized[i] = vector[i] / norm;
+    }
+
+    return normalized;
+  }
+
+  /**
+   * 计算点积（用于归一化向量的相似度计算）
+   * 对于归一化向量，点积等于余弦相似度
+   * @param a 归一化向量 A
+   * @param b 归一化向量 B
+   * @returns 相似度 (0-1)
+   */
+  private dotProduct(a: number[], b: number[]): number {
     if (a.length !== b.length) {
       throw new Error("Vectors must have the same dimension");
     }
 
-    let dotProduct = 0;
-    let normA = 0;
-    let normB = 0;
-
+    let product = 0;
     for (let i = 0; i < a.length; i++) {
-      dotProduct += a[i] * b[i];
-      normA += a[i] * a[i];
-      normB += b[i] * b[i];
+      product += a[i] * b[i];
     }
 
-    normA = Math.sqrt(normA);
-    normB = Math.sqrt(normB);
-
-    if (normA === 0 || normB === 0) {
-      return 0;
-    }
-
-    return dotProduct / (normA * normB);
+    return product;
   }
 }

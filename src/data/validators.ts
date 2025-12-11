@@ -1,7 +1,4 @@
-/**
- * 数据验证函数
- * 用于验证数据模型的完整性和正确性
- */
+/** 数据验证函数 - 验证数据模型的完整性和正确性 */
 
 import {
   CRFrontmatter,
@@ -17,18 +14,12 @@ import {
   err,
 } from "../types";
 
-// ============================================================================
 // UUID 验证
-// ============================================================================
 
-/**
- * UUID v4 正则表达式
- */
+/** UUID v4 正则表达式 */
 const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-/**
- * 验证 UUID v4 格式
- */
+/** 验证 UUID v4 格式 */
 export function isValidUUID(uid: string): boolean {
   return UUID_V4_REGEX.test(uid);
 }
@@ -44,13 +35,9 @@ export function generateUUID(): string {
   });
 }
 
-// ============================================================================
 // ISO 8601 时间戳验证
-// ============================================================================
 
-/**
- * 验证 ISO 8601 时间戳格式
- */
+/** 验证 ISO 8601 时间戳格式 */
 export function isValidISO8601(timestamp: string): boolean {
   const date = new Date(timestamp);
   return !isNaN(date.getTime()) && date.toISOString() === timestamp;
@@ -63,13 +50,9 @@ export function generateTimestamp(): string {
   return new Date().toISOString();
 }
 
-// ============================================================================
 // CRFrontmatter 验证
-// ============================================================================
 
-/**
- * 验证知识类型
- */
+/** 验证知识类型 */
 export function isValidCRType(type: string): type is CRType {
   return ["Domain", "Issue", "Theory", "Entity", "Mechanism"].includes(type);
 }
@@ -81,9 +64,7 @@ export function isValidNoteState(state: string): state is NoteState {
   return ["Stub", "Draft", "Evergreen"].includes(state);
 }
 
-/**
- * 验证 CRFrontmatter 数据完整性
- */
+/** 验证 CRFrontmatter 数据完整性 */
 export function validateCRFrontmatter(data: unknown): Result<CRFrontmatter> {
   if (!data || typeof data !== "object") {
     return err("INVALID_FRONTMATTER", "Frontmatter 必须是对象");
@@ -92,12 +73,12 @@ export function validateCRFrontmatter(data: unknown): Result<CRFrontmatter> {
   const fm = data as Partial<CRFrontmatter>;
 
   // 验证必填字段
-  if (!fm.uid || typeof fm.uid !== "string") {
-    return err("MISSING_FIELD", "缺少必填字段: uid");
+  if (!fm.crUid || typeof fm.crUid !== "string") {
+    return err("MISSING_FIELD", "缺少必填字段: crUid");
   }
 
-  if (!isValidUUID(fm.uid)) {
-    return err("INVALID_UUID", `无效的 UUID 格式: ${fm.uid}`);
+  if (!isValidUUID(fm.crUid)) {
+    return err("INVALID_UUID", `无效的 UUID 格式: ${fm.crUid}`);
   }
 
   if (!fm.type || !isValidCRType(fm.type)) {
@@ -155,13 +136,9 @@ export function validateCRFrontmatter(data: unknown): Result<CRFrontmatter> {
   return ok(fm as CRFrontmatter);
 }
 
-// ============================================================================
 // TaskRecord 验证
-// ============================================================================
 
-/**
- * 验证任务类型
- */
+/** 验证任务类型 */
 export function isValidTaskType(type: string): type is TaskType {
   return [
     "embedding",
@@ -181,9 +158,7 @@ export function isValidTaskState(state: string): state is TaskState {
   return ["Pending", "Running", "Completed", "Failed", "Cancelled"].includes(state);
 }
 
-/**
- * 验证 TaskRecord 数据完整性
- */
+/** 验证 TaskRecord 数据完整性 */
 export function validateTaskRecord(data: unknown): Result<TaskRecord> {
   if (!data || typeof data !== "object") {
     return err("INVALID_TASK", "TaskRecord 必须是对象");
@@ -256,20 +231,14 @@ export function validateTaskRecord(data: unknown): Result<TaskRecord> {
   return ok(task as TaskRecord);
 }
 
-// ============================================================================
 // DuplicatePair 验证
-// ============================================================================
 
-/**
- * 验证重复对状态
- */
+/** 验证重复对状态 */
 export function isValidDuplicatePairStatus(status: string): status is DuplicatePairStatus {
   return ["pending", "merging", "merged", "dismissed"].includes(status);
 }
 
-/**
- * 验证 DuplicatePair 数据完整性
- */
+/** 验证 DuplicatePair 数据完整性 */
 export function validateDuplicatePair(data: unknown): Result<DuplicatePair> {
   if (!data || typeof data !== "object") {
     return err("INVALID_DUPLICATE_PAIR", "DuplicatePair 必须是对象");
@@ -337,16 +306,9 @@ export function validateDuplicatePair(data: unknown): Result<DuplicatePair> {
   return ok(pair as DuplicatePair);
 }
 
-// ============================================================================
 // URL 验证
-// ============================================================================
 
-/**
- * 验证 URL 格式
- * 
- * @param url - 要验证的 URL 字符串
- * @returns 如果 URL 有效则返回 null，否则返回错误消息
- */
+/** 验证 URL 格式 */
 export function validateUrl(url: string): string | null {
   // 检查是否为空
   if (!url || typeof url !== "string") {

@@ -54,57 +54,56 @@
 }
 
 /* ========================================
-   2. Workbench Panel
+   2. Workbench Panel - 重新设计
    ======================================== */
 
 .cr-workbench-panel {
-    padding: var(--cr-gap-md);
+    padding: var(--size-4-6) var(--size-4-4);
     height: 100%;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: var(--cr-gap-lg);
+    gap: var(--size-4-4);
+    max-width: 900px;
+    margin: 0 auto;
 }
 
-/* --- Hero Search Section --- */
-.cr-hero-container {
-    display: flex;
-    justify-content: center;
-    margin-bottom: var(--cr-gap-md);
-}
+/* --- 主搜索区 --- */
 
 .cr-search-wrapper {
+    display: flex;
+    align-items: center;
     position: relative;
-    width: 100%;
-    max-width: 600px;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-l);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    transition: all 0.2s ease;
+    padding: 4px;
+}
+
+.cr-search-wrapper:focus-within {
+    border-color: var(--interactive-accent);
+    box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
 }
 
 .cr-hero-input {
-    width: 100%;
-    height: 40px;
-    /* Slightly smaller to fit better */
-    padding: 0 16px 0 52px;
-    /* Fix overlap: Left padding for icon */
-    /* Adjusted padding */
-    font-size: 1em;
-    border-radius: var(--radius-l);
-    border: 1px solid var(--cr-border);
-    background: var(--cr-bg-surface);
-    color: var(--cr-text-normal);
-    transition: all 0.2s ease;
-    box-shadow: var(--cr-shadow-card);
-    box-sizing: border-box;
-    /* display: flex; REMOVED - Causes text rendering issues on inputs */
-    /* align-items: center; REMOVED */
+    flex: 1;
+    border: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    font-size: 15px;
+    height: 48px;
+    padding: 0 16px;
+    color: var(--text-normal);
+}
+
+.cr-hero-input::placeholder {
+    color: var(--text-faint);
 }
 
 .cr-hero-input:focus {
     outline: none;
-    border-color: var(--cr-border-focus);
-    box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
-    background: var(--cr-bg-base);
-    /* display: flex; REMOVED */
-    /* align-items: center; REMOVED */
 }
 
 /* Modal Simple Input Styles */
@@ -176,59 +175,61 @@
     transform: scale(1.05);
 }
 
-/* Search Icon Fix */
-.cr-search-icon {
-    position: absolute;
-    left: 14px;
-    top: 50%;
-    transform: translateY(-50%);
-    color: var(--cr-text-muted);
-    pointer-events: none;
-}
-
 .cr-search-action-btn {
-    position: absolute;
-    right: 8px;
-    top: 50%;
-    transform: translateY(-50%);
-    background: transparent;
-    color: var(--cr-text-accent);
+    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-m);
     border: none;
-    padding: 4px;
-    cursor: pointer;
-    border-radius: 50%;
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: background 0.2s ease;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    margin-right: 4px;
+}
+
+.cr-search-action-btn svg {
+    width: 18px;
+    height: 18px;
 }
 
 .cr-search-action-btn:hover {
-    background: var(--cr-bg-hover);
+    background: var(--interactive-accent-hover);
+    transform: scale(1.05);
 }
 
-.cr-search-action-btn:disabled,
-.cr-search-action-btn.cr-hidden {
-    opacity: 0;
-    pointer-events: none;
+.cr-search-action-btn:active {
+    transform: scale(0.95);
 }
 
-/* --- Queue Status Section (Refactored) --- */
+.cr-search-action-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.cr-search-action-btn:disabled:hover {
+    transform: none;
+}
+
+/* --- Queue Status Section --- */
 .cr-queue-status-container {
     display: flex;
     flex-direction: column;
-    gap: var(--cr-gap-md);
-    margin-bottom: var(--cr-gap-lg);
+    gap: var(--size-4-3);
 }
 
 .cr-queue-control-row {
     display: flex;
     align-items: center;
-    gap: var(--cr-gap-md);
-    background: var(--cr-bg-surface);
-    border: 1px solid var(--cr-border);
-    border-radius: var(--cr-radius-card);
-    padding: 12px 16px;
+    gap: var(--size-4-4);
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    padding: var(--size-4-3) var(--size-4-4);
 }
 
 .cr-status-wrapper {
@@ -296,27 +297,28 @@
 .cr-queue-stats-grid,
 .cr-dashboard-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: var(--cr-gap-md);
-    margin-bottom: var(--cr-gap-lg);
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: var(--size-4-3);
 }
 
-/* Stat Cards (Reused mostly but refined) */
+/* Stat Cards */
 .cr-stat-card {
-    background: var(--cr-bg-surface);
-    border: 1px solid var(--cr-border);
-    border-radius: var(--cr-radius-card);
-    padding: 12px;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    padding: var(--size-4-4);
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    transition: all 0.15s ease;
+    min-height: 80px;
 }
 
 .cr-stat-card:hover {
-    transform: translateY(-2px);
-    box-shadow: var(--cr-shadow-card);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-s);
+    border-color: var(--background-modifier-border-hover);
 }
 
 .cr-stat-value {
@@ -387,41 +389,51 @@
     }
 }
 
-/* --- Duplicates List Section --- */
+/* --- Duplicates Section --- */
+.cr-duplicates-section {
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    padding: var(--size-4-4);
+}
+
 .cr-duplicates-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: var(--cr-gap-sm);
+    margin-bottom: var(--size-4-3);
+    padding-bottom: var(--size-4-3);
+    border-bottom: 1px solid var(--background-modifier-border);
 }
 
 .cr-section-title {
-    font-size: 1.1em;
+    font-size: var(--font-ui-medium);
     font-weight: 600;
-    color: var(--cr-text-normal);
+    color: var(--text-normal);
     margin: 0;
 }
 
 .cr-duplicates-list {
     display: flex;
     flex-direction: column;
-    gap: var(--cr-gap-sm);
+    gap: var(--size-4-2);
 }
 
 .cr-duplicate-item {
     display: flex;
     align-items: center;
-    padding: var(--cr-padding-card);
-    background: var(--cr-bg-surface);
-    border: 1px solid var(--cr-border);
-    border-radius: var(--cr-radius-card);
-    transition: background 0.2s ease;
+    padding: var(--size-4-3);
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    transition: all 0.15s ease;
+    cursor: pointer;
 }
 
 .cr-duplicate-item:hover {
-    background: var(--cr-bg-hover);
-    border-color: var(--cr-border-focus);
-    /* Subtle highlight */
+    background: var(--background-modifier-hover);
+    border-color: var(--interactive-accent);
+    box-shadow: var(--shadow-s);
 }
 
 .cr-dup-names {
@@ -529,7 +541,7 @@
    3. Settings Tab
    ======================================== */
 
-/* --- Settings Tab (Horizontal Layout) --- */
+/* --- Settings Tab --- */
 .cr-settings-container {
     display: flex;
     flex-direction: column;
@@ -539,74 +551,96 @@
 .cr-settings-nav {
     display: flex;
     flex-direction: row;
-    border-bottom: 1px solid var(--cr-border);
-    margin-bottom: var(--cr-gap-lg);
-    gap: var(--cr-gap-md);
-    padding: 0 var(--cr-gap-sm);
-    background: var(--cr-bg-surface);
+    border-bottom: 1px solid var(--background-modifier-border);
+    margin-bottom: var(--size-4-6);
+    gap: var(--size-4-1);
+    padding: 0 var(--size-4-2);
+    background: var(--background-primary);
     position: sticky;
     top: 0;
     z-index: 10;
 }
 
 .cr-nav-item {
-    padding: 10px 16px;
+    padding: var(--size-4-2) var(--size-4-4);
     cursor: pointer;
-    border-radius: var(--cr-radius-sm) var(--cr-radius-sm) 0 0;
-    color: var(--cr-text-muted);
+    color: var(--text-muted);
     font-weight: 500;
-    transition: all 0.2s ease;
+    font-size: var(--font-ui-small);
+    transition: all 0.15s ease;
     border-bottom: 2px solid transparent;
     margin-bottom: -1px;
+    white-space: nowrap;
 }
 
 .cr-nav-item:hover {
-    color: var(--cr-text-normal);
-    background-color: var(--cr-bg-hover);
+    color: var(--text-normal);
+    background-color: var(--background-modifier-hover);
 }
 
 .cr-nav-item.is-active {
-    color: var(--cr-text-accent);
-    border-bottom-color: var(--cr-text-accent);
+    color: var(--interactive-accent);
+    border-bottom-color: var(--interactive-accent);
     background-color: transparent;
 }
 
 /* Settings Content */
 .cr-settings-content {
     flex: 1;
-    padding: 0 var(--cr-gap-md);
+    padding: 0 var(--size-4-4);
     overflow-y: auto;
     min-height: 0;
-    /* Important for scroll */
+}
+
+.cr-settings-content h2 {
+    font-size: var(--font-ui-large);
+    margin-top: 0;
+    color: var(--text-normal);
+}
+
+.cr-settings-content h3 {
+    font-size: var(--font-ui-medium);
+    color: var(--text-muted);
+    font-weight: 600;
 }
 
 /* Provider Cards */
 .cr-provider-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: var(--cr-gap-md);
-    margin-top: var(--cr-gap-md);
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: var(--size-4-3);
+    margin-top: var(--size-4-4);
 }
 
 .cr-provider-card {
-    background: var(--cr-bg-surface);
-    border: 1px solid var(--cr-border);
-    border-radius: var(--cr-radius-card);
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
     overflow: hidden;
+    transition: all 0.15s ease;
+}
+
+.cr-provider-card:hover {
+    box-shadow: var(--shadow-s);
+    border-color: var(--background-modifier-border-hover);
 }
 
 .cr-provider-header {
-    padding: var(--cr-padding-card);
+    padding: var(--size-4-4);
     display: flex;
     align-items: center;
     justify-content: space-between;
     border-bottom: 1px solid transparent;
-    /* Hidden by default */
     cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.cr-provider-header:hover {
+    background: var(--background-modifier-hover);
 }
 
 .cr-provider-card.is-expanded .cr-provider-header {
-    border-bottom-color: var(--cr-border);
+    border-bottom-color: var(--background-modifier-border);
 }
 
 .cr-provider-info {
@@ -643,13 +677,25 @@
 }
 
 .cr-provider-body {
-    padding: var(--cr-padding-card);
-    background: var(--cr-bg-base);
+    padding: var(--size-4-4);
+    background: var(--background-primary);
     display: none;
+    border-top: 1px solid var(--background-modifier-border);
 }
 
 .cr-provider-card.is-expanded .cr-provider-body {
     display: block;
+}
+
+.cr-text-muted {
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+}
+
+.cr-flex-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
 }
 
 /* ========================================
@@ -658,13 +704,10 @@
 
 /* Minimal Input Modal */
 .cr-minimal-modal .modal {
-    background: rgba(var(--background-primary-rgb), 0.85) !important;
-    /* Requires converted RGB vars or fallback */
-    /* Fallback for native Obsidian vars if RGB not available */
     background: var(--background-primary) !important;
-    backdrop-filter: blur(12px);
-    border: 1px solid var(--cr-border);
-    box-shadow: var(--cr-shadow-floating);
+    backdrop-filter: blur(8px);
+    border: 1px solid var(--background-modifier-border);
+    box-shadow: var(--shadow-l);
     border-radius: var(--radius-l);
     padding: 0;
     max-width: 600px;
@@ -679,16 +722,18 @@
 .cr-minimal-input-wrapper {
     display: flex;
     align-items: center;
-    background: var(--cr-bg-surface);
-    border: 1px solid var(--cr-border);
-    border-radius: var(--cr-radius-card);
-    padding: 8px 12px;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    padding: var(--size-4-2) var(--size-4-3);
     box-sizing: border-box;
+    transition: all 0.15s ease;
 }
 
 .cr-minimal-input-wrapper:focus-within {
-    border-color: var(--cr-border-focus);
+    border-color: var(--interactive-accent);
     box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
+    background: var(--background-primary);
 }
 
 .cr-minimal-input {
@@ -732,12 +777,12 @@
    ======================================== */
 
 .cr-loading-spinner {
-    border: 2px solid var(--cr-bg-surface);
-    border-top: 2px solid var(--cr-text-accent);
+    border: 2px solid var(--background-modifier-border);
+    border-top: 2px solid var(--interactive-accent);
     border-radius: 50%;
     width: 16px;
     height: 16px;
-    animation: spin 1s linear infinite;
+    animation: spin 0.8s linear infinite;
 }
 
 @keyframes spin {
@@ -754,49 +799,840 @@
     display: none !important;
 }
 
-/* Recent Ops Styles */
-.cr-recent-ops-toolbar {
-    /* display: flex;  Moved to header, this might be unused or for sidebar actions */
-    display: none;
+.cr-empty-state {
+    text-align: center;
+    padding: var(--size-4-8);
+    color: var(--text-muted);
+    font-size: var(--font-ui-small);
 }
 
+.cr-card {
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    padding: var(--size-4-4);
+}
+
+/* Recent Ops & Section Actions */
 .cr-section-header-actions {
     display: flex;
     align-items: center;
-    gap: var(--cr-gap-sm);
+    gap: var(--size-4-2);
     margin-left: auto;
-    /* Push to right */
 }
 
 .cr-header-btn {
     background: transparent;
     border: 1px solid transparent;
-    color: var(--cr-text-muted);
-    padding: 4px 8px;
-    font-size: 0.85em;
+    color: var(--text-muted);
+    padding: var(--size-4-1) var(--size-4-2);
+    font-size: var(--font-ui-smaller);
     border-radius: var(--radius-s);
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all 0.15s ease;
 }
 
 .cr-header-btn:hover {
-    background: var(--cr-bg-hover);
-    color: var(--cr-text-normal);
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+    border-color: var(--background-modifier-border);
 }
 
 .cr-btn-small {
-    padding: 6px 14px;
-    font-size: 0.9em;
+    padding: var(--size-4-2) var(--size-4-3);
+    font-size: var(--font-ui-small);
     border-radius: var(--radius-s);
-    background: var(--cr-bg-surface);
-    border: 1px solid var(--cr-border);
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
     cursor: pointer;
-    transition: all 0.2s ease;
-    color: var(--cr-text-muted);
+    transition: all 0.15s ease;
+    color: var(--text-normal);
 }
 
 .cr-btn-small:hover {
-    background: var(--cr-bg-hover);
-    color: var(--cr-text-normal);
-    border-color: var(--cr-border-focus);
+    background: var(--background-modifier-hover);
+    border-color: var(--interactive-accent);
+}
+
+.cr-icon-btn {
+    background: transparent;
+    border: none;
+    padding: var(--size-4-1);
+    color: var(--text-muted);
+    cursor: pointer;
+    border-radius: var(--radius-s);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+}
+
+.cr-icon-btn:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+/* ========================================
+   6. Recent Operations Section
+   ======================================== */
+
+.cr-recent-ops {
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    padding: var(--size-4-4);
+}
+
+.cr-recent-ops-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-2);
+}
+
+.cr-recent-op-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--size-4-3);
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    transition: all 0.15s ease;
+}
+
+.cr-recent-op-item:hover {
+    background: var(--background-modifier-hover);
+    border-color: var(--interactive-accent);
+}
+
+.cr-op-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-1);
+}
+
+.cr-op-description {
+    font-size: var(--font-ui-small);
+    color: var(--text-normal);
+    font-weight: 500;
+}
+
+.cr-op-time {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+}
+
+.cr-undo-btn {
+    flex-shrink: 0;
+    margin-left: var(--size-4-3);
+}
+
+.cr-more-hint {
+    text-align: center;
+    padding: var(--size-4-3);
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+}
+
+/* ========================================
+   7. Type Confidence Table
+   ======================================== */
+
+.cr-type-confidence-table {
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    padding: var(--size-4-3);
+}
+
+.cr-table-header {
+    margin-bottom: var(--size-4-2);
+}
+
+.cr-table-header h4 {
+    margin: 0 0 var(--size-4-1) 0;
+    font-size: var(--font-ui-medium);
+    color: var(--text-normal);
+}
+
+.cr-table-header p {
+    margin: 0;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    line-height: 1.3;
+}
+
+.cr-confidence-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.cr-confidence-table th {
+    text-align: left;
+    padding: var(--size-4-1) var(--size-4-2);
+    font-size: var(--font-ui-smaller);
+    font-weight: 600;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.cr-confidence-table td {
+    padding: var(--size-4-1) var(--size-4-2);
+    border-bottom: 1px solid var(--background-modifier-border);
+    vertical-align: middle;
+}
+
+.cr-confidence-row:last-child td {
+    border-bottom: none;
+}
+
+.cr-confidence-row:hover {
+    background: var(--background-modifier-hover);
+}
+
+.cr-type-name {
+    font-weight: 500;
+    color: var(--text-normal);
+}
+
+.cr-standard-name {
+    color: var(--text-muted);
+    font-size: var(--font-ui-small);
+}
+
+.cr-confidence-cell {
+    align-items: center;
+    min-width: 120px;
+}
+
+.cr-confidence-bar {
+    flex: 1;
+    height: 8px;
+    background: var(--background-modifier-border);
+    border-radius: 4px;
+    overflow: hidden;
+    min-width: 80px;
+}
+
+.cr-confidence-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--interactive-accent), var(--interactive-accent-hover));
+    transition: width 0.3s ease;
+    border-radius: 4px;
+}
+
+.cr-confidence-percentage {
+    font-family: var(--font-monospace);
+    font-size: var(--font-ui-small);
+    color: var(--text-normal);
+    font-weight: 600;
+    min-width: 42px;
+    text-align: right;
+}
+
+.cr-create-btn {
+    padding: var(--size-4-2) var(--size-4-4);
+    font-size: var(--font-ui-small);
+    white-space: nowrap;
+    min-width: 60px;
+}
+
+/* ========================================
+   8. Collapsible Sections
+   ======================================== */
+
+.cr-section {
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    overflow: hidden;
+}
+
+.cr-collapsible-header {
+    padding: var(--size-4-3) var(--size-4-4);
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-2);
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s ease;
+    border-bottom: 1px solid transparent;
+}
+
+.cr-collapsible-header:hover {
+    background: var(--background-modifier-hover);
+}
+
+.cr-collapse-icon {
+    font-size: 12px;
+    color: var(--text-muted);
+    transition: transform 0.15s ease;
+}
+
+.cr-section-content {
+    padding: var(--size-4-4);
+    max-height: 1000px;
+    overflow: hidden;
+    transition: max-height 0.3s ease, opacity 0.3s ease;
+    opacity: 1;
+}
+
+.cr-section-content.cr-collapsed {
+    max-height: 0;
+    padding: 0;
+    opacity: 0;
+}
+
+.cr-badge {
+    background: var(--background-modifier-border);
+    color: var(--text-muted);
+    padding: 2px 8px;
+    border-radius: var(--radius-s);
+    font-size: var(--font-ui-smaller);
+    font-weight: 600;
+    margin-left: var(--size-4-2);
+}
+
+/* ========================================
+   9. Status Badge (Status Bar)
+   ======================================== */
+
+.cr-status-badge {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-1);
+    padding: 0 var(--size-4-2);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.cr-status-badge:hover {
+    background: var(--background-modifier-hover);
+}
+
+.cr-status-text {
+    font-size: var(--font-ui-smaller);
+    font-family: var(--font-monospace);
+}
+
+.cr-status-badge.cr-status-idle .cr-status-text {
+    color: var(--text-muted);
+}
+
+.cr-status-badge.cr-status-active .cr-status-text {
+    color: var(--interactive-accent);
+}
+
+.cr-status-badge.cr-status-paused .cr-status-text {
+    color: var(--color-orange);
+}
+
+.cr-status-badge.cr-status-failed .cr-status-text {
+    color: var(--text-error);
+}
+
+.cr-status-badge.cr-status-offline .cr-status-text {
+    color: var(--text-faint);
+}
+
+/* ========================================
+   10. Responsive Design
+   ======================================== */
+
+@media (max-width: 768px) {
+    .cr-workbench-panel {
+        padding: var(--size-4-4);
+        gap: var(--size-4-4);
+    }
+
+    .cr-queue-stats-grid,
+    .cr-dashboard-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .cr-provider-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .cr-hero-input {
+        font-size: 14px;
+        height: 44px;
+    }
+
+    .cr-settings-nav {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .cr-nav-item {
+        flex-shrink: 0;
+    }
+}
+
+/* ========================================
+   11. Accessibility Enhancements
+   ======================================== */
+
+.cr-clickable {
+    cursor: pointer;
+}
+
+.cr-clickable:focus-visible {
+    outline: 2px solid var(--interactive-accent);
+    outline-offset: 2px;
+}
+
+button:focus-visible,
+.cr-icon-btn:focus-visible,
+.cr-header-btn:focus-visible {
+    outline: 2px solid var(--interactive-accent);
+    outline-offset: 2px;
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+    .cr-stat-card,
+    .cr-duplicate-item,
+    .cr-recent-op-item {
+        border-width: 2px;
+    }
+
+    .cr-hero-input:focus {
+        border-width: 2px;
+    }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+    .cr-scope *,
+    .cr-workbench-panel *,
+    .cr-settings-container *,
+    .cr-minimal-modal * {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+
+    .cr-section-content {
+        transition: none;
+    }
+}
+
+/* ========================================
+   12. 状态概览区域
+   ======================================== */
+
+/* 队列区域外层容器 */
+.cr-queue-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-2);
+}
+
+/* 状态栏（一行） */
+.cr-status-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--size-4-3) var(--size-4-4);
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    gap: var(--size-4-3);
+}
+
+/* 兼容旧的 cr-status-overview */
+.cr-status-overview {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--size-4-4);
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+}
+
+.cr-queue-indicator {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-2);
+    flex-shrink: 0;
+}
+
+.cr-status-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    transition: all 0.3s ease;
+}
+
+.cr-status-dot.is-idle {
+    background: var(--text-muted);
+}
+
+.cr-status-dot.is-running {
+    background: var(--interactive-accent);
+    box-shadow: 0 0 8px var(--interactive-accent);
+    animation: pulse 2s infinite;
+}
+
+.cr-status-dot.is-paused {
+    background: var(--color-orange);
+}
+
+.cr-status-dot.is-error {
+    background: var(--text-error);
+}
+
+.cr-status-text {
+    font-size: var(--font-ui-small);
+    font-weight: 600;
+    color: var(--text-normal);
+}
+
+.cr-quick-stats {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--size-4-3);
+    flex: 1;
+    min-width: 0;
+}
+
+.cr-stat-item {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-2);
+    padding: var(--size-4-2) var(--size-4-3);
+    background: var(--background-primary);
+    border-radius: var(--radius-s);
+}
+
+.cr-stat-item .cr-stat-value {
+    font-size: var(--font-ui-medium);
+    font-weight: 700;
+    font-family: var(--font-monospace);
+}
+
+.cr-stat-item .cr-stat-label {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+}
+
+.cr-stat-item.cr-stat-pending .cr-stat-value {
+    color: var(--color-blue);
+}
+
+.cr-stat-item.cr-stat-running .cr-stat-value {
+    color: var(--interactive-accent);
+}
+
+.cr-stat-item.cr-stat-failed .cr-stat-value {
+    color: var(--text-error);
+}
+
+.cr-status-idle-text {
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+}
+
+/* 队列指示器可点击样式 */
+.cr-queue-indicator.cr-clickable {
+    cursor: pointer;
+    padding: var(--size-4-2) var(--size-4-3);
+    border-radius: var(--radius-s);
+    transition: background-color 0.15s ease;
+}
+
+.cr-queue-indicator.cr-clickable:hover {
+    background: var(--background-modifier-hover);
+}
+
+.cr-expand-icon {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    margin-left: var(--size-4-2);
+    transition: transform 0.2s ease;
+}
+
+/* 暂停/恢复按钮 */
+.cr-queue-control-btn {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: var(--radius-s);
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.15s ease;
+}
+
+.cr-queue-control-btn:hover {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+}
+
+.cr-queue-control-btn.is-paused {
+    background: var(--color-orange);
+    color: white;
+}
+
+/* 队列详情区域（在状态栏下方全宽展开） */
+.cr-queue-details {
+    width: 100%;
+    padding: var(--size-4-3);
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    max-height: 350px;
+    overflow-y: auto;
+}
+
+.cr-queue-details-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-ui-small);
+}
+
+.cr-queue-details-table th,
+.cr-queue-details-table td {
+    padding: var(--size-4-2) var(--size-4-2);
+    text-align: left;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.cr-queue-details-table th {
+    font-weight: 600;
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    text-transform: uppercase;
+}
+
+.cr-task-row:hover {
+    background: var(--background-modifier-hover);
+}
+
+.cr-task-id {
+    font-family: var(--font-monospace);
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+}
+
+.cr-status-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: var(--radius-s);
+    font-size: var(--font-ui-smaller);
+    font-weight: 500;
+}
+
+.cr-status-badge.cr-status-pending {
+    background: var(--color-blue-rgb, 66, 133, 244);
+    background: rgba(66, 133, 244, 0.15);
+    color: var(--color-blue);
+}
+
+.cr-status-badge.cr-status-running {
+    background: rgba(var(--interactive-accent-rgb), 0.15);
+    color: var(--interactive-accent);
+}
+
+.cr-status-badge.cr-status-completed {
+    background: rgba(var(--color-green-rgb, 52, 168, 83), 0.15);
+    color: var(--color-green);
+}
+
+.cr-status-badge.cr-status-failed {
+    background: rgba(var(--text-error-rgb, 234, 67, 53), 0.15);
+    color: var(--text-error);
+}
+
+.cr-status-badge.cr-status-cancelled {
+    background: var(--background-modifier-border);
+    color: var(--text-muted);
+}
+
+.cr-error-icon {
+    color: var(--text-error);
+    cursor: help;
+}
+
+.cr-success-icon {
+    color: var(--color-green);
+}
+
+/* 批量操作按钮 */
+.cr-queue-batch-actions {
+    display: flex;
+    gap: var(--size-4-2);
+    margin-top: var(--size-4-3);
+    padding-top: var(--size-4-3);
+    border-top: 1px solid var(--background-modifier-border);
+}
+
+/* ========================================
+   13. 可展开区域
+   ======================================== */
+
+.cr-expandable-sections {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-3);
+}
+
+.cr-collapsible-section {
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    overflow: hidden;
+    transition: all 0.2s ease;
+}
+
+.cr-collapsible-section .cr-section-header {
+    padding: var(--size-4-3) var(--size-4-4);
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-2);
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s ease;
+}
+
+.cr-collapsible-section .cr-section-header:hover {
+    background: var(--background-modifier-hover);
+}
+
+.cr-collapsible-section .cr-section-title {
+    flex: 1;
+    margin: 0;
+    font-size: var(--font-ui-medium);
+    font-weight: 600;
+}
+
+.cr-collapsible-section .cr-collapse-icon {
+    font-size: 10px;
+    color: var(--text-muted);
+    transition: transform 0.2s ease;
+}
+
+.cr-collapsible-section .cr-badge {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    padding: 2px 8px;
+    border-radius: var(--radius-s);
+    font-size: var(--font-ui-smaller);
+    font-weight: 600;
+}
+
+.cr-collapsible-section .cr-section-content {
+    padding: var(--size-4-4);
+    max-height: 600px;
+    overflow-y: auto;
+    transition: max-height 0.3s ease, padding 0.3s ease;
+}
+
+.cr-collapsible-section .cr-section-content.cr-collapsed {
+    max-height: 0;
+    padding: 0 var(--size-4-4);
+    overflow: hidden;
+}
+
+/* ========================================
+   14. 设置页面分组样式
+   ======================================== */
+
+.cr-setting-group {
+    margin-bottom: var(--size-4-6);
+    padding-bottom: var(--size-4-4);
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.cr-setting-group-title {
+    font-size: var(--font-ui-medium);
+    font-weight: 600;
+    color: var(--text-normal);
+    margin: 0 0 var(--size-4-4) 0;
+}
+
+.cr-collapsible-group {
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    padding: 0;
+}
+
+.cr-setting-group-header {
+    padding: var(--size-4-3) var(--size-4-4);
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-2);
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s ease;
+}
+
+.cr-setting-group-header:hover {
+    background: var(--background-modifier-hover);
+}
+
+.cr-setting-group-header .cr-collapse-icon {
+    font-size: 10px;
+    color: var(--text-muted);
+}
+
+.cr-setting-group-header .cr-setting-group-title {
+    margin: 0;
+}
+
+.cr-setting-group-content {
+    padding: 0 var(--size-4-4) var(--size-4-4);
+    max-height: 1000px;
+    overflow: hidden;
+    transition: max-height 0.3s ease, padding 0.3s ease;
+}
+
+.cr-setting-group-content.cr-collapsed {
+    max-height: 0;
+    padding: 0 var(--size-4-4);
+}
+
+.cr-slider-value {
+    display: inline-block;
+    min-width: 40px;
+    text-align: right;
+    font-family: var(--font-monospace);
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    margin-left: var(--size-4-2);
+}
+
+/* ========================================
+   15. 导航图标样式
+   ======================================== */
+
+.cr-nav-item {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-2);
+}
+
+.cr-nav-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.7;
+    transition: opacity 0.15s ease;
+}
+
+.cr-nav-item:hover .cr-nav-icon,
+.cr-nav-item.is-active .cr-nav-icon {
+    opacity: 1;
+}
+
+.cr-nav-text {
+    font-size: var(--font-ui-small);
 }

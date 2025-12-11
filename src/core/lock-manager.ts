@@ -1,7 +1,4 @@
-/**
- * 锁管理器
- * 负责防止并发冲突，管理节点锁和类型锁
- */
+/** 锁管理器：防止并发冲突，管理节点锁和类型锁 */
 
 import { ILockManager, LockRecord, Result, ok, err } from "../types";
 import { ILogger } from "../types";
@@ -20,13 +17,7 @@ export class LockManager implements ILockManager {
     this.logger.debug("LockManager", "LockManager 初始化完成");
   }
 
-  /**
-   * 获取锁
-   * @param key 锁键（nodeId 或 type）
-   * @param type 锁类型
-   * @param taskId 任务 ID
-   * @returns 锁 ID 或错误
-   */
+  /** 获取锁 */
   acquire(key: string, type: 'node' | 'type', taskId: string): Result<string> {
     this.cleanupExpiredLocks();
     // 检查是否已被锁定
@@ -65,10 +56,7 @@ export class LockManager implements ILockManager {
     return ok(key);
   }
 
-  /**
-   * 释放锁
-   * @param lockId 锁 ID（即 key）
-   */
+  /** 释放锁 */
   release(lockId: string): void {
     const lock = this.locks.get(lockId);
     
@@ -84,25 +72,18 @@ export class LockManager implements ILockManager {
     });
   }
 
-  /**
-   * 检查是否被锁定
-   * @param key 锁键
-   */
+  /** 检查是否被锁定 */
   isLocked(key: string): boolean {
     return this.locks.has(key);
   }
 
-  /**
-   * 获取所有活跃锁
-   */
+  /** 获取所有活跃锁 */
   getActiveLocks(): LockRecord[] {
     this.cleanupExpiredLocks();
     return Array.from(this.locks.values());
   }
 
-  /**
-   * 从持久化状态恢复锁
-   */
+  /** 从持久化状态恢复锁 */
   restoreLocks(locks: LockRecord[]): void {
     this.locks.clear();
 
@@ -119,10 +100,7 @@ export class LockManager implements ILockManager {
     });
   }
 
-  /**
-   * 释放任务持有的所有锁
-   * @param taskId 任务 ID
-   */
+  /** 释放任务持有的所有锁 */
   releaseByTaskId(taskId: string): void {
     const locksToRelease: string[] = [];
 
@@ -144,18 +122,14 @@ export class LockManager implements ILockManager {
     }
   }
 
-  /**
-   * 清空所有锁（用于测试或重置）
-   */
+  /** 清空所有锁（用于测试或重置） */
   clear(): void {
     const count = this.locks.size;
     this.locks.clear();
     this.logger.info("LockManager", `清空所有锁，共 ${count} 个`);
   }
 
-  /**
-   * 停止清理任务（用于卸载时释放定时器）
-   */
+  /** 停止清理任务（用于卸载时释放定时器） */
   dispose(): void {
     if (this.cleanupInterval) {
       clearInterval(this.cleanupInterval);
@@ -163,9 +137,7 @@ export class LockManager implements ILockManager {
     }
   }
 
-  /**
-   * 定期清理过期锁，避免僵尸锁长期占用
-   */
+  /** 定期清理过期锁，避免僵尸锁长期占用 */
   private startCleanup(): void {
     this.cleanupInterval = setInterval(() => {
       const released = this.cleanupExpiredLocks();

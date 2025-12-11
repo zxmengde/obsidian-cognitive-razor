@@ -1,12 +1,4 @@
-/**
- * Provider 管理器
- * 负责与 AI 服务提供商交互，支持 OpenAI 标准格式
- * 
- * 遵循设计文档 Requirements 3.1：
- * - 使用 OpenAI 标准格式
- * - 支持自定义 baseUrl（兼容 OpenRouter、Azure 等）
- * - 错误处理委托给 RetryHandler
- */
+/** Provider 管理器：与 AI 服务提供商交互，支持 OpenAI 标准格式 */
 
 import {
   IProviderManager,
@@ -46,9 +38,7 @@ class SecurityUtils {
   }
 }
 
-/**
- * OpenAI API 响应格式
- */
+/** OpenAI API 响应格式 */
 interface OpenAIChatResponse {
   choices: Array<{
     message: {
@@ -73,9 +63,7 @@ interface OpenAIEmbedResponse {
   };
 }
 
-/**
- * HTTP 错误响应
- */
+/** HTTP 错误响应 */
 interface HttpErrorResponse {
   error?: {
     message?: string;
@@ -84,26 +72,12 @@ interface HttpErrorResponse {
   };
 }
 
-/**
- * Provider 可用性缓存条目
- */
+/** Provider 可用性缓存条目 */
 interface AvailabilityCacheEntry {
   capabilities: ProviderCapabilities;
   timestamp: number;
 }
 
-/**
- * ProviderManager - AI 服务提供商管理器
- * 
- * 实现设计文档 section 7.4 定义的 IProviderManager 接口
- * 
- * 特性：
- * - 使用 OpenAI 标准格式调用 API
- * - 支持自定义 baseUrl（兼容 OpenRouter、Azure、本地模型等）
- * - 错误处理委托给 RetryHandler
- * - 支持聊天和嵌入两种 API
- * - 可用性检查缓存（避免频繁网络请求，遵循 G-08 本地优先）
- */
 export class ProviderManager implements IProviderManager {
   private settingsStore: ISettingsStore;
   private logger: ILogger;
@@ -114,7 +88,6 @@ export class ProviderManager implements IProviderManager {
   // 可用性缓存（遵循 G-08 本地优先，A-NF-01 性能界限）
   private availabilityCache: Map<string, AvailabilityCacheEntry>;
   private static readonly CACHE_TTL_MS = 5 * 60 * 1000; // 5 分钟缓存
-  private static readonly REQUEST_TIMEOUT_MS = 60 * 1000; // 60 秒请求超时
 
   constructor(settingsStore: ISettingsStore, logger: ILogger, retryHandler?: RetryHandler) {
     this.settingsStore = settingsStore;
@@ -126,10 +99,7 @@ export class ProviderManager implements IProviderManager {
     this.logger.debug("ProviderManager", "ProviderManager 初始化完成");
   }
 
-  /**
-   * 清除可用性缓存
-   * 用于设置页面"测试连接"时强制刷新
-   */
+  /** 清除可用性缓存（用于设置页面"测试连接"时强制刷新） */
   clearAvailabilityCache(providerId?: string): void {
     if (providerId) {
       this.availabilityCache.delete(providerId);
@@ -140,16 +110,7 @@ export class ProviderManager implements IProviderManager {
     }
   }
 
-  /**
-   * 调用聊天 API
-   * 
-   * 使用 OpenAI 标准格式：POST /chat/completions
-   * 支持自定义 baseUrl
-   * 错误处理委托给 RetryHandler
-   * 
-   * @param request 聊天请求
-   * @returns 聊天响应
-   */
+  /** 调用聊天 API */
   async chat(request: ChatRequest, signal?: AbortSignal): Promise<Result<ChatResponse>> {
     const startTime = Date.now();
     
@@ -176,6 +137,10 @@ export class ProviderManager implements IProviderManager {
     // 仅当明确指定 maxTokens 时才添加该字段
     if (request.maxTokens !== undefined) {
       requestBody.max_tokens = request.maxTokens;
+    }
+    // 如果指定了 reasoning_effort，添加到请求体（用于 o1/o3 等推理模型）
+    if (request.reasoning_effort) {
+      requestBody.reasoning_effort = request.reasoning_effort;
     }
 
     this.logger.debug("ProviderManager", "发送聊天请求", {
@@ -233,16 +198,7 @@ export class ProviderManager implements IProviderManager {
     return result;
   }
 
-  /**
-   * 调用嵌入 API
-   * 
-   * 使用 OpenAI 标准格式：POST /embeddings
-   * 支持自定义 baseUrl
-   * 错误处理委托给 RetryHandler
-   * 
-   * @param request 嵌入请求
-   * @returns 嵌入响应
-   */
+  /** 调用嵌入 API */
   async embed(request: EmbedRequest, signal?: AbortSignal): Promise<Result<EmbedResponse>> {
     const startTime = Date.now();
     
@@ -326,16 +282,7 @@ export class ProviderManager implements IProviderManager {
     return result;
   }
 
-  /**
-   * 检查 Provider 可用性
-   * 
-   * 通过调用 /models 端点验证 API Key 和连接
-   * 使用缓存避免频繁网络请求（遵循 G-08 本地优先，A-NF-01 性能界限）
-   * 
-   * @param providerId Provider ID
-   * @param forceRefresh 是否强制刷新（用于设置页面"测试连接"）
-   * @returns Provider 能力信息
-   */
+  /** 检查 Provider 可用性 */
   async checkAvailability(providerId: string, forceRefresh = false): Promise<Result<ProviderCapabilities>> {
     // 检查缓存（除非强制刷新）
     if (!forceRefresh) {
@@ -442,9 +389,7 @@ export class ProviderManager implements IProviderManager {
     }
   }
 
-  /**
-   * 获取已配置的 Provider 列表
-   */
+  /** 获取已配置的 Provider 列表 */
   getConfiguredProviders(): ProviderInfo[] {
     const settings = this.settingsStore.getSettings();
     const providers: ProviderInfo[] = [];
@@ -461,9 +406,7 @@ export class ProviderManager implements IProviderManager {
     return providers;
   }
 
-  /**
-   * 订阅网络状态变化（用于离线/恢复提示）
-   */
+  /** 订阅网络状态变化（用于离线/恢复提示） */
   subscribeNetworkStatus(listener: (online: boolean, error?: Err) => void): () => void {
     this.networkListeners.push(listener);
     return () => {
@@ -471,12 +414,7 @@ export class ProviderManager implements IProviderManager {
     };
   }
 
-  /**
-   * 设置 Provider 配置
-   * 
-   * @param id Provider ID
-   * @param config Provider 配置
-   */
+  /** 设置 Provider 配置 */
   setProvider(id: string, config: ProviderConfig): void {
     const settings = this.settingsStore.getSettings();
     settings.providers[id] = config;
@@ -491,11 +429,7 @@ export class ProviderManager implements IProviderManager {
     });
   }
 
-  /**
-   * 移除 Provider
-   * 
-   * @param id Provider ID
-   */
+  /** 移除 Provider */
   removeProvider(id: string): void {
     const settings = this.settingsStore.getSettings();
     delete settings.providers[id];
@@ -507,13 +441,7 @@ export class ProviderManager implements IProviderManager {
     });
   }
 
-  // ============================================================================
-  // 私有辅助方法
-  // ============================================================================
-
-  /**
-   * 通知网络状态（仅在状态变更时触发）
-   */
+  /** 通知网络状态（仅在状态变更时触发） */
   private notifyNetworkStatus(online: boolean, error?: Err): void {
     const nextOffline = !online;
     if (this.isOffline === nextOffline) {
@@ -529,12 +457,7 @@ export class ProviderManager implements IProviderManager {
     }
   }
 
-  /**
-   * 获取并验证 Provider 配置
-   * 
-   * @param providerId Provider ID
-   * @returns Provider 配置或错误
-   */
+  /** 获取并验证 Provider 配置 */
   private getProviderConfig(providerId: string): Result<ProviderConfig> {
     const settings = this.settingsStore.getSettings();
     const providerConfig = settings.providers[providerId];
@@ -554,23 +477,19 @@ export class ProviderManager implements IProviderManager {
     return ok(providerConfig);
   }
 
-  /**
-   * 执行聊天请求（单次，不含重试逻辑）
-   * 
-   * @param url 请求 URL
-   * @param body 请求体
-   * @param apiKey API Key
-   * @returns 聊天响应
-   */
+  /** 执行聊天请求（单次，不含重试逻辑） */
   private async executeChatRequest(
     url: string,
     body: object,
     apiKey: string,
     signal?: AbortSignal
   ): Promise<Result<ChatResponse>> {
+    const settings = this.settingsStore.getSettings();
+    const timeoutMs = settings.providerTimeoutMs || 60000;
+    
     const controller = new AbortController();
     const onAbort = () => controller.abort(signal?.reason as any);
-    const timeoutId = setTimeout(() => controller.abort(new Error("请求超时")), ProviderManager.REQUEST_TIMEOUT_MS);
+    const timeoutId = setTimeout(() => controller.abort(new Error("请求超时")), timeoutMs);
     if (signal) {
       if (signal.aborted) {
         clearTimeout(timeoutId);
@@ -628,23 +547,19 @@ export class ProviderManager implements IProviderManager {
     }
   }
 
-  /**
-   * 执行嵌入请求（单次，不含重试逻辑）
-   * 
-   * @param url 请求 URL
-   * @param body 请求体
-   * @param apiKey API Key
-   * @returns 嵌入响应
-   */
+  /** 执行嵌入请求（单次，不含重试逻辑） */
   private async executeEmbedRequest(
     url: string,
     body: object,
     apiKey: string,
     signal?: AbortSignal
   ): Promise<Result<EmbedResponse>> {
+    const settings = this.settingsStore.getSettings();
+    const timeoutMs = settings.providerTimeoutMs || 60000;
+    
     const controller = new AbortController();
     const onAbort = () => controller.abort(signal?.reason as any);
-    const timeoutId = setTimeout(() => controller.abort(new Error("请求超时")), ProviderManager.REQUEST_TIMEOUT_MS);
+    const timeoutId = setTimeout(() => controller.abort(new Error("请求超时")), timeoutMs);
     if (signal) {
       if (signal.aborted) {
         clearTimeout(timeoutId);
@@ -700,19 +615,7 @@ export class ProviderManager implements IProviderManager {
     }
   }
 
-  /**
-   * 将 HTTP 状态码映射为错误结果
-   * 
-   * 遵循设计文档错误码定义：
-   * - 401/403 → E103 (AUTH_ERROR)
-   * - 429 → E102 (RATE_LIMIT)
-   * - 5xx → E100 (API_ERROR)
-   * - 其他 → E100 (API_ERROR)
-   * 
-   * @param status HTTP 状态码
-   * @param responseText 响应文本
-   * @returns 错误结果
-   */
+  /** 将 HTTP 状态码映射为错误结果 */
   private mapHttpError(status: number, responseText: string): Result<never> {
     // 尝试解析错误响应
     let errorMessage = responseText;
@@ -744,12 +647,7 @@ export class ProviderManager implements IProviderManager {
     return err("E100", `API 错误 (${status}): ${errorMessage}`);
   }
 
-  /**
-   * 安全读取响应文本
-   * 
-   * @param response HTTP 响应
-   * @returns 响应文本或空字符串
-   */
+  /** 安全读取响应文本 */
   private async safeReadText(response: Response): Promise<string> {
     try {
       return await response.text();

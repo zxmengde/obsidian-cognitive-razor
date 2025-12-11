@@ -1,7 +1,4 @@
-/**
- * 撤销管理器
- * 负责快照的创建、恢复和管理
- */
+/** 撤销管理器 - 负责快照的创建、恢复和管理 */
 
 import {
   IUndoManager,
@@ -49,10 +46,7 @@ export class UndoManager implements IUndoManager {
     });
   }
 
-  /**
-   * 更新保留策略配置
-   * 遵循 A-FUNC-02：快照保留策略配置化
-   */
+  /** 更新保留策略配置 */
   updateRetentionPolicy(maxSnapshots?: number, maxAgeDays?: number): void {
     if (maxSnapshots !== undefined) {
       this.maxSnapshots = maxSnapshots;
@@ -79,9 +73,7 @@ export class UndoManager implements IUndoManager {
     });
   }
 
-  /**
-   * 初始化撤销管理器
-   */
+  /** 初始化撤销管理器 */
   async initialize(): Promise<Result<void>> {
     try {
       // 确保快照目录存在
@@ -141,16 +133,7 @@ export class UndoManager implements IUndoManager {
     }
   }
 
-  /**
-   * 创建快照
-   * 遵循 Requirements 2.7：快照包含 id, nodeId, taskId, path, content, created, fileSize, checksum
-   * 
-   * @param filePath 文件路径
-   * @param content 文件内容
-   * @param taskId 关联的任务 ID
-   * @param nodeId 可选的节点 ID，如果不提供则从文件路径提取
-   * @returns 快照 ID
-   */
+  /** 创建快照 */
   async createSnapshot(
     filePath: string,
     content: string,
@@ -260,11 +243,7 @@ export class UndoManager implements IUndoManager {
     }
   }
 
-  /**
-   * 恢复快照（仅读取快照内容，不写入文件）
-   * @param snapshotId 快照 ID
-   * @returns 快照内容
-   */
+  /** 恢复快照（仅读取，不写入文件） */
   async restoreSnapshot(snapshotId: string): Promise<Result<Snapshot>> {
     try {
       if (!this.index) {
@@ -324,17 +303,7 @@ export class UndoManager implements IUndoManager {
     }
   }
 
-  /**
-   * 恢复快照到文件
-   * 遵循 Requirements 2.8：使用原子写入（temp file + rename）确保数据完整性
-   * 
-   * Property 12: Atomic Write for Restore
-   * For any snapshot restore operation, the UndoManager SHALL use atomic write
-   * (temp file + rename) to ensure data integrity.
-   * 
-   * @param snapshotId 快照 ID
-   * @returns 恢复的快照内容
-   */
+  /** 恢复快照到文件（使用原子写入） */
   async restoreSnapshotToFile(snapshotId: string): Promise<Result<Snapshot>> {
     try {
       // 1. 读取快照内容
@@ -376,10 +345,7 @@ export class UndoManager implements IUndoManager {
     }
   }
 
-  /**
-   * 删除快照
-   * @param snapshotId 快照 ID
-   */
+  /** 删除快照 */
   async deleteSnapshot(snapshotId: string): Promise<Result<void>> {
     try {
       if (!this.index) {
@@ -425,10 +391,7 @@ export class UndoManager implements IUndoManager {
     }
   }
 
-  /**
-   * 列出所有快照
-   * @returns 快照元数据列表
-   */
+  /** 列出所有快照 */
   async listSnapshots(): Promise<Result<SnapshotMetadata[]>> {
     try {
       if (!this.index) {
@@ -451,11 +414,7 @@ export class UndoManager implements IUndoManager {
     }
   }
 
-  /**
-   * 清理过期快照
-   * @param maxAgeMs 最大保留时间（毫秒）
-   * @returns 清理的快照数量
-   */
+  /** 清理过期快照 */
   async cleanupExpiredSnapshots(maxAgeMs: number): Promise<Result<number>> {
     try {
       if (!this.index) {
@@ -489,14 +448,9 @@ export class UndoManager implements IUndoManager {
     }
   }
 
-  // ============================================================================
-  // 私有辅助方法
-  // ============================================================================
+  // 私有方法
 
-  /**
-   * 创建空索引
-   * 遵循 A-FUNC-02：将保留策略写入索引
-   */
+  /** 创建空索引 */
   private createEmptyIndex(): SnapshotIndex {
     return {
       version: "1.0.0",
@@ -644,10 +598,7 @@ export class UndoManager implements IUndoManager {
     this.logger.info("UndoManager", `清理最旧的 ${count} 个快照`);
   }
 
-  /**
-   * 清理所有快照
-   * @returns 清理的快照数量
-   */
+  /** 清理所有快照 */
   async clearAllSnapshots(): Promise<Result<number>> {
     try {
       if (!this.index) {

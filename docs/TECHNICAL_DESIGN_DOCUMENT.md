@@ -1,10 +1,12 @@
 # 系统架构与详细设计文档
 
 **版本**: 0.9.3  
-**最后更新**: 2025-12-10  
+**最后更新**: 2025-12-11  
 **项目**: obsidian-cognitive-razor
 
-> **文档说明**：本文档描述 Cognitive Razor 插件的完整技术架构、设计决策和实现细节。文档内容与代码库保持同步，所有架构图、数据结构和流程描述均基于实际代码实现。本文档最后更新于 2025-12-10，与代码版本 0.9.3 保持一致。
+> **文档说明**：本文档描述 Cognitive Razor 插件的完整技术架构、设计决策和实现细节。文档内容与代码库保持同步，所有架构图、数据结构和流程描述均基于实际代码实现（版本 0.9.3）。本文档遵循 `.kiro/steering/` 中定义的项目规范和技术栈要求。
+> 
+> **📖 使用提示**：本文档约 13,000 行，请参考 `.kiro/steering/documentation-guide.md` 了解如何高效使用。
 
 ---
 
@@ -745,8 +747,6 @@ graph TD
    ├─ DuplicateManager（依赖：VectorIndex, FileStorage）
    ├─ TaskRunner（依赖：ProviderManager, PromptManager, Validator, UndoManager）
    ├─ TaskQueue（依赖：LockManager, FileStorage, TaskRunner）
-   ├─ IncrementalImproveHandler（依赖：TaskQueue, UndoManager）
-   ├─ MergeHandler（依赖：TaskQueue, DuplicateManager）
    └─ PipelineOrchestrator（依赖：TaskQueue, TaskRunner, DuplicateManager）
 
 5. UI 层组件初始化
@@ -773,9 +773,7 @@ graph TD
 1. 暂停任务队列
    └─ 停止调度器，等待运行中任务完成
 
-2. 停止后台处理器
-   ├─ IncrementalImproveHandler.stop()
-   ├─ MergeHandler.stop()
+2. 停止管线编排器
    └─ PipelineOrchestrator.dispose()
 
 3. 清理 UI 组件
@@ -849,8 +847,6 @@ graph LR
     UndoManager[UndoManager<br/>撤销管理器]
     ProviderManager[ProviderManager<br/>Provider管理器]
     PromptManager[PromptManager<br/>提示词管理器]
-    IncrementalImproveHandler[IncrementalImproveHandler<br/>增量改进处理器]
-    MergeHandler[MergeHandler<br/>合并处理器]
     
     %% 数据层组件
     FileStorage[FileStorage<br/>文件存储]
@@ -893,16 +889,6 @@ graph LR
     
     DuplicateManager --> VectorIndex
     
-    IncrementalImproveHandler --> TaskQueue
-    IncrementalImproveHandler --> UndoManager
-    IncrementalImproveHandler --> VectorIndex
-    IncrementalImproveHandler --> DuplicateManager
-    
-    MergeHandler --> TaskQueue
-    MergeHandler --> DuplicateManager
-    MergeHandler --> VectorIndex
-    MergeHandler --> UndoManager
-    
     %% 应用层 → 数据层依赖
     VectorIndex --> FileStorage
     UndoManager --> FileStorage
@@ -929,7 +915,7 @@ graph LR
     classDef dataLayer fill:#f1f8e9,stroke:#33691e,stroke-width:2px
     
     class WorkbenchPanel,StatusBadge,CommandDispatcher,SettingsTab uiLayer
-    class PipelineOrchestrator,TaskQueue,TaskRunner,DuplicateManager,VectorIndex,LockManager,UndoManager,ProviderManager,PromptManager,IncrementalImproveHandler,MergeHandler appLayer
+    class PipelineOrchestrator,TaskQueue,TaskRunner,DuplicateManager,VectorIndex,LockManager,UndoManager,ProviderManager,PromptManager appLayer
     class FileStorage,Logger,SettingsStore,Validator dataLayer
 ```
 
@@ -961,8 +947,7 @@ UI 层组件通过插件主类的 `getComponents()` 方法获取应用层和数�
 - **TaskQueue**（任务队列）：依赖锁管理器和任务执行器，负责任务调度
 - **TaskRunner**（任务执行器）：依赖 Provider 管理器、提示词管理器、验证器、撤销管理器和向量索引，负责任务执行
 - **DuplicateManager**（重复管理器）：依赖向量索引和文件存储，负责去重检测
-- **IncrementalImproveHandler**（增量改进处理器）：依赖任务队列、撤销管理器、向量索引和重复管理器
-- **MergeHandler**（合并处理器）：依赖任务队列、重复管理器、向量索引和撤销管理器
+- **PipelineOrchestrator**（管线编排器）：依赖任务队列、任务执行器、重复管理器等，负责概念创建流程的编排
 
 **数据层依赖**
 
@@ -1346,7 +1331,7 @@ flowchart LR
     subgraph Disk[磁盘]
         DataJson[data.json<br/>插件配置]
         QueueJson[data/queue-state.json<br/>队列状态]
-        IndexJson[data/vector-index.json<br/>向量索引]
+        VectorsDir[data/vectors/<br/>向量索引目录]
         PairsJson[data/duplicate-pairs.json<br/>重复对]
         SnapshotIndex[data/snapshots/index.json<br/>快照索引]
         SnapshotFiles[data/snapshots/*.json<br/>快照文件]
@@ -1405,7 +1390,8 @@ flowchart LR
 |---------|------|---------|---------|------|
 | `data.json` | 插件配置 | 插件加载时 | 设置变更时 | JSON |
 | `data/queue-state.json` | 队列状态 | 插件加载时 | 任务状态变更时 | JSON |
-| `data/vector-index.json` | 向量索引 | 插件加载时 | 嵌入生成/删除时 | JSON |
+| `data/vectors/index.json` | 向量索引元数据 | 插件加载时 | 嵌入生成/删除时 | JSON |
+| `data/vectors/{type}/{uid}.json` | 单个概念向量 | 去重检测时 | 嵌入生成/删除时 | JSON |
 | `data/duplicate-pairs.json` | 重复对列表 | 插件加载时 | 去重检测/合并时 | JSON |
 | `data/snapshots/index.json` | 快照索引 | 插件加载时 | 快照创建/删除时 | JSON |
 | `data/snapshots/*.json` | 快照文件 | 撤销操作时 | 写入操作前 | JSON |
@@ -1415,7 +1401,7 @@ flowchart LR
 
 1. **插件加载时**：
    - SettingsStore 通过 Obsidian 的 `loadData()` 读取 `data.json`
-   - FileStorage 读取 `data/queue-state.json`、`data/vector-index.json`、`data/duplicate-pairs.json`、`data/snapshots/index.json`
+   - FileStorage 读取 `data/queue-state.json`、`data/vectors/index.json`、`data/duplicate-pairs.json`、`data/snapshots/index.json`
    - Logger 读取 `data/app.log` 的最后 1000 行（循环日志）
 
 2. **运行时读取**：
@@ -1433,7 +1419,7 @@ flowchart LR
    - 使用普通写入（非原子），因为队列状态可以从任务记录重建
 
 3. **向量索引更新**：
-   - VectorIndex 在嵌入生成或删除时调用 FileStorage 写入 `data/vector-index.json`
+   - VectorIndex 在嵌入生成或删除时写入单个向量文件（`data/vectors/{type}/{uid}.json`）并更新元数据索引（`data/vectors/index.json`）
    - 使用普通写入，因为索引可以从笔记文件重建
 
 4. **重复对更新**：
@@ -1955,8 +1941,14 @@ Cognitive Razor 采用本地优先的存储策略，所有数据都存储在插�
 ├── data/                        # 运行时数据根目录
 │   ├── app.log                  # 循环日志（1MB）
 │   ├── queue-state.json         # 队列状态
-│   ├── vector-index.json        # 向量索引
 │   ├── duplicate-pairs.json     # 重复对列表
+│   ├── vectors/                 # 向量索引目录（新架构）
+│   │   ├── index.json           # 向量索引元数据
+│   │   ├── Domain/              # Domain 类型向量文件
+│   │   ├── Issue/               # Issue 类型向量文件
+│   │   ├── Theory/              # Theory 类型向量文件
+│   │   ├── Entity/              # Entity 类型向量文件
+│   │   └── Mechanism/           # Mechanism 类型向量文件
 │   └── snapshots/               # 快照目录
 │       ├── index.json           # 快照索引
 │       └── *.json               # 快照文件
@@ -1977,8 +1969,9 @@ Cognitive Razor 采用本地优先的存储策略，所有数据都存储在插�
 **目录设计原则**：
 
 1. **单文件直接放在 data/ 下**：避免过度嵌套，提高访问效率
-2. **仅快照使用子目录**：因为快照文件数量多，使用子目录便于管理
-3. **提示词模板独立目录**：便于用户自定义和版本控制
+2. **向量索引使用子目录**：按类型分桶存储，支持延迟加载和增量更新
+3. **快照使用子目录**：因为快照文件数量多，使用子目录便于管理
+4. **提示词模板独立目录**：便于用户自定义和版本控制
 
 **参考文件**：
 - `main.ts`：插件主类，`initializeDataDirectory()` 方法定义完整的目录结构
@@ -2098,15 +2091,96 @@ interface TaskRecord {
 
 ---
 
-**3. data/vector-index.json - 向量索引**
+**3. data/vectors/ - 向量索引目录（新架构 v2.0）**
 
 **用途**：存储所有概念的向量嵌入，用于相似度搜索和去重检测
 
-**数据结构**：
+**架构说明**：
+
+新架构采用分桶存储策略，每个概念的向量独立存储为单个文件，支持延迟加载和增量更新。
+
+**目录结构**：
+
+```
+data/vectors/
+├── index.json              # 轻量级元数据索引
+├── Domain/                 # Domain 类型向量文件
+│   ├── {uid1}.json
+│   └── {uid2}.json
+├── Issue/                  # Issue 类型向量文件
+├── Theory/                 # Theory 类型向量文件
+├── Entity/                 # Entity 类型向量文件
+└── Mechanism/              # Mechanism 类型向量文件
+```
+
+**元数据索引结构**（`data/vectors/index.json`）：
 
 ```typescript
-interface VectorIndexFile {
-  version: string;                    // 索引版本
+interface VectorIndexMeta {
+  version: string;          // 索引版本（当前为 "2.0"）
+  lastUpdated: number;      // 最后更新时间戳
+  stats: {
+    totalConcepts: number;
+    byType: Record<CRType, number>;
+  };
+  concepts: Record<string, ConceptMeta>;  // UID → 元数据映射
+}
+
+interface ConceptMeta {
+  id: string;               // 概念 UID
+  name: string;             // 概念名称
+  type: CRType;             // 知识类型
+  filePath: string;         // 向量文件相对路径（如 "Domain/uid.json"）
+  lastModified: number;     // 最后修改时间戳
+  hasEmbedding: boolean;    // 是否有嵌入向量
+}
+```
+
+**单个概念向量文件结构**（`data/vectors/{type}/{uid}.json`）：
+
+```typescript
+interface ConceptVector {
+  id: string;               // 概念 UID
+  name: string;             // 概念名称
+  type: CRType;             // 知识类型
+  embedding: number[];      // 向量嵌入
+  metadata: {
+    createdAt: number;      // 创建时间戳
+    updatedAt: number;      // 更新时间戳
+    embeddingModel: string; // 嵌入模型（如 "text-embedding-3-small"）
+    dimensions: number;     // 向量维度（如 1536）
+  };
+}
+```
+
+**读取时机**：
+- 插件加载时：读取元数据索引（`data/vectors/index.json`）
+- 去重检测时：按需加载同类型的向量文件
+
+**写入时机**：
+- 嵌入生成完成时：写入单个向量文件并更新元数据索引
+- 概念删除时：删除向量文件并更新元数据索引
+
+**写入方式**：普通写入（`write`），因为向量数据可从笔记文件重建
+
+**新架构优势**：
+1. **延迟加载**：元数据索引轻量级，向量数据按需加载
+2. **增量更新**：单个概念的增删改只影响一个文件
+3. **可扩展性**：支持大规模知识库（数万个概念）
+4. **调试友好**：每个概念的向量独立存储，便于检查
+
+**参考文件**：
+- `src/types.ts`：VectorIndexMeta、ConceptMeta、ConceptVector 等接口定义
+- `src/core/vector-index.ts`：VectorIndex 完整实现，包括分桶存储、延迟加载和增量更新
+- `src/data/file-storage.ts`：FileStorage 实现，提供 `readVectorFile()`、`writeVectorFile()` 等方法
+
+---
+
+**4. data/duplicate-pairs.json - 重复对列表**
+
+**用途**：存储检测到的重复概念对，用于合并流程
+
+**数据结构
   model: string;                      // 嵌入模型标识
   dimension: number;                  // 向量维度
   buckets: Record<CRType, VectorEntry[]>;  // 按类型分桶
@@ -2312,7 +2386,10 @@ interface SnapshotRecord {
 
 **用途**：记录系统运行日志，用于调试和问题排查
 
-**日志格式**：JSON Lines（每行一个 JSON 对象）
+**日志格式**：支持三种格式（通过 `logFormat` 配置）
+- `json`：JSON Lines 格式（每行一个 JSON 对象）
+- `pretty`：人类可读的格式化输出
+- `compact`：紧凑的单行格式
 
 **日志结构**：
 
@@ -2331,11 +2408,11 @@ interface LogEntry {
 }
 ```
 
-**日志示例**：
+**日志示例（JSON 格式）**：
 
 ```json
-{"timestamp":"2025-12-10T10:00:00.000Z","level":"info","module":"TaskQueue","message":"任务状态变更: task-123","context":{"event":"TASK_STATE_CHANGE","taskId":"task-123","previousState":"Pending","newState":"Running"}}
-{"timestamp":"2025-12-10T10:00:05.000Z","level":"error","module":"TaskRunner","message":"任务执行失败","context":{"taskId":"task-123","errorCode":"E100"},"error":{"name":"NetworkError","message":"Connection timeout"}}
+{"timestamp":"2025-12-11T10:00:00.000Z","level":"info","module":"TaskQueue","message":"任务状态变更: task-123","context":{"event":"TASK_STATE_CHANGE","taskId":"task-123","previousState":"Pending","newState":"Running"}}
+{"timestamp":"2025-12-11T10:00:05.000Z","level":"error","module":"TaskRunner","message":"任务执行失败","context":{"taskId":"task-123","errorCode":"E100"},"error":{"name":"Error","message":"API 调用失败","stack":"..."}}ntext":{"taskId":"task-123","errorCode":"E100"},"error":{"name":"NetworkError","message":"Connection timeout"}}
 ```
 
 **循环日志机制**：
@@ -2441,6 +2518,41 @@ constructor(
 - **Vault**：Obsidian 提供的文件系统抽象层，用于文件读写操作
 - **basePath**：插件数据目录的基础路径（通常为 `.obsidian/plugins/obsidian-cognitive-razor`）
 
+#### 路径常量定义
+
+FileStorage 定义了标准化的路径常量，确保整个系统使用一致的路径：
+
+```typescript
+// 数据目录路径常量
+export const DATA_DIR = "data";
+export const SNAPSHOTS_DIR = `${DATA_DIR}/snapshots`;
+export const VECTORS_DIR = `${DATA_DIR}/vectors`;
+
+// 数据文件路径常量
+export const QUEUE_STATE_FILE = `${DATA_DIR}/queue-state.json`;
+export const VECTOR_INDEX_META_FILE = `${VECTORS_DIR}/index.json`;
+export const DUPLICATE_PAIRS_FILE = `${DATA_DIR}/duplicate-pairs.json`;
+export const SNAPSHOTS_INDEX_FILE = `${SNAPSHOTS_DIR}/index.json`;
+export const APP_LOG_FILE = `${DATA_DIR}/app.log`;
+```
+
+**使用示例**：
+
+```typescript
+import { QUEUE_STATE_FILE, VECTORS_DIR } from './file-storage';
+
+// 读取队列状态
+const result = await fileStorage.read(QUEUE_STATE_FILE);
+
+// 确保向量目录存在
+await fileStorage.ensureDir(VECTORS_DIR);
+```
+
+**优势**：
+- 避免硬编码路径字符串，减少拼写错误
+- 统一路径管理，便于重构和维护
+- 类型安全，编译时检查路径引用
+
 #### 关键方法
 
 | 方法 | 签名 | 说明 |
@@ -2451,8 +2563,13 @@ constructor(
 | `atomicWrite(path, content)` | `async atomicWrite(path: string, content: string): Promise<Result<void>>` | 原子写入（临时文件 + 重命名） |
 | `delete(path)` | `async delete(path: string): Promise<Result<void>>` | 删除文件 |
 | `exists(path)` | `async exists(path: string): Promise<boolean>` | 检查文件是否存在 |
-| `exists(path)` | `async exists(path: string): Promise<boolean>` | 检查文件是否存在 |
 | `ensureDir(path)` | `async ensureDir(path: string): Promise<Result<void>>` | 确保目录存在（递归创建） |
+| `rename(oldPath, newPath)` | `async rename(oldPath: string, newPath: string): Promise<Result<void>>` | 重命名文件 |
+| `writeVectorFile(type, conceptId, data)` | `async writeVectorFile(type: CRType, conceptId: string, data: ConceptVector): Promise<Result<void>>` | 写入向量文件 |
+| `readVectorFile(type, conceptId)` | `async readVectorFile(type: CRType, conceptId: string): Promise<Result<ConceptVector>>` | 读取向量文件 |
+| `deleteVectorFile(type, conceptId)` | `async deleteVectorFile(type: CRType, conceptId: string): Promise<Result<void>>` | 删除向量文件 |
+| `readVectorIndexMeta()` | `async readVectorIndexMeta(): Promise<Result<VectorIndexMeta>>` | 读取向量索引元数据 |
+| `writeVectorIndexMeta(meta)` | `async writeVectorIndexMeta(meta: VectorIndexMeta): Promise<Result<void>>` | 写入向量索引元数据 |
 
 #### 原子写入机制
 
@@ -2528,7 +2645,13 @@ FileStorage 在 `initialize()` 方法中创建以下目录结构：
 .obsidian/plugins/obsidian-cognitive-razor/
 ├── data/                          # 数据目录
 │   ├── queue-state.json          # 队列状态
-│   ├── vector-index.json         # 向量索引
+│   ├── vectors/                  # 向量索引目录（新架构）
+│   │   ├── index.json            # 向量索引元数据
+│   │   ├── Domain/               # Domain 类型向量文件
+│   │   ├── Issue/                # Issue 类型向量文件
+│   │   ├── Theory/               # Theory 类型向量文件
+│   │   ├── Entity/               # Entity 类型向量文件
+│   │   └── Mechanism/            # Mechanism 类型向量文件
 │   ├── duplicate-pairs.json      # 重复对列表
 │   ├── app.log                   # 应用日志
 │   └── snapshots/                # 快照目录
@@ -2539,11 +2662,12 @@ FileStorage 在 `initialize()` 方法中创建以下目录结构：
 初始化过程：
 
 1. 创建 `data/` 目录
-2. 创建 `data/snapshots/` 子目录
-3. 初始化 `queue-state.json`（总是重新创建）
-4. 初始化 `vector-index.json`（如果不存在）
-5. 初始化 `duplicate-pairs.json`（如果不存在）
-6. 初始化 `snapshots/index.json`（如果不存在）
+2. 创建 `data/vectors/` 及其子目录（Domain、Issue、Theory、Entity、Mechanism）
+3. 创建 `data/snapshots/` 子目录
+4. 初始化 `queue-state.json`（总是重新创建）
+5. 初始化 `vectors/index.json`（如果不存在）
+6. 初始化 `duplicate-pairs.json`（如果不存在）
+7. 初始化 `snapshots/index.json`（如果不存在）
 
 **参考代码**：
 - `src/data/file-storage.ts`：FileStorage 实现，`initialize()` 方法
@@ -4675,42 +4799,88 @@ VectorIndex 负责管理概念的向量嵌入，支持高效的相似度搜索�
 | `getStats` | `() => IndexStats` | 获取索引统计信息 |
 | `getEntry` | `(uid: string) => VectorEntry \| undefined` | 根据 UID 获取向量条目 |
 
-#### 分桶策略（按 CRType 分桶）
+#### 新架构：分桶存储（v2.0）
 
-VectorIndex 将向量按概念类型分为 5 个桶，每个桶独立存储和检索：
+VectorIndex 采用新的分桶存储架构，每个概念的向量独立存储为单个文件，支持延迟加载和增量更新：
+
+**目录结构**：
+
+```
+data/vectors/
+├── index.json              # 轻量级元数据索引
+├── Domain/                 # Domain 类型向量文件
+│   ├── {uid1}.json
+│   └── {uid2}.json
+├── Issue/                  # Issue 类型向量文件
+├── Theory/                 # Theory 类型向量文件
+├── Entity/                 # Entity 类型向量文件
+└── Mechanism/              # Mechanism 类型向量文件
+```
+
+**元数据索引结构**（`data/vectors/index.json`）：
 
 ```typescript
-interface VectorIndexFile {
-  version: string;
-  model: string;        // 嵌入模型（如 text-embedding-3-small）
-  dimension: number;    // 向量维度（如 1536）
-  buckets: {
-    Domain: VectorEntry[];
-    Issue: VectorEntry[];
-    Theory: VectorEntry[];
-    Entity: VectorEntry[];
-    Mechanism: VectorEntry[];
+interface VectorIndexMeta {
+  version: string;          // 索引版本（当前为 "2.0"）
+  lastUpdated: number;      // 最后更新时间戳
+  stats: {
+    totalConcepts: number;
+    byType: Record<CRType, number>;
   };
+  concepts: Record<string, ConceptMeta>;  // UID → 元数据映射
+}
+
+interface ConceptMeta {
+  id: string;               // 概念 UID
+  name: string;             // 概念名称
+  type: CRType;             // 知识类型
+  filePath: string;         // 向量文件相对路径（如 "Domain/uid.json"）
+  lastModified: number;     // 最后修改时间戳
+  hasEmbedding: boolean;    // 是否有嵌入向量
+}
+```
+
+**单个概念向量文件结构**（`data/vectors/{type}/{uid}.json`）：
+
+```typescript
+interface ConceptVector {
+  id: string;               // 概念 UID
+  name: string;             // 概念名称
+  type: CRType;             // 知识类型
+  embedding: number[];      // 向量嵌入
   metadata: {
-    totalCount: number;
-    lastUpdated: string;
+    createdAt: number;      // 创建时间戳
+    updatedAt: number;      // 更新时间戳
+    embeddingModel: string; // 嵌入模型（如 "text-embedding-3-small"）
+    dimensions: number;     // 向量维度（如 1536）
   };
 }
 ```
 
-**分桶优势**：
+**新架构优势**：
 
-1. **避免跨类型误判**：
-   - "苹果公司"（Entity）和"苹果水果"（Entity）可能相似
-   - 但"苹果公司"（Entity）和"市场竞争"（Issue）不应被判定为重复
+1. **延迟加载**：
+   - 元数据索引始终在内存中（轻量级）
+   - 向量数据按需加载，减少内存占用
+   - 去重检测时只加载同类型的向量文件
 
-2. **提高检索效率**：
-   - 搜索时只需遍历同类型桶，减少计算量
-   - 例如搜索 Domain 类型的相似概念，只需检索 Domain 桶
+2. **增量更新**：
+   - 单个概念的增删改只影响一个文件
+   - 避免全量索引的读写开销
+   - 支持并发写入不同概念的向量
 
-3. **支持类型特定的阈值**：
-   - 不同类型可以设置不同的相似度阈值
-   - 例如 Entity 类型可能需要更高的阈值（0.90），而 Issue 类型可以使用较低的阈值（0.85）
+3. **避免跨类型误判**：
+   - 按类型分桶存储，搜索时只检索同类型
+   - "苹果公司"（Entity）和"市场竞争"（Issue）不会被比较
+
+4. **可扩展性**：
+   - 支持大规模知识库（数万个概念）
+   - 文件系统天然支持分布式存储
+   - 便于备份和迁移（按类型打包）
+
+5. **调试友好**：
+   - 每个概念的向量独立存储，便于检查
+   - 元数据索引可读性强，便于排查问题
 
 #### 向量条目结构
 
@@ -4784,14 +4954,29 @@ for (const entry of bucket) {
 
 #### 索引持久化
 
-VectorIndex 在以下时机将索引持久化到 `data/vector-index.json`：
+VectorIndex 在以下时机将数据持久化：
 
-1. **添加或更新条目后**：`upsert()` 方法调用后
-2. **删除条目后**：`delete()` 方法调用后
+1. **添加或更新条目**（`upsert()`）：
+   - 写入单个向量文件：`data/vectors/{type}/{uid}.json`
+   - 更新元数据索引：`data/vectors/index.json`
+   - 两步操作，先写向量文件，再更新索引
 
-**原子写入**：
+2. **删除条目**（`delete()`）：
+   - 删除向量文件：`data/vectors/{type}/{uid}.json`
+   - 更新元数据索引：`data/vectors/index.json`
 
-VectorIndex 使用 `FileStorage.write()` 方法写入索引文件，确保写入操作的原子性。
+**写入策略**：
+
+- 向量文件使用普通写入（`FileStorage.write()`）
+- 元数据索引使用普通写入（可从笔记文件重建）
+- 不使用原子写入，因为向量数据可重建
+
+**错误恢复**：
+
+如果向量文件损坏或丢失，系统可以：
+1. 从笔记文件的 Frontmatter 读取 UID 和类型
+2. 重新调用嵌入 API 生成向量
+3. 重建向量索引
 
 #### 模型和维度验证
 
@@ -4799,7 +4984,7 @@ VectorIndex 在加载索引时会验证模型和维度是否匹配：
 
 ```typescript
 async load(): Promise<Result<void>> {
-  const indexFile: VectorIndexFile = JSON.parse(readResult.value);
+  const indexMeta: VectorIndexMeta = JSON.parse(readResult.value);
   
   // 验证模型和维度
   if (indexFile.model !== this.model || indexFile.dimension !== this.dimension) {
@@ -6782,7 +6967,7 @@ WorkbenchPanel 依赖以下组件：
 - **TaskQueue**：查询队列状态、订阅队列事件
 - **DuplicateManager**：获取重复对列表、订阅重复对事件
 - **UndoManager**：获取快照列表、执行撤销操作
-- **MergeHandler**：执行合并操作
+- **PipelineOrchestrator**：启动概念创建流程、管线状态管理
 
 **依赖注入方式**：
 
@@ -10542,11 +10727,11 @@ stateDiagram-v2
 
 ### 8.3 向量索引结构
 
-向量索引是 Cognitive Razor 语义去重系统的核心，通过将概念映射到高维向量空间，实现精确的相似度计算和快速的近邻搜索。系统采用分桶策略，按概念类型组织向量数据，避免跨类型误判。
+向量索引是 Cognitive Razor 语义去重系统的核心，通过将概念映射到高维向量空间，实现精确的相似度计算和快速的近邻搜索。系统采用新的分桶存储架构（v2.0），每个概念的向量独立存储为单个文件，支持延迟加载和增量更新。
 
 #### 接口定义
 
-**向量条目 (VectorEntry)**：
+**向量条目 (VectorEntry)** - 内存中的向量表示：
 
 ```typescript
 interface VectorEntry {
@@ -10559,17 +10744,42 @@ interface VectorEntry {
 }
 ```
 
-**向量索引文件 (VectorIndexFile)**：
+**向量索引元数据 (VectorIndexMeta)** - 轻量级索引文件：
 
 ```typescript
-interface VectorIndexFile {
-  version: string;                              // 索引版本
-  model: string;                                // 嵌入模型标识
-  dimension: number;                            // 向量维度
-  buckets: Record<CRType, VectorEntry[]>;      // 按类型分桶
+interface VectorIndexMeta {
+  version: string;          // 索引版本（当前为 "2.0"）
+  lastUpdated: number;      // 最后更新时间戳
+  stats: {
+    totalConcepts: number;
+    byType: Record<CRType, number>;
+  };
+  concepts: Record<string, ConceptMeta>;  // UID → 元数据映射
+}
+
+interface ConceptMeta {
+  id: string;               // 概念 UID
+  name: string;             // 概念名称
+  type: CRType;             // 知识类型
+  filePath: string;         // 向量文件相对路径（如 "Domain/uid.json"）
+  lastModified: number;     // 最后修改时间戳
+  hasEmbedding: boolean;    // 是否有嵌入向量
+}
+```
+
+**单个概念向量文件 (ConceptVector)** - 独立存储的向量数据：
+
+```typescript
+interface ConceptVector {
+  id: string;               // 概念 UID
+  name: string;             // 概念名称
+  type: CRType;             // 知识类型
+  embedding: number[];      // 向量嵌入
   metadata: {
-    totalCount: number;                         // 总条目数
-    lastUpdated: string;                        // 最后更新时间
+    createdAt: number;      // 创建时间戳
+    updatedAt: number;      // 更新时间戳
+    embeddingModel: string; // 嵌入模型（如 "text-embedding-3-small"）
+    dimensions: number;     // 向量维度（如 1536）
   };
 }
 ```
@@ -10608,16 +10818,39 @@ interface IndexStats {
 | `path` | `string` | ✅ | **文件路径**：概念笔记的相对路径（相对于 Vault 根目录），用于打开文件和显示位置。 |
 | `updated` | `string` | ✅ | **更新时间**：ISO 8601 格式的时间戳，记录向量条目最后一次更新的时间。 |
 
-**VectorIndexFile 字段**：
+**VectorIndexMeta 字段**：
 
 | 字段 | 类型 | 必需 | 说明 |
 |------|------|------|------|
-| `version` | `string` | ✅ | **索引版本**：索引文件的格式版本，用于兼容性检查和迁移。当前版本为 `"1.0.0"`。 |
-| `model` | `string` | ✅ | **嵌入模型标识**：生成向量嵌入的模型名称（如 `"text-embedding-3-small"`）。用于验证向量兼容性。 |
-| `dimension` | `number` | ✅ | **向量维度**：向量嵌入的维度数（如 1536）。所有向量必须具有相同的维度。 |
-| `buckets` | `Record<CRType, VectorEntry[]>` | ✅ | **按类型分桶**：将向量条目按概念类型分组存储。键为 `CRType`，值为该类型的所有向量条目数组。 |
-| `metadata.totalCount` | `number` | ✅ | **总条目数**：索引中所有向量条目的总数，等于所有桶中条目数之和。 |
-| `metadata.lastUpdated` | `string` | ✅ | **最后更新时间**：ISO 8601 格式的时间戳，记录索引最后一次修改的时间。 |
+| `version` | `string` | ✅ | **索引版本**：索引文件的格式版本，用于兼容性检查和迁移。当前版本为 `"2.0"`。 |
+| `lastUpdated` | `number` | ✅ | **最后更新时间戳**：Unix 时间戳（毫秒），记录索引最后一次修改的时间。 |
+| `stats.totalConcepts` | `number` | ✅ | **总概念数**：索引中所有概念的总数。 |
+| `stats.byType` | `Record<CRType, number>` | ✅ | **按类型统计**：每种类型的概念数量。 |
+| `concepts` | `Record<string, ConceptMeta>` | ✅ | **概念元数据映射**：UID 到概念元数据的映射，用于快速查找。 |
+
+**ConceptMeta 字段**：
+
+| 字段 | 类型 | 必需 | 说明 |
+|------|------|------|------|
+| `id` | `string` | ✅ | **概念 UID**：概念的唯一标识符。 |
+| `name` | `string` | ✅ | **概念名称**：概念的标准名称。 |
+| `type` | `CRType` | ✅ | **知识类型**：概念的类型（Domain、Issue、Theory、Entity、Mechanism）。 |
+| `filePath` | `string` | ✅ | **向量文件路径**：相对于 `data/vectors/` 的路径（如 `"Domain/uid.json"`）。 |
+| `lastModified` | `number` | ✅ | **最后修改时间戳**：Unix 时间戳（毫秒）。 |
+| `hasEmbedding` | `boolean` | ✅ | **是否有嵌入**：标记该概念是否已生成向量嵌入。 |
+
+**ConceptVector 字段**：
+
+| 字段 | 类型 | 必需 | 说明 |
+|------|------|------|------|
+| `id` | `string` | ✅ | **概念 UID**：概念的唯一标识符。 |
+| `name` | `string` | ✅ | **概念名称**：概念的标准名称。 |
+| `type` | `CRType` | ✅ | **知识类型**：概念的类型。 |
+| `embedding` | `number[]` | ✅ | **向量嵌入**：概念的高维向量表示，维度由 `metadata.dimensions` 定义。 |
+| `metadata.createdAt` | `number` | ✅ | **创建时间戳**：Unix 时间戳（毫秒）。 |
+| `metadata.updatedAt` | `number` | ✅ | **更新时间戳**：Unix 时间戳（毫秒）。 |
+| `metadata.embeddingModel` | `string` | ✅ | **嵌入模型**：生成向量的模型名称（如 `"text-embedding-3-small"`）。 |
+| `metadata.dimensions` | `number` | ✅ | **向量维度**：向量嵌入的维度数（如 1536）。 |
 
 #### 分桶策略
 
@@ -10629,37 +10862,14 @@ Cognitive Razor 采用**按类型分桶**的策略组织向量数据，确保相
 - 搜索时只在目标类型的桶内进行，避免跨类型误判
 - 例如："苹果公司"（Entity）和"苹果水果"（Entity）可能相似，但"苹果公司"（Entity）和"苹果产业"（Domain）不应被判定为重复
 
-**分桶优势**：
+**新架构优势**：
 
-1. **避免跨类型误判**：不同类型的概念即使名称相似，也不会被误判为重复。
-2. **提高搜索效率**：搜索空间缩小到单个桶，减少计算量。
-3. **支持类型特定的阈值**：可以为不同类型设置不同的相似度阈值。
-
-**桶结构示例**：
-
-```json
-{
-  "buckets": {
-    "Domain": [
-      { "uid": "...", "type": "Domain", "embedding": [...], "name": "认知科学", "path": "1-领域/认知科学.md", "updated": "..." },
-      { "uid": "...", "type": "Domain", "embedding": [...], "name": "量子物理", "path": "1-领域/量子物理.md", "updated": "..." }
-    ],
-    "Issue": [
-      { "uid": "...", "type": "Issue", "embedding": [...], "name": "自由意志与决定论", "path": "2-议题/自由意志与决定论.md", "updated": "..." }
-    ],
-    "Theory": [
-      { "uid": "...", "type": "Theory", "embedding": [...], "name": "进化论", "path": "3-理论/进化论.md", "updated": "..." },
-      { "uid": "...", "type": "Theory", "embedding": [...], "name": "相对论", "path": "3-理论/相对论.md", "updated": "..." }
-    ],
-    "Entity": [
-      { "uid": "...", "type": "Entity", "embedding": [...], "name": "DNA", "path": "4-实体/DNA.md", "updated": "..." }
-    ],
-    "Mechanism": [
-      { "uid": "...", "type": "Mechanism", "embedding": [...], "name": "光合作用", "path": "5-机制/光合作用.md", "updated": "..." }
-    ]
-  }
-}
-```
+1. **延迟加载**：元数据索引轻量级（仅包含概念元信息），向量数据按需加载，减少内存占用。
+2. **增量更新**：单个概念的增删改只影响一个文件，避免全量索引的读写开销。
+3. **避免跨类型误判**：按类型分桶存储，搜索时只检索同类型，不同类型的概念即使名称相似也不会被误判。
+4. **可扩展性**：支持大规模知识库（数万个概念），文件系统天然支持分布式存储。
+5. **调试友好**：每个概念的向量独立存储，便于检查和排查问题。
+6. **并发安全**：不同概念的向量文件可以并发写入，提高性能。
 
 #### 相似度计算
 
@@ -10686,107 +10896,128 @@ similarity = (A · B) / (||A|| * ||B||)
 - **阻断阈值（> 0.95）**：自动拒绝极高相似度的重复概念，不允许创建
 - **提示阈值（> 0.85）**：将疑似重复提交人类裁决，用户可选择合并或继续创建
 
-#### 索引文件结构
+#### 新架构：分桶存储（v2.0）
 
-向量索引持久化到 `data/vector-index.json` 文件，完整结构如下：
+**目录结构**：
+
+```
+data/vectors/
+├── index.json              # 轻量级元数据索引
+├── Domain/                 # Domain 类型向量文件
+│   ├── 550e8400-e29b-41d4-a716-446655440000.json
+│   └── 7c9e6679-7425-40de-944b-e07fc1f90ae7.json
+├── Issue/                  # Issue 类型向量文件
+├── Theory/                 # Theory 类型向量文件
+├── Entity/                 # Entity 类型向量文件
+└── Mechanism/              # Mechanism 类型向量文件
+```
+
+**元数据索引文件示例**（`data/vectors/index.json`）：
 
 ```json
 {
-  "version": "1.0.0",
-  "model": "text-embedding-3-small",
-  "dimension": 1536,
-  "buckets": {
-    "Domain": [
-      {
-        "uid": "550e8400-e29b-41d4-a716-446655440000",
-        "type": "Domain",
-        "embedding": [0.023, -0.015, 0.042, ..., 0.018],
-        "name": "认知科学",
-        "path": "1-领域/认知科学.md",
-        "updated": "2025-12-10T08:30:00.000Z"
-      },
-      {
-        "uid": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
-        "type": "Domain",
-        "embedding": [0.031, -0.022, 0.055, ..., 0.012],
-        "name": "量子物理",
-        "path": "1-领域/量子物理.md",
-        "updated": "2025-12-10T09:15:00.000Z"
-      }
-    ],
-    "Issue": [],
-    "Theory": [
-      {
-        "uid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-        "type": "Theory",
-        "embedding": [0.018, -0.033, 0.061, ..., 0.025],
-        "name": "进化论",
-        "path": "3-理论/进化论.md",
-        "updated": "2025-12-10T10:00:00.000Z"
-      }
-    ],
-    "Entity": [
-      {
-        "uid": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-        "type": "Entity",
-        "embedding": [0.045, -0.011, 0.028, ..., 0.037],
-        "name": "DNA",
-        "path": "4-实体/DNA.md",
-        "updated": "2025-12-10T11:30:00.000Z"
-      }
-    ],
-    "Mechanism": []
+  "version": "2.0",
+  "lastUpdated": 1702200000000,
+  "stats": {
+    "totalConcepts": 5,
+    "byType": {
+      "Domain": 2,
+      "Issue": 1,
+      "Theory": 1,
+      "Entity": 1,
+      "Mechanism": 0
+    }
   },
-  "metadata": {
-    "totalCount": 4,
-    "lastUpdated": "2025-12-10T11:30:00.000Z"
+  "concepts": {
+    "550e8400-e29b-41d4-a716-446655440000": {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "name": "认知科学",
+      "type": "Domain",
+      "filePath": "Domain/550e8400-e29b-41d4-a716-446655440000.json",
+      "lastModified": 1702200000000,
+      "hasEmbedding": true
+    },
+    "7c9e6679-7425-40de-944b-e07fc1f90ae7": {
+      "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "name": "量子物理",
+      "type": "Domain",
+      "filePath": "Domain/7c9e6679-7425-40de-944b-e07fc1f90ae7.json",
+      "lastModified": 1702201000000,
+      "hasEmbedding": true
+    }
   }
 }
 ```
 
-#### 搜索流程
+**单个向量文件示例**（`data/vectors/Domain/550e8400-e29b-41d4-a716-446655440000.json`）：
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "认知科学",
+  "type": "Domain",
+  "embedding": [0.023, -0.015, 0.042, ..., 0.018],
+  "metadata": {
+    "createdAt": 1702200000000,
+    "updatedAt": 1702200000000,
+    "embeddingModel": "text-embedding-3-small",
+    "dimensions": 1536
+  }
+}
+```
+
+**参考文件**：
+- `src/types.ts`：VectorIndexMeta、ConceptMeta、ConceptVector、VectorEntry 等接口定义
+- `src/core/vector-index.ts`：VectorIndex 完整实现，包括分桶存储、延迟加载和增量更新
+- `src/data/file-storage.ts`：FileStorage 实现，提供 `readVectorFile()`、`writeVectorFile()`、`readVectorIndexMeta()`、`writeVectorIndexMeta()` 等方法
+- `.kiro/steering/project-context.md`：项目架构约束和数据文件说明
+
+#### 搜索流程（新架构）
 
 ```mermaid
 flowchart TD
     Start([搜索请求]) --> Input[输入: type, embedding, topK]
-    Input --> GetBucket[获取目标类型的桶]
-    GetBucket --> EmptyCheck{桶是否为空?}
-    EmptyCheck -->|是| EmptyResult[返回空结果]
-    EmptyCheck -->|否| CalcSim[计算相似度]
+    Input --> CheckMeta{元数据索引中<br/>是否有该类型?}
+    CheckMeta -->|否| EmptyResult[返回空结果]
+    CheckMeta -->|是| LoadVectors[按需加载该类型<br/>的向量文件]
     
-    CalcSim --> Loop[遍历桶中所有条目]
+    LoadVectors --> Loop[遍历已加载的向量]
     Loop --> Cosine[计算余弦相似度]
     Cosine --> Store[存储 uid, similarity, name, path]
-    Store --> NextEntry{还有条目?}
+    Store --> NextEntry{还有向量?}
     NextEntry -->|是| Loop
     NextEntry -->|否| Sort[按相似度降序排序]
     
     Sort --> TopK[取前 topK 个结果]
-    TopK --> Filter[过滤相似度 < 阈值的结果]
-    Filter --> Return[返回搜索结果]
+    TopK --> Return[返回搜索结果]
     Return --> End([结束])
     
     EmptyResult --> End
     
     style Start fill:#e1f5ff
     style End fill:#c8e6c9
-    style CalcSim fill:#fff3e0
+    style LoadVectors fill:#fff3e0
 ```
 
-**搜索步骤**：
+**搜索步骤（新架构）**：
 
-1. **获取目标桶**：根据概念类型获取对应的桶（如 `buckets["Domain"]`）
-2. **计算相似度**：遍历桶中所有条目，计算查询向量与每个条目向量的余弦相似度
-3. **排序**：按相似度降序排序
-4. **取 TopK**：返回前 K 个最相似的结果（K 由 `topK` 参数指定，默认为 10）
-5. **过滤**：过滤掉相似度低于阈值的结果
+1. **检查元数据索引**：从 `VectorIndexMeta.concepts` 中查找该类型的概念
+2. **延迟加载向量**：按需从 `data/vectors/{type}/{uid}.json` 加载向量文件
+3. **计算相似度**：遍历已加载的向量，计算查询向量与每个向量的余弦相似度
+4. **排序**：按相似度降序排序
+5. **取 TopK**：返回前 K 个最相似的结果（K 由 `topK` 参数指定，默认为 10）
 
-#### 索引更新操作
+**性能优化**：
+- 元数据索引始终在内存中，查找速度快
+- 向量数据按需加载，减少内存占用
+- 已加载的向量会缓存在内存中，避免重复读取
+
+#### 索引更新操作（新架构）
 
 **插入或更新（Upsert）**：
 
 ```typescript
-// 如果 UID 已存在，更新条目；否则插入新条目
+// 如果 UID 已存在，更新向量文件；否则创建新文件
 await vectorIndex.upsert({
   uid: "550e8400-e29b-41d4-a716-446655440000",
   type: "Domain",
@@ -10795,13 +11026,22 @@ await vectorIndex.upsert({
   path: "1-领域/认知科学.md",
   updated: new Date().toISOString()
 });
+
+// 操作流程：
+// 1. 写入向量文件：data/vectors/Domain/550e8400-e29b-41d4-a716-446655440000.json
+// 2. 更新元数据索引：data/vectors/index.json
 ```
 
 **删除**：
 
 ```typescript
-// 根据 UID 删除条目
+// 根据 UID 删除向量文件和元数据
 await vectorIndex.delete("550e8400-e29b-41d4-a716-446655440000");
+
+// 操作流程：
+// 1. 删除向量文件：data/vectors/{type}/{uid}.json
+// 2. 更新元数据索引：data/vectors/index.json
+// 3. 清除内存缓存
 ```
 
 **搜索**：
@@ -10822,35 +11062,46 @@ const results = await vectorIndex.search(
 // ]
 ```
 
-#### 设计原则
+#### 设计原则（新架构）
 
-1. **类型隔离**：通过分桶策略确保只在同类型概念之间进行相似度比较，避免误判。
+1. **类型隔离**：通过分桶目录确保只在同类型概念之间进行相似度比较，避免误判。
 
-2. **高效搜索**：分桶减少了搜索空间，提高了搜索效率。对于包含数千个概念的知识库，搜索时间仍保持在毫秒级。
+2. **延迟加载**：元数据索引轻量级，向量数据按需加载，减少内存占用和启动时间。
 
-3. **模型兼容性**：记录嵌入模型和维度信息，确保向量的兼容性。如果更换嵌入模型，需要重新生成所有向量。
+3. **增量更新**：单个概念的增删改只影响一个文件，避免全量索引的读写开销，支持并发写入。
 
-4. **增量更新**：支持单个条目的插入、更新和删除，无需重建整个索引。
+4. **模型兼容性**：每个向量文件记录嵌入模型和维度信息，确保向量的兼容性。
 
-5. **持久化**：索引数据持久化到磁盘，支持断电恢复和跨会话使用。
+5. **持久化**：向量数据和元数据分别持久化，支持断电恢复和跨会话使用。
 
-6. **统计信息**：维护索引统计信息，便于监控和调试。
+6. **统计信息**：元数据索引维护统计信息，便于监控和调试。
 
-#### 性能优化
+7. **可扩展性**：文件系统天然支持大规模存储，适用于数万个概念的知识库。
+
+#### 性能优化（新架构）
 
 **当前实现**：
-- 使用简单的线性搜索（遍历桶中所有条目）
+- 元数据索引轻量级，始终在内存中（< 1MB）
+- 向量数据按需加载，已加载的向量缓存在内存中
+- 使用简单的线性搜索（遍历同类型的所有向量）
 - 适用于中小规模知识库（< 10,000 个概念）
-- 搜索时间复杂度：O(n)，其中 n 是桶中的条目数
+- 搜索时间复杂度：O(n)，其中 n 是同类型的概念数
+
+**性能特点**：
+- 启动快：只加载元数据索引，不加载向量数据
+- 内存占用低：按需加载，避免一次性加载所有向量
+- 写入快：单个文件写入，避免全量索引更新
 
 **未来优化方向**：
 - 使用近似最近邻搜索（ANN）算法（如 HNSW、IVF）
 - 引入向量数据库（如 Qdrant、Milvus）
 - 支持批量搜索和并行计算
+- 实现向量文件的压缩存储
 
 **参考文件**：
-- `src/types.ts`：VectorEntry、VectorIndexFile、SearchResult 接口定义
-- `src/core/vector-index.ts`：向量索引实现，包括分桶、搜索和相似度计算
+- `src/types.ts`：VectorEntry、VectorIndexMeta、ConceptMeta、ConceptVector、SearchResult 接口定义
+- `src/core/vector-index.ts`：向量索引实现，包括延迟加载、分桶存储、搜索和相似度计算
+- `src/data/file-storage.ts`：FileStorage 实现，提供向量文件读写功能（`readVectorFile`、`writeVectorFile`、`deleteVectorFile`、`readVectorIndexMeta`、`writeVectorIndexMeta`）
 
 ### 8.4 重复对结构
 
@@ -10955,7 +11206,7 @@ stateDiagram-v2
 
 1. **[*] → pending**：DuplicateManager 在向量索引中检测到相似度超过阈值的概念对，创建重复对记录。
 
-2. **pending → merging**：用户在工作台的"重复概念"区域选择"合并"操作，MergeHandler 创建合并任务。
+2. **pending → merging**：用户在工作台的"重复概念"区域选择"合并"操作，PipelineOrchestrator 创建合并管线。
 
 3. **merging → merged**：合并任务执行成功，保留一个概念（通常是内容更完善的那个），删除另一个概念，更新所有引用。
 
@@ -11159,7 +11410,7 @@ flowchart TD
 **合并步骤**：
 
 1. **用户选择**：用户在工作台选择保留哪个概念（通常选择内容更完善的那个）。
-2. **创建任务**：MergeHandler 创建合并任务，更新重复对状态为 merging。
+2. **创建管线**：PipelineOrchestrator 创建合并管线，更新重复对状态为 merging。
 3. **读取内容**：读取两个笔记的完整内容（Frontmatter + 正文）。
 4. **合并内容**：合并两个笔记的内容，保留更完善的部分，合并别名和标签。
 5. **创建快照**：为保留的笔记创建快照，支持撤销操作。

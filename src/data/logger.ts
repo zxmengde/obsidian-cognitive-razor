@@ -1,20 +1,4 @@
-/**
- * Logger 实现
- * 提供结构化日志记录功能，支持循环日志（1MB 上限）
- * 
- * 优化特性：
- * - 人类可读的格式化输出
- * - 会话分隔符和启动标记
- * - 关联 ID 追踪（traceId）
- * - 简短时间戳格式
- * - 日志分组/折叠功能
- * - 日志过滤和搜索辅助
- * 
- * 遵循设计文档 A-NF-03 可观察性要求：
- * - 结构化日志格式（JSON）
- * - 循环日志机制（1MB 上限）
- * - 日志级别控制
- */
+/** Logger - 结构化日志记录，支持循环日志、追踪 ID、分组和过滤 */
 
 import { ILogger } from "../types";
 import { ErrorCode, isValidErrorCode, getErrorCodeInfo } from "./error-codes";
@@ -52,7 +36,7 @@ export interface LogEntry {
   };
 }
 
-/** 日志级别优先级映射 */
+/** 日志级别优先级 */
 const LOG_LEVEL_PRIORITY: Record<LogLevel, number> = {
   debug: 0,
   info: 1,
@@ -84,11 +68,7 @@ const LEVEL_LABELS: Record<LogLevel, string> = {
   error: "ERR",
 };
 
-/**
- * 格式化时间戳为简短格式
- * @param isoString ISO 8601 时间戳
- * @returns 简短格式 HH:mm:ss.SSS
- */
+/** 格式化时间戳为简短格式 HH:mm:ss.SSS */
 function formatShortTime(isoString: string): string {
   const date = new Date(isoString);
   const hours = date.getHours().toString().padStart(2, "0");
@@ -113,20 +93,7 @@ function formatDateTime(isoString: string): string {
   return `${month}-${day} ${hours}:${minutes}:${seconds}`;
 }
 
-/**
- * Logger 实现类
- * 
- * 功能特性：
- * - 结构化 JSON 日志格式
- * - 人类可读的 pretty/compact 格式
- * - 循环日志机制（1MB 上限）
- * - 日志级别过滤
- * - 异步文件写入
- * - 跨会话日志追加
- * - 耗时埋点支持
- * - 追踪 ID 关联
- * - 会话分隔标记
- */
+/** Logger 实现类 */
 export class Logger implements ILogger {
   private logBuffer: string[] = [];
   private readonly maxLogSize: number;
@@ -215,7 +182,7 @@ export class Logger implements ILogger {
     this.consoleFormat = format;
   }
 
-  /** 初始化 Logger，读取既有日志文件 */
+  /** 初始化 Logger */
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
@@ -253,7 +220,7 @@ export class Logger implements ILogger {
     }
   }
 
-  /** 记录会话开始标记 */
+  /** 记录会话开始 */
   private logSessionStart(): void {
     const separator = "═".repeat(60);
     const timestamp = new Date().toISOString();
@@ -503,7 +470,7 @@ export class Logger implements ILogger {
     });
   }
 
-  /** 带错误码的核心日志方法 */
+  /** 带错误码的日志方法 */
   private logWithErrorCode(
     level: LogLevel,
     module: string,
@@ -575,12 +542,12 @@ export class Logger implements ILogger {
     });
   }
 
-  /** 检查是否应该记录该级别的日志 */
+  /** 检查日志级别 */
   private shouldLog(level: LogLevel): boolean {
     return LOG_LEVEL_PRIORITY[level] >= LOG_LEVEL_PRIORITY[this.minLevel];
   }
 
-  /** 格式化日志条目 */
+  /** 格式化日志 */
   private formatLogEntry(entry: LogEntry, format: LogFormat): string {
     switch (format) {
       case "pretty":
@@ -593,7 +560,7 @@ export class Logger implements ILogger {
     }
   }
 
-  /** Pretty 格式：人类可读，带图标和缩进 */
+  /** Pretty 格式 */
   private formatPretty(entry: LogEntry): string {
     const time = formatShortTime(entry.timestamp);
     const icon = LEVEL_COLORS[entry.level];
@@ -619,7 +586,7 @@ export class Logger implements ILogger {
     return line;
   }
 
-  /** Compact 格式：紧凑单行，适合快速扫描 */
+  /** Compact 格式 */
   private formatCompact(entry: LogEntry): string {
     const time = formatShortTime(entry.timestamp);
     const level = LEVEL_LABELS[entry.level];
@@ -648,7 +615,7 @@ export class Logger implements ILogger {
     return line;
   }
 
-  /** 格式化上下文对象为简短字符串 */
+  /** 格式化上下文 */
   private formatContext(context: Record<string, unknown>): string {
     const parts: string[] = [];
     for (const [key, value] of Object.entries(context)) {
@@ -673,7 +640,7 @@ export class Logger implements ILogger {
     return parts.length > 0 ? `{${parts.join(", ")}}` : "";
   }
 
-  /** 解析日志行为 LogEntry 对象 */
+  /** 解析日志行 */
   static parseLogEntry(logLine: string): LogEntry | null {
     try {
       // 尝试 JSON 解析
@@ -695,7 +662,7 @@ export class Logger implements ILogger {
     }
   }
 
-  /** 循环日志（删除旧日志以保持文件大小在限制内） */
+  /** 循环日志 */
   private rotateLog(newEntrySize: number): void {
     const targetSize = this.maxLogSize - newEntrySize;
     
@@ -708,7 +675,7 @@ export class Logger implements ILogger {
     }
   }
 
-  /** 写入日志到文件 */
+  /** 写入文件 */
   private async writeToFile(): Promise<void> {
     try {
       const content = this.getLogContent();
@@ -718,7 +685,7 @@ export class Logger implements ILogger {
     }
   }
 
-  /** 输出日志到控制台 */
+  /** 输出到控制台 */
   private outputToConsole(entry: LogEntry): void {
     if (!this.consoleEnabled) {
       return;
@@ -747,7 +714,7 @@ export class Logger implements ILogger {
     }
   }
 
-  /** 格式化控制台输出 */
+  /** 格式化控制台 */
   private formatConsoleOutput(entry: LogEntry): string {
     const time = formatShortTime(entry.timestamp);
     const prefix = `[CR][${entry.level.toUpperCase()}]`;
@@ -772,9 +739,9 @@ export class Logger implements ILogger {
     return msg;
   }
 
-  // ==================== 日志查询和过滤方法 ====================
+  // 日志查询和过滤
 
-  /** 按级别过滤日志 */
+  /** 按级别过滤 */
   filterByLevel(level: LogLevel): LogEntry[] {
     const entries: LogEntry[] = [];
     const minPriority = LOG_LEVEL_PRIORITY[level];

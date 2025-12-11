@@ -1,22 +1,11 @@
 /**
  * SchemaRegistry - 知识类型 Schema 注册表
- * 
- * 遵循设计文档 5.1.2 节和 7.4.7 节：
- * - 为每种知识类型提供完整的 JSON Schema
- * - 基于亚里士多德四因说和完备性问题设计字段
- * - 提供字段描述和校验规则
- * 
- * 知识类型：Domain, Issue, Theory, Entity, Mechanism
- * 
- * 更新日期：2025-12-09
- * 更新内容：根据最新的 prompt 模板更新所有字段定义
+ * 为五种知识类型提供 JSON Schema、字段描述和校验规则
  */
 
 import { CRType } from "../types";
 
-/**
- * JSON Schema 类型定义
- */
+/** JSON Schema 类型定义 */
 type JSONSchema = {
   $schema?: string;
   type: string;
@@ -41,9 +30,7 @@ type JSONSchemaProperty = {
   enum?: string[];
 };
 
-/**
- * 字段描述接口
- */
+/** 字段描述接口 */
 export interface FieldDescription {
   name: string;
   type: string;
@@ -53,45 +40,17 @@ export interface FieldDescription {
   philosophicalBasis?: string;
 }
 
-/**
- * SchemaRegistry 接口
- */
+/** SchemaRegistry 接口 */
 export interface ISchemaRegistry {
-  /**
-   * 获取指定知识类型的 JSON Schema
-   */
   getSchema(type: CRType): JSONSchema;
-
-  /**
-   * 获取 standardizeClassify 任务的输出 Schema
-   */
   getStandardizeClassifySchema(): JSONSchema;
-  
-  /**
-   * 获取指定知识类型的字段描述
-   */
   getFieldDescriptions(type: CRType): FieldDescription[];
-  
-  /**
-   * 获取指定知识类型的校验规则列表
-   */
   getValidationRules(type: CRType): string[];
-  
-  /**
-   * 获取所有知识类型
-   */
   getAllTypes(): CRType[];
-
-  /**
-   * 检查是否为有效的知识类型
-   */
   isValidType(type: string): type is CRType;
 }
 
-// ============================================================================
-// Domain 类型定义
-// 设计文档 D-TYPE-01：知识的边界划分
-// ============================================================================
+// Domain Schema
 
 const DOMAIN_SCHEMA: JSONSchema = {
   $schema: "http://json-schema.org/draft-07/schema#",
@@ -164,10 +123,7 @@ const DOMAIN_SCHEMA: JSONSchema = {
   }
 };
 
-// ============================================================================
-// Issue 类型定义
-// 设计文档 D-TYPE-02：尚未完全解决的问题，存在核心矛盾
-// ============================================================================
+// Issue Schema
 
 const ISSUE_SCHEMA: JSONSchema = {
   $schema: "http://json-schema.org/draft-07/schema#",
@@ -270,10 +226,7 @@ const ISSUE_SCHEMA: JSONSchema = {
   }
 };
 
-// ============================================================================
-// Theory 类型定义
-// 设计文档 D-TYPE-03：从公理出发的逻辑推演体系
-// ============================================================================
+// Theory Schema
 
 const THEORY_SCHEMA: JSONSchema = {
   $schema: "http://json-schema.org/draft-07/schema#",
@@ -374,10 +327,7 @@ const THEORY_SCHEMA: JSONSchema = {
   }
 };
 
-// ============================================================================
-// Entity 类型定义
-// 设计文档 D-TYPE-04：具有属性的对象或概念
-// ============================================================================
+// Entity Schema
 
 const ENTITY_SCHEMA: JSONSchema = {
   $schema: "http://json-schema.org/draft-07/schema#",
@@ -473,10 +423,7 @@ const ENTITY_SCHEMA: JSONSchema = {
   }
 };
 
-// ============================================================================
-// Mechanism 类型定义
-// 设计文档 D-TYPE-05：因果过程或交互规则
-// ============================================================================
+// Mechanism Schema
 
 const MECHANISM_SCHEMA: JSONSchema = {
   $schema: "http://json-schema.org/draft-07/schema#",
@@ -570,9 +517,7 @@ const MECHANISM_SCHEMA: JSONSchema = {
   }
 };
 
-// ============================================================================
-// StandardizeClassify 输出 Schema
-// ============================================================================
+// StandardizeClassify Schema
 
 const STANDARDIZE_CLASSIFY_SCHEMA: JSONSchema = {
   $schema: "http://json-schema.org/draft-07/schema#",
@@ -633,9 +578,7 @@ const STANDARDIZE_CLASSIFY_SCHEMA: JSONSchema = {
   }
 };
 
-// ============================================================================
 // SchemaRegistry 实现
-// ============================================================================
 
 export class SchemaRegistry implements ISchemaRegistry {
   private schemas: Map<CRType, JSONSchema>;
@@ -684,9 +627,7 @@ export class SchemaRegistry implements ISchemaRegistry {
     return descriptions;
   }
 
-  /**
-   * 获取字段的中文标签映射
-   */
+  /** 获取字段的中文标签映射 */
   private getFieldLabels(type: CRType): Record<string, string> {
     const commonLabels: Record<string, string> = {
       definition: "定义",
@@ -816,5 +757,4 @@ export class SchemaRegistry implements ISchemaRegistry {
   }
 }
 
-// 导出单例
 export const schemaRegistry = new SchemaRegistry();

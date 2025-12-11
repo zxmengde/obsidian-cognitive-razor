@@ -1,23 +1,8 @@
-/**
- * RetryHandler - 错误处理和重试逻辑
- * 
- * 遵循设计文档 A-PDD-08 重试策略：
- * - 内容错误 (E001-E010): 立即重试，最多 3 次
- * - 网络错误 (E100-E102): 指数退避 (1s, 2s, 4s, 8s, 16s)，最多 5 次
- * - 终止错误 (E103, E200-E201, E300-E304): 不重试
- * 
- * **Validates: Requirements 3.2, 3.3, 3.4, 6.1, 6.2, 6.3, 6.4**
- */
+/** RetryHandler：错误处理和重试逻辑 */
 
 import { Result, Err, TaskError, ILogger } from "../types";
 
-// ============================================================================
-// 错误分类
-// ============================================================================
-
-/**
- * 错误类别
- */
+/** 错误类别 */
 type ErrorCategory =
   | "CONTENT_ERROR"         // 内容错误 (E001-E010)
   | "NETWORK_ERROR"         // 网络错误 (E100-E102)
@@ -26,17 +11,13 @@ type ErrorCategory =
   | "FILE_SYSTEM_ERROR"     // 文件系统错误 (E300-E304)
   | "UNKNOWN";              // 未知错误
 
-/**
- * 重试策略类型
- */
+/** 重试策略类型 */
 type RetryStrategy =
   | "immediate"             // 立即重试（内容错误）
   | "exponential"           // 指数退避重试（网络错误）
   | "no_retry";             // 不重试（终止错误）
 
-/**
- * 错误分类结果
- */
+/** 错误分类结果 */
 interface ErrorClassification {
   /** 错误类别 */
   category: ErrorCategory;
@@ -48,13 +29,7 @@ interface ErrorClassification {
   maxAttempts: number;
 }
 
-// ============================================================================
-// 重试配置
-// ============================================================================
-
-/**
- * 重试配置
- */
+/** 重试配置 */
 interface RetryConfig {
   /** 最大重试次数 */
   maxAttempts: number;
@@ -68,33 +43,20 @@ interface RetryConfig {
   onRetry?: (attempt: number, error: TaskError) => void;
 }
 
-/**
- * 内容错误的默认配置
- * Requirements 6.1: 内容错误 (E001-E010) 立即重试，最多 3 次
- */
+/** 内容错误的默认配置 */
 const CONTENT_ERROR_CONFIG: RetryConfig = {
   maxAttempts: 3,
   strategy: "immediate",
 };
 
-/**
- * 网络错误的默认配置
- * Requirements 6.2: 网络错误 (E100-E102) 指数退避，最多 5 次
- */
+/** 网络错误的默认配置 */
 export const NETWORK_ERROR_CONFIG: RetryConfig = {
   maxAttempts: 5,
   strategy: "exponential",
   baseDelayMs: 1000, // 1s, 2s, 4s, 8s, 16s
 };
 
-// ============================================================================
-// 错误码定义
-// ============================================================================
-
-/**
- * 内容错误码 (E001-E010)
- * 这些错误可以通过重试（附加错误历史）来修复
- */
+/** 内容错误码 (E001-E010) */
 const CONTENT_ERROR_CODES = [
   "E001", // PARSE_ERROR - 输出非 JSON 或解析失败
   "E002", // SCHEMA_VIOLATION - 不符合输出 Schema
@@ -108,37 +70,25 @@ const CONTENT_ERROR_CODES = [
   "E010", // INVALID_PATTERN - 字段不匹配正则
 ] as const;
 
-/**
- * 网络错误码 (E100-E102)
- * 这些错误可以通过指数退避重试来恢复
- */
+/** 网络错误码 (E100-E102) */
 const NETWORK_ERROR_CODES = [
   "E100", // API_ERROR - Provider 返回 5xx/4xx
   "E101", // TIMEOUT - 请求超时
   "E102", // RATE_LIMIT - 触发速率限制 (429)
 ] as const;
 
-/**
- * 认证错误码 (E103)
- * 终止错误，不重试
- */
+/** 认证错误码 (E103) */
 const AUTH_ERROR_CODES = [
   "E103", // AUTH_ERROR - 认证失败 (401/403)
 ] as const;
 
-/**
- * 能力错误码 (E200-E201)
- * 终止错误，不重试
- */
+/** 能力错误码 (E200-E201) */
 const CAPABILITY_ERROR_CODES = [
   "E200", // SAFETY_VIOLATION - 触发安全边界
   "E201", // CAPABILITY_MISMATCH - Provider 能力不足
 ] as const;
 
-/**
- * 文件系统错误码 (E300-E304)
- * 终止错误，不重试
- */
+/** 文件系统错误码 (E300-E304) */
 const FILE_SYSTEM_ERROR_CODES = [
   "E300", // FILE_WRITE_ERROR - 文件写入失败
   "E301", // FILE_READ_ERROR - 文件读取失败
@@ -147,48 +97,22 @@ const FILE_SYSTEM_ERROR_CODES = [
   "E304", // PROVIDER_NOT_FOUND - Provider 不存在
 ] as const;
 
-/**
- * 所有终止错误码（不重试）
- */
+/** 所有终止错误码（不重试） */
 const TERMINAL_ERROR_CODES = [
   ...AUTH_ERROR_CODES,
   ...CAPABILITY_ERROR_CODES,
   ...FILE_SYSTEM_ERROR_CODES,
 ] as const;
 
-// ============================================================================
-// RetryHandler 接口
-// ============================================================================
-
-/**
- * RetryHandler 接口
- * 遵循设计文档 section 7.4 定义
- */
+/** RetryHandler 接口 */
 interface IRetryHandler {
-  /**
-   * 带重试的异步操作执行
-   * @param operation 要执行的操作
-   * @param config 重试配置
-   * @returns 操作结果
-   */
+  /** 带重试的异步操作执行 */
   executeWithRetry<T>(
     operation: () => Promise<Result<T>>,
     config: RetryConfig
   ): Promise<Result<T>>;
 }
 
-// ============================================================================
-// RetryHandler 类
-// ============================================================================
-
-/**
- * RetryHandler - 错误处理和重试逻辑
- * 
- * 实现设计文档 A-PDD-08 定义的重试策略：
- * - 内容错误 (E001-E010): 立即重试，最多 3 次
- * - 网络错误 (E100-E102): 指数退避 (1s, 2s, 4s, 8s, 16s)，最多 5 次
- * - 终止错误 (E103, E200-E201, E300-E304): 不重试
- */
 export class RetryHandler implements IRetryHandler {
   private logger?: ILogger;
 
@@ -196,12 +120,7 @@ export class RetryHandler implements IRetryHandler {
     this.logger = logger;
   }
 
-  /**
-   * 分类错误并决定重试策略
-   * 
-   * @param errorCode 错误码
-   * @returns 错误分类结果
-   */
+  /** 分类错误并决定重试策略 */
   classifyError(errorCode: string): ErrorClassification {
     // 内容错误 (E001-E010): 立即重试，最多 3 次
     if (this.isContentError(errorCode)) {
@@ -262,13 +181,7 @@ export class RetryHandler implements IRetryHandler {
     };
   }
 
-  /**
-   * 判断是否应该重试
-   * 
-   * @param error 错误结果
-   * @param currentAttempt 当前尝试次数
-   * @returns 是否应该重试
-   */
+  /** 判断是否应该重试 */
   shouldRetry(error: Err, currentAttempt: number): boolean {
     const classification = this.classifyError(error.error.code);
     
@@ -285,18 +198,7 @@ export class RetryHandler implements IRetryHandler {
     return true;
   }
 
-  /**
-   * 计算重试等待时间
-   * 
-   * 根据设计文档 A-PDD-08：
-   * - 内容错误: 立即重试（0ms）
-   * - 网络错误: 指数退避 (1s, 2s, 4s, 8s, 16s)
-   * 
-   * @param error 错误结果
-   * @param attempt 当前尝试次数（从 1 开始）
-   * @param baseDelayMs 基础延迟（毫秒），默认 1000ms
-   * @returns 等待时间（毫秒）
-   */
+  /** 计算重试等待时间 */
   calculateWaitTime(error: Err, attempt: number, baseDelayMs: number = 1000): number {
     const classification = this.classifyError(error.error.code);
 
@@ -314,34 +216,13 @@ export class RetryHandler implements IRetryHandler {
     return 0;
   }
 
-  /**
-   * 计算指数退避延迟
-   * 
-   * 公式：baseDelay * 2^(attempt - 1)
-   * 
-   * 示例（baseDelay=1000ms）：
-   * - 第 1 次重试：1000ms (1 秒)
-   * - 第 2 次重试：2000ms (2 秒)
-   * - 第 3 次重试：4000ms (4 秒)
-   * - 第 4 次重试：8000ms (8 秒)
-   * - 第 5 次重试：16000ms (16 秒)
-   * 
-   * @param attempt 当前尝试次数（从 1 开始）
-   * @param baseDelayMs 基础延迟（毫秒）
-   * @returns 延迟时间（毫秒）
-   */
+  /** 计算指数退避延迟 */
   private calculateExponentialBackoff(attempt: number, baseDelayMs: number): number {
     // attempt 从 1 开始，所以第 1 次重试的延迟是 baseDelay * 2^0 = baseDelay
     return baseDelayMs * Math.pow(2, attempt - 1);
   }
 
-  /**
-   * 带重试的异步操作执行
-   * 
-   * @param operation 要执行的操作
-   * @param config 重试配置
-   * @returns 操作结果
-   */
+  /** 带重试的异步操作执行 */
   async executeWithRetry<T>(
     operation: () => Promise<Result<T>>,
     config: RetryConfig
@@ -451,9 +332,7 @@ export class RetryHandler implements IRetryHandler {
     };
   }
 
-  /**
-   * 创建任务错误记录
-   */
+  /** 创建任务错误记录 */
   createTaskError(error: Err, attempt: number): TaskError {
     return {
       code: error.error.code,
@@ -463,11 +342,7 @@ export class RetryHandler implements IRetryHandler {
     };
   }
 
-  /**
-   * 构建结构化重试的错误历史提示
-   * 
-   * 将错误历史附加到 prompt 中，帮助 AI 避免重复错误
-   */
+  /** 构建结构化重试的错误历史提示 */
   buildErrorHistoryPrompt(errors: TaskError[]): string {
     if (errors.length === 0) {
       return "";
@@ -488,9 +363,7 @@ export class RetryHandler implements IRetryHandler {
     return lines.join("\n");
   }
 
-  /**
-   * 获取错误的用户友好提示
-   */
+  /** 获取错误的用户友好提示 */
   getUserFriendlyMessage(error: Err): string {
     const code = error.error.code;
     const classification = this.classifyError(code);
@@ -522,9 +395,7 @@ export class RetryHandler implements IRetryHandler {
     }
   }
 
-  /**
-   * 获取错误的修复建议
-   */
+  /** 获取错误的修复建议 */
   getFixSuggestion(error: Err): string | undefined {
     const code = error.error.code;
 
@@ -562,10 +433,7 @@ export class RetryHandler implements IRetryHandler {
     }
   }
 
-  /**
-   * 获取错误的重试配置
-   * 根据错误类型返回适当的重试配置
-   */
+  /** 获取错误的重试配置 */
   getRetryConfigForError(error: Err): RetryConfig {
     const classification = this.classifyError(error.error.code);
 
@@ -584,60 +452,37 @@ export class RetryHandler implements IRetryHandler {
     };
   }
 
-  // ============================================================================
-  // 错误类型判断方法
-  // ============================================================================
-
-  /**
-   * 判断是否为内容错误 (E001-E010)
-   */
+  /** 判断是否为内容错误 (E001-E010) */
   isContentError(code: string): boolean {
     return (CONTENT_ERROR_CODES as readonly string[]).includes(code);
   }
 
-  /**
-   * 判断是否为网络错误 (E100-E102)
-   */
+  /** 判断是否为网络错误 (E100-E102) */
   isNetworkError(code: string): boolean {
     return (NETWORK_ERROR_CODES as readonly string[]).includes(code);
   }
 
-  /**
-   * 判断是否为认证错误 (E103)
-   */
+  /** 判断是否为认证错误 (E103) */
   isAuthError(code: string): boolean {
     return (AUTH_ERROR_CODES as readonly string[]).includes(code);
   }
 
-  /**
-   * 判断是否为能力错误 (E200-E201)
-   */
+  /** 判断是否为能力错误 (E200-E201) */
   isCapabilityError(code: string): boolean {
     return (CAPABILITY_ERROR_CODES as readonly string[]).includes(code);
   }
 
-  /**
-   * 判断是否为文件系统错误 (E300-E304)
-   */
+  /** 判断是否为文件系统错误 (E300-E304) */
   isFileSystemError(code: string): boolean {
     return (FILE_SYSTEM_ERROR_CODES as readonly string[]).includes(code);
   }
 
-  /**
-   * 判断是否为终止错误（不可重试）
-   */
+  /** 判断是否为终止错误（不可重试） */
   isTerminalError(code: string): boolean {
     return (TERMINAL_ERROR_CODES as readonly string[]).includes(code);
   }
 
-  /**
-   * 检查结果是否为重试耗尽
-   * 
-   * 用于判断操作是否因为重试次数耗尽而失败
-   * 
-   * @param result 操作结果
-   * @returns 是否为重试耗尽
-   */
+  /** 检查结果是否为重试耗尽 */
   isRetryExhausted<T>(result: Result<T>): boolean {
     if (result.ok) {
       return false;
@@ -651,12 +496,7 @@ export class RetryHandler implements IRetryHandler {
     return details?.exhausted === true;
   }
 
-  /**
-   * 从失败结果中提取错误历史
-   * 
-   * @param result 失败的操作结果
-   * @returns 错误历史数组
-   */
+  /** 从失败结果中提取错误历史 */
   getErrorHistory<T>(result: Result<T>): TaskError[] {
     if (result.ok) {
       return [];
@@ -669,30 +509,13 @@ export class RetryHandler implements IRetryHandler {
     return details?.errorHistory ?? [];
   }
 
-  /**
-   * 从失败结果中获取最后一个错误
-   * 
-   * 用于设置任务状态为 Failed 时记录最后错误
-   * 遵循 Requirements 6.4：重试耗尽后设置任务状态为 Failed，记录最后错误
-   * 
-   * @param result 失败的操作结果
-   * @returns 最后一个错误，如果没有则返回 undefined
-   */
+  /** 从失败结果中获取最后一个错误 */
   getLastError<T>(result: Result<T>): TaskError | undefined {
     const errorHistory = this.getErrorHistory(result);
     return errorHistory.length > 0 ? errorHistory[errorHistory.length - 1] : undefined;
   }
 
-  /**
-   * 创建任务失败结果
-   * 
-   * 用于将重试耗尽的结果转换为任务失败状态
-   * 遵循 Requirements 6.4：重试耗尽后设置任务状态为 Failed，记录最后错误
-   * 
-   * @param taskId 任务 ID
-   * @param result 失败的操作结果
-   * @returns 任务失败信息
-   */
+  /** 创建任务失败结果 */
   createTaskFailureInfo<T>(taskId: string, result: Result<T>): {
     taskId: string;
     state: "Failed";
@@ -717,20 +540,12 @@ export class RetryHandler implements IRetryHandler {
   }
 }
 
-// ============================================================================
-// 辅助函数
-// ============================================================================
-
-/**
- * 延迟执行（内部使用）
- */
+/** 延迟执行（内部使用） */
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * 带重试的异步操作包装器（便捷函数）
- */
+/** 带重试的异步操作包装器（便捷函数） */
 async function withRetry<T>(
   operation: (attempt: number, errorHistory: TaskError[]) => Promise<Result<T>>,
   retryHandler: RetryHandler,

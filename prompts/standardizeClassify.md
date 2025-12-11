@@ -21,6 +21,13 @@
         2. **Tone**: Academic, objective, encyclopedic, and rigorous.
         3. **Math Integrity**: `sum(confidences)` must equal 1.0.
         
+        <validation_rules>
+            **CRITICAL: Post-generation validation**
+            - After generating the classification_result, verify: `Domain.confidence_score + Issue.confidence_score + Theory.confidence_score + Entity.confidence_score + Mechanism.confidence_score == 1.0`
+            - If the sum is not exactly 1.0, normalize all scores proportionally before output
+            - Example: If sum = 0.95, multiply each score by (1.0 / 0.95)
+        </validation_rules>
+        
         <naming_morphology>
             **CRITICAL: Adopt the following "Syntactic Paradigms" for standardization. Avoid tautology (e.g., do NOT say "Philosophy Studies").**
             * **Domain (The Container)**: 
@@ -61,8 +68,11 @@
             - Select the most appropriate **Syntactic Paradigm** for each dimension based on the input's semantic essence.
             - Ensure the name is distinct for each dimension (e.g., Domain and Theory should not have identical names if possible).
             - **Avoid Redundancy**: If the input is "Philosophy", Domain is "Philosophy", not "Philosophy Studies".
-    2. **Final Output**:
-        - Generate the final JSON object.
+    2. **Validation**:
+        - Verify that `sum(all confidence_scores) == 1.0`
+        - If not, normalize proportionally: `new_score = old_score / sum(all_scores)`
+    3. **Final Output**:
+        - Generate the final JSON object with validated confidence scores.
 </task_instruction>
 
 <output_schema>

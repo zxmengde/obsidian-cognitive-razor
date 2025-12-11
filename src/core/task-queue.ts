@@ -1,7 +1,4 @@
-/**
- * 任务队列
- * 负责任务的调度、并发控制和持久化
- */
+/** 任务队列 - 负责任务调度、并发控制和持久化 */
 
 import {
   ITaskQueue,
@@ -16,6 +13,7 @@ import {
   QueueEventListener,
   QueueEvent,
   QueueStateFile,
+  MinimalTaskRecord,
   Result,
   ok,
   err
@@ -35,7 +33,6 @@ export class TaskQueue implements ITaskQueue {
   private paused: boolean;
   private listeners: QueueEventListener[];
   private processingTasks: Set<string>;
-  private schedulerInterval: NodeJS.Timeout | null;
   private lastPersistedContent: string | null;
   private saveQueueChain: Promise<void>;
   private isScheduling: boolean;
@@ -60,7 +57,6 @@ export class TaskQueue implements ITaskQueue {
     this.paused = false;
     this.listeners = [];
     this.processingTasks = new Set();
-    this.schedulerInterval = null;
     this.lastPersistedContent = null;
     // 串行化持久化操作，避免并发写入同一 .tmp/.bak 文件导致的 ENOENT
     this.saveQueueChain = Promise.resolve();
@@ -71,21 +67,16 @@ export class TaskQueue implements ITaskQueue {
     });
   }
 
-  /**
-   * 设置 TaskRunner（依赖注入）
-   * 
-   * 注意：由于循环依赖问题，TaskRunner 需要在构造后注入
-   * TaskQueue 需要 TaskRunner 来执行任务
-   * TaskRunner 可能需要 TaskQueue 来入队后续任务
-   */
+  /** 设置 TaskRunner（依赖注入，避免循环依赖） */
   setTaskRunner(taskRunner: ITaskRunner): void {
     this.taskRunner = taskRunner;
     this.logger.debug("TaskQueue", "TaskRunner 已注入");
+
+    // 事件驱动调度：注入后立即尝试调度（处理 initialize 时因 taskRunner 未注入而跳过的任务）
+    this.tryScheduleAll();
   }
 
-  /**
-   * 初始化（加载队列状态）
-   */
+  /** 初始化 - 加载队列状态 */
   async initialize(): Promise<Result<void>> {
     try {
       const exists = await this.fileStorage.exists(this.queuePath);
@@ -113,8 +104,8 @@ export class TaskQueue implements ITaskQueue {
         this.logger.info("TaskQueue", "创建新的队列状态");
       }
 
-      // 启动调度器
-      this.startScheduler();
+      // 初始化完成后触发一次调度（处理恢复的 Pending 任务）
+      this.tryScheduleAll();
 
       return ok(undefined);
     } catch (error) {
@@ -123,16 +114,7 @@ export class TaskQueue implements ITaskQueue {
     }
   }
 
-  /**
-   * 将任务加入队列
-   * 
-   * 遵循 Requirements 2.1：入队前检查 LockManager 是否存在冲突锁
-   * 遵循 A-FUNC-01：同一 nodeId 不能重复入队
-   * - 检查是否已有同 nodeId 的 Pending/Running 任务
-   * - 检查节点锁（nodeId）
-   * - 检查类型锁（用于去重检测等场景）
-   * 冲突时返回错误
-   */
+  /** 入队任务 - 检查锁冲突和重复入队 */
   enqueue(task: Omit<TaskRecord, 'id' | 'created' | 'updated'>): Result<string> {
     try {
       // 生成任务 ID
@@ -174,25 +156,8 @@ export class TaskQueue implements ITaskQueue {
         });
       }
 
-      // 检查锁冲突 - 类型锁（用于去重检测等需要类型级别锁的场景）
-      // 从 payload 中获取类型信息（如果存在）
-      const crType = (task.payload?.type as string | undefined) || (task.payload?.conceptType as string | undefined);
-      if (crType) {
-        const typeLockKey = `type:${crType}`;
-        if (this.lockManager.isLocked(typeLockKey)) {
-          this.logger.warn("TaskQueue", "类型锁冲突，无法入队", {
-            taskId,
-            lockKey: typeLockKey,
-            nodeId: task.nodeId,
-            crType,
-            lockType: "type"
-          });
-          return err("E400", `类型 ${crType} 已被锁定，无法入队`, {
-            lockKey: typeLockKey,
-            lockType: "type"
-          });
-        }
-      }
+      // 注意：类型锁已移至 DuplicateManager.detect() 中获取
+      // 不再在入队时检查类型锁，以提高并发性能
 
       // 创建完整的任务记录
       const now = new Date().toISOString();
@@ -227,6 +192,9 @@ export class TaskQueue implements ITaskQueue {
         nodeId: task.nodeId
       });
 
+      // 事件驱动调度：入队后立即尝试调度
+      this.tryScheduleAll();
+
       return ok(taskId);
     } catch (error) {
       this.logger.error("TaskQueue", "任务入队失败", error as Error, {
@@ -237,11 +205,7 @@ export class TaskQueue implements ITaskQueue {
     }
   }
 
-  /**
-   * 取消任务
-   * 
-   * 修复：允许清除 Failed 状态的任务
-   */
+  /** 取消任务 - 支持 Pending/Running/Failed 状态 */
   cancel(taskId: string): Result<boolean> {
     try {
       const task = this.tasks.get(taskId);
@@ -270,9 +234,6 @@ export class TaskQueue implements ITaskQueue {
       // 释放锁
       if (task.lockKey) {
         this.lockManager.release(task.lockKey);
-      }
-      if (task.typeLockKey) {
-        this.lockManager.release(task.typeLockKey);
       }
 
       // 从处理中集合移除
@@ -305,9 +266,7 @@ export class TaskQueue implements ITaskQueue {
     }
   }
 
-  /**
-   * 暂停队列
-   */
+  /** 暂停队列 */
   async pause(): Promise<void> {
     this.paused = true;
     await this.saveQueue();
@@ -320,9 +279,7 @@ export class TaskQueue implements ITaskQueue {
     this.logger.info("TaskQueue", "队列已暂停");
   }
 
-  /**
-   * 恢复队列
-   */
+  /** 恢复队列 */
   async resume(): Promise<void> {
     this.paused = false;
     await this.saveQueue();
@@ -333,11 +290,12 @@ export class TaskQueue implements ITaskQueue {
     });
 
     this.logger.info("TaskQueue", "队列已恢复");
+
+    // 事件驱动调度：恢复后立即尝试调度
+    this.tryScheduleAll();
   }
 
-  /**
-   * 获取队列状态
-   */
+  /** 获取队列状态 */
   getStatus(): QueueStatus {
     let pending = 0;
     let running = 0;
@@ -370,9 +328,7 @@ export class TaskQueue implements ITaskQueue {
     };
   }
 
-  /**
-   * 订阅队列事件
-   */
+  /** 订阅队列事件 */
   subscribe(listener: QueueEventListener): () => void {
     this.listeners.push(listener);
 
@@ -385,16 +341,12 @@ export class TaskQueue implements ITaskQueue {
     };
   }
 
-  /**
-   * 获取任务
-   */
+  /** 获取任务 */
   getTask(taskId: string): TaskRecord | undefined {
     return this.tasks.get(taskId);
   }
 
-  /**
-   * 更新任务状态
-   */
+  /** 更新任务状态 */
   updateTask(taskId: string, updates: Partial<TaskRecord>): Result<void> {
     const task = this.tasks.get(taskId);
     if (!task) {
@@ -409,29 +361,17 @@ export class TaskQueue implements ITaskQueue {
     return ok(undefined);
   }
 
-  /**
-   * 停止调度器
-   */
+  /** 停止调度器（事件驱动模式，保留接口兼容性） */
   stop(): void {
-    if (this.schedulerInterval) {
-      clearInterval(this.schedulerInterval);
-      this.schedulerInterval = null;
-      this.logger.info("TaskQueue", "调度器已停止");
-    }
+    this.logger.debug("TaskQueue", "调度器停止（事件驱动模式）");
   }
 
-  /**
-   * 获取所有任务
-   */
+  /** 获取所有任务 */
   getAllTasks(): TaskRecord[] {
     return Array.from(this.tasks.values());
   }
 
-  /**
-   * 清理已完成的任务
-   * @param beforeDate 清理此日期之前完成的任务
-   * @returns 清理的任务数量
-   */
+  /** 清理已完成的任务 */
   async cleanupCompletedTasks(beforeDate: Date): Promise<Result<number>> {
     try {
       const tasksToRemove: string[] = [];
@@ -462,17 +402,13 @@ export class TaskQueue implements ITaskQueue {
     }
   }
 
-  /**
-   * 清理已完成的任务（无参数版本）
-   */
+  /** 清理所有已完成的任务 */
   async clearCompleted(): Promise<Result<number>> {
     // 清理所有已完成的任务
     return this.cleanupCompletedTasks(new Date());
   }
 
-  /**
-   * 重试所有失败的任务
-   */
+  /** 重试所有失败的任务 */
   async retryFailed(): Promise<Result<number>> {
     try {
       let retriedCount = 0;
@@ -500,112 +436,63 @@ export class TaskQueue implements ITaskQueue {
     }
   }
 
-  // ============================================================================
-  // 私有辅助方法
-  // ============================================================================
+  // 私有方法
 
-  /**
-   * 启动调度器
-   */
-  private startScheduler(): void {
-    if (this.schedulerInterval) {
-      return;
-    }
-    // 每秒检查一次是否有任务可以执行
-    this.schedulerInterval = setInterval(() => {
-      this.scheduleNextTask();
-    }, 1000);
-
-    this.logger.info("TaskQueue", "调度器已启动");
-  }
-
-  /**
-   * 调度下一个任务
-   * 
-   * 遵循设计文档：
-   * - TaskQueue 负责调度和并发控制
-   * - TaskRunner 负责实际执行
-   * - 执行结果更新任务状态并持久化
-   * 
-   * Requirements 6.1, 6.3: 
-   * - 当任务进入队列且状态为 Pending 时，调度器应在 2 秒内尝试启动任务（如果没有锁冲突）
-   * - 当队列有待处理任务且运行任务数低于并发限制时，调度器应启动下一个待处理任务
-   */
-  private scheduleNextTask(): void {
+  /** 事件驱动调度 - 填满并发槽 */
+  private tryScheduleAll(): void {
     if (this.isScheduling) {
-      this.logger.debug("TaskQueue", "调度器正在运行，跳过本轮");
       return;
     }
     this.isScheduling = true;
     try {
+      const settings = this.settingsStore.getSettings();
+      const concurrency = settings.concurrency;
+      let scheduledCount = 0;
+
+      // 循环调度直到填满并发槽
+      while (this.processingTasks.size < concurrency) {
+        const scheduled = this.scheduleOneTask();
+        if (!scheduled) break;
+        scheduledCount++;
+      }
+
+      if (scheduledCount > 0) {
+        this.logger.debug("TaskQueue", "批量调度完成", {
+          scheduledCount,
+          processingCount: this.processingTasks.size,
+          concurrency
+        });
+      }
+    } finally {
+      this.isScheduling = false;
+    }
+  }
+
+  /** 调度单个任务 */
+  private scheduleOneTask(): boolean {
     // 如果队列暂停，不调度新任务
     if (this.paused) {
-      this.logger.debug("TaskQueue", "队列已暂停，跳过调度");
-      return;
+      return false;
     }
 
     // 如果没有注入 TaskRunner，无法执行任务
     if (!this.taskRunner) {
       this.logger.warn("TaskQueue", "TaskRunner 未注入，无法执行任务");
-      return;
+      return false;
     }
 
-    const settings = this.settingsStore.getSettings();
-    const concurrency = settings.concurrency;
-
-    // Requirements 6.3: 如果已达到并发上限，不调度新任务
-    if (this.processingTasks.size >= concurrency) {
-      this.logger.debug("TaskQueue", "已达到并发上限，跳过调度", {
-        processingCount: this.processingTasks.size,
-        concurrency
-      });
-      return;
-    }
-
-    // Requirements 6.1: 查找第一个 Pending 状态的任务并尝试启动
-    let attemptedTasks = 0;
-    let skippedDueToLock = 0;
-
+    // 查找第一个 Pending 状态且可获取锁的任务
     for (const task of this.tasks.values()) {
       if (task.state === "Pending") {
-        attemptedTasks++;
-
         // 检查节点锁
         const lockResult = this.lockManager.acquire(task.nodeId, "node", task.id);
         if (!lockResult.ok) {
-          skippedDueToLock++;
-          this.logger.debug("TaskQueue", `任务 ${task.id} 节点锁冲突，跳过`, {
-            nodeId: task.nodeId,
-            lockError: lockResult.error
-          });
           continue;
-        }
-
-        // 尝试获取类型锁（如果需要）
-        let typeLockKey: string | undefined;
-        const crType = (task.payload?.type as string | undefined) || (task.payload?.conceptType as string | undefined);
-        if (crType) {
-          const typeLockResult = this.lockManager.acquire(`type:${crType}`, "type", task.id);
-          if (!typeLockResult.ok) {
-            // 释放节点锁并跳过
-            this.lockManager.release(lockResult.value);
-            skippedDueToLock++;
-            this.logger.debug("TaskQueue", `任务 ${task.id} 类型锁冲突，跳过`, {
-              nodeId: task.nodeId,
-              crType,
-              lockError: typeLockResult.error
-            });
-            continue;
-          }
-          typeLockKey = typeLockResult.value;
         }
 
         // 标记为处理中
         this.processingTasks.add(task.id);
         task.lockKey = lockResult.value;
-        if (typeLockKey) {
-          task.typeLockKey = typeLockKey;
-        }
 
         // 更新任务状态
         const previousState = task.state;
@@ -632,40 +519,19 @@ export class TaskQueue implements ITaskQueue {
           nodeId: task.nodeId
         });
 
-        // 异步执行任务（不阻塞调度器）
+        // 异步执行任务（不阻塞调度）
         this.executeTask(task).catch((error) => {
           this.logger.error("TaskQueue", `任务执行异常: ${task.id}`, error as Error);
         });
 
-        // 只调度一个任务，然后退出
-        this.logger.debug("TaskQueue", "成功调度一个任务", {
-          taskId: task.id,
-          attemptedTasks,
-          skippedDueToLock
-        });
-        return;
+        return true;
       }
     }
 
-    // 如果没有找到可调度的任务，记录调试信息
-      if (attemptedTasks > 0) {
-        this.logger.debug("TaskQueue", "没有可调度的任务", {
-          attemptedTasks,
-          skippedDueToLock,
-          reason: skippedDueToLock > 0 ? "所有待处理任务都被锁定" : "未知"
-        });
-      }
-    } finally {
-      this.isScheduling = false;
-    }
+    return false;
   }
 
-  /**
-   * 执行任务
-   * 
-   * 调用 TaskRunner.run() 并处理结果
-   * Requirements 6.2: 确保任务正确执行并更新状态
-   */
+  /** 执行任务 - 调用 TaskRunner 并处理结果 */
   private async executeTask(task: TaskRecord): Promise<void> {
     if (!this.taskRunner) {
       this.logger.error("TaskQueue", "TaskRunner 未注入", undefined, {
@@ -736,10 +602,7 @@ export class TaskQueue implements ITaskQueue {
     }
   }
 
-  /**
-   * 处理任务成功
-   * Requirements 6.2: 任务转换到 Completed 状态
-   */
+  /** 处理任务成功 */
   private async handleTaskSuccess(task: TaskRecord, taskResult: TaskResult): Promise<void> {
     const previousState = task.state;
     task.state = "Completed";
@@ -782,15 +645,12 @@ export class TaskQueue implements ITaskQueue {
 
     // 持久化
     await this.saveQueue();
+
+    // 事件驱动调度：任务完成后立即尝试调度下一个
+    this.tryScheduleAll();
   }
 
-  /**
-   * 处理任务失败
-   * Requirements 6.4: 根据重试策略决定是否重试
-   * - 内容错误 (E001-E010): 最多重试 3 次
-   * - 网络错误 (E100-E102): 最多重试 5 次，使用指数退避
-   * - 终止错误: 不重试
-   */
+  /** 处理任务失败 - 根据错误类型决定是否重试 */
   private async handleTaskFailure(task: TaskRecord, error: { code: string; message: string }): Promise<void> {
     const previousState = task.state;
     task.attempt++;
@@ -892,6 +752,9 @@ export class TaskQueue implements ITaskQueue {
 
     // 持久化
     await this.saveQueue();
+
+    // 事件驱动调度：任务失败后立即尝试调度下一个
+    this.tryScheduleAll();
   }
 
   /**
@@ -950,16 +813,46 @@ export class TaskQueue implements ITaskQueue {
       this.lockManager.release(task.lockKey);
       task.lockKey = undefined;
     }
-    if (task.typeLockKey) {
-      this.lockManager.release(task.typeLockKey);
-      task.typeLockKey = undefined;
-    }
+  }
+
+  /**
+   * 将完整 TaskRecord 转换为精简版 MinimalTaskRecord
+   * 
+   * 只保留断电恢复所需的最小字段，剥离大型 payload 和 result 数据
+   */
+  private toMinimalTaskRecord(task: TaskRecord): MinimalTaskRecord {
+    return {
+      id: task.id,
+      nodeId: task.nodeId,
+      taskType: task.taskType,
+      state: task.state,
+      providerRef: task.providerRef,
+      attempt: task.attempt,
+      maxAttempts: task.maxAttempts,
+      payload: {
+        userInput: task.payload?.userInput as string | undefined,
+        conceptType: task.payload?.conceptType as string | undefined,
+        filePath: task.payload?.filePath as string | undefined,
+        pipelineId: task.payload?.pipelineId as string | undefined,
+      },
+      created: task.created,
+      updated: task.updated,
+      startedAt: task.startedAt,
+      completedAt: task.completedAt,
+      // 只保留最后一条错误
+      lastError: task.errors && task.errors.length > 0 
+        ? task.errors[task.errors.length - 1] 
+        : undefined,
+    };
   }
 
   /**
    * 保存队列状态
    * 
    * 遵循 Requirements 2.2：入队成功后立即写入 queue-state.json
+   * 
+   * 优化：持久化时将 TaskRecord 转换为 MinimalTaskRecord，
+   * 剥离大型 payload 和 result 数据，减少文件体积
    * 
    * 注意：此方法是异步的，但在 enqueue 中被调用时不会阻塞返回。
    * 这是为了保持 ITaskQueue 接口的同步特性。
@@ -968,9 +861,14 @@ export class TaskQueue implements ITaskQueue {
   private saveQueue(): Promise<void> {
     const settings = this.settingsStore.getSettings();
     
+    // 转换为精简版任务记录
+    const minimalTasks = Array.from(this.tasks.values()).map(
+      task => this.toMinimalTaskRecord(task)
+    );
+    
     const queueState: QueueStateFile = {
       version: "1.0.0",
-      tasks: Array.from(this.tasks.values()),
+      tasks: minimalTasks,
       concurrency: settings.concurrency,
       paused: this.paused,
       stats: this.calculateStats(),
@@ -1026,7 +924,33 @@ export class TaskQueue implements ITaskQueue {
   }
 
   /**
+   * 将精简版 MinimalTaskRecord 转换回完整 TaskRecord
+   * 
+   * 恢复时重建完整的 TaskRecord 结构，缺失的字段使用默认值
+   */
+  private fromMinimalTaskRecord(minimal: MinimalTaskRecord): TaskRecord {
+    return {
+      id: minimal.id,
+      nodeId: minimal.nodeId,
+      taskType: minimal.taskType,
+      state: minimal.state,
+      providerRef: minimal.providerRef,
+      attempt: minimal.attempt,
+      maxAttempts: minimal.maxAttempts,
+      payload: minimal.payload as Record<string, unknown>,
+      created: minimal.created,
+      updated: minimal.updated,
+      startedAt: minimal.startedAt,
+      completedAt: minimal.completedAt,
+      // 从 lastError 恢复 errors 数组
+      errors: minimal.lastError ? [minimal.lastError] : undefined,
+    };
+  }
+
+  /**
    * 从持久化文件恢复队列状态（包含锁清理）
+   * 
+   * 注意：持久化文件中存储的是 MinimalTaskRecord，需要转换回 TaskRecord
    */
   private async restoreQueueState(queueState: QueueStateFile): Promise<void> {
     // 先清空内存状态
@@ -1047,9 +971,9 @@ export class TaskQueue implements ITaskQueue {
     const recoveredRunning: string[] = [];
 
     // 恢复任务，处理 Running → Pending 的恢复逻辑
-    for (const task of queueState.tasks) {
-      // 拷贝以避免修改原对象引用
-      const restoredTask: TaskRecord = { ...task };
+    for (const minimalTask of queueState.tasks) {
+      // 从精简版转换为完整 TaskRecord
+      const restoredTask: TaskRecord = this.fromMinimalTaskRecord(minimalTask);
 
       // 重启后不存在正在运行的任务，统一降级为 Pending 并释放锁
       if (restoredTask.state === "Running") {
@@ -1057,7 +981,6 @@ export class TaskQueue implements ITaskQueue {
         restoredTask.startedAt = undefined;
         restoredTask.completedAt = undefined;
         restoredTask.lockKey = undefined;
-        restoredTask.typeLockKey = undefined;
         restoredTask.updated = now;
         recoveredRunning.push(restoredTask.id);
         this.lockManager.releaseByTaskId(restoredTask.id);
@@ -1066,11 +989,7 @@ export class TaskQueue implements ITaskQueue {
         if (restoredTask.lockKey) {
           this.lockManager.release(restoredTask.lockKey);
         }
-        if (restoredTask.typeLockKey) {
-          this.lockManager.release(restoredTask.typeLockKey);
-        }
         restoredTask.lockKey = undefined;
-        restoredTask.typeLockKey = undefined;
       }
 
       this.tasks.set(restoredTask.id, restoredTask);
@@ -1231,19 +1150,14 @@ export class TaskQueue implements ITaskQueue {
    * @param crType 知识类型（可选）
    * @returns 如果存在冲突，返回错误信息；否则返回 null
    */
-  checkLockConflict(nodeId: string, crType?: string): { lockKey: string; lockType: 'node' | 'type' } | null {
+  checkLockConflict(nodeId: string, _crType?: string): { lockKey: string; lockType: 'node' | 'type' } | null {
     // 检查节点锁
     if (this.lockManager.isLocked(nodeId)) {
       return { lockKey: nodeId, lockType: 'node' };
     }
 
-    // 检查类型锁
-    if (crType) {
-      const typeLockKey = `type:${crType}`;
-      if (this.lockManager.isLocked(typeLockKey)) {
-        return { lockKey: typeLockKey, lockType: 'type' };
-      }
-    }
+    // 注意：类型锁已移至 DuplicateManager.detect() 中获取
+    // 不再在此处检查类型锁
 
     return null;
   }

@@ -23,7 +23,6 @@ export const COMMAND_IDS = {
   CLEAR_COMPLETED_TASKS: `${COMMAND_PREFIX}:clear-completed-tasks`,
   RETRY_FAILED_TASKS: `${COMMAND_PREFIX}:retry-failed-tasks`,
   ENRICH_NOTE: `${COMMAND_PREFIX}:enrich-note`,
-  IMPROVE_NOTE: `${COMMAND_PREFIX}:improve-note`,
   CHECK_DUPLICATES: `${COMMAND_PREFIX}:check-duplicates`,
   UNDO_LAST_OPERATION: `${COMMAND_PREFIX}:undo-last-operation`,
   TOGGLE_WORKBENCH: `${COMMAND_PREFIX}:toggle-workbench`,

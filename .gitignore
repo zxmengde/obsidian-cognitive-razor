@@ -19,6 +19,8 @@ main.js
 # obsidian
 data.json
 data/
+.kiro/
+.agent/
 
 # Exclude macOS Finder (System Explorer) View States
 .DS_Store

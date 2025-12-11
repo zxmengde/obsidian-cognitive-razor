@@ -11,7 +11,7 @@ import YAML from "yaml";
 
 const FRONTMATTER_DELIMITER = "---";
 const REQUIRED_FIELDS: Array<keyof CRFrontmatter> = [
-  "uid",
+  "crUid",
   "type",
   "status",
   "created",
@@ -40,7 +40,7 @@ function formatDateTime(date: Date): string {
  * @returns CRFrontmatter 对象
  */
 export function generateFrontmatter(options: {
-  uid: string;
+  crUid: string;
   type: CRType;
   status?: NoteState;
   aliases?: string[];
@@ -52,7 +52,7 @@ export function generateFrontmatter(options: {
   const now = formatDateTime(new Date());
 
   return {
-    uid: options.uid,
+    crUid: options.crUid,
     type: options.type,
     status: options.status || "Stub",
     created: now,
@@ -89,7 +89,7 @@ function frontmatterToYaml(frontmatter: CRFrontmatter): string {
   const lines: string[] = [];
   
   // 必填字段按固定顺序
-  lines.push(`uid: ${frontmatter.uid}`);
+  lines.push(`crUid: ${frontmatter.crUid}`);
   lines.push(`type: ${frontmatter.type}`);
   lines.push(`status: ${frontmatter.status}`);
   lines.push(`created: ${frontmatter.created}`);
@@ -156,7 +156,7 @@ function parseFrontmatter(yaml: string): CRFrontmatter | null {
     const sourceUids = normalizeStringArray(normalized.sourceUids);
 
     return {
-      uid: normalized.uid as string,
+      crUid: normalized.crUid as string,
       type: normalized.type as CRType,
       status: normalized.status as NoteState,
       created: normalized.created as string,
@@ -222,7 +222,7 @@ function updateFrontmatter(
   if (!extracted) {
     // 没有 frontmatter，添加一个
     const newFrontmatter = generateFrontmatter({
-      uid: updates.uid || "",
+      crUid: updates.crUid || "",
       type: updates.type || "Entity",
       status: updates.status,
       aliases: updates.aliases,

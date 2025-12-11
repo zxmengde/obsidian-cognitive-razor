@@ -25,7 +25,7 @@ export type NoteState = "Stub" | "Draft" | "Evergreen";
  */
 export interface CRFrontmatter {
   /** UUID v4 唯一标识符 */
-  uid: string;
+  crUid: string;
   /** 知识类型 */
   type: CRType;
   /** 笔记状态 */
@@ -272,6 +272,8 @@ export interface ChatRequest {
   topP?: number;
   /** 最大 token 数 */
   maxTokens?: number;
+  /** 推理强度（用于支持推理的模型，如 o1, o3） */
+  reasoning_effort?: "low" | "medium" | "high";
 }
 
 /**
@@ -341,8 +343,6 @@ export interface ProviderConfig {
   defaultEmbedModel: string;
   /** 是否启用 */
   enabled: boolean;
-  /** 是否持久化 API Key（false 表示仅存储于会话内存，不写入 data.json） */
-  persistApiKey?: boolean;
 }
 
 /**
@@ -441,24 +441,64 @@ export interface PluginSettings {
   
   /** 嵌入向量维度（text-embedding-3-small 支持 512-3072，默认 1536） */
   embeddingDimension: number;
+  
+  /** Provider 请求超时（毫秒，默认 60000） */
+  providerTimeoutMs: number;
 }
 
 /**
- * 向量索引文件结构
+ * 概念元数据
  */
-export interface VectorIndexFile {
-  /** 索引版本 */
+export interface ConceptMeta {
+  /** 概念 UID */
+  id: string;
+  /** 概念名称 */
+  name: string;
+  /** 知识类型 */
+  type: CRType;
+  /** 文件路径（相对于 data/vectors/） */
+  filePath: string;
+  /** 最后修改时间 */
+  lastModified: number;
+  /** 是否有嵌入向量 */
+  hasEmbedding: boolean;
+}
+
+/**
+ * 向量索引元数据
+ */
+export interface VectorIndexMeta {
+  /** 版本 */
   version: string;
-  /** 嵌入模型标识 */
-  model: string;
-  /** 向量维度 */
-  dimension: number;
-  /** 按类型分桶 */
-  buckets: Record<CRType, VectorEntry[]>;
+  /** 最后更新时间 */
+  lastUpdated: number;
+  /** 统计信息 */
+  stats: {
+    totalConcepts: number;
+    byType: Record<CRType, number>;
+  };
+  /** 概念元数据映射 */
+  concepts: Record<string, ConceptMeta>;
+}
+
+/**
+ * 单个概念向量文件
+ */
+export interface ConceptVector {
+  /** 概念 UID */
+  id: string;
+  /** 概念名称 */
+  name: string;
+  /** 知识类型 */
+  type: CRType;
+  /** 向量嵌入 */
+  embedding: number[];
   /** 元数据 */
   metadata: {
-    totalCount: number;
-    lastUpdated: string;
+    createdAt: number;
+    updatedAt: number;
+    embeddingModel: string;
+    dimensions: number;
   };
 }
 
@@ -536,13 +576,53 @@ export interface DuplicatePairsStore {
 }
 
 /**
+ * 精简任务记录（用于持久化）
+ * 
+ * 只保留断电恢复所需的最小字段，剥离大型 payload 和 result 数据
+ * 内存中仍使用完整的 TaskRecord
+ */
+export interface MinimalTaskRecord {
+  /** 任务 ID */
+  id: string;
+  /** 关联的节点 ID (UID) */
+  nodeId: string;
+  /** 任务类型 */
+  taskType: TaskType;
+  /** 任务状态 */
+  state: TaskState;
+  /** Provider 引用 */
+  providerRef?: string;
+  /** 当前尝试次数 */
+  attempt: number;
+  /** 最大尝试次数 */
+  maxAttempts: number;
+  /** 精简载荷（仅保留恢复所需的关键字段） */
+  payload: {
+    userInput?: string;
+    conceptType?: string;
+    filePath?: string;
+    pipelineId?: string;
+  };
+  /** 创建时间 */
+  created: string;
+  /** 更新时间 */
+  updated: string;
+  /** 开始时间 */
+  startedAt?: string;
+  /** 完成时间 */
+  completedAt?: string;
+  /** 错误历史（仅保留最后一条） */
+  lastError?: TaskError;
+}
+
+/**
  * 队列状态文件
  */
 export interface QueueStateFile {
   /** 队列状态版本 */
   version: string;
-  /** 任务列表 */
-  tasks: TaskRecord[];
+  /** 任务列表（精简版） */
+  tasks: MinimalTaskRecord[];
   /** 当前并发数 */
   concurrency: number;
   /** 是否暂停 */
@@ -1252,8 +1332,8 @@ export interface ISettingsStore {
 export interface IFileStorage {
   /**
    * 初始化目录结构
-   * 创建 data/, data/snapshots/ 目录
-   * 初始化 queue-state.json, vector-index.json, duplicate-pairs.json, snapshots/index.json
+   * 创建 data/, data/snapshots/, data/vectors/ 目录
+   * 初始化 queue-state.json, duplicate-pairs.json, snapshots/index.json, vectors/index.json
    * @returns 初始化结果
    */
   initialize(): Promise<Result<void>>;
@@ -1303,6 +1383,45 @@ export interface IFileStorage {
    * @param path 目录路径
    */
   ensureDir(path: string): Promise<Result<void>>;
+  
+  /**
+   * 写入向量文件
+   * @param type 知识类型
+   * @param conceptId 概念 UID
+   * @param data 概念向量数据
+   */
+  writeVectorFile(type: CRType, conceptId: string, data: ConceptVector): Promise<Result<void>>;
+  
+  /**
+   * 读取向量文件
+   * @param type 知识类型
+   * @param conceptId 概念 UID
+   */
+  readVectorFile(type: CRType, conceptId: string): Promise<Result<ConceptVector>>;
+  
+  /**
+   * 删除向量文件
+   * @param type 知识类型
+   * @param conceptId 概念 UID
+   */
+  deleteVectorFile(type: CRType, conceptId: string): Promise<Result<void>>;
+  
+  /**
+   * 读取向量索引元数据
+   */
+  readVectorIndexMeta(): Promise<Result<VectorIndexMeta>>;
+  
+  /**
+   * 写入向量索引元数据
+   */
+  writeVectorIndexMeta(meta: VectorIndexMeta): Promise<Result<void>>;
+  
+  /**
+   * 重命名文件
+   * @param oldPath 原路径
+   * @param newPath 新路径
+   */
+  rename(oldPath: string, newPath: string): Promise<Result<void>>;
 }
 
 /**

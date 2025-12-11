@@ -1,14 +1,4 @@
-/**
- * SettingsStore 实现
- * 管理插件配置，支持版本兼容性检查和导入导出
- * 
- * 实现要求：
- * - Requirements 1.4: 验证 PluginSettings 接口所有必填字段
- * - Requirements 1.5: 版本不兼容时重置为默认值
- * - Requirements 10.3: 导出完整 JSON
- * - Requirements 10.4: 导入时验证并合并默认值
- * - Requirements 10.5: 设置变更时通知所有订阅者
- */
+/** SettingsStore - 管理插件配置，支持版本兼容性检查和导入导出 */
 
 import { ISettingsStore, PluginSettings, ProviderConfig, Result, ok, err, DirectoryScheme, TaskType, TaskModelConfig } from "../types";
 import { Plugin } from "obsidian";
@@ -47,6 +37,7 @@ export const REQUIRED_SETTINGS_FIELDS: (keyof PluginSettings)[] = [
   "taskModels",
   "logLevel",
   "embeddingDimension",
+  "providerTimeoutMs",
 ];
 
 const DEFAULT_TASK_TIMEOUT_MS = 3 * 60 * 1000;
@@ -92,15 +83,7 @@ export interface SettingsValidationResult {
   errors: SettingsValidationError[];
 }
 
-/**
- * 默认设置
- * 
- * 遵循设计文档规范：
- * - G-10: 命名模板默认为 "{{chinese}} ({{english}})"
- * - G-02: 相似度阈值默认为 0.9
- * - A-FUNC-04: topK 默认为 10
- * - 版本 0.9.3：预发布版本，尚未正式发布
- */
+/** 默认设置 */
 export const DEFAULT_SETTINGS: PluginSettings = {
   version: "0.9.3",
   
@@ -172,11 +155,12 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   
   // 嵌入向量维度（text-embedding-3-small 支持 512-3072，默认 1536）
   embeddingDimension: 1536,
+  
+  // Provider 请求超时（毫秒，默认 60000 = 60秒）
+  providerTimeoutMs: 60000,
 };
 
-/**
- * SettingsStore 实现类
- */
+/** SettingsStore 实现类 */
 export class SettingsStore implements ISettingsStore {
   private plugin: Plugin;
   private settings: PluginSettings;
@@ -191,12 +175,7 @@ export class SettingsStore implements ISettingsStore {
     this.settings = { ...DEFAULT_SETTINGS };
   }
 
-  /**
-   * 加载设置
-   * 
-   * **Requirements 1.4**: 验证 PluginSettings 接口所有必填字段
-   * **Requirements 1.5**: 版本不兼容时重置为默认值 (O-05)
-   */
+  /** 加载设置 */
   async loadSettings(): Promise<Result<void>> {
     try {
       const data = await this.plugin.loadData();
@@ -387,15 +366,14 @@ export class SettingsStore implements ISettingsStore {
   }
 
   /**
-   * 序列化设置（根据 persistApiKey 处理敏感字段）
+   * 序列化设置
    */
   private serializeSettings(redactAllApiKeys = false): PluginSettings {
     const providers: Record<string, ProviderConfig> = {};
     for (const [id, config] of Object.entries(this.settings.providers)) {
       providers[id] = {
         ...config,
-        apiKey: config.persistApiKey === false || redactAllApiKeys ? "" : config.apiKey,
-        persistApiKey: config.persistApiKey ?? true
+        apiKey: redactAllApiKeys ? "" : config.apiKey
       };
     }
 
@@ -434,17 +412,7 @@ export class SettingsStore implements ISettingsStore {
     return result.valid;
   }
 
-  /**
-   * 详细验证设置结构
-   * 返回验证结果和具体错误信息
-   * 
-   * **Property 4: Settings Validation**
-   * For any settings object loaded by SettingsStore, the object SHALL conform to
-   * the PluginSettings interface with all required fields present and correctly typed.
-   * 
-   * @param data 待验证的数据
-   * @returns 验证结果，包含是否有效和错误列表
-   */
+  /** 详细验证设置结构 */
   validateSettingsDetailed(data: unknown): SettingsValidationResult {
     const errors: SettingsValidationError[] = [];
 
@@ -693,14 +661,7 @@ export class SettingsStore implements ISettingsStore {
             actualType: typeof cfg.enabled
           });
         }
-        if (cfg.persistApiKey !== undefined && typeof cfg.persistApiKey !== "boolean") {
-          errors.push({
-            field: `providers.${providerId}.persistApiKey`,
-            message: "persistApiKey must be a boolean",
-            expectedType: "boolean",
-            actualType: typeof cfg.persistApiKey
-          });
-        }
+
       }
     }
 
@@ -751,6 +712,23 @@ export class SettingsStore implements ISettingsStore {
       });
     }
 
+    // 验证 providerTimeoutMs 字段
+    if (typeof settings.providerTimeoutMs !== "number") {
+      errors.push({
+        field: "providerTimeoutMs",
+        message: "providerTimeoutMs must be a number",
+        expectedType: "number",
+        actualType: typeof settings.providerTimeoutMs,
+      });
+    } else if (!Number.isInteger(settings.providerTimeoutMs) || settings.providerTimeoutMs < 1000) {
+      errors.push({
+        field: "providerTimeoutMs",
+        message: "providerTimeoutMs must be an integer >= 1000",
+        expectedType: "integer (>=1000)",
+        actualType: String(settings.providerTimeoutMs),
+      });
+    }
+
     // 任务超时
     if (settings.taskTimeoutMs !== undefined) {
       if (typeof settings.taskTimeoutMs !== "number") {
@@ -791,9 +769,7 @@ export class SettingsStore implements ISettingsStore {
     return { valid: errors.length === 0, errors };
   }
 
-  /**
-   * 验证 DirectoryScheme 结构
-   */
+  /** 验证 DirectoryScheme 结构 */
   private validateDirectoryScheme(
     directoryScheme: unknown,
     errors: SettingsValidationError[]
@@ -822,9 +798,7 @@ export class SettingsStore implements ISettingsStore {
     }
   }
 
-  /**
-   * 验证 TaskModels 结构
-   */
+  /** 验证 TaskModels 结构 */
   private validateTaskModels(
     taskModels: unknown,
     errors: SettingsValidationError[]
@@ -907,10 +881,7 @@ export class SettingsStore implements ISettingsStore {
     }
   }
 
-  /**
-   * 合并部分设置并进行基础类型检查
-   * 仅接受已知字段，忽略 undefined，若类型不匹配则返回错误
-   */
+  /** 合并部分设置并进行类型检查 */
   private mergePartialSettings(partial: Partial<PluginSettings>): Result<PluginSettings> {
     const next: PluginSettings = {
       ...this.settings,
@@ -962,7 +933,8 @@ export class SettingsStore implements ISettingsStore {
       "maxSnapshotAgeDays",
       "embeddingDimension",
       "taskTimeoutMs",
-      "maxTaskHistory"
+      "maxTaskHistory",
+      "providerTimeoutMs"
     ] as const) {
       const result = this.applyNumberUpdate(partial, key, next);
       if (!result.ok) {
@@ -1072,14 +1044,6 @@ export class SettingsStore implements ISettingsStore {
       }
     }
 
-    // 补齐 provider 的 persistApiKey 默认值
-    for (const [providerId, config] of Object.entries((merged as PluginSettings).providers)) {
-      if (config.persistApiKey === undefined) {
-        config.persistApiKey = true;
-        (merged as PluginSettings).providers[providerId] = config;
-      }
-    }
-
     return merged;
   }
 
@@ -1098,8 +1062,7 @@ export class SettingsStore implements ISettingsStore {
           baseUrl: undefined,
           defaultChatModel: "gpt-4o",
           defaultEmbedModel: "text-embedding-3-small",
-          enabled: true,
-          persistApiKey: true
+          enabled: true
         };
 
     if (incomingConfig.apiKey !== undefined) {
@@ -1137,21 +1100,12 @@ export class SettingsStore implements ISettingsStore {
       base.enabled = incomingConfig.enabled;
     }
 
-    if (incomingConfig.persistApiKey !== undefined) {
-      if (typeof incomingConfig.persistApiKey !== "boolean") {
-        return err("E001", "provider.persistApiKey 必须是布尔值");
-      }
-      base.persistApiKey = incomingConfig.persistApiKey;
-    } else if (base.persistApiKey === undefined) {
-      base.persistApiKey = true;
-    }
-
     return ok(base);
   }
 
   private applyNumberUpdate(
     partial: Partial<PluginSettings>,
-    key: keyof Pick<PluginSettings, "similarityThreshold" | "topK" | "concurrency" | "maxRetryAttempts" | "maxSnapshots" | "maxSnapshotAgeDays" | "embeddingDimension" | "taskTimeoutMs" | "maxTaskHistory">,
+    key: keyof Pick<PluginSettings, "similarityThreshold" | "topK" | "concurrency" | "maxRetryAttempts" | "maxSnapshots" | "maxSnapshotAgeDays" | "embeddingDimension" | "taskTimeoutMs" | "maxTaskHistory" | "providerTimeoutMs">,
     target: PluginSettings
   ): Result<void> {
     const value = partial[key];
@@ -1183,13 +1137,9 @@ export class SettingsStore implements ISettingsStore {
     return typeof value === "object" && value !== null && !Array.isArray(value);
   }
 
-  // ============================================================================
-  // 便捷方法（供 UI 层使用）
-  // ============================================================================
+  // 便捷方法
 
-  /**
-   * 更新部分设置（updateSettings 的别名）
-   */
+  /** 更新部分设置 */
   async update(partial: Partial<PluginSettings>): Promise<Result<void>> {
     return this.updateSettings(partial);
   }

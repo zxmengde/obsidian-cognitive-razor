@@ -1,20 +1,8 @@
-/**
- * 命名工具模块
- * 
- * 遵循设计文档 G-10 命名规范性公理：
- * 概念命名遵循可配置模板，默认格式为 `{{chinese}} ({{english}})`
- * 
- * 遵循设计文档 A-FUNC-04 语义去重检测：
- * 概念签名 = 标准名（经命名模板渲染）+ 别名列表 + 核心定义
- */
+/** 命名工具：概念命名模板渲染、签名生成、文件路径生成 */
 
 import { CRType } from "../types";
 
-/**
- * 概念签名接口
- * 
- * 遵循设计文档 5.3.2 概念签名模型
- */
+/** 概念签名接口 */
 interface ConceptSignature {
   /** 标准名（经命名模板渲染） */
   standardName: string;
@@ -26,9 +14,7 @@ interface ConceptSignature {
   type: CRType;
 }
 
-/**
- * 命名模板上下文
- */
+/** 命名模板上下文 */
 interface NamingTemplateContext {
   /** 中文名 */
   chinese: string;
@@ -44,22 +30,7 @@ interface NamingTemplateContext {
   alias?: string;
 }
 
-/**
- * 渲染命名模板
- * 
- * 遵循设计文档 G-10 和 Requirements 3.4：
- * 支持的占位符：
- * - {{chinese}}: 中文名
- * - {{english}}: 英文名
- * - {{type}}: 知识类型（英文）
- * - {{type_cn}}: 知识类型（中文）
- * - {{uid}}: 概念唯一标识符
- * - {{alias}}: 第一个别名
- * 
- * @param template 命名模板，如 "{{chinese}} ({{english}})"
- * @param context 模板上下文
- * @returns 渲染后的名称
- */
+/** 渲染命名模板，支持 {{chinese}}, {{english}}, {{type}}, {{type_cn}}, {{uid}}, {{alias}} */
 export function renderNamingTemplate(
   template: string,
   context: NamingTemplateContext
@@ -82,15 +53,7 @@ export function renderNamingTemplate(
   return result;
 }
 
-/**
- * 生成概念签名文本
- * 
- * 遵循设计文档 5.3.2：
- * 签名文本 = 标准名 | 别名1 | 别名2 | ... | 核心定义
- * 
- * @param signature 概念签名
- * @returns 签名文本（用于向量嵌入）
- */
+/** 生成概念签名文本（用于向量嵌入） */
 export function generateSignatureText(signature: ConceptSignature): string {
   const parts: string[] = [signature.standardName];
 
@@ -107,15 +70,7 @@ export function generateSignatureText(signature: ConceptSignature): string {
   return parts.join(" | ");
 }
 
-/**
- * 从标准化数据创建概念签名
- * 
- * @param standardizedData 标准化数据
- * @param type 知识类型
- * @param namingTemplate 命名模板
- * @param uid 可选的 UID
- * @returns 概念签名
- */
+/** 从标准化数据创建概念签名 */
 export function createConceptSignature(
   standardizedData: {
     standardName: { chinese: string; english: string };
@@ -144,9 +99,7 @@ export function createConceptSignature(
   };
 }
 
-/**
- * 获取类型的中文名称
- */
+/** 获取类型的中文名称 */
 function getTypeChinese(type: CRType): string {
   const typeMap: Record<CRType, string> = {
     Domain: "领域",
@@ -158,12 +111,7 @@ function getTypeChinese(type: CRType): string {
   return typeMap[type];
 }
 
-/**
- * 验证命名模板
- * 
- * @param template 命名模板
- * @returns 验证结果
- */
+/** 验证命名模板 */
 export function validateNamingTemplate(template: string): {
   valid: boolean;
   errors: string[];
@@ -208,20 +156,7 @@ export function validateNamingTemplate(template: string): {
   };
 }
 
-/**
- * 获取默认命名模板
- * 遵循设计文档 G-10：默认格式为 `{{chinese}} ({{english}})`
- */
-function getDefaultNamingTemplate(): string {
-  return "{{chinese}} ({{english}})";
-}
-
-/**
- * 清理文件名（移除非法字符）
- * 
- * @param name 原始名称
- * @returns 清理后的文件名
- */
+/** 清理文件名（移除非法字符） */
 export function sanitizeFileName(name: string): string {
   // 移除 Windows 和 Unix 文件系统中的非法字符
   return name
@@ -230,10 +165,7 @@ export function sanitizeFileName(name: string): string {
     .trim();
 }
 
-/**
- * 获取类型对应的目录路径
- * 遵循 Requirements 3.5：根据 DirectoryScheme 配置返回目录路径
- */
+/** 获取类型对应的目录路径 */
 function getDirectoryForType(
   type: CRType,
   scheme: Record<CRType, string>
@@ -241,14 +173,7 @@ function getDirectoryForType(
   return scheme[type] || "";
 }
 
-/**
- * 生成文件路径
- * 
- * @param standardName 标准名
- * @param directoryScheme 目录方案
- * @param type 知识类型
- * @returns 文件路径
- */
+/** 生成文件路径 */
 export function generateFilePath(
   standardName: string,
   directoryScheme: Record<CRType, string>,

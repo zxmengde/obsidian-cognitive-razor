@@ -16,9 +16,11 @@ import type {
   DuplicatePair,
   QueueStatus,
   CRType,
-  StandardizedConcept
+  StandardizedConcept,
+  TaskRecord
 } from "../types";
-import type { MergeHandler } from "../core/merge-handler";
+import { renderNamingTemplate } from "../core/naming-utils";
+
 import type { TaskQueue } from "../core/task-queue";
 import type { PipelineContext, PipelineEvent } from "../core/pipeline-orchestrator";
 import type CognitiveRazorPlugin from "../../main";
@@ -64,10 +66,10 @@ export class WorkbenchPanel extends ItemView {
   private queueStatusContainer: HTMLElement | null = null;
   private recentOpsContainer: HTMLElement | null = null;
   private pipelineStatusContainer: HTMLElement | null = null;
-  private mergeHandler: MergeHandler | null = null;
   private plugin: CognitiveRazorPlugin | null = null;
   private taskQueue: TaskQueue | null = null;
   private pipelineUnsubscribe: (() => void) | null = null;
+  private queueUnsubscribe: (() => void) | null = null;
 
   // 标准化相关
   private standardizeBtn: HTMLButtonElement | null = null;
@@ -122,23 +124,11 @@ export class WorkbenchPanel extends ItemView {
 
   /**
    * 设置插件引用
-   * 自动从插件组件中获取 TaskQueue 和 MergeHandler
    */
   public setPlugin(plugin: CognitiveRazorPlugin): void {
     this.plugin = plugin;
     const components = plugin.getComponents();
     this.taskQueue = components.taskQueue;
-    // 自动设置 MergeHandler
-    if (components.mergeHandler) {
-      this.mergeHandler = components.mergeHandler;
-    }
-  }
-
-  /**
-   * 设置 MergeHandler（用于手动设置或测试）
-   */
-  public setMergeHandler(handler: MergeHandler): void {
-    this.mergeHandler = handler;
   }
 
   getViewType(): string {
@@ -159,22 +149,22 @@ export class WorkbenchPanel extends ItemView {
     container.addClass("cr-workbench-panel");
     container.addClass("cr-scope");
 
-    // 创建概念区域
+    // 主要操作区：创建概念
     this.renderCreateConceptSection(container);
 
-    // 重复概念面板
-    this.renderDuplicatesSection(container);
+    // 状态概览卡片（紧凑版）
+    this.renderStatusOverview(container);
 
-    // 队列状态区域
-    this.renderQueueStatusSection(container);
+    // 可展开区域：重复概念和历史
+    this.renderExpandableSections(container);
 
-    // 最近操作区域
-    this.renderRecentOpsSection(container);
-
-    // 订阅管线事件以更新状态/确认按钮
+    // 订阅管线事件
     this.subscribePipelineEvents();
 
-    // 如果有快速创建的待处理输入，在渲染完成后直接触发标准化流程
+    // 订阅队列事件（实时更新任务列表）
+    this.subscribeQueueEvents();
+
+    // 处理待处理输入
     if (this.pendingConceptInput) {
       const value = this.pendingConceptInput;
       this.pendingConceptInput = null;
@@ -183,6 +173,200 @@ export class WorkbenchPanel extends ItemView {
       }
       void this.handleStandardize(value);
     }
+  }
+
+  /**
+   * 渲染状态概览 - 增强版
+   * 支持点击展开任务列表、暂停/恢复队列
+   */
+  private renderStatusOverview(container: HTMLElement): void {
+    // 外层容器（包含状态栏和可展开的详情）
+    const wrapper = container.createDiv({ cls: "cr-queue-wrapper" });
+    
+    // 状态栏（一行）
+    const statusBar = wrapper.createDiv({ cls: "cr-status-bar" });
+    
+    // 左侧：状态指示器（可点击展开）
+    const queueIndicator = statusBar.createDiv({ cls: "cr-queue-indicator cr-clickable" });
+    queueIndicator.setAttribute("role", "button");
+    queueIndicator.setAttribute("tabindex", "0");
+    queueIndicator.setAttribute("aria-expanded", "false");
+    queueIndicator.setAttribute("title", this.t("workbench.queueStatus.viewDetails"));
+    
+    const statusDot = queueIndicator.createDiv({ cls: "cr-status-dot is-idle" });
+    const statusText = queueIndicator.createSpan({ 
+      cls: "cr-status-text",
+      text: this.t("workbench.queueStatus.noTasks")
+    });
+    const expandIcon = queueIndicator.createSpan({ cls: "cr-expand-icon", text: "▶" });
+
+    // 中间：快速统计（只显示有值的）
+    const stats = statusBar.createDiv({ cls: "cr-quick-stats" });
+    this.queueStatusContainer = stats;
+    
+    // 右侧：暂停/恢复按钮
+    const pauseBtn = statusBar.createEl("button", {
+      cls: "cr-queue-control-btn",
+      attr: { 
+        "aria-label": this.t("workbench.queueStatus.pauseQueue"),
+        "title": this.t("workbench.queueStatus.pauseQueue")
+      }
+    });
+    pauseBtn.innerHTML = "⏸";
+    pauseBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.handleTogglePause();
+    });
+
+    // 任务详情容器（默认隐藏，点击展开）
+    const detailsContainer = wrapper.createDiv({ cls: "cr-queue-details" });
+    detailsContainer.style.display = "none";
+
+    // 点击展开/折叠任务列表
+    queueIndicator.addEventListener("click", () => {
+      const isExpanded = detailsContainer.style.display !== "none";
+      if (isExpanded) {
+        detailsContainer.style.display = "none";
+        expandIcon.textContent = "▶";
+        queueIndicator.setAttribute("aria-expanded", "false");
+      } else {
+        detailsContainer.style.display = "block";
+        expandIcon.textContent = "▼";
+        queueIndicator.setAttribute("aria-expanded", "true");
+        this.renderQueueDetails(detailsContainer);
+      }
+    });
+    
+    // 初始化状态显示
+    this.renderQueueStatus({
+      paused: false,
+      pending: 0,
+      running: 0,
+      completed: 0,
+      failed: 0
+    });
+  }
+
+  /**
+   * 处理暂停/恢复队列
+   */
+  private async handleTogglePause(): Promise<void> {
+    if (!this.plugin) return;
+
+    const taskQueue = this.plugin.getComponents().taskQueue;
+    const status = taskQueue.getStatus();
+
+    if (status.paused) {
+      await taskQueue.resume();
+      new Notice(this.t("workbench.queueStatus.queueResumed"));
+    } else {
+      await taskQueue.pause();
+      new Notice(this.t("workbench.queueStatus.queuePaused"));
+    }
+
+    // 刷新状态显示
+    this.updateQueueStatus(taskQueue.getStatus());
+    this.updatePauseButton(taskQueue.getStatus().paused);
+  }
+
+  /**
+   * 更新暂停按钮状态
+   */
+  private updatePauseButton(isPaused: boolean): void {
+    const pauseBtn = this.containerEl.querySelector(".cr-queue-control-btn") as HTMLButtonElement;
+    if (!pauseBtn) return;
+
+    if (isPaused) {
+      pauseBtn.innerHTML = "▶";
+      pauseBtn.setAttribute("aria-label", this.t("workbench.queueStatus.resumeQueue"));
+      pauseBtn.setAttribute("title", this.t("workbench.queueStatus.resumeQueue"));
+      pauseBtn.addClass("is-paused");
+    } else {
+      pauseBtn.innerHTML = "⏸";
+      pauseBtn.setAttribute("aria-label", this.t("workbench.queueStatus.pauseQueue"));
+      pauseBtn.setAttribute("title", this.t("workbench.queueStatus.pauseQueue"));
+      pauseBtn.removeClass("is-paused");
+    }
+  }
+
+  /**
+   * 获取队列详情容器
+   */
+  private getQueueDetailsContainer(): HTMLElement | null {
+    return this.containerEl.querySelector(".cr-queue-details") as HTMLElement | null;
+  }
+
+  /**
+   * 刷新队列详情（如果已展开）
+   */
+  private refreshQueueDetailsIfVisible(): void {
+    const detailsContainer = this.getQueueDetailsContainer();
+    if (detailsContainer && detailsContainer.style.display !== "none") {
+      this.renderQueueDetails(detailsContainer);
+    }
+  }
+
+  /**
+   * 渲染可展开区域
+   */
+  private renderExpandableSections(container: HTMLElement): void {
+    const sections = container.createDiv({ cls: "cr-expandable-sections" });
+
+    // 重复概念（默认折叠）
+    this.renderCollapsibleSection(
+      sections,
+      this.t("workbench.duplicates.title"),
+      "duplicates",
+      (content) => {
+        this.duplicatesContainer = content;
+        this.renderEmptyDuplicates();
+      }
+    );
+
+    // 操作历史（默认折叠）
+    this.renderCollapsibleSection(
+      sections,
+      this.t("workbench.recentOps.title"),
+      "history",
+      (content) => {
+        this.recentOpsContainer = content;
+        this.refreshRecentOps();
+      }
+    );
+  }
+
+  /**
+   * 渲染可折叠区域
+   */
+  private renderCollapsibleSection(
+    container: HTMLElement,
+    title: string,
+    id: string,
+    renderContent: (content: HTMLElement) => void
+  ): void {
+    const section = container.createDiv({ cls: "cr-collapsible-section" });
+    
+    const header = section.createDiv({ cls: "cr-section-header" });
+    const icon = header.createSpan({ cls: "cr-collapse-icon", text: "▶" });
+    header.createEl("h3", { text: title, cls: "cr-section-title" });
+    
+    const badge = header.createSpan({ cls: "cr-badge", text: "0" });
+    badge.style.display = "none";
+
+    const content = section.createDiv({ cls: "cr-section-content cr-collapsed" });
+
+    header.onclick = () => {
+      const isCollapsed = content.hasClass("cr-collapsed");
+      if (isCollapsed) {
+        content.removeClass("cr-collapsed");
+        icon.textContent = "▼";
+      } else {
+        content.addClass("cr-collapsed");
+        icon.textContent = "▶";
+      }
+    };
+
+    renderContent(content);
   }
 
   async onClose(): Promise<void> {
@@ -196,63 +380,57 @@ export class WorkbenchPanel extends ItemView {
       this.pipelineUnsubscribe();
       this.pipelineUnsubscribe = null;
     }
+    if (this.queueUnsubscribe) {
+      this.queueUnsubscribe();
+      this.queueUnsubscribe = null;
+    }
     this.pendingConceptInput = null;
   }
   /**
-   * 渲染创建概念区域
-   * Redesigned as "Search Hero Section"
+   * 渲染创建概念区域 - 简化版搜索框
    */
   private renderCreateConceptSection(container: HTMLElement): void {
-    // 容器使用 cr-hero-container 布局
     const heroContainer = container.createDiv({ cls: "cr-hero-container" });
     const wrapper = heroContainer.createDiv({ cls: "cr-search-wrapper" });
 
-    // 1. Search Icon
-    const searchIcon = wrapper.createDiv({ cls: "cr-search-icon" });
-    searchIcon.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>`;
-
-    // 2. Big Input Field
+    // Input Field
     this.conceptInput = wrapper.createEl("input", {
       type: "text",
       cls: "cr-hero-input",
       attr: {
-        placeholder: this.t("workbench.createConcept.placeholder") || "Create or Search Concept...",
+        placeholder: this.t("workbench.createConcept.placeholder"),
+        "aria-label": this.t("workbench.createConcept.title")
       }
     });
 
-    // 3. Action Button (Inside Input)
+    // Action Button
     this.standardizeBtn = wrapper.createEl("button", {
-      cls: "cr-search-action-btn cr-hidden", // 默认隐藏，输入内容后显示
+      cls: "cr-search-action-btn",
       attr: {
         "aria-label": this.t("workbench.createConcept.startButton"),
-        "title": "Standardize (Enter)"
+        "title": `${this.t("workbench.createConcept.standardizing")} (Enter)`
       }
     });
-    this.standardizeBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>`;
+    this.standardizeBtn.innerHTML = `⏎`;
 
     // Event Listeners
-    if (this.standardizeBtn) {
-      this.standardizeBtn.addEventListener("click", () => this.handleStandardize());
-    }
+    this.standardizeBtn.addEventListener("click", () => this.handleStandardize());
 
-    if (this.conceptInput) {
-      this.conceptInput.addEventListener("input", () => {
-        if (this.conceptInput?.value.trim()) {
-          this.standardizeBtn?.removeClass("cr-hidden");
-        } else {
-          this.standardizeBtn?.addClass("cr-hidden");
-        }
-      });
+    this.conceptInput.addEventListener("input", () => {
+      const hasValue = this.conceptInput?.value.trim();
+      if (this.standardizeBtn) {
+        this.standardizeBtn.disabled = !hasValue;
+      }
+    });
 
-      this.conceptInput.addEventListener("keydown", (e: KeyboardEvent) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          this.handleStandardize();
-        }
-      });
-    }
+    this.conceptInput.addEventListener("keydown", (e: KeyboardEvent) => {
+      if (e.key === "Enter" && this.conceptInput?.value.trim()) {
+        e.preventDefault();
+        this.handleStandardize();
+      }
+    });
 
-    // 结果容器（保持原有逻辑，但隐藏初始显示）
+    // 结果容器
     this.standardizedResultContainer = container.createDiv({ cls: "cr-standardized-result" });
     this.standardizedResultContainer.style.display = "none";
 
@@ -261,42 +439,84 @@ export class WorkbenchPanel extends ItemView {
   }
 
   /**
-   * 渲染队列状态区域
-   * Redesigned as "Dashboard Grid"
+   * 渲染队列状态 - 紧凑版
+   * 只在快速统计区域显示有值的统计项
    */
-  private renderQueueStatusSection(container: HTMLElement): void {
-    // 使用 Dashboard Grid 布局，不再折叠
-    this.queueStatusContainer = container.createDiv({ cls: "cr-dashboard-grid" });
-    // 初始化状态 (Status cards will be injected by renderQueueStatus)
-    this.renderQueueStatus({
-      paused: false,
-      pending: 0,
-      running: 0,
-      completed: 0,
-      failed: 0
+  private renderQueueStatus(status: QueueStatus): void {
+    if (!this.queueStatusContainer) return;
+
+    this.queueStatusContainer.empty();
+
+    // 只显示有值的统计项
+    const stats = [
+      { label: this.t("workbench.queueStatus.pending"), value: status.pending, cls: "pending" },
+      { label: this.t("workbench.queueStatus.running"), value: status.running, cls: "running" },
+      { label: this.t("workbench.queueStatus.failed"), value: status.failed, cls: "failed" }
+    ];
+
+    stats.forEach(stat => {
+      // 只显示有值的项
+      if (stat.value > 0) {
+        const item = this.queueStatusContainer!.createDiv({ cls: `cr-stat-item cr-stat-${stat.cls}` });
+        item.createSpan({ cls: "cr-stat-value", text: stat.value.toString() });
+        item.createSpan({ cls: "cr-stat-label", text: stat.label });
+      }
     });
+
+    // 更新左侧状态指示器文本
+    this.updateStatusIndicator(status);
   }
 
   /**
-   * 渲染重复概念面板
-   * Redesigned as "Clean List"
+   * 更新状态指示器
+   */
+  private updateStatusIndicator(status: QueueStatus): void {
+    const dot = this.containerEl.querySelector(".cr-status-dot");
+    const text = this.containerEl.querySelector(".cr-queue-indicator .cr-status-text");
+    
+    if (!dot || !text) return;
+
+    dot.removeClass("is-idle", "is-running", "is-paused", "is-error");
+    
+    if (status.failed > 0) {
+      dot.addClass("is-error");
+      text.textContent = this.t("workbench.queueStatus.failed");
+    } else if (status.paused) {
+      dot.addClass("is-paused");
+      text.textContent = this.t("workbench.queueStatus.paused");
+    } else if (status.running > 0) {
+      dot.addClass("is-running");
+      text.textContent = this.t("workbench.queueStatus.running");
+    } else {
+      dot.addClass("is-idle");
+      text.textContent = this.t("workbench.queueStatus.noTasks");
+    }
+
+    // 同步更新暂停按钮状态
+    this.updatePauseButton(status.paused);
+  }
+
+  /**
+   * 渲染重复概念面板 - 简化版列表
    */
   private renderDuplicatesSection(container: HTMLElement): void {
-    const section = container.createDiv({ cls: "cr-duplicates-section" });
+    const section = container.createDiv({ cls: "cr-section cr-duplicates-section" });
 
-    // Header
+    // Header with refresh button
     const header = section.createDiv({ cls: "cr-duplicates-header" });
-    header.createEl("h3", { text: this.t("workbench.duplicates.title"), cls: "cr-section-title" });
-
-    // Controls (Sort/Filter - Simplified for now, can expand later)
-    // 这里暂时省略复杂的 Select 控件，为了保持界面清洁。
-    // 如果需要保留筛选功能，建议使用 Icon Menu 或 Popover。
+    header.createEl("h3", { 
+      text: this.t("workbench.duplicates.title"),
+      cls: "cr-section-title" 
+    });
 
     const refreshBtn = header.createEl("button", {
       cls: "cr-icon-btn",
-      attr: { "aria-label": "Refresh" }
+      attr: { 
+        "aria-label": this.t("workbench.duplicates.refresh") || "Refresh",
+        "title": this.t("workbench.duplicates.refresh") || "Refresh"
+      }
     });
-    refreshBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"></path><path d="M1 20v-6h6"></path><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>`;
+    refreshBtn.innerHTML = `↺`;
     refreshBtn.onclick = () => this.refreshDuplicates();
 
     // List Container
@@ -533,37 +753,30 @@ export class WorkbenchPanel extends ItemView {
   private resetStandardizeButton(): void {
     if (this.standardizeBtn) {
       this.standardizeBtn.disabled = false;
-      this.standardizeBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>`;
+      this.standardizeBtn.innerHTML = `⏎`;
     }
   }
 
   /**
-   * 渲染类型置信度表格
-   * Requirements: 5.2
-   * 
-   * @param standardizedData 标准化结果数据
+   * 渲染类型置信度表格 - 优化版
    */
   private renderTypeConfidenceTable(standardizedData: StandardizedConcept): void {
     if (!this.typeConfidenceTableContainer) return;
 
-    // 清空容器
     this.typeConfidenceTableContainer.empty();
     this.typeConfidenceTableContainer.style.display = "block";
 
-    // 隐藏标准化结果容器
     if (this.standardizedResultContainer) {
       this.standardizedResultContainer.style.display = "none";
     }
 
-    // 创建表格标题
+    // 标题区域
     const header = this.typeConfidenceTableContainer.createDiv({ cls: "cr-table-header" });
-    header.createEl("h4", { text: this.t("workbench.createConcept.selectType") });
-    header.createEl("p", {
-      text: "请选择概念类型，每种类型都有对应的标准化名称",
-      cls: "cr-standardized-name"
+    header.createEl("h4", { 
+      text: this.t("workbench.createConcept.selectType")
     });
 
-    // 创建表格
+    // 表格
     const table = this.typeConfidenceTableContainer.createEl("table", { cls: "cr-confidence-table" });
 
     // 表头
@@ -577,21 +790,27 @@ export class WorkbenchPanel extends ItemView {
     // 表体
     const tbody = table.createEl("tbody");
 
-    // 获取类型置信度并排序（任务 10.3）
+    // 排序类型置信度
     const typeConfidences = Object.entries(standardizedData.typeConfidences)
       .map(([type, confidence]) => ({
         type: type as CRType,
         confidence: confidence as number
       }))
-      .sort((a, b) => b.confidence - a.confidence); // 降序排列
+      .sort((a, b) => b.confidence - a.confidence);
 
-    // 渲染每一行
-    typeConfidences.forEach(({ type, confidence }) => {
+    // 渲染行
+    typeConfidences.forEach(({ type, confidence }, index) => {
       const row = tbody.createEl("tr", { cls: "cr-confidence-row" });
 
-      // 类型名称列
+      // 类型列
       const typeCell = row.createEl("td", { cls: "cr-type-cell" });
-      typeCell.createEl("span", { text: type, cls: "cr-type-name" });
+      const typeLabel = typeCell.createEl("span", { text: type, cls: "cr-type-name" });
+      
+      // 高亮最高置信度
+      if (index === 0) {
+        typeLabel.style.fontWeight = "600";
+        typeLabel.style.color = "var(--interactive-accent)";
+      }
 
       // 标准名称列
       const nameCell = row.createEl("td", { cls: "cr-name-cell" });
@@ -606,8 +825,18 @@ export class WorkbenchPanel extends ItemView {
       const confidenceBar = confidenceCell.createDiv({ cls: "cr-confidence-bar" });
       const confidenceFill = confidenceBar.createDiv({ cls: "cr-confidence-fill" });
       confidenceFill.style.width = `${confidence * 100}%`;
+      
+      // 根据置信度调整颜色
+      if (confidence > 0.8) {
+        confidenceFill.style.background = "var(--interactive-accent)";
+      } else if (confidence > 0.6) {
+        confidenceFill.style.background = "var(--color-orange)";
+      } else {
+        confidenceFill.style.background = "var(--text-muted)";
+      }
+      
       confidenceCell.createEl("span", {
-        text: `${(confidence * 100).toFixed(1)}%`,
+        text: `${(confidence * 100).toFixed(0)}%`,
         cls: "cr-confidence-percentage"
       });
 
@@ -615,11 +844,10 @@ export class WorkbenchPanel extends ItemView {
       const actionCell = row.createEl("td", { cls: "cr-action-cell" });
       const createBtn = actionCell.createEl("button", {
         text: this.t("workbench.createConcept.create"),
-        cls: "mod-cta cr-create-btn",
+        cls: index === 0 ? "mod-cta cr-create-btn" : "cr-create-btn",
         attr: { "aria-label": `${this.t("workbench.createConcept.create")} ${type}` }
       });
 
-      // 绑定创建按钮点击事件（任务 10.4）
       createBtn.addEventListener("click", () => {
         this.handleCreateConcept(type, standardizedData);
       });
@@ -1086,32 +1314,10 @@ export class WorkbenchPanel extends ItemView {
   }
 
   /**
-   * 批量合并
+   * 批量合并（已弃用）
    */
   private async handleBatchMerge(): Promise<void> {
-    if (this.selectedDuplicates.size === 0) {
-      new Notice(this.t("workbench.notifications.selectDuplicates"));
-      return;
-    }
-
-    const count = this.selectedDuplicates.size;
-    const confirmed = await this.showConfirmDialog(
-      this.t("workbench.duplicates.batchMerge"),
-      `${this.t("workbench.notifications.batchMergeConfirm")} (${count})`
-    );
-
-    if (!confirmed) return;
-
-    let successCount = 0;
-    let failCount = 0;
-
-    // 注意：合并功能已被弃用，等待重构
-    new Notice(this.t("workbench.notifications.mergeDeprecated"));
-    return;
-
-    new Notice(`${this.t("workbench.notifications.batchMergeComplete")}: ${successCount} / ${failCount}`);
-    this.selectedDuplicates.clear();
-    this.refreshDuplicates();
+    new Notice("合并功能已被弃用");
   }
 
   /**
@@ -1249,73 +1455,7 @@ export class WorkbenchPanel extends ItemView {
   }
 
   /**
-   * 渲染队列状态
-   * 遵循 A-NF-04：添加 aria-label 和键盘支持
-   */
-  private renderQueueStatus(status: QueueStatus): void {
-    if (!this.queueStatusContainer) return;
 
-    this.queueStatusContainer.empty();
-
-    const grid = this.queueStatusContainer.createDiv({
-      cls: "cr-queue-status-container",
-      attr: { role: "region", "aria-label": this.t("workbench.queueStatus.title") }
-    });
-
-    // 1. Status & Control Row (Flex Row)
-    const controlRow = this.queueStatusContainer.createDiv({ cls: "cr-queue-control-row" });
-
-    // Status Indicator & Toggle
-    const statusWrapper = controlRow.createDiv({ cls: "cr-status-wrapper" });
-    const toggleBtn = statusWrapper.createEl("button", {
-      cls: `cr-queue-toggle-btn ${status.paused ? "is-paused" : "is-active"}`,
-      attr: {
-        "aria-label": status.paused ? this.t("workbench.queueStatus.resumeQueue") : this.t("workbench.queueStatus.pauseQueue"),
-        "title": status.paused ? "Resume Queue" : "Pause Queue"
-      }
-    });
-    toggleBtn.innerHTML = status.paused
-      ? `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>`
-      : `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>`;
-    toggleBtn.onclick = () => this.handleToggleQueue();
-
-    statusWrapper.createSpan({
-      cls: "cr-queue-status-text",
-      text: status.paused ? this.t("workbench.queueStatus.queuePaused") : this.t("workbench.queueStatus.queueRunning")
-    });
-
-    // Progress Bar (Flex Grow)
-    const total = status.pending + status.running + status.completed + status.failed;
-    const progress = total > 0 ? ((status.completed + status.failed) / total) * 100 : 0;
-
-    const progressContainer = controlRow.createDiv({ cls: "cr-progress-container" });
-    const progressBar = progressContainer.createDiv({ cls: "cr-progress-bar" });
-    progressBar.createDiv({ cls: "cr-progress-fill" }).style.width = `${progress}%`;
-    progressContainer.createSpan({ cls: "cr-progress-text", text: `${Math.round(progress)}%` });
-
-    // 2. Statistics Grid (Uniform 4 columns)
-    const statsGrid = this.queueStatusContainer.createDiv({ cls: "cr-queue-stats-grid" });
-    this.createStatCard(statsGrid, this.t("workbench.queueStatus.pending"), status.pending, "pending");
-    this.createStatCard(statsGrid, this.t("workbench.queueStatus.running"), status.running, "running");
-    this.createStatCard(statsGrid, this.t("workbench.queueStatus.completed"), status.completed, "completed");
-    this.createStatCard(statsGrid, this.t("workbench.queueStatus.failed"), status.failed, "failed");
-
-    // Details Link
-    // const detailsLink = this.queueStatusContainer.createEl("a", { 
-    //   cls: "cr-queue-details-link", 
-    //   text: this.t("workbench.queueStatus.viewDetails") 
-    // });
-    // detailsLink.onclick = () => this.handleViewQueue();
-  }
-
-  /**
-   * 创建统计卡片
-   */
-  private createStatCard(container: HTMLElement, label: string, value: number, type: string): void {
-    const card = container.createDiv({ cls: `cr-card cr-stat-card cr-stat-${type}` });
-    card.createDiv({ cls: "cr-stat-value", text: value.toString() });
-    card.createDiv({ cls: "cr-stat-label", text: label });
-  }
 
   /**
    * 渲染空最近操作
@@ -1675,17 +1815,10 @@ export class WorkbenchPanel extends ItemView {
   }
 
   /**
-   * 确认合并 - 创建合并任务
+   * 确认合并（已弃用）
    */
   private async confirmMerge(pair: DuplicatePair): Promise<void> {
-    if (!this.plugin) {
-      new Notice(this.t("workbench.notifications.pluginNotInitialized"));
-      return;
-    }
-
-    // 注意：合并功能已被弃用，等待重构
-    new Notice(this.t("workbench.notifications.mergeDeprecated"));
-    return;
+    new Notice("合并功能已被弃用");
   }
 
   /**
@@ -1882,28 +2015,63 @@ export class WorkbenchPanel extends ItemView {
   }
 
   /**
-   * 处理查看队列详情（内联展开/折叠）
-   * Requirements: 7.1, 7.2
+   * 订阅队列事件（实时更新任务列表）
    */
-  private handleViewQueue(): void {
-    if (!this.queueStatusContainer) return;
+  private subscribeQueueEvents(): void {
+    if (!this.plugin) return;
 
-    // 查找或创建内联详情容器
-    let detailsContainer = this.queueStatusContainer.querySelector(".cr-queue-details") as HTMLElement;
+    const taskQueue = this.plugin.getComponents().taskQueue;
+    this.queueUnsubscribe = taskQueue.subscribe(() => {
+      // 更新状态栏
+      this.updateQueueStatus(taskQueue.getStatus());
+      // 刷新详情（如果已展开）
+      this.refreshQueueDetailsIfVisible();
+    });
+  }
 
-    if (!detailsContainer) {
-      // 首次点击，创建详情容器
-      detailsContainer = this.queueStatusContainer.createDiv({ cls: "cr-queue-details" });
-      this.renderQueueDetails(detailsContainer);
-    } else {
-      // 切换显示/隐藏
-      if (detailsContainer.style.display === "none") {
-        detailsContainer.style.display = "block";
-        this.renderQueueDetails(detailsContainer);
-      } else {
-        detailsContainer.style.display = "none";
+  /**
+   * 从任务中提取显示名称
+   * 优先使用标准化数据生成标准笔记名，其次从 filePath 解析
+   */
+  private getTaskDisplayName(task: TaskRecord): string {
+    const payload = task.payload as Record<string, unknown>;
+    const settings = this.plugin?.settings;
+    const namingTemplate = settings?.namingTemplate || "{{chinese}} ({{english}})";
+    
+    // 优先使用标准化数据生成标准笔记名
+    const standardizedData = payload?.standardizedData as StandardizedConcept | undefined;
+    const conceptType = (payload?.conceptType as CRType) || standardizedData?.primaryType;
+    
+    if (standardizedData?.standardNames && conceptType) {
+      const nameData = standardizedData.standardNames[conceptType];
+      if (nameData?.chinese || nameData?.english) {
+        const standardName = renderNamingTemplate(namingTemplate, {
+          chinese: nameData.chinese || "",
+          english: nameData.english || "",
+          type: conceptType
+        });
+        // 截断过长的名称
+        return standardName.length > 30 ? standardName.substring(0, 30) + "..." : standardName;
       }
     }
+    
+    // 其次从 filePath 解析笔记名
+    if (payload?.filePath && typeof payload.filePath === "string") {
+      const filePath = payload.filePath;
+      // 提取文件名（不含扩展名）
+      const fileName = filePath.split("/").pop() || filePath;
+      const noteName = fileName.replace(/\.md$/, "");
+      return noteName.length > 30 ? noteName.substring(0, 30) + "..." : noteName;
+    }
+    
+    // 再次使用 userInput
+    if (payload?.userInput && typeof payload.userInput === "string") {
+      const input = payload.userInput;
+      return input.length > 20 ? input.substring(0, 20) + "..." : input;
+    }
+    
+    // 最后使用任务 ID 的前 8 位
+    return task.id.substring(0, 8);
   }
 
   /**
@@ -1934,23 +2102,27 @@ export class WorkbenchPanel extends ItemView {
     // 表头
     const thead = table.createEl("thead");
     const headerRow = thead.createEl("tr");
-    headerRow.createEl("th", { text: this.t("workbench.queueStatus.taskId") });
+    headerRow.createEl("th", { text: this.t("workbench.queueStatus.noteName") }); // 笔记名
     headerRow.createEl("th", { text: this.t("workbench.queueStatus.type") });
     headerRow.createEl("th", { text: this.t("workbench.queueStatus.status") });
-    headerRow.createEl("th", { text: this.t("workbench.queueStatus.progress") });
     headerRow.createEl("th", { text: this.t("workbench.queueStatus.actions") });
 
     // 表体
     const tbody = table.createEl("tbody");
 
-    allTasks.forEach(task => {
+    // 按时间倒序排列（最新的在前）
+    const sortedTasks = [...allTasks].sort((a, b) => 
+      new Date(b.created).getTime() - new Date(a.created).getTime()
+    );
+
+    sortedTasks.forEach(task => {
       const row = tbody.createEl("tr", { cls: `cr-task-row cr-task-${task.state.toLowerCase()}` });
 
-      // 任务 ID
-      row.createEl("td", {
-        text: task.id.substring(0, 8),
-        cls: "cr-task-id",
-        attr: { title: task.id }
+      // 概念名称
+      const nameCell = row.createEl("td", { cls: "cr-task-name" });
+      nameCell.createSpan({
+        text: this.getTaskDisplayName(task),
+        attr: { title: (task.payload as Record<string, unknown>)?.userInput as string || task.id }
       });
 
       // 任务类型
@@ -1961,19 +2133,10 @@ export class WorkbenchPanel extends ItemView {
 
       // 状态
       const statusCell = row.createEl("td", { cls: "cr-task-status" });
-      const statusBadge = statusCell.createEl("span", {
+      statusCell.createEl("span", {
         cls: `cr-status-badge cr-status-${task.state.toLowerCase()}`,
         text: this.getStatusLabel(task.state)
       });
-
-      // 进度
-      const progressCell = row.createEl("td", { cls: "cr-task-progress" });
-      // TaskRecord 没有 progress 字段，显示尝试次数
-      if (task.state === "Running") {
-        progressCell.textContent = `${task.attempt}/${task.maxAttempts}`;
-      } else {
-        progressCell.textContent = "-";
-      }
 
       // 操作按钮
       const actionCell = row.createEl("td", { cls: "cr-task-actions" });
@@ -1982,7 +2145,7 @@ export class WorkbenchPanel extends ItemView {
         const cancelBtn = actionCell.createEl("button", {
           text: this.t("workbench.queueStatus.cancel"),
           cls: "cr-btn-small",
-          attr: { "aria-label": `${this.t("workbench.queueStatus.cancel")} ${task.id}` }
+          attr: { "aria-label": `${this.t("workbench.queueStatus.cancel")}` }
         });
         cancelBtn.addEventListener("click", () => {
           this.handleCancelTask(task.id);
@@ -1990,7 +2153,7 @@ export class WorkbenchPanel extends ItemView {
       } else if (task.state === "Failed") {
         if (task.errors && task.errors.length > 0) {
           const lastError = task.errors[task.errors.length - 1];
-          const errorIcon = actionCell.createEl("span", {
+          actionCell.createEl("span", {
             text: "⚠",
             cls: "cr-error-icon",
             attr: { title: lastError.message }
@@ -2060,12 +2223,7 @@ export class WorkbenchPanel extends ItemView {
 
     if (result.ok) {
       new Notice(this.t("workbench.notifications.taskCancelled"));
-      // 刷新详情显示
-      const detailsContainer = this.queueStatusContainer?.querySelector(".cr-queue-details") as HTMLElement;
-      if (detailsContainer) {
-        this.renderQueueDetails(detailsContainer);
-      }
-      // 刷新队列状态
+      this.refreshQueueDetailsIfVisible();
       this.updateQueueStatus(taskQueue.getStatus());
     } else {
       new Notice(`${this.t("workbench.notifications.cancelFailed")}: ${result.error.message}`);
@@ -2083,12 +2241,7 @@ export class WorkbenchPanel extends ItemView {
 
     if (result.ok) {
       new Notice(`${this.t("workbench.notifications.retryComplete")}: ${result.value}`);
-      // 刷新详情显示
-      const detailsContainer = this.queueStatusContainer?.querySelector(".cr-queue-details") as HTMLElement;
-      if (detailsContainer) {
-        this.renderQueueDetails(detailsContainer);
-      }
-      // 刷新队列状态
+      this.refreshQueueDetailsIfVisible();
       this.updateQueueStatus(taskQueue.getStatus());
     } else {
       new Notice(`${this.t("workbench.notifications.cancelFailed")}: ${result.error.message}`);
@@ -2106,12 +2259,7 @@ export class WorkbenchPanel extends ItemView {
 
     if (result.ok) {
       new Notice(`${this.t("workbench.notifications.clearComplete")}: ${result.value}`);
-      // 刷新详情显示
-      const detailsContainer = this.queueStatusContainer?.querySelector(".cr-queue-details") as HTMLElement;
-      if (detailsContainer) {
-        this.renderQueueDetails(detailsContainer);
-      }
-      // 刷新队列状态
+      this.refreshQueueDetailsIfVisible();
       this.updateQueueStatus(taskQueue.getStatus());
     } else {
       new Notice(`清除失败: ${result.error.message}`);
@@ -2141,12 +2289,7 @@ export class WorkbenchPanel extends ItemView {
 
     new Notice(`${this.t("workbench.notifications.clearComplete")} (${clearedCount})`);
 
-    // 刷新详情显示
-    const detailsContainer = this.queueStatusContainer?.querySelector(".cr-queue-details") as HTMLElement;
-    if (detailsContainer) {
-      this.renderQueueDetails(detailsContainer);
-    }
-    // 刷新队列状态
+    this.refreshQueueDetailsIfVisible();
     this.updateQueueStatus(taskQueue.getStatus());
   }
 

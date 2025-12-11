@@ -1,14 +1,4 @@
-/**
- * 任务执行器
- * 负责执行单个任务，包括调用 Provider、构建 Prompt、验证输出和重试逻辑
- * 
- * 遵循设计文档要求：
- * - Property 10: Snapshot Before Write - 文件写入前调用 UndoManager.createSnapshot
- * - Property 29: Task Pipeline Order - 任务管线顺序
- * - Property 30: Evergreen Downgrade on Improvement - 增量改进后降级 Evergreen 状态
- * - Property 31: Merge Flow Completeness - 合并流程完整性
- * - Property 27: Type-Specific Field Completeness - 类型字段完整性验证
- */
+/** 任务执行器 - 负责执行单个任务，调用 Provider 和验证输出 */
 
 import {
   ITaskRunner,
@@ -35,11 +25,7 @@ import { schemaRegistry, ISchemaRegistry } from "./schema-registry";
 import { createConceptSignature, generateSignatureText } from "./naming-utils";
 import { mapStandardizeOutput } from "./standardize-mapper";
 
-/**
- * 任务管线阶段定义
- * 流程：standardizeClassify → enrich → confirm → reason:new → embedding → ground → write → dedup
- * embedding 在 reason:new 之后执行
- */
+/** 任务管线顺序 */
 const TASK_PIPELINE_ORDER: TaskType[] = [
   "standardizeClassify",
   "enrich",
@@ -49,11 +35,7 @@ const TASK_PIPELINE_ORDER: TaskType[] = [
 ];
 
 
-/**
- * 类型必填字段定义
- * Property 27: Type-Specific Field Completeness
- * Requirements 7.1-7.5
- */
+/** 类型必填字段定义 */
 const TYPE_REQUIRED_FIELDS: Record<CRType, string[]> = {
   Domain: [
     "definition",
@@ -144,9 +126,7 @@ class InputValidator {
 }
 
 
-/**
- * 扩展的 TaskRunner 依赖接口
- */
+/** TaskRunner 依赖接口 */
 interface TaskRunnerDependencies {
   providerManager: IProviderManager;
   promptManager: IPromptManager;
@@ -159,9 +139,7 @@ interface TaskRunnerDependencies {
   settingsStore?: ISettingsStore;
 }
 
-/**
- * 写入操作上下文
- */
+/** 写入操作上下文 */
 interface WriteContext {
   filePath: string;
   content: string;
@@ -201,11 +179,7 @@ export class TaskRunner implements ITaskRunner {
   }
 
 
-  /**
-   * 执行任务
-   * 
-   * 遵循 A-FUNC-03：任务执行前必须验证 Provider 能力匹配
-   */
+  /** 执行任务 - 验证 Provider 能力后分发到具体执行方法 */
   async run(task: TaskRecord): Promise<Result<TaskResult>> {
     const startTime = Date.now();
     
@@ -281,9 +255,7 @@ export class TaskRunner implements ITaskRunner {
     }
   }
 
-  /**
-   * 中断任务执行
-   */
+  /** 中断任务执行 */
   abort(taskId: string): void {
     const abortController = this.abortControllers.get(taskId);
     if (abortController) {
@@ -294,22 +266,7 @@ export class TaskRunner implements ITaskRunner {
   }
 
 
-  // ============================================================================
-  // Property 10: Snapshot Before Write
-  // 文件写入前调用 UndoManager.createSnapshot
-  // Requirements 2.6, 8.5
-  // ============================================================================
-
-  /**
-   * 创建写入前快照
-   * 
-   * Property 10: Snapshot Before Write
-   * For any file write operation performed by TaskRunner, a snapshot SHALL exist
-   * in UndoManager before the write completes.
-   * 
-   * @param context 写入上下文
-   * @returns 快照 ID 或错误
-   */
+  /** 创建写入前快照 */
   async createSnapshotBeforeWrite(context: WriteContext): Promise<Result<string>> {
     try {
       this.logger.debug("TaskRunner", "创建写入前快照", {
@@ -367,37 +324,9 @@ export class TaskRunner implements ITaskRunner {
   }
 
 
-  // ============================================================================
-  // Property 30: Evergreen Downgrade on Improvement
-  // 增量改进后将 Evergreen 状态改为 Draft
-  // Requirements 8.3
-  // ============================================================================
 
-  /**
-   * 处理 Evergreen 降级
-   * 
-   * Property 30: Evergreen Downgrade on Improvement
-   * For any Evergreen note that undergoes incremental improvement, the note status
-   * SHALL be changed to Draft after the improvement is applied.
-   * 
-   * @param currentStatus 当前笔记状态
-   * @returns 新的笔记状态
-   */
-  handleEvergreenDowngrade(currentStatus: NoteState): NoteState {
-    if (currentStatus === "Evergreen") {
-      this.logger.info("TaskRunner", "Evergreen 笔记增量改进后降级为 Draft");
-      return "Draft";
-    }
-    return currentStatus;
-  }
 
-  /**
-   * 更新笔记状态（用于增量改进后的降级）
-   * 
-   * @param filePath 文件路径
-   * @param newStatus 新状态
-   * @returns 更新结果
-   */
+  /** 更新笔记状态 */
   async updateNoteStatus(filePath: string, newStatus: NoteState): Promise<Result<void>> {
     if (!this.fileStorage) {
       return err("E304", "FileStorage 未配置");
@@ -427,9 +356,7 @@ export class TaskRunner implements ITaskRunner {
     }
   }
 
-  /**
-   * 更新 frontmatter 中的 status 字段
-   */
+  /** 更新 frontmatter 中的 status 字段 */
   private updateFrontmatterStatus(content: string, newStatus: NoteState): string {
     // 匹配 YAML frontmatter
     const frontmatterRegex = /^---\n([\s\S]*?)\n---/;
@@ -449,24 +376,7 @@ export class TaskRunner implements ITaskRunner {
   }
 
 
-  // ============================================================================
-  // Property 31: Merge Flow Completeness
-  // 合并完成后删除被合并笔记，更新向量索引
-  // Requirements 8.4
-  // ============================================================================
-
-  /**
-   * 完成合并流程
-   * 
-   * Property 31: Merge Flow Completeness
-   * For any completed merge operation, the merged note SHALL be deleted and the
-   * vector index SHALL be updated to remove the merged entry.
-   * 
-   * @param keepNodeId 保留的节点 ID
-   * @param deleteNodeId 要删除的节点 ID
-   * @param deleteFilePath 要删除的文件路径
-   * @returns 完成结果
-   */
+  /** 完成合并流程 - 删除被合并笔记并更新向量索引 */
   async completeMergeFlow(
     keepNodeId: string,
     deleteNodeId: string,
@@ -522,26 +432,7 @@ export class TaskRunner implements ITaskRunner {
   }
 
 
-  // ============================================================================
-  // Property 29: Task Pipeline Order
-  // 任务管线顺序验证
-  // Requirements 8.1
-  // ============================================================================
-
-  /**
-   * 验证任务管线顺序
-   * 
-   * Property 29: Task Pipeline Order
-   * For any new concept creation, tasks SHALL execute in order:
-   * standardizeClassify → enrich → (user confirmation) → reason:new → embedding →
-   * ground → (user confirmation) → write → dedup detection.
-   * 
-   * embedding 在 reason:new 之后执行
-   * 
-   * @param previousTaskType 前一个任务类型
-   * @param currentTaskType 当前任务类型
-   * @returns 是否符合管线顺序
-   */
+  /** 验证任务管线顺序 */
   validatePipelineOrder(previousTaskType: TaskType | null, currentTaskType: TaskType): boolean {
     // 如果没有前一个任务，任何任务都可以开始
     if (previousTaskType === null) {
@@ -567,12 +458,7 @@ export class TaskRunner implements ITaskRunner {
     return currentIndex >= previousIndex;
   }
 
-  /**
-   * 获取任务管线中的下一个任务类型
-   * 
-   * @param currentTaskType 当前任务类型
-   * @returns 下一个任务类型或 null
-   */
+  /** 获取任务管线中的下一个任务类型 */
   getNextPipelineTask(currentTaskType: TaskType): TaskType | null {
     const currentIndex = TASK_PIPELINE_ORDER.indexOf(currentTaskType);
     
@@ -594,13 +480,9 @@ export class TaskRunner implements ITaskRunner {
   }
 
 
-  // ============================================================================
-  // 任务类型执行方法
-  // ============================================================================
+  // 任务执行方法
 
-  /**
-   * 执行 standardizeClassify 任务
-   */
+  /** 执行 standardizeClassify 任务 */
   private async executeStandardizeClassify(
     task: TaskRecord,
     signal: AbortSignal
@@ -628,7 +510,7 @@ export class TaskRunner implements ITaskRunner {
       const modelConfig = this.getTaskModelConfig("standardizeClassify");
 
       // 调用 LLM（使用用户配置的模型）
-      const chatResult = await this.providerManager.chat({
+      const chatRequest: any = {
         providerId: task.providerRef || modelConfig.providerId,
         model: modelConfig.model,
         messages: [
@@ -637,7 +519,14 @@ export class TaskRunner implements ITaskRunner {
         temperature: modelConfig.temperature,
         topP: modelConfig.topP,
         maxTokens: modelConfig.maxTokens
-      }, signal);
+      };
+      
+      // 如果配置了 reasoning_effort，添加到请求中（用于 o1/o3 等推理模型）
+      if (modelConfig.reasoning_effort) {
+        chatRequest.reasoning_effort = modelConfig.reasoning_effort;
+      }
+      
+      const chatResult = await this.providerManager.chat(chatRequest, signal);
 
       if (!chatResult.ok) {
         return this.createTaskError(task, chatResult.error!);
@@ -672,9 +561,7 @@ export class TaskRunner implements ITaskRunner {
     }
   }
 
-  /**
-   * 执行 enrich 任务
-   */
+  /** 执行 enrich 任务 */
   private async executeEnrich(
     task: TaskRecord,
     signal: AbortSignal
@@ -695,7 +582,7 @@ export class TaskRunner implements ITaskRunner {
       const modelConfig = this.getTaskModelConfig("enrich");
 
       // 调用 LLM（使用用户配置的模型）
-      const chatResult = await this.providerManager.chat({
+      const chatRequest: any = {
         providerId: task.providerRef || modelConfig.providerId,
         model: modelConfig.model,
         messages: [
@@ -704,7 +591,14 @@ export class TaskRunner implements ITaskRunner {
         temperature: modelConfig.temperature,
         topP: modelConfig.topP,
         maxTokens: modelConfig.maxTokens
-      }, signal);
+      };
+      
+      // 如果配置了 reasoning_effort，添加到请求中
+      if (modelConfig.reasoning_effort) {
+        chatRequest.reasoning_effort = modelConfig.reasoning_effort;
+      }
+      
+      const chatResult = await this.providerManager.chat(chatRequest, signal);
 
       if (!chatResult.ok) {
         return this.createTaskError(task, chatResult.error!);
@@ -751,9 +645,7 @@ export class TaskRunner implements ITaskRunner {
   }
 
 
-  /**
-   * 执行 embedding 任务
-   */
+  /** 执行 embedding 任务 */
   private async executeEmbedding(
     task: TaskRecord,
     signal: AbortSignal
@@ -819,10 +711,7 @@ export class TaskRunner implements ITaskRunner {
     }
   }
 
-  /**
-   * 执行 reason:new 任务
-   * 包含 Property 10 (Snapshot Before Write) 和 Property 27 (Type Field Completeness)
-   */
+  /** 执行 reason:new 任务 */
   private async executeReasonNew(
     task: TaskRecord,
     signal: AbortSignal
@@ -846,7 +735,7 @@ export class TaskRunner implements ITaskRunner {
       const modelConfig = this.getTaskModelConfig("reason:new");
 
       // 调用 LLM（使用用户配置的模型）
-      const chatResult = await this.providerManager.chat({
+      const chatRequest: any = {
         providerId: task.providerRef || modelConfig.providerId,
         model: modelConfig.model,
         messages: [
@@ -855,7 +744,14 @@ export class TaskRunner implements ITaskRunner {
         temperature: modelConfig.temperature,
         topP: modelConfig.topP,
         maxTokens: modelConfig.maxTokens
-      }, signal);
+      };
+      
+      // 如果配置了 reasoning_effort，添加到请求中
+      if (modelConfig.reasoning_effort) {
+        chatRequest.reasoning_effort = modelConfig.reasoning_effort;
+      }
+      
+      const chatResult = await this.providerManager.chat(chatRequest, signal);
 
       if (!chatResult.ok) {
         return this.createTaskError(task, chatResult.error!);
@@ -910,12 +806,7 @@ export class TaskRunner implements ITaskRunner {
 
 
 
-  /**
-   * 执行 ground 任务（事实核查）
-   * 
-   * 遵循设计文档 A-FUNC-05：可选 ground 阶段
-   * 输出结构化的验证结果：overall_assessment, issues, recommendations
-   */
+  /** 执行 ground 任务（事实核查） */
   private async executeGround(
     task: TaskRecord,
     signal: AbortSignal
@@ -945,7 +836,7 @@ export class TaskRunner implements ITaskRunner {
       const modelConfig = this.getTaskModelConfig("ground");
 
       // 调用 LLM（使用用户配置的模型）
-      const chatResult = await this.providerManager.chat({
+      const chatRequest: any = {
         providerId: task.providerRef || modelConfig.providerId,
         model: modelConfig.model,
         messages: [
@@ -954,7 +845,14 @@ export class TaskRunner implements ITaskRunner {
         temperature: modelConfig.temperature,
         topP: modelConfig.topP,
         maxTokens: modelConfig.maxTokens
-      }, signal);
+      };
+      
+      // 如果配置了 reasoning_effort，添加到请求中
+      if (modelConfig.reasoning_effort) {
+        chatRequest.reasoning_effort = modelConfig.reasoning_effort;
+      }
+      
+      const chatResult = await this.providerManager.chat(chatRequest, signal);
 
       if (!chatResult.ok) {
         return this.createTaskError(task, chatResult.error!);
@@ -1003,25 +901,16 @@ export class TaskRunner implements ITaskRunner {
     }
   }
 
-  // ============================================================================
   // 辅助方法
-  // ============================================================================
 
-  /**
-   * 获取任务模型配置
-   * 
-   * 从 settingsStore 获取用户为特定任务类型配置的模型和参数
-   * 如果未配置，返回默认值
-   * 
-   * @param taskType 任务类型
-   * @returns 模型配置（providerId, model, temperature, topP, maxTokens）
-   */
+  /** 获取任务模型配置 */
   private getTaskModelConfig(taskType: TaskType): {
     providerId: string;
     model: string;
     temperature?: number;
     topP?: number;
     maxTokens?: number;
+    reasoning_effort?: "low" | "medium" | "high";
   } {
     const settings = this.settingsStore?.getSettings();
     const taskConfig = settings?.taskModels?.[taskType];
@@ -1042,14 +931,12 @@ export class TaskRunner implements ITaskRunner {
       model: taskConfig?.model || defaultConfig.model,
       temperature: taskConfig?.temperature ?? defaultConfig.temperature,
       topP: taskConfig?.topP,
-      maxTokens: taskConfig?.maxTokens
+      maxTokens: taskConfig?.maxTokens,
+      reasoning_effort: taskConfig?.reasoning_effort
     };
   }
 
-  /**
-   * 构建 CTX_META 上下文字符串
-   * 简化格式：仅包含当前选择的类型和对应的标准名称
-   */
+  /** 构建 CTX_META 上下文字符串 */
   private buildMetaContext(payload: Record<string, unknown>): string {
     const standardized = payload.standardizedData as StandardizedConcept | undefined;
     const primaryType = (standardized?.primaryType || payload.conceptType) as CRType | undefined;

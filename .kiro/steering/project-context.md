@@ -37,31 +37,6 @@ UI 层 → 应用层 → 数据层
 | `src/core/undo-manager.ts` | 快照和撤销管理 |
 | `src/ui/workbench-panel.ts` | 统一工作台 UI |
 
----
-
-## 核心流程
-
-### 概念创建管线
-
-```
-标准化 → 丰富 → 推理 → 写入 → 嵌入 → 去重
-```
-
-1. **标准化 (standardizeClassify)**：生成标准名称、类型置信度
-2. **丰富 (enrich)**：生成别名、标签
-3. **推理 (reason:new)**：生成概念内容
-4. **写入**：创建/更新 Markdown 文件
-5. **嵌入 (embedding)**：生成向量嵌入
-6. **去重**：检测相似概念
-
-### 快照策略
-
-- **创建流程**：不创建快照（新文件无需回滚）
-- **增量改进**：创建快照（保护现有内容）
-- **合并流程**：创建快照（保护两个文件）
-
----
-
 ## 架构约束
 
 ### 必须遵循
@@ -87,7 +62,8 @@ UI 层 → 应用层 → 数据层
 |------|------|
 | `data.json` | 插件设置（Obsidian 管理） |
 | `data/queue-state.json` | 任务队列状态 |
-| `data/vector-index.json` | 向量索引 |
+| `data/vectors/` | 向量索引（新架构，按类型分桶） |
+| `data/vectors/index.json` | 向量索引元数据 |
 | `data/duplicate-pairs.json` | 重复对列表 |
 | `data/app.log` | 运行日志 |
 | `data/snapshots/` | 快照文件 |
@@ -97,5 +73,4 @@ UI 层 → 应用层 → 数据层
 ## 参考文档
 
 - `docs/TECHNICAL_DESIGN_DOCUMENT.md`：详细技术设计
-- `docs/哲学设计文档.md`：设计哲学和原理
 - `prompts/`：AI 提示词模板

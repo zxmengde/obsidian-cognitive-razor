@@ -79,7 +79,6 @@ export class ProviderConfigModal extends Modal {
   private baseUrlInput: HTMLInputElement | null = null;
   private chatModelInput: HTMLInputElement | null = null;
   private embedModelInput: HTMLInputElement | null = null;
-  private persistToggle: boolean = true;
   private errorEl: HTMLElement | null = null;
 
   constructor(app: App, options: ProviderConfigModalOptions) {
@@ -92,37 +91,50 @@ export class ProviderConfigModal extends Modal {
     contentEl.empty();
     modalEl.addClass("cr-scope");
     contentEl.addClass("cr-scope");
+    contentEl.addClass("cr-provider-config-modal");
 
     const title = this.options.mode === "add" ? "添加 AI Provider" : "编辑 AI Provider";
     contentEl.createEl("h2", { text: title });
 
+    // 说明文字
+    const descEl = contentEl.createDiv({ cls: "modal-description" });
+    descEl.textContent = "配置 OpenAI 兼容的 API 服务。支持 OpenAI、Azure OpenAI、以及其他兼容服务。";
+    descEl.style.marginBottom = "1.5em";
+    descEl.style.color = "var(--text-muted)";
+
     const formEl = contentEl.createDiv({ cls: "modal-form" });
 
+    // === 基础配置 ===
+    const basicSection = formEl.createDiv({ cls: "modal-section" });
+    basicSection.createEl("h3", { text: "基础配置", cls: "modal-section-title" });
+
     // Provider ID
-    const idSetting = new Setting(formEl)
+    const idSetting = new Setting(basicSection)
       .setName("Provider ID")
-      .setDesc("唯一标识符，例如: my-openai");
+      .setDesc("唯一标识符，建议使用英文字母和连字符，例如: my-openai");
 
     this.providerIdInput = idSetting.controlEl.createEl("input", {
       type: "text",
       placeholder: "my-openai",
       value: this.options.providerId || ""
     });
+    this.providerIdInput.style.width = "100%";
 
     if (this.options.mode === "edit") {
       this.providerIdInput.disabled = true;
     }
 
     // API Key
-    const apiKeySetting = new Setting(formEl)
+    const apiKeySetting = new Setting(basicSection)
       .setName("API Key")
-      .setDesc("您的 API 密钥（默认写入本地 data.json，不会上传）");
+      .setDesc("您的 API 密钥");
 
     this.apiKeyInput = apiKeySetting.controlEl.createEl("input", {
       type: "password",
       placeholder: "sk-...",
       value: this.options.currentConfig?.apiKey || ""
     });
+    this.apiKeyInput.style.width = "calc(100% - 80px)";
 
     apiKeySetting.addButton(button => {
       button
@@ -136,50 +148,51 @@ export class ProviderConfigModal extends Modal {
         });
     });
 
-    new Setting(formEl)
-      .setName("仅本次会话保存")
-      .setDesc("开启后不会将 API Key 写入 data.json，重启需重新输入。关闭则明文存储在本地 data.json。")
-      .addToggle(toggle => {
-        this.persistToggle = this.options.currentConfig?.persistApiKey ?? true;
-        toggle
-          .setValue(!this.persistToggle)
-          .onChange(value => {
-            this.persistToggle = !value;
-          });
-      });
+
+
+    // === 端点配置 ===
+    const endpointSection = formEl.createDiv({ cls: "modal-section" });
+    endpointSection.createEl("h3", { text: "端点配置", cls: "modal-section-title" });
 
     // 自定义端点
-    const baseUrlSetting = new Setting(formEl)
-      .setName("自定义端点 (可选)")
-      .setDesc("默认: https://api.openai.com/v1");
+    const baseUrlSetting = new Setting(endpointSection)
+      .setName("API 端点")
+      .setDesc("留空使用 OpenAI 官方端点 (https://api.openai.com/v1)");
 
     this.baseUrlInput = baseUrlSetting.controlEl.createEl("input", {
       type: "text",
       placeholder: "https://api.openai.com/v1",
       value: this.options.currentConfig?.baseUrl || ""
     });
+    this.baseUrlInput.style.width = "100%";
+
+    // === 模型配置 ===
+    const modelSection = formEl.createDiv({ cls: "modal-section" });
+    modelSection.createEl("h3", { text: "默认模型", cls: "modal-section-title" });
 
     // 聊天模型
-    const chatModelSetting = new Setting(formEl)
+    const chatModelSetting = new Setting(modelSection)
       .setName("聊天模型")
-      .setDesc("用于对话的模型");
+      .setDesc("用于标准化、推理等任务");
 
     this.chatModelInput = chatModelSetting.controlEl.createEl("input", {
       type: "text",
       placeholder: "gpt-4o",
-      value: this.options.currentConfig?.defaultChatModel || ""
+      value: this.options.currentConfig?.defaultChatModel || "gpt-4o"
     });
+    this.chatModelInput.style.width = "100%";
 
     // 嵌入模型
-    const embedModelSetting = new Setting(formEl)
+    const embedModelSetting = new Setting(modelSection)
       .setName("嵌入模型")
-      .setDesc("用于向量嵌入的模型");
+      .setDesc("用于向量嵌入和语义搜索");
 
     this.embedModelInput = embedModelSetting.controlEl.createEl("input", {
       type: "text",
       placeholder: "text-embedding-3-small",
-      value: this.options.currentConfig?.defaultEmbedModel || ""
+      value: this.options.currentConfig?.defaultEmbedModel || "text-embedding-3-small"
     });
+    this.embedModelInput.style.width = "100%";
 
     this.errorEl = formEl.createDiv({ cls: "modal-error" });
     this.errorEl.style.display = "none";
@@ -237,8 +250,7 @@ export class ProviderConfigModal extends Modal {
       baseUrl: baseUrl || undefined,
       defaultChatModel: chatModel || "gpt-4o",
       defaultEmbedModel: embedModel || "text-embedding-3-small",
-      enabled: this.options.currentConfig?.enabled ?? true,
-      persistApiKey: this.persistToggle
+      enabled: this.options.currentConfig?.enabled ?? true
     };
 
     try {
