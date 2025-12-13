@@ -25,19 +25,23 @@ export type NoteState = "Stub" | "Draft" | "Evergreen";
  */
 export interface CRFrontmatter {
   /** UUID v4 唯一标识符 */
-  crUid: string;
+  cruid: string;
   /** 知识类型 */
   type: CRType;
+  /** 笔记名称 */
+  name: string;
   /** 笔记状态 */
   status: NoteState;
-  /** 创建时间 (ISO 8601) */
+  /** 创建时间 (yyyy-MM-DD HH:mm:ss) */
   created: string;
-  /** 更新时间 (ISO 8601) */
+  /** 更新时间 (yyyy-MM-DD HH:mm:ss) */
   updated: string;
   /** 别名列表 */
   aliases?: string[];
   /** 标签列表 */
   tags?: string[];
+  /** 父概念名称（笔记标题）列表 */
+  parents: string[];
   /** 父概念 UID */
   parentUid?: string;
   /** 父概念类型 */
@@ -397,7 +401,6 @@ export interface PluginSettings {
   
   /** 基础设置 */
   language: "zh" | "en";
-  advancedMode: boolean;
   
   /** 命名设置 */
   namingTemplate: string;
@@ -456,8 +459,10 @@ export interface ConceptMeta {
   name: string;
   /** 知识类型 */
   type: CRType;
-  /** 文件路径（相对于 data/vectors/） */
-  filePath: string;
+  /** Vault 内笔记路径（对外暴露，用于 UI/合并/增量改写） */
+  notePath: string;
+  /** 向量文件相对路径（仅索引内部使用，如 "Domain/xxx.json"） */
+  vectorFilePath: string;
   /** 最后修改时间 */
   lastModified: number;
   /** 是否有嵌入向量 */
@@ -676,6 +681,98 @@ export interface StandardizedConcept {
   primaryType?: CRType;
   /** 核心定义 */
   coreDefinition?: string;
+}
+
+// ============================================================================
+// 管线系统
+// ============================================================================
+
+/**
+ * 管线阶段
+ */
+export type PipelineStage =
+  | "idle"                    // 空闲
+  | "standardizing"           // 标准化中
+  | "enriching"               // 丰富中
+  | "embedding"               // 嵌入中
+  | "awaiting_create_confirm" // 等待创建确认
+  | "reasoning"               // 推理中
+  | "grounding"               // Ground 校验中
+  | "awaiting_write_confirm"  // 等待写入确认
+  | "writing"                 // 写入中
+  | "deduplicating"           // 去重中
+  | "completed"               // 完成
+  | "failed";                 // 失败
+
+/**
+ * 管线上下文
+ */
+export interface PipelineContext {
+  /** 管线类型：创建 / 增量改进 / 合并 */
+  kind: "create" | "incremental" | "merge";
+  /** 管线 ID */
+  pipelineId: string;
+  /** 节点 ID */
+  nodeId: string;
+  /** 知识类型 */
+  type: CRType;
+  /** 当前阶段 */
+  stage: PipelineStage;
+  /** 用户输入 */
+  userInput: string;
+  /** 标准化结果 */
+  standardizedData?: StandardizedConcept;
+  /** 丰富结果（别名和标签） */
+  enrichedData?: {
+    aliases: string[];
+    tags: string[];
+  };
+  /** 嵌入向量 */
+  embedding?: number[];
+  /** 生成的内容 */
+  generatedContent?: unknown;
+  /** 父级标题（用于 Deepen/抽象来源写入） */
+  parents?: string[];
+  /** 父级 UID（可选） */
+  parentUid?: string;
+  /** 父级类型（可选） */
+  parentType?: CRType;
+  /** 供 reason:new 使用的来源上下文（抽象深化） */
+  sources?: string;
+  /** 目标路径覆盖（Deepen 预设路径） */
+  targetPathOverride?: string;
+  /** 写入前的原始内容（增量/合并预览使用） */
+  previousContent?: string;
+  /** 待写入的新内容（增量/合并预览使用） */
+  newContent?: string;
+  /** 文件路径 */
+  filePath?: string;
+  /** Ground 结果 */
+  groundingResult?: Record<string, unknown>;
+  /** 增量/合并特有字段 */
+  mergePairId?: string;
+  deleteFilePath?: string;
+  deleteNoteName?: string;
+  deleteNodeId?: string;
+  deleteContent?: string;
+  currentStatus?: string;
+  /** 快照 ID */
+  snapshotId?: string;
+  /** 错误信息 */
+  error?: { code: string; message: string };
+  /** 创建时间 */
+  createdAt: string;
+  /** 更新时间 */
+  updatedAt: string;
+}
+
+/**
+ * 管线状态持久化文件
+ */
+export interface PipelineStateFile {
+  version: string;
+  pipelines: PipelineContext[];
+  lastUpdated: string;
 }
 
 // ============================================================================
@@ -1100,6 +1197,14 @@ export interface IVectorIndex {
    * 根据 UID 获取条目（用于增量/合并写入后更新索引）
    */
   getEntry(uid: string): VectorEntry | undefined;
+
+  /**
+   * 根据笔记路径查找 UID
+   * 用于索引自愈：文件删除/重命名时定位对应的索引条目
+   * @param notePath Vault 内笔记路径
+   * @returns 概念 UID 或 undefined
+   */
+  findUidByPath(notePath: string): string | undefined;
 }
 
 /**
@@ -1226,6 +1331,15 @@ export interface IPromptManager {
    * @returns 完整的 prompt
    */
   build(taskType: TaskType, slots: Record<string, string>, conceptType?: string): Result<string>;
+
+  /**
+   * 构建操作 prompt（用于 Merge/Incremental 等操作）
+   * 遵循 SSOT 5.4.4：使用操作模块槽位映射
+   * @param operation 操作类型：merge | incremental | create
+   * @param slots 槽位值
+   * @returns 构建的 prompt
+   */
+  buildOperation(operation: string, slots: Record<string, string>): Result<string>;
   
   /**
    * 验证模板

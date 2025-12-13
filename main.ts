@@ -23,6 +23,8 @@ import { TaskQueue } from './src/core/task-queue';
 import { TaskRunner } from './src/core/task-runner';
 
 import { PipelineOrchestrator } from './src/core/pipeline-orchestrator';
+import { DeepenOrchestrator } from './src/core/deepen-orchestrator';
+import { IndexHealer } from './src/core/index-healer';
 
 // UI 层组件
 import { WorkbenchPanel, WORKBENCH_VIEW_TYPE } from './src/ui/workbench-panel';
@@ -55,6 +57,8 @@ export default class CognitiveRazorPlugin extends Plugin {
 	private taskQueue!: TaskQueue;
 	private taskRunner!: TaskRunner;
 	private pipelineOrchestrator!: PipelineOrchestrator;
+	private deepenOrchestrator!: DeepenOrchestrator;
+	private indexHealer!: IndexHealer;
 
 	// UI 组件
 	private statusBadge!: StatusBadge;
@@ -176,8 +180,9 @@ export default class CognitiveRazorPlugin extends Plugin {
 				this.logger?.debug('CognitiveRazorPlugin', '任务队列已暂停并停止调度器');
 			}
 
-			// 2. 停止管线编排器
+			// 2. 停止管线编排器和索引自愈
 			this.pipelineOrchestrator?.dispose();
+			this.indexHealer?.dispose();
 			this.lockManager?.dispose?.();
 
 			// 3. 保存设置（SettingsStore 使用 Obsidian 的 saveData，在 updateSettings 时自动保存）
@@ -420,7 +425,8 @@ export default class CognitiveRazorPlugin extends Plugin {
 		this.vectorIndex = new VectorIndex(
 			this.fileStorage,
 			'text-embedding-3-small',
-			embeddingDimension
+			embeddingDimension,
+			this.logger
 		);
 		const loadResult = await this.vectorIndex.load();
 		if (!loadResult.ok) {
@@ -575,6 +581,27 @@ export default class CognitiveRazorPlugin extends Plugin {
 			getSettings: () => this.settings,
 		});
 		this.logger.debug('CognitiveRazorPlugin', 'PipelineOrchestrator 初始化完成');
+
+		// DeepenOrchestrator（深化编排器）
+		this.deepenOrchestrator = new DeepenOrchestrator({
+			app: this.app,
+			logger: this.logger,
+			vectorIndex: this.vectorIndex,
+			fileStorage: this.fileStorage,
+			pipelineOrchestrator: this.pipelineOrchestrator,
+			getSettings: () => this.settings
+		});
+		this.logger.debug('CognitiveRazorPlugin', 'DeepenOrchestrator 初始化完成');
+
+		// 11. IndexHealer（索引自愈，遵循 SSOT 第 7 章）
+		this.indexHealer = new IndexHealer({
+			app: this.app,
+			vectorIndex: this.vectorIndex,
+			duplicateManager: this.duplicateManager,
+			logger: this.logger,
+			fileStorage: this.fileStorage,
+		});
+		this.logger.debug('CognitiveRazorPlugin', 'IndexHealer 初始化完成');
 
 		this.logger.info('CognitiveRazorPlugin', '应用层组件初始化完成');
 	}
@@ -731,6 +758,30 @@ export default class CognitiveRazorPlugin extends Plugin {
 		});
 		this.unsubscribers.push(unsubPipeline);
 
+		// 5. 订阅 Vault 文件事件（索引自愈，遵循 SSOT 第 7 章）
+		// 文件删除事件
+		this.registerEvent(
+			this.app.vault.on('delete', (file) => {
+				void this.indexHealer.handleDelete(file);
+			})
+		);
+
+		// 文件重命名/移动事件
+		this.registerEvent(
+			this.app.vault.on('rename', (file, oldPath) => {
+				void this.indexHealer.handleRename(file, oldPath);
+			})
+		);
+
+		// 文件修改事件（带防抖）
+		this.registerEvent(
+			this.app.vault.on('modify', (file) => {
+				this.indexHealer.handleModify(file);
+			})
+		);
+
+		this.logger.debug('CognitiveRazorPlugin', 'Vault 文件事件订阅完成');
+
 		this.logger.info('CognitiveRazorPlugin', '事件订阅完成');
 	}
 
@@ -801,6 +852,7 @@ export default class CognitiveRazorPlugin extends Plugin {
 			taskQueue: this.taskQueue,
 			taskRunner: this.taskRunner,
 			pipelineOrchestrator: this.pipelineOrchestrator,
+			deepenOrchestrator: this.deepenOrchestrator,
 		};
 	}
 }

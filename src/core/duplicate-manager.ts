@@ -15,6 +15,7 @@ import {
   ok,
   err
 } from "../types";
+import { formatCRTimestamp } from "../utils/date-utils";
 
 export class DuplicateManager implements IDuplicateManager {
   private vectorIndex: IVectorIndex;
@@ -96,7 +97,7 @@ export class DuplicateManager implements IDuplicateManager {
       return ok(undefined);
     } catch (error) {
       this.logger.error("DuplicateManager", "初始化失败", error as Error);
-      return err("E304", "初始化重复管理器失败", error);
+      return err("E305", "初始化重复管理器失败", error);
     }
   }
 
@@ -121,7 +122,7 @@ export class DuplicateManager implements IDuplicateManager {
 
     try {
       if (!this.store) {
-        return err("E304", "重复管理器未初始化");
+        return err("E306", "重复管理器未初始化");
       }
 
       const settings = this.settingsStore.getSettings();
@@ -208,7 +209,7 @@ export class DuplicateManager implements IDuplicateManager {
           },
           type,
           similarity: duplicate.similarity,
-          detectedAt: new Date().toISOString(),
+          detectedAt: formatCRTimestamp(),
           status: "pending"
         };
 
@@ -237,7 +238,7 @@ export class DuplicateManager implements IDuplicateManager {
         nodeId,
         type
       });
-      return err("E304", "检测重复失败", error);
+      return err("E305", "检测重复失败", error);
     } finally {
       // 释放类型锁
       this.lockManager.release(lockResult.value);
@@ -258,13 +259,13 @@ export class DuplicateManager implements IDuplicateManager {
   async markAsNonDuplicate(pairId: string): Promise<Result<void>> {
     try {
       if (!this.store) {
-        return err("E304", "重复管理器未初始化");
+        return err("E306", "重复管理器未初始化");
       }
 
       const pairIndex = this.store.pairs.findIndex(p => p.id === pairId);
       if (pairIndex === -1) {
         this.logger.warn("DuplicateManager", "重复对不存在", { pairId });
-        return err("E304", `重复对不存在: ${pairId}`);
+        return err("E307", `重复对不存在: ${pairId}`);
       }
 
       // 更新状态
@@ -291,7 +292,7 @@ export class DuplicateManager implements IDuplicateManager {
       this.logger.error("DuplicateManager", "标记为非重复失败", error as Error, {
         pairId
       });
-      return err("E304", "标记为非重复失败", error);
+      return err("E305", "标记为非重复失败", error);
     }
   }
 
@@ -299,13 +300,13 @@ export class DuplicateManager implements IDuplicateManager {
   async startMerge(pairId: string): Promise<Result<string>> {
     try {
       if (!this.store) {
-        return err("E304", "重复管理器未初始化");
+        return err("E306", "重复管理器未初始化");
       }
 
       const pairIndex = this.store.pairs.findIndex(p => p.id === pairId);
       if (pairIndex === -1) {
         this.logger.warn("DuplicateManager", "重复对不存在", { pairId });
-        return err("E304", `重复对不存在: ${pairId}`);
+        return err("E307", `重复对不存在: ${pairId}`);
       }
 
       // 更新状态
@@ -332,7 +333,7 @@ export class DuplicateManager implements IDuplicateManager {
       this.logger.error("DuplicateManager", "开始合并失败", error as Error, {
         pairId
       });
-      return err("E304", "开始合并失败", error);
+      return err("E305", "开始合并失败", error);
     }
   }
 
@@ -340,13 +341,13 @@ export class DuplicateManager implements IDuplicateManager {
   async completeMerge(pairId: string, keepNodeId: string): Promise<Result<void>> {
     try {
       if (!this.store) {
-        return err("E304", "重复管理器未初始化");
+        return err("E306", "重复管理器未初始化");
       }
 
       const pairIndex = this.store.pairs.findIndex(p => p.id === pairId);
       if (pairIndex === -1) {
         this.logger.warn("DuplicateManager", "重复对不存在", { pairId });
-        return err("E304", `重复对不存在: ${pairId}`);
+        return err("E307", `重复对不存在: ${pairId}`);
       }
 
       const pair = this.store.pairs[pairIndex];
@@ -382,7 +383,7 @@ export class DuplicateManager implements IDuplicateManager {
         pairId,
         keepNodeId
       });
-      return err("E304", "完成合并失败", error);
+      return err("E305", "完成合并失败", error);
     }
   }
 
@@ -408,13 +409,13 @@ export class DuplicateManager implements IDuplicateManager {
   async updateStatus(pairId: string, status: DuplicatePairStatus): Promise<Result<void>> {
     try {
       if (!this.store) {
-        return err("E304", "重复管理器未初始化");
+        return err("E306", "重复管理器未初始化");
       }
 
       const pairIndex = this.store.pairs.findIndex(p => p.id === pairId);
       if (pairIndex === -1) {
         this.logger.warn("DuplicateManager", "重复对不存在", { pairId });
-        return err("E304", `重复对不存在: ${pairId}`);
+        return err("E307", `重复对不存在: ${pairId}`);
       }
 
       // 更新状态
@@ -437,7 +438,7 @@ export class DuplicateManager implements IDuplicateManager {
         pairId,
         status
       });
-      return err("E304", "更新状态失败", error);
+      return err("E305", "更新状态失败", error);
     }
   }
 
@@ -445,13 +446,13 @@ export class DuplicateManager implements IDuplicateManager {
   async removePair(pairId: string): Promise<Result<void>> {
     try {
       if (!this.store) {
-        return err("E304", "重复管理器未初始化");
+        return err("E306", "重复管理器未初始化");
       }
 
       const pairIndex = this.store.pairs.findIndex(p => p.id === pairId);
       if (pairIndex === -1) {
         this.logger.warn("DuplicateManager", "重复对不存在", { pairId });
-        return err("E304", `重复对不存在: ${pairId}`);
+        return err("E307", `重复对不存在: ${pairId}`);
       }
 
       // 移除重复对
@@ -473,7 +474,7 @@ export class DuplicateManager implements IDuplicateManager {
       this.logger.error("DuplicateManager", "移除重复对失败", error as Error, {
         pairId
       });
-      return err("E304", "移除重复对失败", error);
+      return err("E305", "移除重复对失败", error);
     }
   }
 
@@ -509,7 +510,7 @@ export class DuplicateManager implements IDuplicateManager {
   /** 保存存储 */
   private async saveStore(): Promise<Result<void>> {
     if (!this.store) {
-      return err("E304", "存储未初始化");
+      return err("E306", "存储未初始化");
     }
 
     const writeResult = await this.fileStorage.write(

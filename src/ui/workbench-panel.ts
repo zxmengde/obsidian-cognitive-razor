@@ -17,15 +17,23 @@ import type {
   QueueStatus,
   CRType,
   StandardizedConcept,
-  TaskRecord
+  TaskRecord,
+  SnapshotMetadata
 } from "../types";
 import { renderNamingTemplate } from "../core/naming-utils";
 
 import type { TaskQueue } from "../core/task-queue";
-import type { PipelineContext, PipelineEvent } from "../core/pipeline-orchestrator";
+import type { PipelineContext } from "../types";
+import type { PipelineEvent } from "../core/pipeline-orchestrator";
 import type CognitiveRazorPlugin from "../../main";
 import { UndoNotification } from "./undo-notification";
-import { SimpleDiffView, buildLineDiff } from "./diff-view";
+import { renderSideBySideDiff, SimpleDiffView, buildLineDiff } from "./diff-view";
+import { MergeNameSelectionModal } from "./merge-modals";
+import { SimpleInputModal } from "./simple-input-modal";
+import { DeepenModal } from "./deepen-modal";
+import { AbstractModal } from "./abstract-modal";
+import type { DeepenPlan, HierarchicalPlan, AbstractPlan } from "../core/deepen-orchestrator";
+import { formatMessage } from "../core/i18n";
 
 export const WORKBENCH_VIEW_TYPE = "cognitive-razor-workbench";
 
@@ -108,10 +116,10 @@ export class WorkbenchPanel extends ItemView {
     if (!this.plugin) return path;
     try {
       const keys = path.split('.');
-      let current: any = this.plugin.getI18n().t();
+      let current: unknown = this.plugin.getI18n().t();
       for (const key of keys) {
         if (current && typeof current === 'object' && key in current) {
-          current = current[key];
+          current = (current as Record<string, unknown>)[key];
         } else {
           return path;
         }
@@ -119,6 +127,26 @@ export class WorkbenchPanel extends ItemView {
       return typeof current === 'string' ? current : path;
     } catch (e) {
       return path;
+    }
+  }
+
+  /**
+   * 记录错误日志（通过 plugin 获取 logger）
+   */
+  private logError(context: string, error: unknown, extra?: Record<string, unknown>): void {
+    const logger = this.plugin?.getComponents().logger;
+    if (logger) {
+      logger.error("WorkbenchPanel", context, error instanceof Error ? error : new Error(String(error)), extra);
+    }
+  }
+
+  /**
+   * 记录警告日志
+   */
+  private logWarn(context: string, extra?: Record<string, unknown>): void {
+    const logger = this.plugin?.getComponents().logger;
+    if (logger) {
+      logger.warn("WorkbenchPanel", context, extra);
     }
   }
 
@@ -430,6 +458,26 @@ export class WorkbenchPanel extends ItemView {
       }
     });
 
+    // 增量改进入口（改进当前笔记）
+    const improveSection = container.createDiv({ cls: "cr-improve-section" });
+    const improveBtn = improveSection.createEl("button", {
+      text: "改进当前笔记",
+      cls: "cr-btn-secondary",
+      attr: { "aria-label": "改进当前笔记" }
+    });
+    improveBtn.addEventListener("click", () => {
+      void this.handleStartIncremental();
+    });
+
+    const deepenBtn = improveSection.createEl("button", {
+      text: "深化",
+      cls: "cr-btn-secondary",
+      attr: { "aria-label": "深化当前笔记" }
+    });
+    deepenBtn.addEventListener("click", () => {
+      void this.handleStartDeepen();
+    });
+
     // 结果容器
     this.standardizedResultContainer = container.createDiv({ cls: "cr-standardized-result" });
     this.standardizedResultContainer.style.display = "none";
@@ -719,7 +767,7 @@ export class WorkbenchPanel extends ItemView {
 
       new Notice(this.t("workbench.notifications.standardizeComplete"));
     } catch (error) {
-      console.error("标准化失败:", error);
+      this.logError("标准化失败", error);
       const errorMessage = error instanceof Error ? error.message : String(error);
       new Notice(`${this.t("workbench.notifications.standardizeFailed")}: ${errorMessage}`);
     } finally {
@@ -745,6 +793,189 @@ export class WorkbenchPanel extends ItemView {
       await this.handleStandardize(value);
       this.pendingConceptInput = null;
     }
+  }
+
+  /**
+   * 启动增量改进（针对当前激活笔记）
+   */
+  public async handleStartIncremental(): Promise<void> {
+    if (!this.plugin) {
+      new Notice(this.t("workbench.notifications.pluginNotInitialized"));
+      return;
+    }
+
+    const activeFile = this.app.workspace.getActiveFile();
+    if (!activeFile || activeFile.extension !== "md") {
+      new Notice("请先打开一个 Markdown 笔记");
+      return;
+    }
+
+    const orchestrator = this.plugin.getComponents().pipelineOrchestrator;
+    if (!orchestrator) {
+      new Notice("管线编排器未初始化");
+      return;
+    }
+
+    const modal = new SimpleInputModal(this.app, {
+      title: "增量改进",
+      placeholder: "请输入改进指令（例如：补充更多示例、优化定义、添加相关理论）",
+      onSubmit: async (instruction) => {
+        const result = orchestrator.startIncrementalPipeline(activeFile.path, instruction);
+        if (result.ok) {
+          new Notice("增量改进任务已启动，请等待 AI 生成改进内容...");
+        } else {
+          new Notice(`启动失败: ${result.error.message}`);
+        }
+      }
+    });
+
+    modal.open();
+  }
+
+  /**
+   * 启动深化（层级/抽象）
+   */
+  public async handleStartDeepen(file?: TFile): Promise<void> {
+    if (!this.plugin) {
+      new Notice(this.t("workbench.notifications.pluginNotInitialized"));
+      return;
+    }
+
+    const targetFile = file ?? this.app.workspace.getActiveFile();
+    if (!targetFile || targetFile.extension !== "md") {
+      new Notice("请先打开一个 Markdown 笔记");
+      return;
+    }
+
+    const components = this.plugin.getComponents();
+    const orchestrator = components.deepenOrchestrator;
+    if (!orchestrator) {
+      new Notice(this.t("deepen.notInitialized"));
+      return;
+    }
+
+    const prepareResult = await orchestrator.prepare(targetFile);
+    if (!prepareResult.ok) {
+      new Notice(prepareResult.error.message);
+      return;
+    }
+
+    const plan = prepareResult.value as DeepenPlan;
+    if (plan.mode === "hierarchical") {
+      this.openHierarchicalDeepen(plan as HierarchicalPlan);
+    } else if (plan.mode === "abstract") {
+      this.openAbstractDeepen(plan as AbstractPlan);
+    }
+  }
+
+  private openHierarchicalDeepen(plan: HierarchicalPlan): void {
+    if (!this.plugin) return;
+    const orchestrator = this.plugin.getComponents().deepenOrchestrator;
+    if (!orchestrator) {
+      new Notice(this.t("deepen.notInitialized"));
+      return;
+    }
+
+    const labels = {
+      titlePrefix: this.t("deepen.titlePrefix"),
+      stats: {
+        total: this.t("deepen.stats.total"),
+        creatable: this.t("deepen.stats.creatable"),
+        existing: this.t("deepen.stats.existing"),
+        invalid: this.t("deepen.stats.invalid")
+      },
+      selectAll: this.t("deepen.selectAll"),
+      deselectAll: this.t("deepen.deselectAll"),
+      confirm: this.t("deepen.confirm"),
+      cancel: this.t("common.cancel"),
+      existing: this.t("deepen.status.existing"),
+      invalid: this.t("deepen.status.invalid"),
+      looseStructureHint: this.t("deepen.looseStructureHint"),
+      empty: this.t("deepen.empty")
+    };
+
+    const modal = new DeepenModal(this.app, {
+      parentTitle: plan.parentTitle,
+      parentType: plan.parentType,
+      currentType: plan.currentType,
+      candidates: plan.candidates,
+      looseStructure: plan.looseStructure,
+      labels,
+      onConfirm: async (selected) => {
+        const result = await orchestrator.createFromHierarchical(plan, selected);
+        if (result.ok) {
+          const failed = result.value.failed.length;
+          const started = result.value.started;
+          const msg = failed > 0
+            ? formatMessage(this.t("deepen.startedWithFailures"), { started, failed })
+            : formatMessage(this.t("deepen.started"), { count: started });
+          new Notice(msg);
+        } else {
+          new Notice(result.error.message);
+        }
+      },
+      onCancel: () => {
+        // no-op
+      }
+    });
+
+    modal.open();
+  }
+
+  private openAbstractDeepen(plan: AbstractPlan): void {
+    if (!this.plugin) return;
+    const orchestrator = this.plugin.getComponents().deepenOrchestrator;
+    if (!orchestrator) {
+      new Notice(this.t("deepen.notInitialized"));
+      return;
+    }
+
+    const labels = {
+      titlePrefix: this.t("deepen.abstractTitlePrefix"),
+      instruction: this.t("deepen.abstractInstruction"),
+      similarity: this.t("deepen.similarity"),
+      confirm: this.t("deepen.abstractConfirm"),
+      cancel: this.t("common.cancel"),
+      empty: this.t("deepen.empty")
+    };
+
+    const modal = new AbstractModal(this.app, {
+      currentTitle: plan.currentTitle,
+      currentType: plan.currentType,
+      candidates: plan.candidates,
+      labels,
+      onConfirm: async (selected) => {
+        const result = await orchestrator.createFromAbstract(plan, selected);
+        if (result.ok) {
+          new Notice(formatMessage(this.t("deepen.started"), { count: 1 }));
+        } else {
+          new Notice(result.error.message);
+        }
+      },
+      onCancel: () => {
+        // no-op
+      }
+    });
+
+    modal.open();
+  }
+
+  /**
+   * 聚焦到“重复概念”区域
+   */
+  public revealDuplicates(): void {
+    this.refreshDuplicates();
+    const section = this.containerEl.querySelector(".cr-duplicates-section") as HTMLElement | null;
+    section?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }
+
+  /**
+   * 打开操作历史（当前实现：合并历史）
+   */
+  public openOperationHistory(): void {
+    if (!this.plugin) return;
+    const modal = new MergeHistoryModal(this.app, this.plugin);
+    modal.open();
   }
 
   /**
@@ -889,7 +1120,7 @@ export class WorkbenchPanel extends ItemView {
       this.hideTypeConfidenceTable();
       this.resetConceptInput();
     } catch (error) {
-      console.error("创建概念失败:", error);
+      this.logError("创建概念失败", error);
       const errorMessage = error instanceof Error ? error.message : String(error);
       new Notice(`${this.t("workbench.notifications.createFailed")}: ${errorMessage}`);
     }
@@ -964,12 +1195,7 @@ export class WorkbenchPanel extends ItemView {
       const summary = this.standardizedResultContainer.createDiv({ cls: "cr-pipeline-summary" });
       summary.createEl("div", { text: `管线类型：${ctx.kind === "incremental" ? "增量改进" : "合并"}` });
       summary.createEl("div", { text: `阶段：${stageLabel[ctx.stage] || ctx.stage}` });
-      if (ctx.groundingResult) {
-        const ground = summary.createDiv({ cls: "cr-grounding" });
-        ground.setAttr("aria-live", "polite");
-        ground.createEl("div", { text: this.t("workbench.pipeline.groundingResult"), cls: "cr-muted" });
-        ground.createEl("div", { text: `${ctx.groundingResult.overall_assessment ?? "unknown"}` });
-      }
+      this.renderGroundingResult(summary, ctx);
 
       const actions = summary.createDiv({ cls: "cr-pipeline-actions" });
       const previewBtn = actions.createEl("button", {
@@ -1124,9 +1350,25 @@ export class WorkbenchPanel extends ItemView {
     }
 
     const { previousContent, newContent, targetPath } = preview.value;
+    const titlePrefix = ctx.kind === "merge"
+      ? "合并预览"
+      : ctx.kind === "incremental"
+        ? "增量改进预览"
+        : this.t("workbench.pipeline.previewWrite");
+    const cancelNotice = ctx.kind === "incremental"
+      ? "已取消改进"
+      : ctx.kind === "merge"
+        ? this.t("workbench.notifications.mergeCancelled")
+        : "已取消写入";
+    const successNotice = ctx.kind === "incremental"
+      ? "改进完成"
+      : ctx.kind === "merge"
+        ? "合并完成"
+        : this.t("workbench.notifications.writeSuccess");
+
     const diffView = new SimpleDiffView(
       this.app,
-      `${this.t("workbench.pipeline.previewWrite")}: ${targetPath}`,
+      `${titlePrefix}: ${targetPath}`,
       previousContent,
       newContent,
       async () => {
@@ -1134,15 +1376,77 @@ export class WorkbenchPanel extends ItemView {
         if (!result.ok) {
           new Notice(`${this.t("workbench.notifications.writeFailed")}: ${result.error.message}`);
         } else {
-          new Notice(this.t("workbench.notifications.writeSuccess"));
+          new Notice(successNotice);
         }
       },
       () => {
-        new Notice(this.t("workbench.notifications.mergeCancelled"));
+        new Notice(cancelNotice);
       }
     );
 
     diffView.open();
+  }
+
+  private renderGroundingResult(container: HTMLElement, context: PipelineContext): void {
+    if (!context.groundingResult) return;
+
+    const result = context.groundingResult as Record<string, any>;
+    const wrapper = container.createDiv({ cls: "cr-grounding-result" });
+    wrapper.setAttr("aria-live", "polite");
+
+    wrapper.createEl("h4", { text: "Ground 校验结果" });
+
+    const assessment = wrapper.createDiv({ cls: "cr-assessment" });
+    assessment.createEl("strong", { text: "总体评估: " });
+    assessment.createSpan({
+      text: String(result.overall_assessment ?? "unknown"),
+      cls: this.getAssessmentClass(result.overall_assessment)
+    });
+
+    if (typeof result.confidence_score === "number") {
+      const score = wrapper.createDiv({ cls: "cr-confidence-score" });
+      score.createEl("strong", { text: "置信度: " });
+      score.createSpan({ text: `${(result.confidence_score * 100).toFixed(0)}%` });
+    }
+
+    const issues = Array.isArray(result.issues) ? (result.issues as any[]) : [];
+    if (issues.length > 0) {
+      wrapper.createEl("h5", { text: "发现的问题" });
+      const bySeverity = new Map<string, any[]>();
+      for (const issue of issues) {
+        const severity = String(issue?.severity ?? "unknown");
+        if (!bySeverity.has(severity)) bySeverity.set(severity, []);
+        bySeverity.get(severity)!.push(issue);
+      }
+
+      const list = wrapper.createDiv({ cls: "cr-issues-groups" });
+      for (const [severity, items] of bySeverity.entries()) {
+        const group = list.createDiv({ cls: "cr-issues-group" });
+        group.createEl("div", { text: severity, cls: "cr-issues-severity" });
+        const ul = group.createEl("ul", { cls: "cr-issues-list" });
+        items.forEach((issue) => {
+          const li = ul.createEl("li");
+          li.createSpan({ text: String(issue?.description ?? "") });
+        });
+      }
+    }
+
+    const recommendations = Array.isArray(result.recommendations)
+      ? (result.recommendations as any[])
+      : [];
+    if (recommendations.length > 0) {
+      wrapper.createEl("h5", { text: "改进建议" });
+      const ul = wrapper.createEl("ul", { cls: "cr-recommendations-list" });
+      recommendations.forEach((rec) => ul.createEl("li", { text: String(rec) }));
+    }
+  }
+
+  private getAssessmentClass(assessment: unknown): string {
+    const v = String(assessment ?? "").toLowerCase();
+    if (["pass", "ok", "good", "clean"].includes(v)) return "cr-assessment-ok";
+    if (["warn", "warning", "uncertain"].includes(v)) return "cr-assessment-warn";
+    if (["fail", "error", "bad"].includes(v)) return "cr-assessment-fail";
+    return "cr-assessment-unknown";
   }
 
   /**
@@ -1410,7 +1714,7 @@ export class WorkbenchPanel extends ItemView {
       // 创建预览模态框
       this.showDuplicatePreviewModal(pair, contentA, contentB);
     } catch (error) {
-      console.error("显示预览失败:", error);
+      this.logError("显示预览失败", error, { pairId: pair.id });
       const errorMessage = error instanceof Error ? error.message : String(error);
       new Notice(`${this.t("workbench.notifications.previewFailed")}: ${errorMessage}`);
     }
@@ -1515,6 +1819,14 @@ export class WorkbenchPanel extends ItemView {
       undoBtn.addEventListener("click", async () => {
         await this.handleUndoSnapshot(snapshot.id);
       });
+      const viewBtn = item.createEl("button", {
+        text: this.t("workbench.recentOps.viewSnapshot"),
+        cls: "cr-view-snapshot-btn cr-btn-small",
+        attr: { "aria-label": `${this.t("workbench.recentOps.viewSnapshot")}: ${description}` }
+      });
+      viewBtn.addEventListener("click", async () => {
+        await this.handleViewSnapshotDiff(snapshot);
+      });
     });
 
     // 如果有更多快照，显示提示
@@ -1586,10 +1898,47 @@ export class WorkbenchPanel extends ItemView {
       // 刷新列表
       await this.refreshRecentOps();
     } catch (error) {
-      console.error("撤销操作失败:", error);
+      this.logError("撤销操作失败", error, { snapshotId });
       const errorMessage = error instanceof Error ? error.message : String(error);
       new Notice(`${this.t("workbench.notifications.undoFailed")}: ${errorMessage}`);
     }
+  }
+
+  private async handleViewSnapshotDiff(snapshot: SnapshotMetadata): Promise<void> {
+    if (!this.plugin) {
+      new Notice(this.t("workbench.notifications.pluginNotInitialized"));
+      return;
+    }
+
+    const undoManager = this.plugin.getComponents().undoManager;
+    const snapshotResult = await undoManager.restoreSnapshot(snapshot.id);
+    if (!snapshotResult.ok) {
+      new Notice(`${this.t("workbench.notifications.undoFailed")}: ${snapshotResult.error.message}`);
+      return;
+    }
+
+    const snapshotContent = snapshotResult.value.content;
+    let currentContent = snapshotContent;
+    const file = this.app.vault.getAbstractFileByPath(snapshot.path);
+    if (file && file instanceof TFile) {
+      currentContent = await this.app.vault.read(file);
+    }
+
+    const modal = new SnapshotDiffModal(this.app, {
+      snapshot,
+      snapshotContent,
+      currentContent,
+      onRestore: async () => {
+        const restoreResult = await undoManager.restoreSnapshotToFile(snapshot.id);
+        if (!restoreResult.ok) {
+          new Notice(`${this.t("workbench.notifications.undoFailed")}: ${restoreResult.error.message}`);
+          return;
+        }
+        new Notice(this.t("workbench.notifications.undoSuccess"));
+        await this.refreshRecentOps();
+      }
+    });
+    modal.open();
   }
 
   /**
@@ -1743,7 +2092,7 @@ export class WorkbenchPanel extends ItemView {
       // 刷新操作历史列表
       await this.refreshRecentOps();
     } catch (error) {
-      console.error("撤销操作失败:", error);
+      this.logError("撤销操作失败（Toast）", error, { snapshotId });
       const errorMessage = error instanceof Error ? error.message : String(error);
       new Notice(`${this.t("workbench.notifications.undoFailed")}: ${errorMessage}`);
     }
@@ -1781,7 +2130,7 @@ export class WorkbenchPanel extends ItemView {
       // 显示合并预览 DiffView
       this.showMergePreviewDiffView(pair, contentA, contentB);
     } catch (error) {
-      console.error("显示合并预览失败:", error);
+      this.logError("显示合并预览失败", error, { pairId: pair.id });
       const errorMessage = error instanceof Error ? error.message : String(error);
       new Notice(`${this.t("workbench.notifications.previewFailed")}: ${errorMessage}`);
     }
@@ -1815,10 +2164,57 @@ export class WorkbenchPanel extends ItemView {
   }
 
   /**
-   * 确认合并（已弃用）
+   * 确认合并
+   * 
+   * 显示名称选择 Modal，用户选择后启动合并管线
    */
   private async confirmMerge(pair: DuplicatePair): Promise<void> {
-    new Notice("合并功能已被弃用");
+    if (!this.plugin) {
+      new Notice(this.t("workbench.notifications.pluginNotInitialized"));
+      return;
+    }
+
+    const components = this.plugin.getComponents();
+    const orchestrator = components.pipelineOrchestrator;
+
+    if (!orchestrator) {
+      new Notice("管线编排器未初始化");
+      return;
+    }
+
+    // 显示名称选择 Modal
+    const modal = new MergeNameSelectionModal(
+      this.app,
+      pair,
+      {
+        onConfirm: async (finalFileName: string, keepNodeId: string) => {
+          try {
+            // 启动合并管线
+            const result = orchestrator.startMergePipeline(pair, keepNodeId, finalFileName);
+            
+            if (!result.ok) {
+              new Notice(`启动合并失败: ${result.error.message}`);
+              return;
+            }
+
+            new Notice(`合并任务已启动，请等待 AI 生成合并内容...`);
+            
+            // 更新重复对状态为 merging
+            const duplicateManager = components.duplicateManager;
+            if (duplicateManager) {
+              await duplicateManager.updateStatus(pair.id, "merging");
+            }
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            new Notice(`启动合并失败: ${errorMessage}`);
+          }
+        },
+        onCancel: () => {
+          new Notice(this.t("workbench.notifications.mergeCancelled"));
+        }
+      }
+    );
+    modal.open();
   }
 
   /**
@@ -1853,7 +2249,7 @@ export class WorkbenchPanel extends ItemView {
       // 刷新重复列表
       this.refreshDuplicates();
     } catch (error) {
-      console.error("忽略重复对失败:", error);
+      this.logError("忽略重复对失败", error, { pairId: pair.id });
       const errorMessage = error instanceof Error ? error.message : String(error);
       new Notice(`${this.t("workbench.notifications.dismissFailed")}: ${errorMessage}`);
     }
@@ -1875,7 +2271,7 @@ export class WorkbenchPanel extends ItemView {
       const pairs = duplicateManager.getPendingPairs();
       this.updateDuplicates(pairs);
     } catch (error) {
-      console.error("刷新重复列表失败:", error);
+      this.logWarn("刷新重复列表失败", { error });
     }
   }
 
@@ -1933,7 +2329,14 @@ export class WorkbenchPanel extends ItemView {
       if (event.type === "pipeline_failed" && event.context.error) {
         new Notice(event.context.error.message, 8000); // 显示8秒
       }
-      
+
+      // merge / incremental 进入待写入确认阶段时：自动弹出 Diff 预览
+      if (event.type === "confirmation_required" &&
+          (event.context.kind === "merge" || event.context.kind === "incremental") &&
+          event.context.stage === "awaiting_write_confirm") {
+        void this.showWritePreview(event.context);
+      }
+       
       this.updatePipelineContexts(po.getActivePipelines());
     });
   }
@@ -2817,5 +3220,74 @@ class MergeHistoryModal extends Modal {
   onClose(): void {
     const { contentEl } = this;
     contentEl.empty();
+  }
+}
+
+/**
+ * 快照 Diff 预览模态框
+ */
+class SnapshotDiffModal extends Modal {
+  constructor(
+    app: App,
+    private options: {
+      snapshot: SnapshotMetadata;
+      snapshotContent: string;
+      currentContent: string;
+      onRestore: () => Promise<void>;
+    }
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass("cr-snapshot-diff");
+    contentEl.addClass("cr-scope");
+
+    contentEl.createEl("h2", {
+      text: `快照预览: ${this.options.snapshot.id}`
+    });
+    contentEl.createEl("p", {
+      text: `创建时间：${this.formatTime(this.options.snapshot.created)}`
+    });
+
+    const diffContainer = contentEl.createDiv({ cls: "cr-snapshot-diff-panel" });
+    renderSideBySideDiff(
+      diffContainer,
+      this.options.snapshotContent,
+      this.options.currentContent,
+      "快照版本",
+      "当前版本"
+    );
+
+    const actions = contentEl.createDiv({ cls: "cr-diff-actions" });
+
+    const restoreBtn = actions.createEl("button", {
+      text: "恢复此快照",
+      cls: "mod-cta"
+    });
+    restoreBtn.addEventListener("click", async () => {
+      restoreBtn.disabled = true;
+      await this.options.onRestore();
+      this.close();
+    });
+
+    const closeBtn = actions.createEl("button", {
+      text: "关闭"
+    });
+    closeBtn.addEventListener("click", () => {
+      this.close();
+    });
+  }
+
+  onClose(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+  }
+
+  private formatTime(timestamp: string): string {
+    const date = new Date(timestamp);
+    return date.toLocaleString("zh-CN");
   }
 }

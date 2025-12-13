@@ -21,7 +21,7 @@ data.json
 data/
 .kiro/
 .agent/
-
+.claude/
 # Exclude macOS Finder (System Explorer) View States
 .DS_Store
 

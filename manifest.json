@@ -7,5 +7,5 @@
 	"author": "Cognitive Razor Team",
 	"authorUrl": "https://github.com/your-username/obsidian-cognitive-razor",
 	"fundingUrl": "https://github.com/sponsors/your-username",
-	"isDesktopOnly": false
+	"isDesktopOnly": true
 }

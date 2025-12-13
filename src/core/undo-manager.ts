@@ -12,6 +12,7 @@ import {
   ok,
   err
 } from "../types";
+import { formatCRTimestamp } from "../utils/date-utils";
 import { createHash } from "crypto";
 
 export class UndoManager implements IUndoManager {
@@ -186,7 +187,7 @@ export class UndoManager implements IUndoManager {
         taskId: taskId,
         path: filePath,
         content,
-        created: new Date().toISOString(),
+        created: formatCRTimestamp(),
         fileSize,
         checksum
       };
@@ -425,8 +426,12 @@ export class UndoManager implements IUndoManager {
       const expiredSnapshots: string[] = [];
 
       for (const snapshot of this.index.snapshots) {
-        const createdTime = new Date(snapshot.created).getTime();
-        if (now - createdTime > maxAgeMs) {
+      const createdTime = new Date(snapshot.created.replace(" ", "T")).getTime();
+      if (Number.isNaN(createdTime)) {
+        continue;
+      }
+
+      if (now - createdTime > maxAgeMs) {
           expiredSnapshots.push(snapshot.id);
         }
       }
@@ -567,9 +572,9 @@ export class UndoManager implements IUndoManager {
     }
     
     // 验证 ISO 8601 时间格式
-    const dateRegex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}Z$/;
+    const dateRegex = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
     if (!dateRegex.test(snapshot.created)) {
-      return err("E303", "创建时间必须是 ISO 8601 格式");
+      return err("E303", "创建时间必须是 yyyy-MM-DD HH:mm:ss 格式");
     }
     
     return ok(undefined);

@@ -222,7 +222,7 @@ export class TaskRunner implements ITaskRunner {
           result = await this.executeGround(task, abortController.signal);
           break;
         default:
-          result = err("E304", `未知的任务类型: ${task.taskType}`);
+          result = err("E306", `未知的任务类型: ${task.taskType}`);
       }
 
       const elapsedTime = Date.now() - startTime;
@@ -249,7 +249,7 @@ export class TaskRunner implements ITaskRunner {
         elapsedTime
       });
 
-      return err("E304", "任务执行异常", error);
+      return err("E305", "任务执行异常", error);
     } finally {
       this.abortControllers.delete(task.id);
     }
@@ -329,7 +329,7 @@ export class TaskRunner implements ITaskRunner {
   /** 更新笔记状态 */
   async updateNoteStatus(filePath: string, newStatus: NoteState): Promise<Result<void>> {
     if (!this.fileStorage) {
-      return err("E304", "FileStorage 未配置");
+      return err("E306", "FileStorage 未配置");
     }
 
     try {
@@ -427,7 +427,7 @@ export class TaskRunner implements ITaskRunner {
         keepNodeId,
         deleteNodeId
       });
-      return err("E304", "完成合并流程失败", error);
+      return err("E305", "完成合并流程失败", error);
     }
   }
 
@@ -557,7 +557,7 @@ export class TaskRunner implements ITaskRunner {
       this.logger.error("TaskRunner", "执行 standardizeClassify 失败", error as Error, {
         taskId: task.id
       });
-      return err("E304", "执行 standardizeClassify 失败", error);
+      return err("E305", "执行 standardizeClassify 失败", error);
     }
   }
 
@@ -640,7 +640,7 @@ export class TaskRunner implements ITaskRunner {
       this.logger.error("TaskRunner", "执行 enrich 失败", error as Error, {
         taskId: task.id
       });
-      return err("E304", "执行 enrich 失败", error);
+      return err("E305", "执行 enrich 失败", error);
     }
   }
 
@@ -707,7 +707,7 @@ export class TaskRunner implements ITaskRunner {
       this.logger.error("TaskRunner", "执行 embedding 失败", error as Error, {
         taskId: task.id
       });
-      return err("E304", "执行 embedding 失败", error);
+      return err("E305", "执行 embedding 失败", error);
     }
   }
 
@@ -719,9 +719,11 @@ export class TaskRunner implements ITaskRunner {
     try {
       const conceptType = (task.payload.conceptType as CRType) || "Entity";
       const schema = this.getSchema(conceptType);
+      const sources = typeof task.payload.sources === "string" ? task.payload.sources : "";
 
       const slots = {
         CTX_META: this.buildMetaContext(task.payload),
+        CTX_SOURCES: sources,
         CTX_LANGUAGE: this.getLanguage()
       };
 
@@ -798,7 +800,7 @@ export class TaskRunner implements ITaskRunner {
       this.logger.error("TaskRunner", "执行 reason:new 失败", error as Error, {
         taskId: task.id
       });
-      return err("E304", "执行 reason:new 失败", error);
+      return err("E305", "执行 reason:new 失败", error);
     }
   }
 
@@ -897,7 +899,7 @@ export class TaskRunner implements ITaskRunner {
       this.logger.error("TaskRunner", "执行 ground 失败", error as Error, {
         taskId: task.id
       });
-      return err("E304", "执行 ground 失败", error);
+      return err("E305", "执行 ground 失败", error);
     }
   }
 

@@ -8,33 +8,33 @@
     <philosophical_core>
         You view the world through specific "Forms of Existence". For this task, you must strictly adhere to the definitions of **Mechanism**, **Entity**, and **Theory**:
 
-        1.  **Mechanism (The Process | 机制)**
+        1. **Mechanism (The Process | 机制)**
             *   **Essence**: Mechanism is the "Rule" or "Time's Chain". It answers "How does A cause B?". It describes the dynamic rules of interaction between entities.
             *   **Metaphor**: The script, the gears, the algorithm, the chemical reaction equation.
             *   **Function**: It transforms the state of Entities. It is the "Verb" of the cognitive world.
 
-        2.  **Entity (The Object | 对象)**
+        2. **Entity (The Object | 对象)**
             *   **Essence**: Entity is the "Actor". It answers "What is being acted upon?".
             *   **Metaphor**: The variable, the chess piece, the reactant.
             *   **Relation**: Mechanisms cannot exist without Entities to operate on.
 
-        3.  **Theory (The Context | 理论)**
+        3. **Theory (The Context | 理论)**
             *   **Essence**: Theory is the "Blueprint". It provides the logical context in which this mechanism is valid.
     </philosophical_core>
 
     <naming_morphology>
         **CRITICAL: You must strictly adhere to the following naming conventions for all output fields.**
 
-        1.  **General Format**:
+        1. **General Format**:
             *   All names must be output as: `Standard Chinese Name (Standard English Name)`
 
-        2.  **Mechanism Naming (The Action)**:
+        2. **Mechanism Naming (The Action)**:
             *   *Paradigm*: Focus on the process, change, or logic of interaction.
             *   *Keywords*: ...作用 (Interaction), ...效应 (Effect), ...循环 (Cycle/Loop), ...机制 (Mechanism), ...过程 (Process), ...法 (Method/Algorithm).
             *   *Grammar*: Often Nominalized Verbs (Gerunds).
             *   *Example*: `自然选择 (Natural Selection)`, `光电效应 (Photoelectric Effect)`, `梯度下降 (Gradient Descent)`.
 
-        3.  **Entity Naming (The Operand)**:
+        3. **Entity Naming (The Operand)**:
             *   *Paradigm*: Concrete or Abstract Nouns.
             *   *Example*: `电子 (Electron)`, `神经递质 (Neurotransmitter)`.
     </naming_morphology>
@@ -42,16 +42,16 @@
     <decomposition_logic>
         **The Algorithm for Analysis**:
 
-        1.  **Causal Chain Reconstruction (Step-by-Step)**:
+        1. **Causal Chain Reconstruction (Step-by-Step)**:
             *   **Rule**: You must break down the mechanism into discrete, atomic steps.
             *   **Flow**: $Trigger \rightarrow Step_1 \rightarrow Step_2 \rightarrow ... \rightarrow Outcome$.
             *   **Granularity**: Do not skip logical leaps. If A leads to C, you must identify B.
 
-        2.  **System Dynamics (Regulation & Entropy)**:
+        2. **System Dynamics (Regulation & Entropy)**:
             *   **Modulation**: Mechanisms are not static; they are regulated. What speeds it up (Catalysts)? What slows it down (Inhibitors)?
             *   **Side Effects**: Every process generates intended outputs and unintended byproducts (Externalities/Entropy). You must identify both.
 
-        3.  **Contextual Boundaries**:
+        3. **Contextual Boundaries**:
             *   **Termination**: When does it stop? (Depletion of input, Equilibrium, or External Blockage).
             *   **Requirement**: What other mechanisms must be present for this to work? (Dependencies).
     </decomposition_logic>
@@ -59,12 +59,12 @@
     <content_depth_standards>
         **You must push the model's cognitive resolution to the limit. Do not summarize; explicate.**
 
-        1.  **Process Resolution**: Do not just say "It happens". Explain **HOW**. Use the language of dynamics (flow, transfer, transformation, modulation).
-        2.  **Teleology & Function**: Why does this mechanism exist in the system? Is it for homeostasis, growth, defense, or reproduction?
-        3.  **Holistic Understanding**: How does this mechanism fit into the "Clockwork of Reality"? Connect the micro-process to the macro-phenomenon.
+        1. **Process Resolution**: Do not just say "It happens". Explain **HOW**. Use the language of dynamics (flow, transfer, transformation, modulation).
+        2. **Teleology & Function**: Why does this mechanism exist in the system? Is it for homeostasis, growth, defense, or reproduction?
+        3. **Holistic Understanding**: How does this mechanism fit into the "Clockwork of Reality"? Connect the micro-process to the macro-phenomenon.
     </content_depth_standards>
     
-{{BASE_OUTPUT_FORMAT}}
+    {{BASE_OUTPUT_FORMAT}}
 
     <output_schema>
         {
@@ -120,20 +120,8 @@
     </output_schema>
 </system_instructions>
 
-<task>
-Analyze the input mechanism provided in the context slots.
-- If CTX_SOURCES is provided, treat these note bodies as primary evidence and synthesize a more abstract concept grounded in them.
-1.  **Identify** the Trigger, the Operands (Entities), and the Outcome.
-2.  **Decompose** the process into a high-resolution `causal_chain`.
-3.  **Analyze** the Dynamics: Inputs, Outputs, Modulation, and Side Effects.
-4.  **Generate** the JSON output strictly following the schema, naming morphology, and depth standards.
-</task>
-
 {{BASE_WRITING_STYLE}}
 
 {{BASE_ANTI_PATTERNS}}
 
-<context_slots>
-{{CTX_META}}
-{{CTX_SOURCES}}
-</context_slots>
+{{OPERATION_BLOCK}}

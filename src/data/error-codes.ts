@@ -3,8 +3,8 @@
  * E001-E010: 内容错误（可重试）
  * E100-E102: 网络错误（可重试）
  * E103: 认证错误（终止）
- * E200-E201: 安全/能力错误（终止）
- * E300-E304: 文件系统错误（终止）
+ * E200-E201, E304-E307, E400: 能力/状态/内部错误（终止）
+ * E300-E303: 文件系统错误（终止）
  */
 
 // 错误码枚举
@@ -49,15 +49,25 @@ export const AuthErrorCodes = {
   E103: "E103",
 } as const;
 
-/** 能力错误码 (E200-E201) - 终止错误 */
+/** 能力/状态/内部错误码 (E200-E201, E304-E307, E400) - 终止错误 */
 export const CapabilityErrorCodes = {
   /** 触发安全边界 */
   E200: "E200",
-  /** Provider 能力不足 */
+  /** Provider 能力不足或不可用 */
   E201: "E201",
+  /** Provider 不存在或未配置 */
+  E304: "E304",
+  /** 内部错误/未预期异常 */
+  E305: "E305",
+  /** 状态/前置条件不满足或操作不允许 */
+  E306: "E306",
+  /** 资源/对象不存在 */
+  E307: "E307",
+  /** 任务/锁冲突或并发限制 */
+  E400: "E400",
 } as const;
 
-/** 文件系统错误码 (E300-E304) - 终止错误 */
+/** 文件系统错误码 (E300-E303) - 终止错误 */
 export const FileSystemErrorCodes = {
   /** 文件写入失败 */
   E300: "E300",
@@ -67,8 +77,6 @@ export const FileSystemErrorCodes = {
   E302: "E302",
   /** 快照恢复失败 */
   E303: "E303",
-  /** Provider 不存在 */
-  E304: "E304",
 } as const;
 
 // 错误码类型
@@ -225,7 +233,7 @@ export const ERROR_CODE_INFO: Record<ErrorCode, ErrorCodeInfo> = {
     fixSuggestion: "请前往设置页面检查并更新 API Key。",
   },
 
-  // 能力错误 (E200-E201)
+  // 能力/状态/内部错误 (E200-E201, E304-E307, E400)
   E200: {
     code: "E200",
     name: "SAFETY_VIOLATION",
@@ -237,13 +245,55 @@ export const ERROR_CODE_INFO: Record<ErrorCode, ErrorCodeInfo> = {
   E201: {
     code: "E201",
     name: "CAPABILITY_MISMATCH",
-    description: "Provider 能力不足",
+    description: "Provider 能力不足或不可用",
     category: "CAPABILITY",
     retryable: false,
     fixSuggestion: "请选择支持此功能的 Provider 或检查配置。",
   },
 
-  // 文件系统错误 (E300-E304)
+  // 能力/状态/内部错误续
+  E304: {
+    code: "E304",
+    name: "PROVIDER_NOT_FOUND",
+    description: "Provider 不存在或未配置",
+    category: "CAPABILITY",
+    retryable: false,
+    fixSuggestion: "请检查 Provider 配置是否正确。",
+  },
+  E305: {
+    code: "E305",
+    name: "INTERNAL_ERROR",
+    description: "内部错误或未预期异常",
+    category: "CAPABILITY",
+    retryable: false,
+    fixSuggestion: "请重试或重启插件，如持续出现请反馈日志。",
+  },
+  E306: {
+    code: "E306",
+    name: "INVALID_STATE",
+    description: "状态不正确或前置条件不满足",
+    category: "CAPABILITY",
+    retryable: false,
+    fixSuggestion: "请按流程操作或检查当前状态。",
+  },
+  E307: {
+    code: "E307",
+    name: "NOT_FOUND",
+    description: "资源或对象不存在",
+    category: "CAPABILITY",
+    retryable: false,
+    fixSuggestion: "请检查目标是否仍存在或刷新后重试。",
+  },
+  E400: {
+    code: "E400",
+    name: "TASK_CONFLICT",
+    description: "任务/锁冲突或并发限制",
+    category: "CAPABILITY",
+    retryable: false,
+    fixSuggestion: "请等待当前任务完成，或取消后再试。",
+  },
+
+  // 文件系统错误 (E300-E303)
   E300: {
     code: "E300",
     name: "FILE_WRITE_ERROR",
@@ -275,14 +325,6 @@ export const ERROR_CODE_INFO: Record<ErrorCode, ErrorCodeInfo> = {
     category: "FILE_SYSTEM",
     retryable: false,
     fixSuggestion: "快照恢复失败，请检查快照文件是否完整。",
-  },
-  E304: {
-    code: "E304",
-    name: "PROVIDER_NOT_FOUND",
-    description: "Provider 不存在",
-    category: "FILE_SYSTEM",
-    retryable: false,
-    fixSuggestion: "请检查 Provider 配置是否正确。",
   },
 };
 
@@ -333,9 +375,9 @@ export function isCapabilityErrorCode(code: string): boolean {
   return code in CapabilityErrorCodes || /^E20[0-1]$/.test(code);
 }
 
-/** 检查是否为文件系统错误 (E300-E304) */
+/** 检查是否为文件系统错误 (E300-E303) */
 export function isFileSystemErrorCode(code: string): boolean {
-  return code in FileSystemErrorCodes || /^E30[0-4]$/.test(code);
+  return code in FileSystemErrorCodes || /^E30[0-3]$/.test(code);
 }
 
 /** 检查是否为终止错误（不可重试） */

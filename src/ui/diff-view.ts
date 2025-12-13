@@ -266,7 +266,7 @@ class DiffView extends Modal {
 
     const diffContent = contentArea.createDiv({ cls: "cr-preview-diff" });
     diffContent.style.display = "none";
-    this.renderSideBySideDiff(diffContent);
+    this.renderEmbeddedSideBySideDiff(diffContent);
 
     // 标签页切换逻辑
     originalTab.addEventListener("click", () => {
@@ -294,90 +294,14 @@ class DiffView extends Modal {
   /**
    * 渲染并排差异视图（带行号和语法高亮）
    */
-  private renderSideBySideDiff(container: HTMLElement): void {
-    const diffGrid = container.createDiv({ cls: "cr-diff-grid" });
-
-    // 左侧：原始内容
-    const leftPanel = diffGrid.createDiv({ cls: "cr-diff-panel" });
-    leftPanel.createEl("div", { text: "原始内容", cls: "cr-panel-title" });
-    const leftContent = leftPanel.createDiv({ cls: "cr-panel-content-wrapper" });
-    this.renderContentWithLineNumbers(leftContent, this.diffData.originalContent, "original");
-
-    // 右侧：新内容
-    const rightPanel = diffGrid.createDiv({ cls: "cr-diff-panel" });
-    rightPanel.createEl("div", { text: "新内容", cls: "cr-panel-title" });
-    const rightContent = rightPanel.createDiv({ cls: "cr-panel-content-wrapper" });
-    this.renderContentWithLineNumbers(rightContent, this.diffData.newContent, "new");
-  }
-
-  /**
-   * 渲染带行号的内容
-   */
-  private renderContentWithLineNumbers(
-    container: HTMLElement,
-    content: string,
-    type: "original" | "new"
-  ): void {
-    const lines = content.split("\n");
-    const lineNumbersDiv = container.createDiv({ cls: "cr-line-numbers" });
-    const contentDiv = container.createDiv({ cls: "cr-content-lines" });
-
-    lines.forEach((line, index) => {
-      // 行号
-      lineNumbersDiv.createDiv({
-        text: String(index + 1),
-        cls: "cr-line-number"
-      });
-
-      // 内容行
-      const lineDiv = contentDiv.createDiv({ cls: "cr-content-line" });
-      
-      // 简单的语法高亮（针对 Markdown）
-      this.renderLineWithHighlight(lineDiv, line);
-    });
-  }
-
-  /**
-   * 简单的 Markdown 语法高亮
-   */
-  private renderLineWithHighlight(container: HTMLElement, line: string): void {
-    // 标题
-    if (/^#{1,6}\s/.test(line)) {
-      container.addClass("cr-syntax-heading");
-      container.textContent = line;
-      return;
-    }
-
-    // 列表
-    if (/^[\s]*[-*+]\s/.test(line) || /^[\s]*\d+\.\s/.test(line)) {
-      container.addClass("cr-syntax-list");
-      container.textContent = line;
-      return;
-    }
-
-    // 代码块
-    if (/^```/.test(line)) {
-      container.addClass("cr-syntax-code-fence");
-      container.textContent = line;
-      return;
-    }
-
-    // 引用
-    if (/^>\s/.test(line)) {
-      container.addClass("cr-syntax-quote");
-      container.textContent = line;
-      return;
-    }
-
-    // 链接
-    if (/\[.*\]\(.*\)/.test(line)) {
-      container.addClass("cr-syntax-link");
-      container.textContent = line;
-      return;
-    }
-
-    // 普通文本
-    container.textContent = line || " "; // 空行显示空格以保持布局
+  private renderEmbeddedSideBySideDiff(container: HTMLElement): void {
+    renderSideBySideDiff(
+      container,
+      this.diffData.originalContent,
+      this.diffData.newContent,
+      "原始内容",
+      "新内容"
+    );
   }
 
   /**
@@ -609,4 +533,80 @@ export class SimpleDiffView extends Modal {
     const { contentEl } = this;
     contentEl.empty();
   }
+}
+
+function renderContentWithLineNumbers(container: HTMLElement, content: string): void {
+  const lines = content.split("\n");
+  const lineNumbersDiv = container.createDiv({ cls: "cr-line-numbers" });
+  const contentDiv = container.createDiv({ cls: "cr-content-lines" });
+
+  lines.forEach((line, index) => {
+    lineNumbersDiv.createDiv({
+      text: String(index + 1),
+      cls: "cr-line-number"
+    });
+
+    const lineDiv = contentDiv.createDiv({ cls: "cr-content-line" });
+    renderLineWithHighlight(lineDiv, line);
+  });
+}
+
+function renderLineWithHighlight(container: HTMLElement, line: string): void {
+  if (/^#{1,6}\s/.test(line)) {
+    container.addClass("cr-syntax-heading");
+    container.textContent = line;
+    return;
+  }
+
+  if (/^[\s]*[-*+]\s/.test(line) || /^[\s]*\d+\.\s/.test(line)) {
+    container.addClass("cr-syntax-list");
+    container.textContent = line;
+    return;
+  }
+
+  if (/^```/.test(line)) {
+    container.addClass("cr-syntax-code-fence");
+    container.textContent = line;
+    return;
+  }
+
+  if (/^>\s/.test(line)) {
+    container.addClass("cr-syntax-quote");
+    container.textContent = line;
+    return;
+  }
+
+  if (/\[.*\]\(.*\)/.test(line)) {
+    container.addClass("cr-syntax-link");
+    container.textContent = line;
+    return;
+  }
+
+  container.textContent = line || " ";
+}
+
+export function renderSideBySideDiff(
+  container: HTMLElement,
+  oldContent: string,
+  newContent: string,
+  leftHeaderTitle: string = "旧版本",
+  rightHeaderTitle: string = "新版本"
+): void {
+  const diffGrid = container.createDiv({ cls: "cr-diff-grid" });
+
+  const leftPanel = diffGrid.createDiv({ cls: "cr-diff-panel cr-diff-left" });
+  leftPanel.createEl("div", {
+    text: leftHeaderTitle,
+    cls: "cr-panel-title"
+  });
+  const leftContent = leftPanel.createDiv({ cls: "cr-panel-content-wrapper" });
+  renderContentWithLineNumbers(leftContent, oldContent);
+
+  const rightPanel = diffGrid.createDiv({ cls: "cr-diff-panel cr-diff-right" });
+  rightPanel.createEl("div", {
+    text: rightHeaderTitle,
+    cls: "cr-panel-title"
+  });
+  const rightContent = rightPanel.createDiv({ cls: "cr-panel-content-wrapper" });
+  renderContentWithLineNumbers(rightContent, newContent);
 }

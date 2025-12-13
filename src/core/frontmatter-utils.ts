@@ -1,37 +1,24 @@
 /**
  * Frontmatter 工具模块
  * 
- * 遵循设计文档 5.3.1 Frontmatter 模型：
- * - 必填字段：uid, type, status, created, updated
- * - 可选字段：aliases, tags, parentUid, parentType, sourceUids
+ * 遵循设计文档 5.1 Frontmatter 约束：
+ * - 必填字段：cruid, type, name, status, parents, created, updated
+ * - 可选字段：aliases, tags, parentUid, parentType, sourceUids, version
  */
 
 import { CRFrontmatter, CRType, NoteState } from "../types";
 import YAML from "yaml";
+import { formatCRTimestamp } from "../utils/date-utils";
 
 const FRONTMATTER_DELIMITER = "---";
 const REQUIRED_FIELDS: Array<keyof CRFrontmatter> = [
-  "crUid",
+  "cruid",
   "type",
   "status",
   "created",
   "updated"
 ];
-const ARRAY_FIELDS: Array<keyof CRFrontmatter> = ["aliases", "tags", "sourceUids"];
-
-/**
- * 格式化日期为 yyyy-MM-DD HH:mm:ss
- */
-function formatDateTime(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-  const seconds = String(date.getSeconds()).padStart(2, '0');
-  
-  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-}
+const ARRAY_FIELDS: Array<keyof CRFrontmatter> = ["aliases", "tags", "sourceUids", "parents"];
 
 /**
  * 生成 frontmatter
@@ -40,28 +27,34 @@ function formatDateTime(date: Date): string {
  * @returns CRFrontmatter 对象
  */
 export function generateFrontmatter(options: {
-  crUid: string;
+  cruid: string;
   type: CRType;
+  name: string;
   status?: NoteState;
+  parents?: string[];
   aliases?: string[];
   tags?: string[];
   parentUid?: string;
   parentType?: CRType;
   sourceUids?: string[];
+  version?: string;
 }): CRFrontmatter {
-  const now = formatDateTime(new Date());
+  const now = formatCRTimestamp();
 
   return {
-    crUid: options.crUid,
+    cruid: options.cruid,
     type: options.type,
+    name: options.name,
     status: options.status || "Stub",
     created: now,
     updated: now,
+    parents: options.parents || [],
     aliases: options.aliases,
     tags: options.tags,
     parentUid: options.parentUid,
     parentType: options.parentType,
-    sourceUids: options.sourceUids
+    sourceUids: options.sourceUids,
+    version: options.version
   };
 }
 
@@ -89,8 +82,9 @@ function frontmatterToYaml(frontmatter: CRFrontmatter): string {
   const lines: string[] = [];
   
   // 必填字段按固定顺序
-  lines.push(`crUid: ${frontmatter.crUid}`);
+  lines.push(`cruid: ${frontmatter.cruid}`);
   lines.push(`type: ${frontmatter.type}`);
+  lines.push(`name: ${frontmatter.name}`);
   lines.push(`status: ${frontmatter.status}`);
   lines.push(`created: ${frontmatter.created}`);
   lines.push(`updated: ${frontmatter.updated}`);
@@ -99,7 +93,12 @@ function frontmatterToYaml(frontmatter: CRFrontmatter): string {
   if (frontmatter.aliases && frontmatter.aliases.length > 0) {
     lines.push(`aliases: ${formatArrayInline(frontmatter.aliases)}`);
   }
-  
+
+  const parentsValue = Array.isArray(frontmatter.parents) && frontmatter.parents.length > 0
+    ? formatArrayInline(frontmatter.parents)
+    : "[]";
+  lines.push(`parents: ${parentsValue}`);
+
   if (frontmatter.tags && frontmatter.tags.length > 0) {
     lines.push(`tags: ${formatArrayInline(frontmatter.tags)}`);
   }
@@ -115,6 +114,10 @@ function frontmatterToYaml(frontmatter: CRFrontmatter): string {
   
   if (frontmatter.sourceUids && frontmatter.sourceUids.length > 0) {
     lines.push(`sourceUids: ${formatArrayInline(frontmatter.sourceUids)}`);
+  }
+
+  if (frontmatter.version) {
+    lines.push(`version: ${frontmatter.version}`);
   }
 
   return `${FRONTMATTER_DELIMITER}\n${lines.join('\n')}\n${FRONTMATTER_DELIMITER}\n\n`;
@@ -154,18 +157,34 @@ function parseFrontmatter(yaml: string): CRFrontmatter | null {
     const aliases = normalizeStringArray(normalized.aliases);
     const tags = normalizeStringArray(normalized.tags);
     const sourceUids = normalizeStringArray(normalized.sourceUids);
+    const parents = normalizeStringArray(normalized.parents) || [];
+    const version = normalizeOptionalString(normalized.version);
+    const name = typeof normalized.name === "string" ? normalized.name : "";
+
+    const rawCruid = typeof normalized.cruid === "string"
+      ? normalized.cruid
+      : typeof normalized.crUid === "string"
+        ? normalized.crUid
+        : undefined;
+
+    if (!rawCruid) {
+      return null;
+    }
 
     return {
-      crUid: normalized.crUid as string,
+      cruid: rawCruid,
       type: normalized.type as CRType,
+      name,
       status: normalized.status as NoteState,
       created: normalized.created as string,
       updated: normalized.updated as string,
       aliases,
       tags,
+      parents,
       parentUid: normalizeOptionalString(normalized.parentUid),
       parentType: normalizeOptionalString(normalized.parentType) as CRType | undefined,
-      sourceUids
+      sourceUids,
+      version
     };
   } catch (error) {
     return null;
@@ -175,7 +194,7 @@ function parseFrontmatter(yaml: string): CRFrontmatter | null {
 /**
  * 从 Markdown 内容中提取 frontmatter（内部使用）
  */
-function extractFrontmatter(content: string): {
+export function extractFrontmatter(content: string): {
   frontmatter: CRFrontmatter;
   body: string;
 } | null {
@@ -216,17 +235,23 @@ function updateFrontmatter(
   content: string,
   updates: Partial<CRFrontmatter>
 ): string {
-  const now = formatDateTime(new Date());
+  const now = formatCRTimestamp();
   const extracted = extractFrontmatter(content);
   
   if (!extracted) {
     // 没有 frontmatter，添加一个
     const newFrontmatter = generateFrontmatter({
-      crUid: updates.crUid || "",
+      cruid: updates.cruid || "",
       type: updates.type || "Entity",
+      name: updates.name || "Unnamed Concept",
+      parents: updates.parents || [],
       status: updates.status,
       aliases: updates.aliases,
-      tags: updates.tags
+      tags: updates.tags,
+      parentUid: updates.parentUid,
+      parentType: updates.parentType,
+      sourceUids: updates.sourceUids,
+      version: updates.version
     });
     
     return frontmatterToYaml(newFrontmatter) + content;
@@ -236,6 +261,7 @@ function updateFrontmatter(
   const merged: CRFrontmatter = {
     ...extracted.frontmatter,
     ...updates,
+    parents: updates.parents ?? extracted.frontmatter.parents ?? [],
     updated: now // 总是更新时间戳
   };
 
@@ -274,4 +300,3 @@ function normalizeOptionalString(value: unknown): string | undefined {
   }
   return undefined;
 }
-

@@ -18,6 +18,7 @@ import {
   ok,
   err
 } from "../types";
+import { formatCRTimestamp } from "../utils/date-utils";
 import { RetryHandler } from "./retry-handler";
 
 export class TaskQueue implements ITaskQueue {
@@ -110,7 +111,7 @@ export class TaskQueue implements ITaskQueue {
       return ok(undefined);
     } catch (error) {
       this.logger.error("TaskQueue", "初始化失败", error as Error);
-      return err("E304", "初始化任务队列失败", error);
+      return err("E305", "初始化任务队列失败", error);
     }
   }
 
@@ -160,7 +161,7 @@ export class TaskQueue implements ITaskQueue {
       // 不再在入队时检查类型锁，以提高并发性能
 
       // 创建完整的任务记录
-      const now = new Date().toISOString();
+      const now = formatCRTimestamp();
       const fullTask: TaskRecord = {
         ...task,
         id: taskId,
@@ -201,7 +202,7 @@ export class TaskQueue implements ITaskQueue {
         nodeId: task.nodeId,
         taskType: task.taskType
       });
-      return err("E304", "任务入队失败", error);
+      return err("E305", "任务入队失败", error);
     }
   }
 
@@ -211,7 +212,7 @@ export class TaskQueue implements ITaskQueue {
       const task = this.tasks.get(taskId);
       if (!task) {
         this.logger.warn("TaskQueue", "任务不存在", { taskId });
-        return err("E304", `任务不存在: ${taskId}`);
+        return err("E307", `任务不存在: ${taskId}`);
       }
 
       // 可以取消 Pending、Running 或 Failed 状态的任务
@@ -221,15 +222,27 @@ export class TaskQueue implements ITaskQueue {
           taskId,
           state: task.state
         });
-        return err("E304", `任务状态不允许取消: ${task.state}`);
+        return err("E306", `任务状态不允许取消: ${task.state}`);
       }
 
       // 记录之前的状态
       const previousState = task.state;
 
+      // Running 任务尝试中断执行（如果支持）
+      if (task.state === "Running") {
+        try {
+          this.taskRunner?.abort(taskId);
+        } catch (error) {
+          this.logger.warn("TaskQueue", "中断运行中任务失败（忽略）", {
+            taskId,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+
       // 更新任务状态
       task.state = "Cancelled";
-      task.updated = new Date().toISOString();
+      task.updated = formatCRTimestamp();
 
       // 释放锁
       if (task.lockKey) {
@@ -262,7 +275,7 @@ export class TaskQueue implements ITaskQueue {
       this.logger.error("TaskQueue", "取消任务失败", error as Error, {
         taskId
       });
-      return err("E304", "取消任务失败", error);
+      return err("E305", "取消任务失败", error);
     }
   }
 
@@ -273,7 +286,7 @@ export class TaskQueue implements ITaskQueue {
     
     this.publishEvent({
       type: "queue-paused",
-      timestamp: new Date().toISOString()
+      timestamp: formatCRTimestamp()
     });
 
     this.logger.info("TaskQueue", "队列已暂停");
@@ -286,7 +299,7 @@ export class TaskQueue implements ITaskQueue {
     
     this.publishEvent({
       type: "queue-resumed",
-      timestamp: new Date().toISOString()
+      timestamp: formatCRTimestamp()
     });
 
     this.logger.info("TaskQueue", "队列已恢复");
@@ -350,11 +363,11 @@ export class TaskQueue implements ITaskQueue {
   updateTask(taskId: string, updates: Partial<TaskRecord>): Result<void> {
     const task = this.tasks.get(taskId);
     if (!task) {
-      return err("E304", `任务不存在: ${taskId}`);
+      return err("E307", `任务不存在: ${taskId}`);
     }
 
     Object.assign(task, updates);
-    task.updated = new Date().toISOString();
+    task.updated = formatCRTimestamp();
 
     this.saveQueue();
 
@@ -398,7 +411,7 @@ export class TaskQueue implements ITaskQueue {
       return ok(tasksToRemove.length);
     } catch (error) {
       this.logger.error("TaskQueue", "清理任务失败", error as Error);
-      return err("E304", "清理任务失败", error);
+      return err("E305", "清理任务失败", error);
     }
   }
 
@@ -419,7 +432,7 @@ export class TaskQueue implements ITaskQueue {
           task.state = "Pending";
           task.attempt = 0;
           task.errors = [];
-          task.updated = new Date().toISOString();
+          task.updated = formatCRTimestamp();
           retriedCount++;
         }
       }
@@ -432,7 +445,7 @@ export class TaskQueue implements ITaskQueue {
       return ok(retriedCount);
     } catch (error) {
       this.logger.error("TaskQueue", "重试任务失败", error as Error);
-      return err("E304", "重试任务失败", error);
+      return err("E305", "重试任务失败", error);
     }
   }
 
@@ -497,7 +510,7 @@ export class TaskQueue implements ITaskQueue {
         // 更新任务状态
         const previousState = task.state;
         task.state = "Running";
-        task.startedAt = new Date().toISOString();
+        task.startedAt = formatCRTimestamp();
         task.updated = task.startedAt;
 
         this.saveQueue();
@@ -539,7 +552,7 @@ export class TaskQueue implements ITaskQueue {
       });
       // 即使 TaskRunner 未注入，也要清理任务状态
       this.handleTaskExecutionFailure(task, {
-        code: "E304",
+        code: "E306",
         message: "TaskRunner 未注入"
       });
       return;
@@ -592,7 +605,7 @@ export class TaskQueue implements ITaskQueue {
       });
 
       await this.handleTaskExecutionFailure(task, {
-        code: "E304",
+        code: "E305",
         message: error instanceof Error ? error.message : String(error)
       });
     } finally {
@@ -606,7 +619,7 @@ export class TaskQueue implements ITaskQueue {
   private async handleTaskSuccess(task: TaskRecord, taskResult: TaskResult): Promise<void> {
     const previousState = task.state;
     task.state = "Completed";
-    task.completedAt = new Date().toISOString();
+    task.completedAt = formatCRTimestamp();
     task.updated = task.completedAt;
     task.result = taskResult.data;
     
@@ -662,7 +675,7 @@ export class TaskQueue implements ITaskQueue {
     task.errors.push({
       code: error.code,
       message: error.message,
-      timestamp: new Date().toISOString(),
+      timestamp: formatCRTimestamp(),
       attempt: task.attempt
     });
 
@@ -689,7 +702,7 @@ export class TaskQueue implements ITaskQueue {
     if (shouldRetry) {
       // Requirements 6.4: 重试 - 重置为 Pending 状态
       task.state = "Pending";
-      task.updated = new Date().toISOString();
+      task.updated = formatCRTimestamp();
 
       // Requirements 8.4: 记录任务状态变更日志（重试）
       this.logger.warn("TaskQueue", `任务状态变更: ${task.id}`, {
@@ -714,7 +727,7 @@ export class TaskQueue implements ITaskQueue {
     } else {
       // Requirements 6.4: 不再重试 - 标记为 Failed
       task.state = "Failed";
-      task.updated = new Date().toISOString();
+      task.updated = formatCRTimestamp();
 
       const failureReason = !settings.autoRetry ? "autoRetry disabled" :
                            !errorClassification.retryable ? "non-retryable error" :
@@ -763,7 +776,7 @@ export class TaskQueue implements ITaskQueue {
   private async handleTaskExecutionFailure(task: TaskRecord, error: { code: string; message: string }): Promise<void> {
     const previousState = task.state;
     task.state = "Failed";
-    task.updated = new Date().toISOString();
+    task.updated = formatCRTimestamp();
     
     if (!task.errors) {
       task.errors = [];
@@ -771,7 +784,7 @@ export class TaskQueue implements ITaskQueue {
     task.errors.push({
       code: error.code,
       message: error.message,
-      timestamp: new Date().toISOString(),
+      timestamp: formatCRTimestamp(),
       attempt: task.attempt
     });
 
@@ -967,7 +980,7 @@ export class TaskQueue implements ITaskQueue {
       this.lockManager.clear();
     }
 
-    const now = new Date().toISOString();
+    const now = formatCRTimestamp();
     const recoveredRunning: string[] = [];
 
     // 恢复任务，处理 Running → Pending 的恢复逻辑

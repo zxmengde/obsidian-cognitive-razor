@@ -1,6 +1,12 @@
 /** RetryHandler：错误处理和重试逻辑 */
 
 import { Result, Err, TaskError, ILogger } from "../types";
+import { formatCRTimestamp } from "../utils/date-utils";
+import {
+  getErrorCategory,
+  isRetryableErrorCode,
+  getFixSuggestion as getFixSuggestionForCode
+} from "../data/error-codes";
 
 /** 错误类别 */
 type ErrorCategory =
@@ -8,7 +14,7 @@ type ErrorCategory =
   | "NETWORK_ERROR"         // 网络错误 (E100-E102)
   | "AUTH_ERROR"            // 认证错误 (E103)
   | "CAPABILITY_ERROR"      // 能力错误 (E200-E201)
-  | "FILE_SYSTEM_ERROR"     // 文件系统错误 (E300-E304)
+  | "FILE_SYSTEM_ERROR"     // 文件系统错误 (E300-E303)
   | "UNKNOWN";              // 未知错误
 
 /** 重试策略类型 */
@@ -56,54 +62,6 @@ export const NETWORK_ERROR_CONFIG: RetryConfig = {
   baseDelayMs: 1000, // 1s, 2s, 4s, 8s, 16s
 };
 
-/** 内容错误码 (E001-E010) */
-const CONTENT_ERROR_CODES = [
-  "E001", // PARSE_ERROR - 输出非 JSON 或解析失败
-  "E002", // SCHEMA_VIOLATION - 不符合输出 Schema
-  "E003", // MISSING_REQUIRED - 必填字段缺失
-  "E004", // CONSTRAINT_VIOLATION - 违反业务规则 C001-C016
-  "E005", // SEMANTIC_DUPLICATE - 相似度超阈值
-  "E006", // INVALID_WIKILINK - wikilink 格式错误
-  "E007", // TYPE_MISMATCH - 输出类型与预期不符
-  "E008", // CONTENT_TOO_SHORT - 内容长度不足
-  "E009", // SUM_NOT_ONE - type_confidences 求和 ≠ 1
-  "E010", // INVALID_PATTERN - 字段不匹配正则
-] as const;
-
-/** 网络错误码 (E100-E102) */
-const NETWORK_ERROR_CODES = [
-  "E100", // API_ERROR - Provider 返回 5xx/4xx
-  "E101", // TIMEOUT - 请求超时
-  "E102", // RATE_LIMIT - 触发速率限制 (429)
-] as const;
-
-/** 认证错误码 (E103) */
-const AUTH_ERROR_CODES = [
-  "E103", // AUTH_ERROR - 认证失败 (401/403)
-] as const;
-
-/** 能力错误码 (E200-E201) */
-const CAPABILITY_ERROR_CODES = [
-  "E200", // SAFETY_VIOLATION - 触发安全边界
-  "E201", // CAPABILITY_MISMATCH - Provider 能力不足
-] as const;
-
-/** 文件系统错误码 (E300-E304) */
-const FILE_SYSTEM_ERROR_CODES = [
-  "E300", // FILE_WRITE_ERROR - 文件写入失败
-  "E301", // FILE_READ_ERROR - 文件读取失败
-  "E302", // INDEX_CORRUPTED - 向量索引损坏
-  "E303", // SNAPSHOT_RESTORE_FAILED - 快照恢复失败
-  "E304", // PROVIDER_NOT_FOUND - Provider 不存在
-] as const;
-
-/** 所有终止错误码（不重试） */
-const TERMINAL_ERROR_CODES = [
-  ...AUTH_ERROR_CODES,
-  ...CAPABILITY_ERROR_CODES,
-  ...FILE_SYSTEM_ERROR_CODES,
-] as const;
-
 /** RetryHandler 接口 */
 interface IRetryHandler {
   /** 带重试的异步操作执行 */
@@ -122,28 +80,28 @@ export class RetryHandler implements IRetryHandler {
 
   /** 分类错误并决定重试策略 */
   classifyError(errorCode: string): ErrorClassification {
-    // 内容错误 (E001-E010): 立即重试，最多 3 次
-    if (this.isContentError(errorCode)) {
+    const category = getErrorCategory(errorCode);
+    const retryable = isRetryableErrorCode(errorCode);
+
+    if (category === "CONTENT") {
       return {
         category: "CONTENT_ERROR",
         strategy: "immediate",
-        retryable: true,
+        retryable,
         maxAttempts: 3,
       };
     }
 
-    // 网络错误 (E100-E102): 指数退避，最多 5 次
-    if (this.isNetworkError(errorCode)) {
+    if (category === "NETWORK") {
       return {
         category: "NETWORK_ERROR",
         strategy: "exponential",
-        retryable: true,
+        retryable,
         maxAttempts: 5,
       };
     }
 
-    // 认证错误 (E103): 不重试
-    if (this.isAuthError(errorCode)) {
+    if (category === "AUTH") {
       return {
         category: "AUTH_ERROR",
         strategy: "no_retry",
@@ -152,8 +110,7 @@ export class RetryHandler implements IRetryHandler {
       };
     }
 
-    // 能力错误 (E200-E201): 不重试
-    if (this.isCapabilityError(errorCode)) {
+    if (category === "CAPABILITY") {
       return {
         category: "CAPABILITY_ERROR",
         strategy: "no_retry",
@@ -162,8 +119,7 @@ export class RetryHandler implements IRetryHandler {
       };
     }
 
-    // 文件系统错误 (E300-E304): 不重试
-    if (this.isFileSystemError(errorCode)) {
+    if (category === "FILE_SYSTEM") {
       return {
         category: "FILE_SYSTEM_ERROR",
         strategy: "no_retry",
@@ -172,7 +128,6 @@ export class RetryHandler implements IRetryHandler {
       };
     }
 
-    // 未知错误: 不重试
     return {
       category: "UNKNOWN",
       strategy: "no_retry",
@@ -337,7 +292,7 @@ export class RetryHandler implements IRetryHandler {
     return {
       code: error.error.code,
       message: error.error.message,
-      timestamp: new Date().toISOString(),
+      timestamp: formatCRTimestamp(),
       attempt,
     };
   }
@@ -382,7 +337,7 @@ export class RetryHandler implements IRetryHandler {
         return "API 调用失败，系统将自动重试。";
 
       case "CAPABILITY_ERROR":
-        return "Provider 不支持此功能，请更换 Provider 或检查配置。";
+        return error.error.message;
 
       case "CONTENT_ERROR":
         return "AI 输出格式错误，系统将自动重试。";
@@ -397,40 +352,7 @@ export class RetryHandler implements IRetryHandler {
 
   /** 获取错误的修复建议 */
   getFixSuggestion(error: Err): string | undefined {
-    const code = error.error.code;
-
-    switch (code) {
-      case "E103":
-        return "请前往设置页面检查并更新 API Key。";
-
-      case "E201":
-        return "请选择支持此功能的 Provider 或检查配置。";
-
-      case "E102":
-        return "请稍后再试，或考虑升级 API 套餐以获得更高的速率限制。";
-
-      case "E001":
-      case "E002":
-        return "AI 输出格式不正确，系统将自动重试并提供更明确的指示。";
-
-      case "E300":
-        return "请检查文件写入权限和磁盘空间。";
-
-      case "E301":
-        return "请检查文件是否存在和读取权限。";
-
-      case "E302":
-        return "向量索引可能已损坏，请尝试重建索引。";
-
-      case "E303":
-        return "快照恢复失败，请检查快照文件是否完整。";
-
-      case "E304":
-        return "请检查 Provider 配置是否正确。";
-
-      default:
-        return undefined;
-    }
+    return getFixSuggestionForCode(error.error.code);
   }
 
   /** 获取错误的重试配置 */
@@ -454,32 +376,32 @@ export class RetryHandler implements IRetryHandler {
 
   /** 判断是否为内容错误 (E001-E010) */
   isContentError(code: string): boolean {
-    return (CONTENT_ERROR_CODES as readonly string[]).includes(code);
+    return getErrorCategory(code) === "CONTENT";
   }
 
   /** 判断是否为网络错误 (E100-E102) */
   isNetworkError(code: string): boolean {
-    return (NETWORK_ERROR_CODES as readonly string[]).includes(code);
+    return getErrorCategory(code) === "NETWORK";
   }
 
   /** 判断是否为认证错误 (E103) */
   isAuthError(code: string): boolean {
-    return (AUTH_ERROR_CODES as readonly string[]).includes(code);
+    return getErrorCategory(code) === "AUTH";
   }
 
   /** 判断是否为能力错误 (E200-E201) */
   isCapabilityError(code: string): boolean {
-    return (CAPABILITY_ERROR_CODES as readonly string[]).includes(code);
+    return getErrorCategory(code) === "CAPABILITY";
   }
 
-  /** 判断是否为文件系统错误 (E300-E304) */
+  /** 判断是否为文件系统错误 (E300-E303) */
   isFileSystemError(code: string): boolean {
-    return (FILE_SYSTEM_ERROR_CODES as readonly string[]).includes(code);
+    return getErrorCategory(code) === "FILE_SYSTEM";
   }
 
   /** 判断是否为终止错误（不可重试） */
   isTerminalError(code: string): boolean {
-    return (TERMINAL_ERROR_CODES as readonly string[]).includes(code);
+    return !isRetryableErrorCode(code);
   }
 
   /** 检查结果是否为重试耗尽 */

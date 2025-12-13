@@ -92,6 +92,7 @@ interface Translations {
       title: string;
       empty: string;
       undo: string;
+      viewSnapshot: string;
       refresh: string;
       clearAll: string;
       clearAllConfirmTitle: string;
@@ -184,6 +185,31 @@ interface Translations {
       mergeCancelled: string;
     };
   };
+  deepen: {
+    titlePrefix: string;
+    stats: {
+      total: string;
+      creatable: string;
+      existing: string;
+      invalid: string;
+    };
+    selectAll: string;
+    deselectAll: string;
+    confirm: string;
+    empty: string;
+    status: {
+      existing: string;
+      invalid: string;
+    };
+    looseStructureHint: string;
+    abstractTitlePrefix: string;
+    abstractInstruction: string;
+    abstractConfirm: string;
+    similarity: string;
+    notInitialized: string;
+    started: string;
+    startedWithFailures: string;
+  };
 
   // 设置面板
   settings: {
@@ -211,10 +237,6 @@ interface Translations {
       desc: string;
       zh: string;
       en: string;
-    };
-    advancedMode: {
-      name: string;
-      desc: string;
     };
     similarityThreshold: {
       name: string;
@@ -536,6 +558,7 @@ export class I18n {
           title: "操作历史",
           empty: "暂无可撤销的操作",
           undo: "撤销",
+          viewSnapshot: "查看快照",
           refresh: "刷新",
           clearAll: "清空全部",
           clearAllConfirmTitle: "确认清空",
@@ -628,6 +651,31 @@ export class I18n {
           mergeCancelled: "已取消合并",
         },
       },
+      deepen: {
+        titlePrefix: "深化：",
+        stats: {
+          total: "候选总数",
+          creatable: "可创建",
+          existing: "已存在",
+          invalid: "不可创建",
+        },
+        selectAll: "全选",
+        deselectAll: "全不选",
+        confirm: "创建已选",
+        empty: "暂无候选项",
+        status: {
+          existing: "已存在",
+          invalid: "不可创建",
+        },
+        looseStructureHint: "未找到标准章节，已回退全局扫描，结果可能不完整",
+        abstractTitlePrefix: "抽象：",
+        abstractInstruction: "选择至少 1 个相似概念，与当前笔记一起生成更高层概念。",
+        abstractConfirm: "生成",
+        similarity: "相似度",
+        notInitialized: "Deepen 功能未初始化",
+        started: "已启动 {count} 个创建任务",
+        startedWithFailures: "已启动 {started} 个任务，{failed} 个未能启动",
+      },
       settings: {
         title: "Cognitive Razor 设置",
         tabs: {
@@ -653,10 +701,6 @@ export class I18n {
           desc: "选择界面语言",
           zh: "中文",
           en: "English",
-        },
-        advancedMode: {
-          name: "高级模式",
-          desc: "显示高级配置选项",
         },
         similarityThreshold: {
           name: "相似度阈值",
@@ -933,6 +977,7 @@ export class I18n {
           title: "Operation History",
           empty: "No operations to undo",
           undo: "Undo",
+          viewSnapshot: "View Snapshot",
           refresh: "Refresh",
           clearAll: "Clear All",
           clearAllConfirmTitle: "Confirm Clear",
@@ -1025,6 +1070,31 @@ export class I18n {
           mergeCancelled: "Merge cancelled",
         },
       },
+      deepen: {
+        titlePrefix: "Deepen: ",
+        stats: {
+          total: "Total",
+          creatable: "Creatable",
+          existing: "Existing",
+          invalid: "Not creatable",
+        },
+        selectAll: "Select All",
+        deselectAll: "Deselect All",
+        confirm: "Create Selected",
+        empty: "No candidates",
+        status: {
+          existing: "Existing",
+          invalid: "Not creatable",
+        },
+        looseStructureHint: "No standard sections found. Fallback scan may miss items.",
+        abstractTitlePrefix: "Abstract: ",
+        abstractInstruction: "Pick at least one similar concept to generate a more abstract one with the current note.",
+        abstractConfirm: "Generate",
+        similarity: "Similarity",
+        notInitialized: "Deepen is not initialized",
+        started: "Started {count} create tasks",
+        startedWithFailures: "Started {started} tasks, {failed} failed to start",
+      },
       settings: {
         title: "Cognitive Razor Settings",
         tabs: {
@@ -1050,10 +1120,6 @@ export class I18n {
           desc: "Select interface language",
           zh: "中文",
           en: "English",
-        },
-        advancedMode: {
-          name: "Advanced Mode",
-          desc: "Show advanced configuration options",
         },
         similarityThreshold: {
           name: "Similarity Threshold",

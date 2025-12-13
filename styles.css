@@ -106,6 +106,30 @@
     outline: none;
 }
 
+/* --- 增量改进入口 --- */
+
+.cr-improve-section {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: var(--size-4-2);
+}
+
+.cr-btn-secondary {
+    padding: var(--size-4-2) var(--size-4-3);
+    font-size: var(--font-ui-small);
+    border-radius: var(--radius-s);
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    color: var(--text-normal);
+}
+
+.cr-btn-secondary:hover {
+    background: var(--background-modifier-hover);
+    border-color: var(--interactive-accent);
+}
+
 /* Modal Simple Input Styles */
 .cr-simple-input-modal .modal-content {
     padding: 30px;
@@ -137,6 +161,55 @@
 .cr-simple-input-container:focus-within {
     border-color: var(--cr-border-focus);
     box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
+}
+
+/* --- Ground 结果展示 --- */
+
+.cr-grounding-result {
+    margin-top: var(--size-4-3);
+    padding: var(--size-4-3);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    background: var(--background-secondary);
+}
+
+.cr-grounding-result h4,
+.cr-grounding-result h5 {
+    margin: 0 0 var(--size-4-2) 0;
+}
+
+.cr-assessment-ok {
+    color: var(--text-success);
+}
+
+.cr-assessment-warn {
+    color: var(--text-accent);
+}
+
+.cr-assessment-fail {
+    color: var(--text-error);
+}
+
+.cr-assessment-unknown {
+    color: var(--text-muted);
+}
+
+.cr-issues-groups {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-2);
+}
+
+.cr-issues-severity {
+    font-weight: 600;
+    color: var(--text-normal);
+    margin-bottom: var(--size-4-1);
+}
+
+.cr-issues-list,
+.cr-recommendations-list {
+    margin: 0;
+    padding-left: 20px;
 }
 
 .cr-simple-input {
@@ -1635,4 +1708,179 @@ button:focus-visible,
 
 .cr-nav-text {
     font-size: var(--font-ui-small);
+}
+
+/* Side-by-Side Diff Styles */
+.cr-side-by-side-diff {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--cr-border);
+  border-radius: var(--cr-radius-card);
+  overflow: hidden;
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  line-height: 1.5;
+  background-color: var(--cr-bg-base);
+}
+
+.cr-diff-col {
+  flex: 1;
+  display: flex;
+  overflow-x: auto;
+}
+
+.cr-diff-left {
+  border-right: 1px solid var(--cr-border);
+}
+
+.cr-diff-linenums {
+  flex: 0 0 40px;
+  background-color: var(--cr-bg-surface);
+  border-right: 1px solid var(--cr-border);
+  text-align: right;
+  padding: 4px 8px;
+  color: var(--cr-text-muted);
+  user-select: none;
+}
+
+.cr-diff-content {
+  flex: 1;
+  padding: 4px 0;
+  white-space: pre;
+}
+
+.cr-diff-row {
+  padding: 0 8px;
+  min-height: 1.5em;
+}
+
+.cr-diff-linenum {
+  min-height: 1.5em;
+}
+
+.cr-diff-remove {
+  background-color: rgba(255, 0, 0, 0.1);
+  text-decoration: line-through;
+  color: var(--cr-text-muted);
+}
+
+.cr-diff-add {
+  background-color: rgba(0, 255, 0, 0.1);
+}
+
+.cr-diff-empty {
+  background-color: var(--cr-bg-surface);
+  opacity: 0.5;
+}
+
+/* Dark mode adjustments if needed */
+.theme-dark .cr-diff-remove {
+  background-color: rgba(255, 100, 100, 0.15);
+}
+
+.theme-dark .cr-diff-add {
+  background-color: rgba(100, 255, 100, 0.15);
+}
+
+.merge-diff-badge {
+    margin-top: var(--size-4-2);
+}
+
+.merge-diff-controls {
+    display: flex;
+    gap: var(--size-4-2);
+    margin: var(--size-4-2) 0;
+}
+
+.cr-toggle-btn {
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+    border-radius: var(--radius-s);
+    padding: var(--size-4-2) var(--size-4-3);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: var(--font-ui-small);
+}
+
+.cr-toggle-btn.cr-toggle-active {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    border-color: var(--interactive-accent);
+}
+
+.merge-diff-panel {
+    margin-bottom: var(--size-4-3);
+}
+
+.merge-full-preview {
+    display: none;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    overflow: hidden;
+    background: var(--background-primary);
+}
+
+.merge-full-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: var(--size-4-2);
+}
+
+.merge-full-box {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-2);
+    padding: var(--size-4-3);
+}
+
+.merge-full-content {
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    padding: var(--size-4-2);
+    max-height: 320px;
+    overflow: auto;
+    background: var(--background-secondary);
+}
+
+.merge-full-pre {
+    margin: 0;
+    font-size: 0.85em;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.cr-view-snapshot-btn {
+    background: var(--interactive-accent-subtle);
+    border: 1px solid var(--interactive-accent);
+    color: var(--interactive-accent);
+}
+
+.cr-view-snapshot-btn:hover {
+    background: var(--interactive-accent-hover);
+    color: var(--text-on-accent);
+}
+
+.cr-snapshot-diff-panel {
+    margin-top: var(--size-4-2);
+}
+
+
+/* Updated Side-by-Side Diff Styles */
+.cr-diff-col {
+  flex-direction: column;
+}
+
+.cr-diff-header {
+  padding: 8px;
+  background-color: var(--background-secondary);
+  border-bottom: 1px solid var(--cr-border);
+  font-weight: bold;
+  font-family: var(--font-interface);
+}
+
+.cr-diff-scroll {
+  flex: 1;
+  display: flex;
+  overflow: auto;
 }

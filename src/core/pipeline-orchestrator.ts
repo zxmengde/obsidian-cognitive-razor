@@ -16,85 +16,22 @@ import {
   NoteState,
   DuplicatePair,
   PluginSettings,
+  PipelineContext,
+  PipelineStage,
+  PipelineStateFile,
   StandardizedConcept,
   Result,
   ok,
   err
 } from "../types";
 import { App, TFile } from "obsidian";
-import { generateFrontmatter, generateMarkdownContent } from "./frontmatter-utils";
+import YAML from "yaml";
+import { extractFrontmatter, generateFrontmatter, generateMarkdownContent } from "./frontmatter-utils";
 import { createConceptSignature, generateFilePath } from "./naming-utils";
 import { FieldDescription, schemaRegistry } from "./schema-registry";
 import { mapStandardizeOutput } from "./standardize-mapper";
 import { generateUUID } from "../data/validators";
-
-/**
- * 管线阶段
- */
-type PipelineStage =
-  | "idle"                    // 空闲
-  | "standardizing"           // 标准化中
-  | "enriching"               // 丰富中
-  | "embedding"               // 嵌入中
-  | "awaiting_create_confirm" // 等待创建确认
-  | "reasoning"               // 推理中
-  | "grounding"               // Ground 校验中
-  | "awaiting_write_confirm"  // 等待写入确认
-  | "writing"                 // 写入中
-  | "deduplicating"           // 去重中
-  | "completed"               // 完成
-  | "failed";                 // 失败
-
-/**
- * 管线上下文
- */
-export interface PipelineContext {
-  /** 管线类型：创建 / 增量改进 / 合并 */
-  kind: "create" | "incremental" | "merge";
-  /** 管线 ID */
-  pipelineId: string;
-  /** 节点 ID */
-  nodeId: string;
-  /** 知识类型 */
-  type: CRType;
-  /** 当前阶段 */
-  stage: PipelineStage;
-  /** 用户输入 */
-  userInput: string;
-  /** 标准化结果 */
-  standardizedData?: StandardizedConcept;
-  /** 丰富结果（别名和标签） */
-  enrichedData?: {
-    aliases: string[];
-    tags: string[];
-  };
-  /** 嵌入向量 */
-  embedding?: number[];
-  /** 生成的内容 */
-  generatedContent?: unknown;
-  /** 写入前的原始内容（增量/合并预览使用） */
-  previousContent?: string;
-  /** 待写入的新内容（增量/合并预览使用） */
-  newContent?: string;
-  /** 文件路径 */
-  filePath?: string;
-  /** Ground 结果 */
-  groundingResult?: Record<string, unknown>;
-  /** 增量/合并特有字段 */
-  mergePairId?: string;
-  deleteFilePath?: string;
-  deleteNodeId?: string;
-  deleteContent?: string;
-  currentStatus?: string;
-  /** 快照 ID */
-  snapshotId?: string;
-  /** 错误信息 */
-  error?: { code: string; message: string };
-  /** 创建时间 */
-  createdAt: string;
-  /** 更新时间 */
-  updatedAt: string;
-}
+import { formatCRTimestamp } from "../utils/date-utils";
 
 /**
  * 管线事件类型
@@ -140,6 +77,15 @@ interface PipelineOrchestratorDependencies {
   getSettings: () => PluginSettings;
 }
 
+/** 创建管线预设选项（用于 Deepen） */
+interface CreatePresetOptions {
+  parents?: string[];
+  parentUid?: string;
+  parentType?: CRType;
+  targetPathOverride?: string;
+  sources?: string;
+}
+
 /**
  * 管线编排器接口
  */
@@ -156,7 +102,25 @@ interface IPipelineOrchestrator {
     selectedType: CRType
   ): Result<string>;
 
-  // 注意：startIncrementalPipeline 和 startMergePipeline 已被移除（功能已弃用）
+  /** 使用预设名称/路径/父级信息启动创建管线（Deepen） */
+  startCreatePipelineWithPreset(
+    standardizedData: StandardizedConcept,
+    selectedType: CRType,
+    options?: CreatePresetOptions
+  ): Result<string>;
+
+  /** 启动合并管线 */
+  startMergePipeline(
+    pair: DuplicatePair,
+    keepNodeId: string,
+    finalFileName: string
+  ): Result<string>;
+
+  /** 启动增量改进管线 */
+  startIncrementalPipeline(
+    filePath: string,
+    instruction: string
+  ): Result<string>;
   
   /** 确认创建（在 embedding 之后） */
   confirmCreate(pipelineId: string): Promise<Result<void>>;
@@ -208,6 +172,11 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
   private taskToPipeline: Map<string, string>; // taskId -> pipelineId
   private unsubscribeQueue?: () => void;
 
+  // 管线状态持久化
+  private static readonly PIPELINE_STATE_FILE = "data/pipeline-state.json";
+  private pipelineSaveChain: Promise<void> = Promise.resolve();
+  private lastPersistedPipelineState: string | null = null;
+
   constructor(deps: PipelineOrchestratorDependencies) {
     this.app = deps.app;
     this.taskQueue = deps.taskQueue;
@@ -228,6 +197,9 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     // 订阅任务队列事件
     this.subscribeToTaskQueue();
 
+    // 异步加载持久化的管线状态
+    void this.loadPipelineState();
+
     this.logger.debug("PipelineOrchestrator", "管线编排器初始化完成");
   }
 
@@ -242,9 +214,13 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
    */
   private checkDuplicateByName(
     standardizedData: StandardizedConcept,
-    type: CRType
+    type: CRType,
+    targetPathOverride?: string
   ): Result<void> {
     const settings = this.getSettings();
+    const normalizedOverride = targetPathOverride && targetPathOverride.trim().length > 0
+      ? (targetPathOverride.endsWith(".md") ? targetPathOverride : `${targetPathOverride}.md`)
+      : undefined;
     const signature = createConceptSignature(
       {
         standardName: standardizedData.standardNames[type],
@@ -255,12 +231,14 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
       settings.namingTemplate
     );
 
-    // 生成目标文件路径
-    const targetPath = generateFilePath(
-      signature.standardName,
-      settings.directoryScheme,
-      type
-    );
+    // 生成目标文件路径（Deepen 允许传入预设路径，以保证与父笔记链接一致）
+    const targetPath = normalizedOverride
+      ? normalizedOverride
+      : generateFilePath(
+        signature.standardName,
+        settings.directoryScheme,
+        type
+      );
 
     // 检查文件是否已存在
     const file = this.app.vault.getAbstractFileByPath(targetPath);
@@ -368,7 +346,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     this.logger.warn("PipelineOrchestrator", "startCreatePipeline 已废弃，请使用 standardizeDirect + startCreatePipelineWithStandardized");
     
     // 返回错误，强制使用新流程
-    return err("E304", "请使用 standardizeDirect 方法进行标准化，然后使用 startCreatePipelineWithStandardized 创建管线");
+    return err("E306", "请使用 standardizeDirect 方法进行标准化，然后使用 startCreatePipelineWithStandardized 创建管线");
   }
 
   /**
@@ -405,11 +383,11 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
       const sanitizedInput = userInput.replace(/[\x00-\x1F\x7F]/g, "").replace(/\s+/g, " ").trim();
 
       if (!this.providerManager) {
-        return err("E304", "ProviderManager 未初始化");
+        return err("E306", "ProviderManager 未初始化");
       }
 
       if (!this.promptManager) {
-        return err("E304", "PromptManager 未初始化");
+        return err("E306", "PromptManager 未初始化");
       }
 
       this.logger.info("PipelineOrchestrator", "开始直接标准化", {
@@ -480,7 +458,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
       }
     } catch (error) {
       this.logger.error("PipelineOrchestrator", "直接标准化失败", error as Error);
-      return err("E304", "直接标准化失败", error);
+      return err("E305", "直接标准化失败", error);
     }
   }
 
@@ -499,6 +477,19 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     standardizedData: StandardizedConcept,
     selectedType: CRType
   ): Result<string> {
+    return this.startCreatePipelineWithPreset(standardizedData, selectedType);
+  }
+
+  /**
+   * 使用预设名称/路径/父级信息启动创建管线（Deepen）
+   * 
+   * 复用 Create 管线，但允许外部指定目标路径与父子关系，确保与父笔记中的 [[链接]] 保持一致。
+   */
+  startCreatePipelineWithPreset(
+    standardizedData: StandardizedConcept,
+    selectedType: CRType,
+    options?: CreatePresetOptions
+  ): Result<string> {
     try {
       // 前置校验 enrich 任务
       const prerequisiteCheck = this.validatePrerequisites("enrich");
@@ -506,20 +497,24 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
         return prerequisiteCheck as Result<string>;
       }
 
-      // 在 enrich 之前检查重复名称，避免浪费 API 调用
-      // 遵循 G-02 语义唯一性公理：防止创建重复概念
-      const duplicateCheck = this.checkDuplicateByName(standardizedData, selectedType);
+      // 在 enrich 之前检查重复名称/路径，避免浪费 API 调用
+      const duplicateCheck = this.checkDuplicateByName(
+        standardizedData,
+        selectedType,
+        options?.targetPathOverride
+      );
       if (!duplicateCheck.ok) {
         this.logger.warn("PipelineOrchestrator", "重复名称检查失败，管线未启动", {
           type: selectedType,
-          error: duplicateCheck.error
+          error: duplicateCheck.error,
+          targetPathOverride: options?.targetPathOverride
         });
         return duplicateCheck as Result<string>;
       }
 
       const pipelineId = this.generatePipelineId();
       const nodeId = this.generateNodeId();
-      const now = new Date().toISOString();
+      const now = formatCRTimestamp();
 
       // 创建管线上下文，直接设置标准化数据
       const context: PipelineContext = {
@@ -535,16 +530,24 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
           primaryType: selectedType,
           coreDefinition: standardizedData.coreDefinition
         },
+        parents: options?.parents,
+        parentUid: options?.parentUid,
+        parentType: options?.parentType,
+        targetPathOverride: options?.targetPathOverride,
+        sources: options?.sources,
+        filePath: options?.targetPathOverride,
         createdAt: now,
         updatedAt: now
       };
 
       this.pipelines.set(pipelineId, context);
 
-      this.logger.info("PipelineOrchestrator", `启动创建管线（跳过标准化）: ${pipelineId}`, {
+      this.logger.info("PipelineOrchestrator", `启动创建管线（预设）: ${pipelineId}`, {
         nodeId,
         selectedType,
-        chinese: standardizedData.standardNames[selectedType].chinese
+        chinese: standardizedData.standardNames[selectedType].chinese,
+        targetPathOverride: options?.targetPathOverride,
+        parents: options?.parents
       });
 
       // 创建 enrich 任务
@@ -566,7 +569,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
       if (!taskResult.ok) {
         this.pipelines.delete(pipelineId);
-        return err("E304", `创建任务失败: ${taskResult.error.message}`);
+        return err(taskResult.error.code, `创建任务失败: ${taskResult.error.message}`, taskResult.error);
       }
 
       // 记录任务到管线的映射
@@ -584,7 +587,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
       return ok(pipelineId);
     } catch (error) {
       this.logger.error("PipelineOrchestrator", "启动管线失败", error as Error);
-      return err("E304", "启动管线失败", error);
+      return err("E305", "启动管线失败", error);
     }
   }
 
@@ -626,12 +629,12 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
         name: signature.standardName,
         path: targetPath,
         embedding: context.embedding,
-        updated: new Date().toISOString()
+        updated: formatCRTimestamp()
       });
     }
 
     context.stage = "deduplicating";
-    context.updatedAt = new Date().toISOString();
+    context.updatedAt = formatCRTimestamp();
     if (context.embedding) {
       await this.duplicateManager.detect(
         context.nodeId,
@@ -641,7 +644,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     }
 
     context.stage = "completed";
-    context.updatedAt = new Date().toISOString();
+    context.updatedAt = formatCRTimestamp();
     this.publishEvent({
       type: "pipeline_completed",
       pipelineId: context.pipelineId,
@@ -680,13 +683,13 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     // 更新向量索引并去重（复用已有向量）
     const entry = this.vectorIndex.getEntry(context.nodeId);
     if (entry) {
-      const updatedEntry = { ...entry, path: targetPath, updated: new Date().toISOString() };
+      const updatedEntry = { ...entry, path: targetPath, updated: formatCRTimestamp() };
       await this.vectorIndex.upsert(updatedEntry);
       await this.duplicateManager.detect(context.nodeId, entry.type, entry.embedding);
     }
 
     context.stage = "completed";
-    context.updatedAt = new Date().toISOString();
+    context.updatedAt = formatCRTimestamp();
     this.publishEvent({
       type: "pipeline_completed",
       pipelineId: context.pipelineId,
@@ -709,25 +712,28 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     const { targetPath, previousContent, newContent } = composed.value;
     context.filePath = targetPath;
 
-    // 合并：保存主笔记快照
-    const snapshotResult = await this.undoManager.createSnapshot(
-      targetPath,
-      previousContent,
-      context.pipelineId,
-      context.nodeId
-    );
-    if (snapshotResult.ok) {
-      context.snapshotId = snapshotResult.value;
-    }
-
-    // 合并：为被删除笔记创建快照
-    if (context.deleteFilePath && context.deleteContent) {
-      await this.undoManager.createSnapshot(
-        context.deleteFilePath,
-        context.deleteContent,
-        `merge-delete-${context.mergePairId ?? context.pipelineId}`,
-        context.deleteNodeId
+    // 注意：快照已在 executeMergePipeline 中创建，此处不再重复创建
+    // 如果快照尚未创建（兼容旧流程），则创建快照
+    if (!context.snapshotId) {
+      const snapshotResult = await this.undoManager.createSnapshot(
+        targetPath,
+        previousContent,
+        context.pipelineId,
+        context.nodeId
       );
+      if (snapshotResult.ok) {
+        context.snapshotId = snapshotResult.value;
+      }
+
+      // 为被删除笔记创建快照
+      if (context.deleteFilePath && context.deleteContent) {
+        await this.undoManager.createSnapshot(
+          context.deleteFilePath,
+          context.deleteContent,
+          `merge-delete-${context.mergePairId ?? context.pipelineId}`,
+          context.deleteNodeId
+        );
+      }
     }
 
     await this.atomicWriteVault(targetPath, newContent);
@@ -746,18 +752,18 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     }
     const entry = this.vectorIndex.getEntry(context.nodeId);
     if (entry) {
-      const updatedEntry = { ...entry, path: targetPath, updated: new Date().toISOString() };
+      const updatedEntry = { ...entry, path: targetPath, updated: formatCRTimestamp() };
       await this.vectorIndex.upsert(updatedEntry);
       await this.duplicateManager.detect(context.nodeId, entry.type, entry.embedding);
     }
 
     // 去重记录清理
     if (context.mergePairId) {
-      await this.duplicateManager.removePair(context.mergePairId);
+      await this.duplicateManager.completeMerge(context.mergePairId, context.nodeId);
     }
 
     context.stage = "completed";
-    context.updatedAt = new Date().toISOString();
+    context.updatedAt = formatCRTimestamp();
     this.publishEvent({
       type: "pipeline_completed",
       pipelineId: context.pipelineId,
@@ -781,20 +787,20 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
     if (!improved) {
       context.stage = "failed";
-      context.error = { code: "E304", message: "增量改进结果缺失" };
+      context.error = { code: "E306", message: "增量改进结果缺失" };
       this.publishEvent({
         type: "pipeline_failed",
         pipelineId: context.pipelineId,
         stage: "failed",
         context,
-        timestamp: new Date().toISOString()
+        timestamp: formatCRTimestamp()
       });
       return;
     }
 
     context.newContent = improved as string;
     context.generatedContent = result;
-    context.updatedAt = new Date().toISOString();
+    context.updatedAt = formatCRTimestamp();
 
     const settings = this.getSettings();
     if (settings.enableGrounding) {
@@ -815,7 +821,14 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
       if (!taskResult.ok) {
         context.stage = "failed";
-        context.error = { code: "E304", message: taskResult.error.message };
+        context.error = { code: taskResult.error.code, message: taskResult.error.message };
+        this.publishEvent({
+          type: "pipeline_failed",
+          pipelineId: context.pipelineId,
+          stage: "failed",
+          context,
+          timestamp: formatCRTimestamp()
+        });
         return;
       }
 
@@ -842,13 +855,13 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     const mergeResult = (task.result || task.payload?.result) as Record<string, unknown> | undefined;
     if (!mergeResult) {
       context.stage = "failed";
-      context.error = { code: "E304", message: "合并结果缺失" };
+      context.error = { code: "E306", message: "合并结果缺失" };
       this.publishEvent({
         type: "pipeline_failed",
         pipelineId: context.pipelineId,
         stage: "failed",
         context,
-        timestamp: new Date().toISOString()
+        timestamp: formatCRTimestamp()
       });
       return;
     }
@@ -856,7 +869,8 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     const mergedContent = this.buildMergedContent(
       mergeResult,
       context.previousContent || "",
-      context.type
+      context.type,
+      context.deleteNoteName || ""
     );
 
     if (!mergedContent.ok) {
@@ -867,7 +881,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
     context.newContent = mergedContent.value;
     context.generatedContent = mergeResult;
-    context.updatedAt = new Date().toISOString();
+    context.updatedAt = formatCRTimestamp();
 
     const settings = this.getSettings();
     if (settings.enableGrounding) {
@@ -888,7 +902,14 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
       if (!taskResult.ok) {
         context.stage = "failed";
-        context.error = { code: "E304", message: taskResult.error.message };
+        context.error = { code: taskResult.error.code, message: taskResult.error.message };
+        this.publishEvent({
+          type: "pipeline_failed",
+          pipelineId: context.pipelineId,
+          stage: "failed",
+          context,
+          timestamp: formatCRTimestamp()
+        });
         return;
       }
 
@@ -905,8 +926,680 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     }
   }
 
-  // 注意：startIncrementalPipeline 和 startMergePipeline 方法已被移除
-  // 这些功能将在未来重构后重新实现
+  /**
+   * 启动合并管线
+   * 
+   * 遵循 SSOT 6.3：Merge 流程
+   * - 用户从重复对列表进入 merge，对 A/B 选择主笔记
+   * - 创建快照：A、B 各一份
+   * - 生成合并候选（正文 + frontmatter）
+   * - 进入确认阶段：DiffView 确认后落盘
+   * 
+   * @param pair 重复对
+   * @param keepNodeId 保留的笔记 nodeId
+   * @param finalFileName 合并后的文件名（不含扩展名）
+   * @returns 管线 ID
+   */
+  startMergePipeline(
+    pair: DuplicatePair,
+    keepNodeId: string,
+    finalFileName: string
+  ): Result<string> {
+    // 确定主笔记和被删除笔记
+    const isKeepA = keepNodeId === pair.noteA.nodeId;
+    const keepNote = isKeepA ? pair.noteA : pair.noteB;
+    const deleteNote = isKeepA ? pair.noteB : pair.noteA;
+
+    // 前置校验
+    const prereqResult = this.validatePrerequisites("reason:new", pair.type);
+    if (!prereqResult.ok) {
+      return prereqResult as Result<string>;
+    }
+
+    const pipelineId = generateUUID();
+    const now = formatCRTimestamp();
+
+    const context: PipelineContext = {
+      kind: "merge",
+      pipelineId,
+      nodeId: keepNote.nodeId,
+      type: pair.type,
+      stage: "idle",
+      userInput: `合并 ${pair.noteA.name} 和 ${pair.noteB.name}`,
+      mergePairId: pair.id,
+      deleteFilePath: deleteNote.path,
+      deleteNoteName: deleteNote.name,
+      deleteNodeId: deleteNote.nodeId,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    this.pipelines.set(pipelineId, context);
+    this.queueSavePipelineState();
+
+    this.logger.info("PipelineOrchestrator", `启动合并管线: ${pipelineId}`, {
+      keepNodeId,
+      deleteNodeId: deleteNote.nodeId,
+      pairId: pair.id,
+      finalFileName
+    });
+
+    // 异步执行合并流程
+    void this.executeMergePipeline(context, pair, keepNote, deleteNote, finalFileName);
+
+    return ok(pipelineId);
+  }
+
+  /**
+   * 执行合并管线
+   */
+  private async executeMergePipeline(
+    context: PipelineContext,
+    pair: DuplicatePair,
+    keepNote: { nodeId: string; name: string; path: string },
+    deleteNote: { nodeId: string; name: string; path: string },
+    finalFileName: string
+  ): Promise<void> {
+    try {
+      // 1. 读取两篇笔记内容
+      const keepFile = this.app.vault.getAbstractFileByPath(keepNote.path);
+      const deleteFile = this.app.vault.getAbstractFileByPath(deleteNote.path);
+
+      if (!keepFile || !(keepFile instanceof TFile)) {
+        context.stage = "failed";
+        context.error = { code: "E306", message: `主笔记不存在: ${keepNote.path}` };
+        this.publishEvent({
+          type: "pipeline_failed",
+          pipelineId: context.pipelineId,
+          stage: "failed",
+          context,
+          timestamp: formatCRTimestamp()
+        });
+        return;
+      }
+
+      if (!deleteFile || !(deleteFile instanceof TFile)) {
+        context.stage = "failed";
+        context.error = { code: "E306", message: `被合并笔记不存在: ${deleteNote.path}` };
+        this.publishEvent({
+          type: "pipeline_failed",
+          pipelineId: context.pipelineId,
+          stage: "failed",
+          context,
+          timestamp: formatCRTimestamp()
+        });
+        return;
+      }
+
+      const keepContent = await this.app.vault.read(keepFile);
+      const deleteContent = await this.app.vault.read(deleteFile);
+
+      context.previousContent = keepContent;
+      context.deleteContent = deleteContent;
+      context.filePath = keepNote.path;
+
+      // 2. 创建双快照（SSOT 要求）
+      context.stage = "writing";
+      context.updatedAt = formatCRTimestamp();
+
+      const keepSnapshotResult = await this.undoManager.createSnapshot(
+        keepNote.path,
+        keepContent,
+        context.pipelineId,
+        keepNote.nodeId
+      );
+      if (keepSnapshotResult.ok) {
+        context.snapshotId = keepSnapshotResult.value;
+      }
+
+      await this.undoManager.createSnapshot(
+        deleteNote.path,
+        deleteContent,
+        `merge-delete-${context.pipelineId}`,
+        deleteNote.nodeId
+      );
+
+      this.logger.info("PipelineOrchestrator", "合并快照已创建", {
+        pipelineId: context.pipelineId,
+        keepSnapshotId: context.snapshotId
+      });
+
+      // 3. 调用 LLM 生成合并内容
+      context.stage = "reasoning";
+      context.updatedAt = formatCRTimestamp();
+
+      this.publishEvent({
+        type: "stage_changed",
+        pipelineId: context.pipelineId,
+        stage: "reasoning",
+        context,
+        timestamp: context.updatedAt
+      });
+
+      // 构建 merge prompt 并调用 LLM
+      const mergeResult = await this.generateMergeContent(
+        context,
+        keepNote.name,
+        deleteNote.name,
+        keepContent,
+        deleteContent,
+        pair.type,
+        finalFileName
+      );
+
+      if (!mergeResult.ok) {
+        context.stage = "failed";
+        context.error = { code: mergeResult.error.code, message: mergeResult.error.message };
+        this.publishEvent({
+          type: "pipeline_failed",
+          pipelineId: context.pipelineId,
+          stage: "failed",
+          context,
+          timestamp: formatCRTimestamp()
+        });
+        return;
+      }
+
+      context.generatedContent = mergeResult.value;
+      context.newContent = mergeResult.value.finalContent;
+
+      // 4. 进入等待确认阶段
+      context.stage = "awaiting_write_confirm";
+      context.updatedAt = formatCRTimestamp();
+
+      this.publishEvent({
+        type: "confirmation_required",
+        pipelineId: context.pipelineId,
+        stage: "awaiting_write_confirm",
+        context,
+        timestamp: context.updatedAt
+      });
+
+    } catch (error) {
+      this.logger.error("PipelineOrchestrator", "合并管线执行失败", error as Error, {
+        pipelineId: context.pipelineId
+      });
+      context.stage = "failed";
+      context.error = { code: "E305", message: String(error) };
+      this.publishEvent({
+        type: "pipeline_failed",
+        pipelineId: context.pipelineId,
+        stage: "failed",
+        context,
+        timestamp: formatCRTimestamp()
+      });
+    }
+  }
+
+  /**
+   * 生成合并内容
+   * 
+   * 遵循 SSOT 5.4.4：使用 PromptManager.buildOperation 构建 merge prompt
+   */
+  private async generateMergeContent(
+    context: PipelineContext,
+    keepNoteName: string,
+    deleteNoteName: string,
+    keepContent: string,
+    deleteContent: string,
+    type: CRType,
+    finalFileName: string
+  ): Promise<Result<{ mergeResult: Record<string, unknown>; finalContent: string }>> {
+    if (!this.promptManager || !this.providerManager) {
+      return err("E306", "PromptManager 或 ProviderManager 未初始化");
+    }
+
+    const settings = this.getSettings();
+    const language = settings.language === "en" ? "English" : "Chinese";
+
+    // 构建 merge prompt（遵循 SSOT 5.4.4 槽位契约）
+    const slots: Record<string, string> = {
+      SOURCE_A_NAME: keepNoteName,
+      CTX_SOURCE_A: keepContent,
+      SOURCE_B_NAME: deleteNoteName,
+      CTX_SOURCE_B: deleteContent,
+      USER_INSTRUCTION: `合并这两个 ${type} 类型的概念笔记，最终文件名为 "${finalFileName}"`,
+      CONCEPT_TYPE: type,
+      CTX_LANGUAGE: language
+    };
+
+    // 使用 buildOperation 构建 merge prompt
+    let promptContent: string;
+    const promptResult = this.promptManager.buildOperation("merge", slots);
+    
+    if (!promptResult.ok) {
+      // 如果 merge 模板不可用，使用简化的合并 prompt
+      this.logger.warn("PipelineOrchestrator", "merge 模板不可用，使用简化 prompt", {
+        pipelineId: context.pipelineId,
+        error: promptResult.error
+      });
+      
+      promptContent = this.buildSimpleMergePrompt(
+        keepNoteName,
+        deleteNoteName,
+        keepContent,
+        deleteContent,
+        type,
+        language
+      );
+    } else {
+      promptContent = promptResult.value;
+    }
+
+    // 获取任务模型配置
+    const taskConfig = settings.taskModels?.["reason:new"];
+    const providerId = taskConfig?.providerId || settings.defaultProviderId || "default";
+    const model = taskConfig?.model || "gpt-4o";
+
+    // 调用 LLM
+    const chatResult = await this.providerManager.chat({
+      providerId,
+      model,
+      messages: [{ role: "user", content: promptContent }],
+      temperature: taskConfig?.temperature ?? 0.7,
+      maxTokens: taskConfig?.maxTokens
+    });
+
+    if (!chatResult.ok) {
+      return chatResult as Result<{ mergeResult: Record<string, unknown>; finalContent: string }>;
+    }
+
+    // 解析 LLM 输出
+    let mergeResult: Record<string, unknown>;
+    try {
+      // 尝试提取 JSON（处理可能的 markdown code fence）
+      let jsonStr = chatResult.value.content.trim();
+      const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch) {
+        jsonStr = jsonMatch[1].trim();
+      }
+      mergeResult = JSON.parse(jsonStr);
+    } catch (parseError) {
+      this.logger.error("PipelineOrchestrator", "解析合并结果失败", parseError as Error, {
+        pipelineId: context.pipelineId,
+        rawContent: chatResult.value.content.substring(0, 500)
+      });
+      return err("E306", "解析合并结果失败，LLM 输出格式不正确");
+    }
+
+    // 构建最终内容
+    const buildResult = this.buildMergedContent(
+      mergeResult,
+      context.previousContent || "",
+      type,
+      deleteNoteName
+    );
+
+    if (!buildResult.ok) {
+      return buildResult as Result<{ mergeResult: Record<string, unknown>; finalContent: string }>;
+    }
+
+    return ok({
+      mergeResult,
+      finalContent: buildResult.value
+    });
+  }
+
+  /**
+   * 构建简化的合并 prompt
+   */
+  private buildSimpleMergePrompt(
+    keepNoteName: string,
+    deleteNoteName: string,
+    keepContent: string,
+    deleteContent: string,
+    type: CRType,
+    language: string
+  ): string {
+    return `你是一个知识合并专家。请将以下两个 ${type} 类型的概念笔记合并为一个统一的知识节点。
+
+**源笔记 A（主笔记）：${keepNoteName}**
+\`\`\`
+${keepContent}
+\`\`\`
+
+**源笔记 B（被合并笔记）：${deleteNoteName}**
+\`\`\`
+${deleteContent}
+\`\`\`
+
+**要求**：
+1. 保留两个笔记中的所有关键信息
+2. 消除重复和冗余
+3. 使用 ${language} 作为主要语言
+4. 将被合并笔记的名称添加到 aliases 中
+
+**输出格式**：纯 JSON，不使用 markdown 代码块
+{
+  "merged_name": { "chinese": "...", "english": "..." },
+  "merge_rationale": "合并理由说明",
+  "content": { ... 按照 ${type} 类型的结构组织内容 ... },
+  "preserved_from_a": ["从笔记A保留的信息点"],
+  "preserved_from_b": ["从笔记B保留的信息点"]
+}`;
+  }
+
+  /**
+   * 启动增量改进管线
+   * 
+   * 遵循 SSOT 6.4：Incremental Edit 流程
+   * - 用户从 Workbench 选择目标笔记与改写指令
+   * - 创建快照（目标笔记）
+   * - 生成候选改写（正文 + frontmatter）
+   * - 进入确认阶段：DiffView 确认后落盘
+   * 
+   * @param filePath 目标笔记路径
+   * @param instruction 改写指令
+   * @returns 管线 ID
+   */
+  startIncrementalPipeline(
+    filePath: string,
+    instruction: string
+  ): Result<string> {
+    // 前置校验
+    const prereqResult = this.validatePrerequisites("reason:new");
+    if (!prereqResult.ok) {
+      return prereqResult as Result<string>;
+    }
+
+    // 获取文件
+    const file = this.app.vault.getAbstractFileByPath(filePath);
+    if (!file || !(file instanceof TFile)) {
+      return err("E306", `文件不存在: ${filePath}`);
+    }
+
+    const pipelineId = generateUUID();
+    const now = formatCRTimestamp();
+
+    // 从文件路径提取 nodeId（如果有 frontmatter 中的 cruid）
+    const nodeId = generateUUID(); // 临时 ID，后续从 frontmatter 读取
+
+    const context: PipelineContext = {
+      kind: "incremental",
+      pipelineId,
+      nodeId,
+      type: "Entity", // 临时类型，后续从 frontmatter 读取
+      stage: "idle",
+      userInput: instruction,
+      filePath,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    this.pipelines.set(pipelineId, context);
+    this.queueSavePipelineState();
+
+    this.logger.info("PipelineOrchestrator", `启动增量改进管线: ${pipelineId}`, {
+      filePath,
+      instruction: instruction.substring(0, 100)
+    });
+
+    // 异步执行增量改进流程
+    void this.executeIncrementalPipeline(context, file, instruction);
+
+    return ok(pipelineId);
+  }
+
+  /**
+   * 执行增量改进管线
+   */
+  private async executeIncrementalPipeline(
+    context: PipelineContext,
+    file: TFile,
+    instruction: string
+  ): Promise<void> {
+    try {
+      // 1. 读取笔记内容
+      const content = await this.app.vault.read(file);
+      context.previousContent = content;
+
+      // 2. 解析 frontmatter 获取 nodeId 和 type
+      const frontmatter = this.parseSimpleFrontmatter(content);
+      const extractedUid = (frontmatter.cruid ?? frontmatter.crUid) as string | undefined;
+      if (extractedUid) {
+        context.nodeId = extractedUid;
+      }
+      if (frontmatter.type) {
+        context.type = frontmatter.type as CRType;
+      }
+
+      // 3. 创建快照（SSOT 要求）
+      const snapshotResult = await this.undoManager.createSnapshot(
+        context.filePath!,
+        content,
+        context.pipelineId,
+        context.nodeId
+      );
+      if (snapshotResult.ok) {
+        context.snapshotId = snapshotResult.value;
+      }
+
+      this.logger.info("PipelineOrchestrator", "增量改进快照已创建", {
+        pipelineId: context.pipelineId,
+        snapshotId: context.snapshotId
+      });
+
+      // 4. 调用 LLM 生成改进内容
+      context.stage = "reasoning";
+      context.updatedAt = formatCRTimestamp();
+
+      this.publishEvent({
+        type: "stage_changed",
+        pipelineId: context.pipelineId,
+        stage: "reasoning",
+        context,
+        timestamp: context.updatedAt
+      });
+
+      const improveResult = await this.generateIncrementalContent(
+        context,
+        content,
+        instruction
+      );
+
+      if (!improveResult.ok) {
+        context.stage = "failed";
+        context.error = { code: improveResult.error.code, message: improveResult.error.message };
+        this.publishEvent({
+          type: "pipeline_failed",
+          pipelineId: context.pipelineId,
+          stage: "failed",
+          context,
+          timestamp: formatCRTimestamp()
+        });
+        return;
+      }
+
+      context.generatedContent = improveResult.value;
+      context.newContent = improveResult.value.finalContent;
+
+      // 5. 进入等待确认阶段
+      context.stage = "awaiting_write_confirm";
+      context.updatedAt = formatCRTimestamp();
+
+      this.publishEvent({
+        type: "confirmation_required",
+        pipelineId: context.pipelineId,
+        stage: "awaiting_write_confirm",
+        context,
+        timestamp: context.updatedAt
+      });
+
+    } catch (error) {
+      this.logger.error("PipelineOrchestrator", "增量改进管线执行失败", error as Error, {
+        pipelineId: context.pipelineId
+      });
+      context.stage = "failed";
+      context.error = { code: "E305", message: String(error) };
+      this.publishEvent({
+        type: "pipeline_failed",
+        pipelineId: context.pipelineId,
+        stage: "failed",
+        context,
+        timestamp: formatCRTimestamp()
+      });
+    }
+  }
+
+  /**
+   * 生成增量改进内容
+   */
+  private async generateIncrementalContent(
+    context: PipelineContext,
+    currentContent: string,
+    instruction: string
+  ): Promise<Result<{ improveResult: Record<string, unknown>; finalContent: string }>> {
+    if (!this.providerManager) {
+      return err("E306", "ProviderManager 未初始化");
+    }
+
+    const settings = this.getSettings();
+    const language = settings.language === "en" ? "English" : "Chinese";
+
+    // 构建增量改进 prompt（优先使用操作模板，失败则回退到简化 prompt）
+    let promptContent = this.buildIncrementalPrompt(
+      currentContent,
+      instruction,
+      context.type,
+      language
+    );
+
+    if (this.promptManager) {
+      const slots: Record<string, string> = {
+        CTX_CURRENT: currentContent,
+        USER_INSTRUCTION: instruction,
+        CONCEPT_TYPE: context.type,
+        CTX_LANGUAGE: language
+      };
+
+      const promptResult = this.promptManager.buildOperation("incremental", slots);
+      if (promptResult.ok) {
+        promptContent = promptResult.value;
+      } else {
+        this.logger.warn("PipelineOrchestrator", "incremental 模板不可用，使用简化 prompt", {
+          pipelineId: context.pipelineId,
+          error: promptResult.error
+        });
+      }
+    }
+
+    // 获取任务模型配置
+    const taskConfig = settings.taskModels?.["reason:new"];
+    const providerId = taskConfig?.providerId || settings.defaultProviderId || "default";
+    const model = taskConfig?.model || "gpt-4o";
+
+    // 调用 LLM
+    const chatResult = await this.providerManager.chat({
+      providerId,
+      model,
+      messages: [{ role: "user", content: promptContent }],
+      temperature: taskConfig?.temperature ?? 0.7,
+      maxTokens: taskConfig?.maxTokens
+    });
+
+    if (!chatResult.ok) {
+      return chatResult as Result<{ improveResult: Record<string, unknown>; finalContent: string }>;
+    }
+
+    // 解析 LLM 输出
+    let improveResult: Record<string, unknown>;
+    try {
+      let jsonStr = chatResult.value.content.trim();
+      const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch) {
+        jsonStr = jsonMatch[1].trim();
+      }
+      improveResult = JSON.parse(jsonStr);
+    } catch (parseError) {
+      // 如果无法解析为 JSON，直接使用原始内容作为改进后的内容
+      this.logger.warn("PipelineOrchestrator", "无法解析增量改进结果为 JSON，使用原始输出", {
+        pipelineId: context.pipelineId
+      });
+      
+      // 尝试提取 markdown 内容
+      const content = chatResult.value.content.trim();
+      return ok({
+        improveResult: { improved_content: content },
+        finalContent: content
+      });
+    }
+
+    // 构建最终内容
+    const finalContent = (improveResult.improved_content as string) || 
+                         (improveResult.newContent as string) ||
+                         chatResult.value.content;
+
+    return ok({
+      improveResult,
+      finalContent
+    });
+  }
+
+  /**
+   * 构建增量改进 prompt
+   */
+  private buildIncrementalPrompt(
+    currentContent: string,
+    instruction: string,
+    type: CRType,
+    language: string
+  ): string {
+    return `你是一个知识改进专家。请根据用户指令改进以下 ${type} 类型的概念笔记。
+
+**当前笔记内容**：
+\`\`\`
+${currentContent}
+\`\`\`
+
+**用户指令**：${instruction}
+
+**要求**：
+1. 保留原笔记中所有有效内容
+2. 根据用户指令进行针对性改进
+3. 使用 ${language} 作为主要语言
+4. 保持原有的 frontmatter 格式和字段
+5. 改进后的内容必须是原内容的超集
+
+**输出格式**：纯 JSON，不使用 markdown 代码块
+{
+  "improved_content": "完整的改进后笔记内容（包含 frontmatter）",
+  "changes_summary": "改进内容摘要",
+  "preserved_sections": ["保留的章节列表"],
+  "enhanced_sections": ["增强的章节列表"]
+}`;
+  }
+
+  /**
+   * 简单解析 frontmatter（用于增量改进）
+   */
+  private parseSimpleFrontmatter(content: string): Record<string, unknown> {
+    const match = content.match(/^---\n([\s\S]*?)\n---/);
+    if (!match) {
+      return {};
+    }
+
+    const frontmatterStr = match[1];
+    const result: Record<string, unknown> = {};
+
+    // 简单解析 YAML
+    const lines = frontmatterStr.split("\n");
+    for (const line of lines) {
+      const colonIndex = line.indexOf(":");
+      if (colonIndex > 0) {
+        const key = line.substring(0, colonIndex).trim();
+        let value: unknown = line.substring(colonIndex + 1).trim();
+        
+        // 处理引号
+        if (typeof value === "string" && value.startsWith('"') && value.endsWith('"')) {
+          value = value.slice(1, -1);
+        }
+        
+        result[key] = value;
+      }
+    }
+
+    return result;
+  }
 
   /**
    * 确认创建（在 embedding 之后）
@@ -918,11 +1611,11 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
   async confirmCreate(pipelineId: string): Promise<Result<void>> {
     const context = this.pipelines.get(pipelineId);
     if (!context) {
-      return err("E304", `管线不存在: ${pipelineId}`);
+      return err("E307", `管线不存在: ${pipelineId}`);
     }
 
     if (context.stage !== "awaiting_create_confirm") {
-      return err("E304", `管线状态不正确: ${context.stage}，期望: awaiting_create_confirm`);
+      return err("E306", `管线状态不正确: ${context.stage}，期望: awaiting_create_confirm`);
     }
 
     try {
@@ -938,7 +1631,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
       // 2. 更新阶段为 reasoning
       context.stage = "reasoning";
-      context.updatedAt = new Date().toISOString();
+      context.updatedAt = formatCRTimestamp();
 
       // 3. 创建 reason:new 任务
       const settings = this.getSettings();
@@ -958,14 +1651,15 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
           embedding: context.embedding,
           filePath: context.filePath, // 传递 Stub 文件路径
           skipSnapshot: true, // 创建流程不保存快照
-          userInput: context.userInput
+          userInput: context.userInput,
+          sources: context.sources
         }
       });
 
       if (!taskResult.ok) {
         context.stage = "failed";
-        context.error = { code: "E304", message: taskResult.error.message };
-        return err("E304", `创建任务失败: ${taskResult.error.message}`);
+        context.error = { code: taskResult.error.code, message: taskResult.error.message };
+        return err(taskResult.error.code, `创建任务失败: ${taskResult.error.message}`, taskResult.error);
       }
 
       this.taskToPipeline.set(taskResult.value, pipelineId);
@@ -982,8 +1676,35 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
       return ok(undefined);
     } catch (error) {
       this.logger.error("PipelineOrchestrator", "确认创建失败", error as Error);
-      return err("E304", "确认创建失败", error);
+      return err("E305", "确认创建失败", error);
     }
+  }
+
+  /**
+   * 解析创建目标路径与名称（支持 Deepen 预设路径）
+   */
+  private resolveCreateTarget(
+    context: PipelineContext,
+    signatureStandardName: string
+  ): { targetPath: string; targetName: string } {
+    const settings = this.getSettings();
+    const hasOverride = !!context.targetPathOverride && context.targetPathOverride.trim().length > 0;
+
+    const targetPath = hasOverride
+      ? (context.targetPathOverride!.endsWith(".md")
+        ? context.targetPathOverride!
+        : `${context.targetPathOverride!}.md`)
+      : (context.filePath || generateFilePath(
+        signatureStandardName,
+        settings.directoryScheme,
+        context.type
+      ));
+
+    const targetName = hasOverride
+      ? (targetPath.split("/").pop() || signatureStandardName).replace(/\.md$/i, "") || signatureStandardName
+      : signatureStandardName;
+
+    return { targetPath, targetName };
   }
 
   /**
@@ -995,7 +1716,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
   private async createStubFile(context: PipelineContext): Promise<Result<string>> {
     try {
       if (!context.standardizedData) {
-        return err("E304", "缺少标准化数据，无法创建 Stub");
+        return err("E306", "缺少标准化数据，无法创建 Stub");
       }
 
       const settings = this.getSettings();
@@ -1009,12 +1730,8 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
         settings.namingTemplate
       );
 
-      // 生成目标路径
-      const targetPath = generateFilePath(
-        signature.standardName,
-        settings.directoryScheme,
-        context.type
-      );
+      // 生成目标路径（Deepen 支持传入覆盖路径）
+      const { targetPath, targetName } = this.resolveCreateTarget(context, signature.standardName);
       context.filePath = targetPath;
 
       // 确保目录存在
@@ -1024,11 +1741,15 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
       // 生成仅含 frontmatter 的 Stub 内容
       const frontmatter = generateFrontmatter({
-        crUid: context.nodeId,
+        cruid: context.nodeId,
         type: context.type,
+        name: targetName,
+        parents: context.parents ?? [],
         status: "Stub", // Stub 状态
         aliases: context.enrichedData?.aliases,
-        tags: context.enrichedData?.tags
+        tags: context.enrichedData?.tags,
+        parentUid: context.parentUid,
+        parentType: context.parentType
       });
       const stubContent = generateMarkdownContent(frontmatter, ""); // 无正文
 
@@ -1044,7 +1765,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
       return ok(targetPath);
     } catch (error) {
       this.logger.error("PipelineOrchestrator", "创建 Stub 文件失败", error as Error);
-      return err("E304", "创建 Stub 文件失败", error);
+      return err("E300", "创建 Stub 文件失败", error);
     }
   }
 
@@ -1059,11 +1780,11 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     const edits = updates || {};
     const context = this.pipelines.get(pipelineId);
     if (!context) {
-      return err("E304", `管线不存在: ${pipelineId}`);
+      return err("E307", `管线不存在: ${pipelineId}`);
     }
 
     if (!context.standardizedData) {
-      return err("E304", "标准化结果尚未生成，无法更新");
+      return err("E306", "标准化结果尚未生成，无法更新");
     }
 
     // 合并名称、别名、类型
@@ -1091,7 +1812,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     }
 
     context.standardizedData = merged;
-    context.updatedAt = new Date().toISOString();
+    context.updatedAt = formatCRTimestamp();
 
     this.publishEvent({
       type: "stage_changed",
@@ -1115,16 +1836,16 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
   async confirmWrite(pipelineId: string): Promise<Result<void>> {
     const context = this.pipelines.get(pipelineId);
     if (!context) {
-      return err("E304", `管线不存在: ${pipelineId}`);
+      return err("E307", `管线不存在: ${pipelineId}`);
     }
 
     if (context.stage !== "awaiting_write_confirm") {
-      return err("E304", `管线状态不正确: ${context.stage}，期望: awaiting_write_confirm`);
+      return err("E306", `管线状态不正确: ${context.stage}，期望: awaiting_write_confirm`);
     }
 
     try {
       context.stage = "writing";
-      context.updatedAt = new Date().toISOString();
+      context.updatedAt = formatCRTimestamp();
 
       this.logger.info("PipelineOrchestrator", `用户确认写入: ${pipelineId}`);
 
@@ -1138,12 +1859,12 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
         return await this.confirmMergeWrite(context);
       }
 
-      return err("E304", "未知的管线类型");
+      return err("E306", "未知的管线类型");
     } catch (error) {
       this.logger.error("PipelineOrchestrator", "确认写入失败", error as Error);
       context.stage = "failed";
-      context.error = { code: "E304", message: String(error) };
-      return err("E304", "确认写入失败", error);
+      context.error = { code: "E305", message: String(error) };
+      return err("E305", "确认写入失败", error);
     }
   }
 
@@ -1157,11 +1878,11 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
   }>> {
     const context = this.pipelines.get(pipelineId);
     if (!context) {
-      return err("E304", `管线不存在: ${pipelineId}`);
+      return err("E307", `管线不存在: ${pipelineId}`);
     }
 
     if (!["awaiting_write_confirm", "writing", "deduplicating"].includes(context.stage)) {
-      return err("E304", `当前阶段不支持预览: ${context.stage}`);
+      return err("E306", `当前阶段不支持预览: ${context.stage}`);
     }
 
     return this.composeWriteContent(context);
@@ -1173,7 +1894,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
   cancelPipeline(pipelineId: string): Result<void> {
     const context = this.pipelines.get(pipelineId);
     if (!context) {
-      return err("E304", `管线不存在: ${pipelineId}`);
+      return err("E307", `管线不存在: ${pipelineId}`);
     }
 
     // 取消所有关联的任务
@@ -1186,8 +1907,8 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
     // 更新状态
     context.stage = "failed";
-    context.error = { code: "E304", message: "用户取消" };
-    context.updatedAt = new Date().toISOString();
+    context.error = { code: "E306", message: "用户取消" };
+    context.updatedAt = formatCRTimestamp();
 
     this.logger.info("PipelineOrchestrator", `管线已取消: ${pipelineId}`);
 
@@ -1255,14 +1976,22 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
    * 处理任务完成
    */
   private async handleTaskCompleted(taskId: string): Promise<void> {
-    const pipelineId = this.taskToPipeline.get(taskId);
+    const task = this.taskQueue.getTask(taskId);
+    if (!task) return;
+
+    const pipelineId =
+      this.taskToPipeline.get(taskId) ||
+      (typeof (task.payload as Record<string, unknown>)?.pipelineId === "string"
+        ? ((task.payload as Record<string, unknown>).pipelineId as string)
+        : undefined);
     if (!pipelineId) return;
+
+    if (!this.taskToPipeline.has(taskId)) {
+      this.taskToPipeline.set(taskId, pipelineId);
+    }
 
     const context = this.pipelines.get(pipelineId);
     if (!context) return;
-
-    const task = this.taskQueue.getTask(taskId);
-    if (!task) return;
 
     this.logger.debug("PipelineOrchestrator", `任务完成: ${taskId}`, {
       pipelineId,
@@ -1335,13 +2064,13 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     const result = (task.result || task.payload?.result) as PipelineContext["standardizedData"];
     if (!result) {
       context.stage = "failed";
-      context.error = { code: "E304", message: "标准化结果缺失" };
+      context.error = { code: "E306", message: "标准化结果缺失" };
       this.publishEvent({
         type: "pipeline_failed",
         pipelineId: context.pipelineId,
         stage: "failed",
         context,
-        timestamp: new Date().toISOString()
+        timestamp: formatCRTimestamp()
       });
       return;
     }
@@ -1359,7 +2088,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
     // 进入 enrich 阶段
     context.stage = "enriching";
-    context.updatedAt = new Date().toISOString();
+    context.updatedAt = formatCRTimestamp();
 
     // 创建 enrich 任务
     const settings = this.getSettings();
@@ -1404,13 +2133,13 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     const result = (task.result || task.payload?.result) as PipelineContext["enrichedData"];
     if (!result) {
       context.stage = "failed";
-      context.error = { code: "E304", message: "丰富结果缺失" };
+      context.error = { code: "E306", message: "丰富结果缺失" };
       this.publishEvent({
         type: "pipeline_failed",
         pipelineId: context.pipelineId,
         stage: "failed",
         context,
-        timestamp: new Date().toISOString()
+        timestamp: formatCRTimestamp()
       });
       return;
     }
@@ -1422,7 +2151,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
     // 进入等待创建确认阶段（自动确认）
     context.stage = "awaiting_create_confirm";
-    context.updatedAt = new Date().toISOString();
+    context.updatedAt = formatCRTimestamp();
 
     this.logger.info("PipelineOrchestrator", `自动确认创建并生成内容: ${context.pipelineId}`);
     const confirmResult = await this.confirmCreate(context.pipelineId);
@@ -1434,7 +2163,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
         pipelineId: context.pipelineId,
         stage: "failed",
         context,
-        timestamp: new Date().toISOString()
+        timestamp: formatCRTimestamp()
       });
     }
   }
@@ -1459,20 +2188,20 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
       context.embedding = result.embedding as number[];
     } else {
       context.stage = "failed";
-      context.error = { code: "E304", message: "嵌入结果缺失" };
+      context.error = { code: "E306", message: "嵌入结果缺失" };
       this.publishEvent({
         type: "pipeline_failed",
         pipelineId: context.pipelineId,
         stage: "failed",
         context,
-        timestamp: new Date().toISOString()
+        timestamp: formatCRTimestamp()
       });
       return;
     }
 
     // 进入等待创建确认阶段（自动确认，无需 UI）
     context.stage = "awaiting_create_confirm";
-    context.updatedAt = new Date().toISOString();
+    context.updatedAt = formatCRTimestamp();
 
     this.logger.info("PipelineOrchestrator", `自动确认创建并生成内容: ${context.pipelineId}`);
     const confirmResult = await this.confirmCreate(context.pipelineId);
@@ -1484,7 +2213,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
         pipelineId: context.pipelineId,
         stage: "failed",
         context,
-        timestamp: new Date().toISOString()
+        timestamp: formatCRTimestamp()
       });
     }
   }
@@ -1517,7 +2246,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
     // reason:new 完成后，执行 embedding
     context.stage = "embedding";
-    context.updatedAt = new Date().toISOString();
+    context.updatedAt = formatCRTimestamp();
 
     this.publishEvent({
       type: "stage_changed",
@@ -1538,7 +2267,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
    */
   private async startGroundTask(context: PipelineContext): Promise<void> {
     context.stage = "reasoning"; // 复用 reasoning 阶段表示 ground 进行中
-    context.updatedAt = new Date().toISOString();
+    context.updatedAt = formatCRTimestamp();
 
     this.logger.info("PipelineOrchestrator", `启动 Ground 任务: ${context.pipelineId}`);
 
@@ -1577,7 +2306,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
    */
   private transitionToAwaitingWriteConfirm(context: PipelineContext): void {
     context.stage = "awaiting_write_confirm";
-    context.updatedAt = new Date().toISOString();
+    context.updatedAt = formatCRTimestamp();
 
     // 发布确认请求事件
     this.publishEvent({
@@ -1600,7 +2329,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
     // 直接进入写入确认阶段，避免 UI 交互
     context.stage = "awaiting_write_confirm";
-    context.updatedAt = new Date().toISOString();
+    context.updatedAt = formatCRTimestamp();
 
     // 直接调用 confirmWrite 逻辑
     const writeResult = await this.confirmWrite(context.pipelineId);
@@ -1613,7 +2342,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
         pipelineId: context.pipelineId,
         stage: "failed",
         context,
-        timestamp: new Date().toISOString()
+        timestamp: formatCRTimestamp()
       });
     }
   }
@@ -1622,20 +2351,27 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
    * 处理任务失败
    */
   private handleTaskFailed(taskId: string): void {
-    const pipelineId = this.taskToPipeline.get(taskId);
+    const task = this.taskQueue.getTask(taskId);
+    const pipelineId =
+      this.taskToPipeline.get(taskId) ||
+      (typeof (task?.payload as Record<string, unknown>)?.pipelineId === "string"
+        ? ((task!.payload as Record<string, unknown>).pipelineId as string)
+        : undefined);
     if (!pipelineId) return;
+
+    if (!this.taskToPipeline.has(taskId)) {
+      this.taskToPipeline.set(taskId, pipelineId);
+    }
 
     const context = this.pipelines.get(pipelineId);
     if (!context) return;
 
-    const task = this.taskQueue.getTask(taskId);
-
     context.stage = "failed";
     context.error = {
-      code: task?.errors?.[0]?.code || "E304",
+      code: task?.errors?.[0]?.code || "E305",
       message: task?.errors?.[0]?.message || "任务执行失败"
     };
-    context.updatedAt = new Date().toISOString();
+    context.updatedAt = formatCRTimestamp();
 
     this.publishEvent({
       type: "pipeline_failed",
@@ -1686,21 +2422,50 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
   /**
    * Vault 原子写入
+   * 
+   * 静默更新策略（State Preservation）：
+   * - 对于已存在的文件，使用 vault.modify 进行原地更新，避免触发文件删除事件
+   * - 这确保用户当前打开的标签页不会因为文件被删除而跳转到其他文件
+   * - 对于新文件，使用临时文件 + rename 的原子写入方式
    */
   private async atomicWriteVault(path: string, content: string): Promise<void> {
     const adapter = this.app.vault.adapter;
+    
+    // 检查文件是否已存在
+    const existingFile = this.app.vault.getAbstractFileByPath(path);
+    
+    if (existingFile && existingFile instanceof TFile) {
+      // 文件已存在：使用 vault.modify 进行静默更新
+      // 这不会触发文件删除事件，保持用户当前的编辑器焦点
+      await this.app.vault.modify(existingFile, content);
+      this.logger.debug("PipelineOrchestrator", "静默更新已存在文件", { path });
+      return;
+    }
+    
+    // 文件不存在：使用临时文件 + rename 的原子写入方式
     const temp = `${path}.tmp`;
-    await this.ensureVaultDir(path);
-    await adapter.write(temp, content);
-    const verify = await adapter.read(temp);
-    if (verify !== content) {
-      await adapter.remove(temp);
-      throw new Error("写入校验失败");
+    try {
+      await this.ensureVaultDir(path);
+      await adapter.write(temp, content);
+      const verify = await adapter.read(temp);
+      if (verify !== content) {
+        throw new Error("写入校验失败");
+      }
+      await adapter.rename(temp, path);
+      this.logger.debug("PipelineOrchestrator", "原子写入新文件", { path });
+    } catch (error) {
+      try {
+        if (await adapter.exists(temp)) {
+          await adapter.remove(temp);
+        }
+      } catch (cleanupError) {
+        this.logger.warn("PipelineOrchestrator", "清理临时文件失败", {
+          temp,
+          error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+        });
+      }
+      throw error;
     }
-    if (await adapter.exists(path)) {
-      await adapter.remove(path);
-    }
-    await adapter.rename(temp, path);
   }
 
   /**
@@ -1796,123 +2561,215 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
   /**
    * 渲染对象数组
-   * 根据不同的字段类型选择合适的渲染格式
+   * 
+   * 使用 fieldName 参数精确区分不同字段类型，避免仅依赖对象结构导致的误判。
+   * 字段名唯一性约束：每种字段类型有独立的渲染逻辑。
    */
   private renderObjectArray(items: Record<string, unknown>[], fieldName?: string): string {
     if (items.length === 0) return "";
 
+    // 优先使用 fieldName 精确匹配，避免结构相似导致的误判
+    switch (fieldName) {
+      // ========== Domain 类型字段 ==========
+      case "sub_domains":
+        return this.renderNameDescriptionArray(items, true);
+      case "issues":
+        // Domain 中的 issues 字段（name + description）
+        return this.renderNameDescriptionArray(items, true);
+
+      // ========== Issue 类型字段 ==========
+      case "sub_issues":
+        return this.renderNameDescriptionArray(items, true);
+      case "stakeholder_perspectives":
+        return this.renderStakeholderPerspectives(items);
+      case "theories":
+        return this.renderTheories(items);
+
+      // ========== Theory 类型字段 ==========
+      case "axioms":
+        return this.renderAxioms(items);
+      case "sub_theories":
+        return this.renderNameDescriptionArray(items, true);
+      case "entities":
+        // Theory 中的 entities（name + role + attributes）
+        return this.renderTheoryEntities(items);
+      case "mechanisms":
+        // Theory 中的 mechanisms（name + process + function）
+        return this.renderTheoryMechanisms(items);
+
+      // ========== Entity 类型字段 ==========
+      case "properties":
+        // Entity 中的 properties（name + type + description）
+        return this.renderEntityProperties(items);
+      case "states":
+        // Entity 中的 states（name + description，无链接）
+        return this.renderNameDescriptionArray(items, false);
+
+      // ========== Mechanism 类型字段 ==========
+      case "operates_on":
+        return this.renderOperatesOn(items);
+      case "causal_chain":
+        return this.renderCausalChain(items);
+      case "modulation":
+        return this.renderModulation(items);
+    }
+
+    // 回退：基于对象结构推断（兼容旧逻辑）
+    return this.renderObjectArrayByStructure(items);
+  }
+
+  /** 渲染 name + description 数组，withLink 控制是否添加 [[]] 链接 */
+  private renderNameDescriptionArray(items: Record<string, unknown>[], withLink: boolean): string {
+    return items.map(item => {
+      const name = String(item.name || "");
+      const description = String(item.description || "");
+      return withLink
+        ? `- [[${name}]]：${description}`
+        : `- **${name}**：${description}`;
+    }).join("\n");
+  }
+
+  /** 渲染 stakeholder_perspectives（stakeholder + perspective） */
+  private renderStakeholderPerspectives(items: Record<string, unknown>[]): string {
+    return items.map(item => {
+      const stakeholder = String(item.stakeholder || "");
+      const perspective = String(item.perspective || "");
+      return `- **${stakeholder}**：${perspective}`;
+    }).join("\n");
+  }
+
+  /** 渲染 theories（name + status + brief） */
+  private renderTheories(items: Record<string, unknown>[]): string {
+    return items.map(item => {
+      const name = String(item.name || "");
+      const status = String(item.status || "");
+      const brief = String(item.brief || "");
+      const statusLabel = this.getTheoryStatusLabel(status);
+      return `- [[${name}]] (${statusLabel})：${brief}`;
+    }).join("\n");
+  }
+
+  /** 渲染 axioms（statement + justification） */
+  private renderAxioms(items: Record<string, unknown>[]): string {
+    return items.map((item, index) => {
+      const statement = String(item.statement || "");
+      const justification = String(item.justification || "");
+      return `### 公理 ${index + 1}：${statement}\n- **理由**：${justification}`;
+    }).join("\n\n");
+  }
+
+  /** 渲染 Theory 中的 entities（name + role + attributes） */
+  private renderTheoryEntities(items: Record<string, unknown>[]): string {
+    return items.map(item => {
+      const name = String(item.name || "");
+      const role = String(item.role || "");
+      const attributes = String(item.attributes || "");
+      return `- [[${name}]]\n  - **角色**：${role}\n  - **属性**：${attributes}`;
+    }).join("\n");
+  }
+
+  /** 渲染 Theory 中的 mechanisms（name + process + function） */
+  private renderTheoryMechanisms(items: Record<string, unknown>[]): string {
+    return items.map(item => {
+      const name = String(item.name || "");
+      const process = String(item.process || "");
+      const func = String(item.function || "");
+      return `- [[${name}]]\n  - **过程**：${process}\n  - **功能**：${func}`;
+    }).join("\n");
+  }
+
+  /** 渲染 Entity 中的 properties（name + type + description） */
+  private renderEntityProperties(items: Record<string, unknown>[]): string {
+    return items.map(item => {
+      const name = String(item.name || "");
+      const type = String(item.type || "");
+      const description = String(item.description || "");
+      return `- **${name}** (${type})：${description}`;
+    }).join("\n");
+  }
+
+  /** 渲染 operates_on（entity + role） */
+  private renderOperatesOn(items: Record<string, unknown>[]): string {
+    return items.map(item => {
+      const entity = String(item.entity || "");
+      const role = String(item.role || "");
+      return `- ${role}：${entity}`;
+    }).join("\n");
+  }
+
+  /** 渲染 causal_chain（step + description + interaction） */
+  private renderCausalChain(items: Record<string, unknown>[]): string {
+    return items.map(item => {
+      const step = item.step;
+      const description = String(item.description || "");
+      const interaction = String(item.interaction || "");
+      return `### 步骤 ${step}：${interaction}\n- ${description}`;
+    }).join("\n\n");
+  }
+
+  /** 渲染 modulation（factor + effect + mechanism） */
+  private renderModulation(items: Record<string, unknown>[]): string {
+    return items.map(item => {
+      const factor = String(item.factor || "");
+      const effect = String(item.effect || "");
+      const mechanism = String(item.mechanism || "");
+      const effectLabel = this.getModulationEffectLabel(effect);
+      return `- **${factor}** (${effectLabel})：${mechanism}`;
+    }).join("\n");
+  }
+
+  /** 基于对象结构推断渲染方式（回退逻辑） */
+  private renderObjectArrayByStructure(items: Record<string, unknown>[]): string {
     const firstItem = items[0];
 
-    // 优先匹配更具体的结构，避免被通用规则覆盖
-
-    // properties (in Entity): name + type + description
+    // properties: name + type + description
     if ("name" in firstItem && "type" in firstItem && "description" in firstItem) {
-      return items.map(item => {
-        const name = String(item.name || "");
-        const type = String(item.type || "");
-        const description = String(item.description || "");
-        return `- **${name}** (${type})：${description}`;
-      }).join("\n");
+      return this.renderEntityProperties(items);
     }
 
     // axioms: statement + justification
     if ("statement" in firstItem && "justification" in firstItem) {
-      return items.map((item, index) => {
-        const statement = String(item.statement || "");
-        const justification = String(item.justification || "");
-        return `### 公理 ${index + 1}：${statement}\n- **理由**：${justification}`;
-      }).join("\n\n");
+      return this.renderAxioms(items);
     }
 
-    // entities (in Theory): name + role + attributes
+    // entities (Theory): name + role + attributes
     if ("name" in firstItem && "role" in firstItem && "attributes" in firstItem) {
-      return items.map(item => {
-        const name = String(item.name || "");
-        const role = String(item.role || "");
-        const attributes = String(item.attributes || "");
-        return `- [[${name}]]\n  - **角色**：${role}\n  - **属性**：${attributes}`;
-      }).join("\n");
+      return this.renderTheoryEntities(items);
     }
 
-    // mechanisms (in Theory): name + process + function
+    // mechanisms (Theory): name + process + function
     if ("name" in firstItem && "process" in firstItem && "function" in firstItem) {
-      return items.map(item => {
-        const name = String(item.name || "");
-        const process = String(item.process || "");
-        const func = String(item.function || "");
-        return `- [[${name}]]\n  - **过程**：${process}\n  - **功能**：${func}`;
-      }).join("\n");
+      return this.renderTheoryMechanisms(items);
     }
 
-    // theories (in Issue): name + status + brief
+    // theories: name + status + brief
     if ("name" in firstItem && "status" in firstItem && "brief" in firstItem) {
-      return items.map(item => {
-        const name = String(item.name || "");
-        const status = String(item.status || "");
-        const brief = String(item.brief || "");
-        const statusLabel = this.getTheoryStatusLabel(status);
-        return `- [[${name}]] (${statusLabel})：${brief}`;
-      }).join("\n");
+      return this.renderTheories(items);
     }
 
     // stakeholder_perspectives: stakeholder + perspective
     if ("stakeholder" in firstItem && "perspective" in firstItem) {
-      return items.map(item => {
-        const stakeholder = String(item.stakeholder || "");
-        const perspective = String(item.perspective || "");
-        return `- **${stakeholder}**：${perspective}`;
-      }).join("\n");
+      return this.renderStakeholderPerspectives(items);
     }
 
-    // operates_on (in Mechanism): entity + role
-    // 修改格式：- 主体：实体名 / - 客体：实体名
+    // operates_on: entity + role
     if ("entity" in firstItem && "role" in firstItem) {
-      return items.map(item => {
-        const entity = String(item.entity || "");
-        const role = String(item.role || "");
-        return `- ${role}：${entity}`;
-      }).join("\n");
+      return this.renderOperatesOn(items);
     }
 
-    // causal_chain (in Mechanism): step + description + interaction
-    // 修改格式：### 步骤 N：interaction\n- description
+    // causal_chain: step + description + interaction
     if ("step" in firstItem && "description" in firstItem && "interaction" in firstItem) {
-      return items.map(item => {
-        const step = item.step;
-        const description = String(item.description || "");
-        const interaction = String(item.interaction || "");
-        return `### 步骤 ${step}：${interaction}\n- ${description}`;
-      }).join("\n\n");
+      return this.renderCausalChain(items);
     }
 
-    // modulation (in Mechanism): factor + effect + mechanism
+    // modulation: factor + effect + mechanism
     if ("factor" in firstItem && "effect" in firstItem && "mechanism" in firstItem) {
-      return items.map(item => {
-        const factor = String(item.factor || "");
-        const effect = String(item.effect || "");
-        const mechanism = String(item.mechanism || "");
-        const effectLabel = this.getModulationEffectLabel(effect);
-        return `- **${factor}** (${effectLabel})：${mechanism}`;
-      }).join("\n");
+      return this.renderModulation(items);
     }
 
-    // states (in Entity): name + description (without role/type)
-    // 必须在通用 name+description 规则之前
-    if ("name" in firstItem && "description" in firstItem && !("role" in firstItem) && !("type" in firstItem)) {
-      return items.map(item => {
-        const name = String(item.name || "");
-        const description = String(item.description || "");
-        return `- **${name}**：${description}`;
-      }).join("\n");
-    }
-
-    // sub_domains, issues, sub_issues, sub_theories: name + description (通用规则)
+    // name + description（通用，带链接）
     if ("name" in firstItem && "description" in firstItem) {
-      return items.map(item => {
-        const name = String(item.name || "");
-        const description = String(item.description || "");
-        return `- [[${name}]]：${description}`;
-      }).join("\n");
+      return this.renderNameDescriptionArray(items, true);
     }
 
     // 默认：渲染为键值对列表
@@ -1981,53 +2838,61 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
    */
   private parseFrontmatter(content: string): CRFrontmatter | null {
     const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
-    if (!match) {
+    if (!match) return null;
+
+    try {
+      const doc = YAML.parse(match[1]) as Record<string, unknown> | null;
+      if (!doc || typeof doc !== "object") return null;
+
+      const cruid = typeof doc.cruid === "string"
+        ? doc.cruid
+        : typeof doc.crUid === "string"
+          ? doc.crUid
+          : undefined;
+      const type = typeof doc.type === "string" ? (doc.type as CRType) : undefined;
+      const status = typeof doc.status === "string" ? (doc.status as NoteState) : undefined;
+      const created = typeof doc.created === "string" ? doc.created : undefined;
+      const updated = typeof doc.updated === "string" ? doc.updated : undefined;
+      const name = typeof doc.name === "string" ? doc.name : "";
+
+      if (!cruid || !type || !status || !created || !updated) {
+        return null;
+      }
+
+      const normalizeArray = (value: unknown): string[] | undefined => {
+        if (!Array.isArray(value)) return undefined;
+        const arr = value.map((v) => String(v)).filter((s) => s.trim().length > 0);
+        return arr.length > 0 ? arr : undefined;
+      };
+
+      const parents = normalizeArray(doc.parents) || [];
+
+      return {
+        cruid,
+        type,
+        name,
+        status,
+        created,
+        updated,
+        aliases: normalizeArray(doc.aliases),
+        tags: normalizeArray(doc.tags),
+        parents,
+        parentUid: typeof doc.parentUid === "string" ? doc.parentUid : undefined,
+        parentType: typeof doc.parentType === "string" ? (doc.parentType as CRType) : undefined,
+        sourceUids: normalizeArray(doc.sourceUids),
+        version: typeof doc.version === "string" ? doc.version : undefined
+      };
+    } catch {
       return null;
     }
-
-    const frontmatterText = match[1];
-    const lines = frontmatterText.split("\n");
-    const frontmatter: Partial<CRFrontmatter> = {};
-
-    for (const line of lines) {
-      const colonIndex = line.indexOf(":");
-      if (colonIndex === -1) continue;
-
-      const key = line.substring(0, colonIndex).trim();
-      const value = line.substring(colonIndex + 1).trim();
-
-      switch (key) {
-        case "crUid":
-          frontmatter.crUid = value;
-          break;
-        case "type":
-          frontmatter.type = value as CRType;
-          break;
-        case "status":
-          frontmatter.status = value as NoteState;
-          break;
-        case "created":
-          frontmatter.created = value;
-          break;
-        case "updated":
-          frontmatter.updated = value;
-          break;
-        case "aliases":
-          // 简化：不解析 aliases 列表，保持原值
-          break;
-      }
-    }
-
-    return frontmatter.crUid && frontmatter.type && frontmatter.status
-      ? (frontmatter as CRFrontmatter)
-      : null;
   }
 
   private buildFrontmatterString(frontmatter: CRFrontmatter): string {
     const lines = [
       "---",
-      `crUid: ${frontmatter.crUid}`,
+      `cruid: ${frontmatter.cruid}`,
       `type: ${frontmatter.type}`,
+      `name: ${frontmatter.name}`,
       `status: ${frontmatter.status}`,
       `created: ${frontmatter.created}`,
       `updated: ${frontmatter.updated}`,
@@ -2038,9 +2903,34 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
       frontmatter.aliases.forEach(alias => lines.push(`  - ${alias}`));
     }
 
+    const parents = Array.isArray(frontmatter.parents) ? frontmatter.parents : [];
+    if (parents.length > 0) {
+      lines.push("parents:");
+      parents.forEach(parent => lines.push(`  - ${parent}`));
+    } else {
+      lines.push("parents: []");
+    }
+
     if (frontmatter.tags && frontmatter.tags.length > 0) {
       lines.push("tags:");
       frontmatter.tags.forEach(tag => lines.push(`  - ${tag}`));
+    }
+
+    if (frontmatter.parentUid) {
+      lines.push(`parentUid: ${frontmatter.parentUid}`);
+    }
+
+    if (frontmatter.parentType) {
+      lines.push(`parentType: ${frontmatter.parentType}`);
+    }
+
+    if (frontmatter.sourceUids && frontmatter.sourceUids.length > 0) {
+      lines.push("sourceUids:");
+      frontmatter.sourceUids.forEach(uid => lines.push(`  - ${uid}`));
+    }
+
+    if (frontmatter.version) {
+      lines.push(`version: ${frontmatter.version}`);
     }
 
     lines.push("---");
@@ -2147,28 +3037,35 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
   private buildMergedContent(
     mergeResult: Record<string, unknown>,
     previousContent: string,
-    type: CRType
+    type: CRType,
+    deleteNoteName: string
   ): Result<string> {
     const frontmatter = this.parseFrontmatter(previousContent);
     if (!frontmatter) {
-      return err("E304", "无法解析原始笔记的 frontmatter");
+      return err("E306", "无法解析原始笔记的 frontmatter");
     }
 
     const mergedName = (mergeResult.merged_name as { chinese?: string; english?: string }) || {};
     const content = mergeResult.content as Record<string, unknown> | undefined;
     if (!content) {
-      return err("E304", "合并结果缺少内容信息");
+      return err("E306", "合并结果缺少内容信息");
     }
 
     const updatedFrontmatter: CRFrontmatter = {
       ...frontmatter,
-      updated: new Date().toISOString()
+      updated: formatCRTimestamp()
     };
 
-    const fmStr = this.buildFrontmatterString(updatedFrontmatter);
+    // 合并后：将被合并笔记标题加入 aliases，便于链接重定向
+    if (deleteNoteName && deleteNoteName.trim()) {
+      const nextAliases = new Set<string>(updatedFrontmatter.aliases ?? []);
+      nextAliases.add(deleteNoteName.trim());
+      updatedFrontmatter.aliases = Array.from(nextAliases);
+    }
+
     const body = this.buildMergeBody(mergedName, content, type, mergeResult);
 
-    return ok(`${fmStr}\n\n${body}`);
+    return ok(generateMarkdownContent(updatedFrontmatter, body));
   }
 
 
@@ -2182,7 +3079,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
   }>> {
     if (context.kind === "create") {
       if (!context.standardizedData || !context.generatedContent) {
-        return err("E304", "缺少生成内容或标准化数据");
+        return err("E306", "缺少生成内容或标准化数据");
       }
 
       const settings = this.getSettings();
@@ -2196,11 +3093,8 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
         settings.namingTemplate
       );
 
-      const targetPath = context.filePath || generateFilePath(
-        signature.standardName,
-        settings.directoryScheme,
-        context.type
-      );
+      const { targetPath, targetName } = this.resolveCreateTarget(context, signature.standardName);
+      context.filePath = targetPath;
 
       await this.ensureVaultDir(targetPath);
 
@@ -2211,15 +3105,19 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
       const markdownBody = this.renderContentToMarkdown(
         context,
-        signature.standardName
+        targetName
       );
 
       const frontmatter = generateFrontmatter({
-        crUid: context.nodeId,
+        cruid: context.nodeId,
         type: context.type,
+        name: targetName,
+        parents: context.parents ?? [],
         status: "Draft",
         aliases: context.enrichedData?.aliases,
-        tags: context.enrichedData?.tags
+        tags: context.enrichedData?.tags,
+        parentUid: context.parentUid,
+        parentType: context.parentType
       });
 
       const fullContent = generateMarkdownContent(frontmatter, markdownBody);
@@ -2233,22 +3131,35 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
     if (context.kind === "incremental" || context.kind === "merge") {
       if (!context.filePath) {
-        return err("E304", "缺少文件路径");
+        return err("E306", "缺少文件路径");
       }
       if (context.previousContent === undefined || context.newContent === undefined) {
-        return err("E304", "缺少预览内容");
+        return err("E306", "缺少预览内容");
       }
 
       await this.ensureVaultDir(context.filePath);
 
+      const normalized = extractFrontmatter(context.newContent);
+      if (!normalized) {
+        return err("E306", "无法解析生成的 frontmatter");
+      }
+
+      const normalizedFrontmatter: CRFrontmatter = {
+        ...normalized.frontmatter,
+        parents: normalized.frontmatter.parents ?? [],
+        updated: formatCRTimestamp()
+      };
+
+      const normalizedContent = generateMarkdownContent(normalizedFrontmatter, normalized.body);
+
       return ok({
         targetPath: context.filePath,
         previousContent: context.previousContent,
-        newContent: context.newContent
+        newContent: normalizedContent
       });
     }
 
-    return err("E304", "未知的管线类型");
+    return err("E306", "未知的管线类型");
   }
 
   /**
@@ -2330,7 +3241,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
       // 保存 embedding 结果
       context.embedding = embedResult.value.embedding;
-      context.updatedAt = new Date().toISOString();
+      context.updatedAt = formatCRTimestamp();
 
       this.logger.info("PipelineOrchestrator", `Embedding 完成: ${context.pipelineId}`, {
         tokensUsed: embedResult.value.tokensUsed
@@ -2349,7 +3260,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
       this.logger.error("PipelineOrchestrator", "直接执行 embedding 失败", error as Error);
       context.stage = "failed";
       context.error = { 
-        code: "E304", 
+        code: "E305", 
         message: error instanceof Error ? error.message : String(error) 
       };
       this.publishEvent({
@@ -2357,7 +3268,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
         pipelineId: context.pipelineId,
         stage: "failed",
         context,
-        timestamp: new Date().toISOString()
+        timestamp: formatCRTimestamp()
       });
     }
   }
@@ -2377,6 +3288,89 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
   }
 
   /**
+   * 管线状态持久化：保存（串行化写入，避免并发写入冲突）
+   */
+  private queueSavePipelineState(): void {
+    const state: PipelineStateFile = {
+      version: "1.0.0",
+      pipelines: this.getActivePipelines(),
+      lastUpdated: formatCRTimestamp()
+    };
+
+    const content = JSON.stringify(state, null, 2);
+    if (content === this.lastPersistedPipelineState) {
+      return;
+    }
+    this.lastPersistedPipelineState = content;
+
+    this.pipelineSaveChain = this.pipelineSaveChain
+      .then(async () => {
+        const result = await this.fileStorage.atomicWrite(
+          PipelineOrchestrator.PIPELINE_STATE_FILE,
+          content
+        );
+        if (!result.ok) {
+          this.logger.warn("PipelineOrchestrator", "保存管线状态失败", {
+            error: result.error
+          });
+        }
+      })
+      .catch((error) => {
+        this.logger.error("PipelineOrchestrator", "保存管线状态异常", error as Error);
+      });
+  }
+
+  /**
+   * 管线状态持久化：加载并恢复（仅恢复未 completed/failed 的管线）
+   */
+  private async loadPipelineState(): Promise<void> {
+    try {
+      const exists = await this.fileStorage.exists(PipelineOrchestrator.PIPELINE_STATE_FILE);
+      if (!exists) return;
+
+      const readResult = await this.fileStorage.read(PipelineOrchestrator.PIPELINE_STATE_FILE);
+      if (!readResult.ok) {
+        this.logger.warn("PipelineOrchestrator", "读取管线状态失败", { error: readResult.error });
+        return;
+      }
+
+      let parsed: PipelineStateFile;
+      try {
+        parsed = JSON.parse(readResult.value) as PipelineStateFile;
+      } catch (error) {
+        this.logger.warn("PipelineOrchestrator", "解析管线状态失败", { error });
+        return;
+      }
+
+      if (!parsed || !Array.isArray(parsed.pipelines)) return;
+
+      let restored = 0;
+      for (const ctx of parsed.pipelines) {
+        if (!ctx || typeof ctx.pipelineId !== "string") continue;
+        if (ctx.stage === "completed" || ctx.stage === "failed") continue;
+        this.pipelines.set(ctx.pipelineId, ctx);
+        restored++;
+      }
+
+      if (restored > 0) {
+        this.logger.info("PipelineOrchestrator", "已恢复活跃管线", { restored });
+        // 通知 UI：让工作台等订阅者刷新
+        for (const ctx of this.getActivePipelines()) {
+          this.publishEvent({
+            type: "stage_changed",
+            pipelineId: ctx.pipelineId,
+            stage: ctx.stage,
+            context: ctx,
+            timestamp: ctx.updatedAt
+          });
+        }
+      }
+    } catch (error) {
+      this.logger.error("PipelineOrchestrator", "加载管线状态失败", error as Error);
+    }
+  }
+
+  /**
    * 发布事件
    */
   private publishEvent(event: PipelineEvent): void {
@@ -2387,5 +3381,8 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
         this.logger.error("PipelineOrchestrator", "事件监听器执行失败", error as Error);
       }
     }
+
+    // 管线状态变更后自动持久化（阶段 2.4）
+    this.queueSavePipelineState();
   }
 }

@@ -31,7 +31,13 @@ const TASK_BLOCKS = [
   "<task>"
 ] as const;
 
-/** 任务-槽位映射表：定义每种任务类型允许使用的槽位 */
+/** 任务-槽位映射表：定义每种任务类型允许使用的槽位
+ * 
+ * 遵循 SSOT 5.4.4 槽位契约：
+ * - 通用槽位：CTX_LANGUAGE（可选；默认 Chinese）
+ * - 操作模块槽位：用于 create/merge/incremental
+ * - 任务型模板槽位：用于现有 TaskType
+ */
 const TASK_SLOT_MAPPING: Record<TaskType, { required: string[]; optional: string[] }> = {
   "embedding": {
     required: ["CTX_INPUT"],
@@ -52,6 +58,28 @@ const TASK_SLOT_MAPPING: Record<TaskType, { required: string[]; optional: string
   "ground": {
     required: ["CTX_META", "CTX_CURRENT"],
     optional: ["CTX_SOURCES", "CTX_LANGUAGE"]
+  }
+};
+
+/**
+ * 操作模块槽位映射（用于 Merge/Incremental 等操作）
+ * 
+ * 遵循 SSOT 5.4.4：
+ * - Merge：必需 SOURCE_A_NAME, CTX_SOURCE_A, SOURCE_B_NAME, CTX_SOURCE_B
+ * - Incremental：必需 CTX_CURRENT, USER_INSTRUCTION
+ */
+export const OPERATION_SLOT_MAPPING: Record<string, { required: string[]; optional: string[] }> = {
+  "merge": {
+    required: ["SOURCE_A_NAME", "CTX_SOURCE_A", "SOURCE_B_NAME", "CTX_SOURCE_B"],
+    optional: ["USER_INSTRUCTION", "CTX_LANGUAGE", "CONCEPT_TYPE"]
+  },
+  "incremental": {
+    required: ["CTX_CURRENT", "USER_INSTRUCTION"],
+    optional: ["CTX_LANGUAGE", "CONCEPT_TYPE"]
+  },
+  "create": {
+    required: ["CTX_INPUT"],
+    optional: ["CTX_LANGUAGE"]
   }
 };
 
@@ -120,6 +148,21 @@ function findUnreplacedVariables(content: string): string[] {
   }
 
   return unreplaced;
+}
+
+/** 提取模板中引用的槽位名（去重） */
+function extractPlaceholderNames(content: string): string[] {
+  const regex = /\{\{([^}]+)\}\}/g;
+  const slots = new Set<string>();
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(content)) !== null) {
+    const name = match[1].trim();
+    if (!name) continue;
+    slots.add(name);
+  }
+
+  return Array.from(slots);
 }
 
 /** 验证槽位是否符合任务-槽位映射表 */
@@ -335,6 +378,85 @@ export class PromptManager implements IPromptManager {
     return this.templateCache.has(templateId);
   }
 
+  /**
+   * 构建操作 prompt（用于 Merge/Incremental 等操作）
+   * 
+   * 遵循 SSOT 5.4.4：使用操作模块槽位映射
+   * 
+   * @param operation 操作类型：merge | incremental | create
+   * @param slots 槽位值
+   * @returns 构建的 prompt
+   */
+  buildOperation(operation: string, slots: Record<string, string>): Result<string> {
+    try {
+      const slotMapping = OPERATION_SLOT_MAPPING[operation];
+      if (!slotMapping) {
+        return err("E002", `不支持的操作类型: ${operation}`);
+      }
+
+      // 加载操作模板（遵循路线图：prompts/_base/operations/<operation>.md）
+      const templateId = `_base/operations/${operation}`;
+      const templateResult = this.loadTemplate(templateId);
+      if (!templateResult.ok) {
+        return templateResult as Result<string>;
+      }
+
+      const template = templateResult.value;
+
+      // 1) 先按契约校验传入槽位是否合法（缺少必需/包含额外）
+      const allowedSlots = new Set([...slotMapping.required, ...slotMapping.optional]);
+      const missingRequired = slotMapping.required.filter((slot) => !(slot in slots));
+      if (missingRequired.length > 0) {
+        return err("E001", `缺少必需槽位: ${missingRequired.join(", ")}`);
+      }
+
+      const extraProvided = Object.keys(slots).filter((slot) => !allowedSlots.has(slot));
+      if (extraProvided.length > 0) {
+        return err("E002", `操作 ${operation} 不支持槽位: ${extraProvided.join(", ")}`);
+      }
+
+      // 2) 模板自身的占位符也必须全部被填充，且不允许未知占位符
+      const templateSlots = extractPlaceholderNames(template.content);
+      const unknownTemplateSlots = templateSlots.filter((slot) => !allowedSlots.has(slot));
+      if (unknownTemplateSlots.length > 0) {
+        return err("E002", `模板存在未声明的槽位: ${unknownTemplateSlots.join(", ")}`);
+      }
+
+      const missingTemplateSlots = templateSlots.filter((slot) => !(slot in slots));
+      if (missingTemplateSlots.length > 0) {
+        return err("E001", `缺少必需槽位: ${missingTemplateSlots.join(", ")}`);
+      }
+
+      // 替换变量
+      let prompt = template.content;
+      for (const [key, value] of Object.entries(slots)) {
+        prompt = replaceVariable(prompt, key, value);
+      }
+
+      // 验证是否还有未替换的变量
+      const unreplacedVars = findUnreplacedVariables(prompt);
+      if (unreplacedVars.length > 0) {
+        this.logger.error("PromptManager", "操作存在未替换的变量", undefined, {
+          operation,
+          unreplacedVars
+        });
+        return err("E002", `存在未替换的占位符: ${unreplacedVars[0]}`);
+      }
+
+      this.logger.debug("PromptManager", "操作 Prompt 构建成功", {
+        operation,
+        promptLength: prompt.length
+      });
+
+      return ok(prompt);
+    } catch (error) {
+      this.logger.error("PromptManager", "构建操作 prompt 失败", error as Error, {
+        operation
+      });
+      return err("E002", "构建操作 prompt 失败", error);
+    }
+  }
+
   /** 加载模板 */
   private loadTemplate(templateId: string): Result<PromptTemplate> {
     // 检查缓存
@@ -481,7 +603,11 @@ export class PromptManager implements IPromptManager {
       "reason-theory",
       "reason-entity",
       "reason-mechanism",
-      "ground"
+      "ground",
+      "merge",
+      "_base/operations/create",
+      "_base/operations/merge",
+      "_base/operations/incremental"
     ];
 
     const errors: string[] = [];

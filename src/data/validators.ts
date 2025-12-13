@@ -13,6 +13,7 @@ import {
   ok,
   err,
 } from "../types";
+import { formatCRTimestamp } from "../utils/date-utils";
 
 // UUID 验证
 
@@ -37,17 +38,21 @@ export function generateUUID(): string {
 
 // ISO 8601 时间戳验证
 
-/** 验证 ISO 8601 时间戳格式 */
-export function isValidISO8601(timestamp: string): boolean {
-  const date = new Date(timestamp);
-  return !isNaN(date.getTime()) && date.toISOString() === timestamp;
+/** 验证 CR 时间戳格式 yyyy-MM-DD HH:mm:ss */
+export function isValidCRTimestamp(timestamp: string): boolean {
+  const regex = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+  if (!regex.test(timestamp)) {
+    return false;
+  }
+  const date = new Date(timestamp.replace(" ", "T"));
+  return !isNaN(date.getTime());
 }
 
 /**
- * 生成当前时间的 ISO 8601 时间戳
+ * 生成当前时间的 CR 时间戳
  */
 export function generateTimestamp(): string {
-  return new Date().toISOString();
+  return formatCRTimestamp();
 }
 
 // CRFrontmatter 验证
@@ -73,12 +78,12 @@ export function validateCRFrontmatter(data: unknown): Result<CRFrontmatter> {
   const fm = data as Partial<CRFrontmatter>;
 
   // 验证必填字段
-  if (!fm.crUid || typeof fm.crUid !== "string") {
-    return err("MISSING_FIELD", "缺少必填字段: crUid");
+  if (!fm.cruid || typeof fm.cruid !== "string") {
+    return err("MISSING_FIELD", "缺少必填字段: cruid");
   }
 
-  if (!isValidUUID(fm.crUid)) {
-    return err("INVALID_UUID", `无效的 UUID 格式: ${fm.crUid}`);
+  if (!isValidUUID(fm.cruid)) {
+    return err("INVALID_UUID", `无效的 UUID 格式: ${fm.cruid}`);
   }
 
   if (!fm.type || !isValidCRType(fm.type)) {
@@ -93,7 +98,7 @@ export function validateCRFrontmatter(data: unknown): Result<CRFrontmatter> {
     return err("MISSING_FIELD", "缺少必填字段: created");
   }
 
-  if (!isValidISO8601(fm.created)) {
+  if (!isValidCRTimestamp(fm.created)) {
     return err("INVALID_TIMESTAMP", `无效的时间戳格式: ${fm.created}`);
   }
 
@@ -101,7 +106,7 @@ export function validateCRFrontmatter(data: unknown): Result<CRFrontmatter> {
     return err("MISSING_FIELD", "缺少必填字段: updated");
   }
 
-  if (!isValidISO8601(fm.updated)) {
+  if (!isValidCRTimestamp(fm.updated)) {
     return err("INVALID_TIMESTAMP", `无效的时间戳格式: ${fm.updated}`);
   }
 
@@ -203,7 +208,7 @@ export function validateTaskRecord(data: unknown): Result<TaskRecord> {
     return err("MISSING_FIELD", "缺少必填字段: created");
   }
 
-  if (!isValidISO8601(task.created)) {
+  if (!isValidCRTimestamp(task.created)) {
     return err("INVALID_TIMESTAMP", `无效的时间戳格式: ${task.created}`);
   }
 
@@ -211,16 +216,16 @@ export function validateTaskRecord(data: unknown): Result<TaskRecord> {
     return err("MISSING_FIELD", "缺少必填字段: updated");
   }
 
-  if (!isValidISO8601(task.updated)) {
+  if (!isValidCRTimestamp(task.updated)) {
     return err("INVALID_TIMESTAMP", `无效的时间戳格式: ${task.updated}`);
   }
 
   // 验证可选字段
-  if (task.startedAt !== undefined && !isValidISO8601(task.startedAt)) {
+  if (task.startedAt !== undefined && !isValidCRTimestamp(task.startedAt)) {
     return err("INVALID_TIMESTAMP", `无效的时间戳格式: ${task.startedAt}`);
   }
 
-  if (task.completedAt !== undefined && !isValidISO8601(task.completedAt)) {
+  if (task.completedAt !== undefined && !isValidCRTimestamp(task.completedAt)) {
     return err("INVALID_TIMESTAMP", `无效的时间戳格式: ${task.completedAt}`);
   }
 
@@ -295,7 +300,7 @@ export function validateDuplicatePair(data: unknown): Result<DuplicatePair> {
     return err("MISSING_FIELD", "缺少必填字段: detectedAt");
   }
 
-  if (!isValidISO8601(pair.detectedAt)) {
+  if (!isValidCRTimestamp(pair.detectedAt)) {
     return err("INVALID_TIMESTAMP", `无效的时间戳格式: ${pair.detectedAt}`);
   }
 

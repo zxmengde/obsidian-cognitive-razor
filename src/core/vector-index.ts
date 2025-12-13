@@ -2,6 +2,7 @@
 
 import {
   IVectorIndex,
+  ILogger,
   VectorEntry,
   SearchResult,
   IndexStats,
@@ -16,10 +17,12 @@ import {
   ConceptMeta,
 } from "../types";
 import { VECTORS_DIR, DEFAULT_VECTOR_INDEX_META } from "../data/file-storage";
+import { formatCRTimestamp } from "../utils/date-utils";
 
 /** VectorIndex 实现类 - 分桶存储、延迟加载、增量更新 */
 export class VectorIndex implements IVectorIndex {
   private fileStorage: IFileStorage;
+  private logger: ILogger | null;
   private model: string;
   private dimension: number;
   
@@ -33,9 +36,11 @@ export class VectorIndex implements IVectorIndex {
   constructor(
     fileStorage: IFileStorage,
     model: string = "text-embedding-3-small",
-    dimension: number = 1536
+    dimension: number = 1536,
+    logger: ILogger | null = null
   ) {
     this.fileStorage = fileStorage;
+    this.logger = logger;
     this.model = model;
     this.dimension = dimension;
   }
@@ -72,6 +77,16 @@ export class VectorIndex implements IVectorIndex {
       }
 
       this.indexMeta = metaResult.value;
+      
+      // 迁移旧格式数据：检测并修复缺少 notePath 的条目
+      const migrationResult = await this.migrateOldFormat();
+      if (!migrationResult.ok) {
+        // 迁移失败不阻断加载，仅记录警告
+        this.logger?.warn("VectorIndex", "迁移旧格式数据时出现警告", {
+          error: migrationResult.error
+        });
+      }
+      
       return ok(undefined);
     } catch (error) {
       return err(
@@ -80,6 +95,54 @@ export class VectorIndex implements IVectorIndex {
         error
       );
     }
+  }
+  
+  /**
+   * 迁移旧格式数据
+   * 旧格式：只有 filePath（向量文件路径）
+   * 新格式：notePath（笔记路径）+ vectorFilePath（向量文件路径）
+   */
+  private async migrateOldFormat(): Promise<Result<void>> {
+    if (!this.indexMeta) {
+      return ok(undefined);
+    }
+    
+    let needsSave = false;
+    const conceptsToMigrate: string[] = [];
+    
+    for (const [uid, meta] of Object.entries(this.indexMeta.concepts)) {
+      // 检测旧格式：有 filePath 但没有 notePath/vectorFilePath
+      const legacyMeta = meta as unknown as { filePath?: string; notePath?: string; vectorFilePath?: string };
+      
+      if (legacyMeta.filePath && !legacyMeta.notePath) {
+        // 旧格式条目，需要迁移
+        conceptsToMigrate.push(uid);
+        
+        // 设置 vectorFilePath（从旧的 filePath）
+        (meta as unknown as { vectorFilePath: string }).vectorFilePath = legacyMeta.filePath;
+        
+        // notePath 无法自动推断，标记为空字符串（需要重建）
+        (meta as unknown as { notePath: string }).notePath = "";
+        
+        // 删除旧字段
+        delete legacyMeta.filePath;
+        
+        needsSave = true;
+      }
+    }
+    
+    if (needsSave) {
+      this.logger?.warn("VectorIndex", `迁移了 ${conceptsToMigrate.length} 个旧格式条目，notePath 需要通过重新索引修复`, {
+        migratedCount: conceptsToMigrate.length,
+        conceptIds: conceptsToMigrate
+      });
+      const saveResult = await this.saveIndexMeta();
+      if (!saveResult.ok) {
+        return saveResult;
+      }
+    }
+    
+    return ok(undefined);
   }
 
   /** 添加或更新向量条目 */
@@ -149,7 +212,8 @@ export class VectorIndex implements IVectorIndex {
         id: entry.uid,
         name: entry.name,
         type: entry.type,
-        filePath: `${entry.type}/${entry.uid}.json`,
+        notePath: entry.path,
+        vectorFilePath: `${entry.type}/${entry.uid}.json`,
         lastModified: now,
         hasEmbedding: true,
       };
@@ -269,12 +333,12 @@ export class VectorIndex implements IVectorIndex {
         }
       }
 
-      // 转换为 SearchResult 格式
+      // 转换为 SearchResult 格式（path 语义为 notePath）
       const searchResults: SearchResult[] = topResults.map((r) => ({
         uid: r.vector.id,
         similarity: r.similarity,
         name: r.vector.name,
-        path: this.indexMeta!.concepts[r.vector.id]?.filePath || "",
+        path: this.indexMeta!.concepts[r.vector.id]?.notePath || "",
       }));
 
       return ok(searchResults);
@@ -299,18 +363,18 @@ export class VectorIndex implements IVectorIndex {
           Entity: 0,
           Mechanism: 0,
         },
-        lastUpdated: new Date().toISOString(),
+        lastUpdated: formatCRTimestamp(),
       };
     }
 
     return {
       totalEntries: this.indexMeta.stats.totalConcepts,
       byType: { ...this.indexMeta.stats.byType },
-      lastUpdated: new Date(this.indexMeta.lastUpdated).toISOString(),
+      lastUpdated: formatCRTimestamp(new Date(this.indexMeta.lastUpdated)),
     };
   }
 
-  /** 根据 UID 获取条目 */
+  /** 根据 UID 获取条目（path 语义为 notePath） */
   getEntry(uid: string): VectorEntry | undefined {
     if (!this.indexMeta) {
       return undefined;
@@ -329,12 +393,30 @@ export class VectorIndex implements IVectorIndex {
         type: cached.type,
         embedding: cached.embedding,
         name: cached.name,
-        path: meta.filePath,
-        updated: new Date(cached.metadata.updatedAt).toISOString(),
+        path: meta.notePath,
+        updated: formatCRTimestamp(new Date(cached.metadata.updatedAt)),
       };
     }
 
     // 否则返回元数据（不包含向量）
+    return undefined;
+  }
+
+  /**
+   * 根据笔记路径查找 UID
+   * 用于索引自愈：文件删除/重命名时定位对应的索引条目
+   */
+  findUidByPath(notePath: string): string | undefined {
+    if (!this.indexMeta) {
+      return undefined;
+    }
+
+    for (const [uid, meta] of Object.entries(this.indexMeta.concepts)) {
+      if (meta.notePath === notePath) {
+        return uid;
+      }
+    }
+
     return undefined;
   }
 
@@ -366,7 +448,10 @@ export class VectorIndex implements IVectorIndex {
           } else {
             // 文件读取失败，跳过该向量
             const error = readResult as Err;
-            console.warn(`Failed to load vector file for ${meta.id}:`, error.error.message);
+            this.logger?.warn("VectorIndex", `加载向量文件失败: ${meta.id}`, {
+              conceptId: meta.id,
+              error: error.error.message
+            });
             continue;
           }
         }

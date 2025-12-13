@@ -21,7 +21,6 @@ export const DEFAULT_DIRECTORY_SCHEME: DirectoryScheme = {
 export const REQUIRED_SETTINGS_FIELDS: (keyof PluginSettings)[] = [
   "version",
   "language",
-  "advancedMode",
   "namingTemplate",
   "directoryScheme",
   "similarityThreshold",
@@ -89,7 +88,6 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   
   // 基础设置
   language: "zh",
-  advancedMode: false,
   
   // 命名设置 (G-10: 命名规范性公理)
   namingTemplate: "{{chinese}} ({{english}})",
@@ -453,16 +451,6 @@ export class SettingsStore implements ISettingsStore {
         message: "language must be 'zh' or 'en'",
         expectedType: "'zh' | 'en'",
         actualType: `'${settings.language}'`,
-      });
-    }
-
-    // 验证 advancedMode 字段
-    if (typeof settings.advancedMode !== "boolean") {
-      errors.push({
-        field: "advancedMode",
-        message: "advancedMode must be a boolean",
-        expectedType: "boolean",
-        actualType: typeof settings.advancedMode,
       });
     }
 
@@ -896,13 +884,6 @@ export class SettingsStore implements ISettingsStore {
         return err("E001", "language 必须是 zh 或 en");
       }
       next.language = partial.language;
-    }
-
-    if (partial.advancedMode !== undefined) {
-      if (typeof partial.advancedMode !== "boolean") {
-        return err("E001", "advancedMode 必须是布尔值");
-      }
-      next.advancedMode = partial.advancedMode;
     }
 
     if (partial.namingTemplate !== undefined) {

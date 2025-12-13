@@ -9,9 +9,9 @@
  * 命令 ID 格式：cognitive-razor:<action>-<target>
  * 
  * 核心命令（Requirements 9.1-9.4）：
- * - cognitive-razor:create-concept (Ctrl/Cmd + Shift + N)
- * - cognitive-razor:open-queue (Ctrl/Cmd + Shift + Q)
- * - cognitive-razor:pause-queue (Ctrl/Cmd + Shift + P)
+ * - cognitive-razor:create-concept
+ * - cognitive-razor:open-queue
+ * - cognitive-razor:pause-queue
  */
 
 import { Plugin, Notice, MarkdownView, TFile, Menu } from "obsidian";
@@ -64,6 +64,16 @@ export class CommandDispatcher {
   }
 
   /**
+   * 记录错误日志
+   */
+  private logError(context: string, error: unknown, extra?: Record<string, unknown>): void {
+    const logger = this.plugin.getComponents().logger;
+    if (logger) {
+      logger.error("CommandDispatcher", context, error instanceof Error ? error : new Error(String(error)), extra);
+    }
+  }
+
+  /**
    * 设置 TaskQueue（用于延迟初始化）
    */
   public setTaskQueue(taskQueue: TaskQueue): void {
@@ -73,20 +83,120 @@ export class CommandDispatcher {
   /**
    * 注册所有命令
    * 
-   * 重构说明：仅保留核心命令入口
-   * - 创建概念（Create Concept）
-   * - 打开工作台（Open Workbench）
-   * 其他功能通过工作台内部操作完成
+   * 遵循 SSOT 第 11 章：命令与快捷键
+   * 核心命令：
+   * - 打开 Workbench
+   * - 创建概念
+   * - 对当前笔记启动 Incremental Edit
+   * - 对当前重复对启动 Merge
    */
   public registerAllCommands(): void {
-    // 核心命令：创建概念
-    this.registerConceptCommands();
-
     // 核心命令：打开工作台
     this.registerWorkbenchCommands();
 
+    // 核心命令：创建概念
+    this.registerConceptCommands();
+
+    // 核心命令：增量改进
+    this.registerImproveCommands();
+
+    // Deepen（当前笔记深化）
+    this.registerDeepenCommands();
+
+    // 核心命令：合并重复对
+    this.registerMergeCommands();
+
+    // 阶段 2：重要功能命令
+    this.registerUtilityCommands();
+
     // 注册文件菜单（增量改进）
     this.registerFileMenu();
+  }
+
+  /**
+   * 注册工具类命令（阶段 2）
+   */
+  private registerUtilityCommands(): void {
+    // 查看重复概念
+    this.registerCommand({
+      id: COMMAND_IDS.VIEW_DUPLICATES,
+      name: "查看重复概念",
+      icon: "copy",
+      handler: async () => {
+        const workbench = await this.openWorkbench();
+        workbench?.revealDuplicates();
+      }
+    });
+
+    // 暂停队列
+    this.registerCommand({
+      id: COMMAND_IDS.PAUSE_QUEUE,
+      name: "暂停任务队列",
+      icon: "pause",
+      handler: async () => {
+        const taskQueue = this.taskQueue ?? this.plugin.getComponents().taskQueue;
+        if (!taskQueue) {
+          new Notice("任务队列未初始化");
+          return;
+        }
+        await taskQueue.pause();
+        new Notice("任务队列已暂停");
+      }
+    });
+
+    // 恢复队列
+    this.registerCommand({
+      id: COMMAND_IDS.RESUME_QUEUE,
+      name: "恢复任务队列",
+      icon: "play",
+      handler: async () => {
+        const taskQueue = this.taskQueue ?? this.plugin.getComponents().taskQueue;
+        if (!taskQueue) {
+          new Notice("任务队列未初始化");
+          return;
+        }
+        await taskQueue.resume();
+        new Notice("任务队列已恢复");
+      }
+    });
+
+    // 清空队列（取消所有 Pending/Running/Failed 任务）
+    this.registerCommand({
+      id: COMMAND_IDS.CLEAR_QUEUE,
+      name: "清空任务队列",
+      icon: "trash",
+      handler: async () => {
+        const taskQueue = this.taskQueue ?? this.plugin.getComponents().taskQueue;
+        if (!taskQueue) {
+          new Notice("任务队列未初始化");
+          return;
+        }
+
+        const tasks = taskQueue.getAllTasks();
+        const cancellable = tasks.filter(t => t.state === "Pending" || t.state === "Running" || t.state === "Failed");
+
+        let cancelled = 0;
+        for (const task of cancellable) {
+          const result = taskQueue.cancel(task.id);
+          if (result.ok) {
+            cancelled++;
+          }
+        }
+
+        new Notice(`已取消 ${cancelled} 个任务`);
+      }
+    });
+
+    // 查看操作历史（合并历史）
+    this.registerCommand({
+      id: COMMAND_IDS.VIEW_OPERATION_HISTORY,
+      name: "查看操作历史",
+      icon: "history",
+      handler: async () => {
+        const workbench = await this.openWorkbench();
+        workbench?.openOperationHistory();
+      }
+    });
   }
 
   /**
@@ -94,8 +204,9 @@ export class CommandDispatcher {
    */
   private registerFileMenu(): void {
     // 使用 workspace.on 注册文件菜单事件
-    // 注意：file-menu 事件在 Obsidian API 中存在，但类型定义可能不完整
-    const workspace = this.plugin.app.workspace as any;
+    const workspace = this.plugin.app.workspace as unknown as {
+      on: (event: string, callback: (menu: Menu, file: TFile) => void) => { unload: () => void };
+    };
     this.plugin.registerEvent(
       workspace.on("file-menu", (menu: Menu, file: TFile) => {
         // 只对 Markdown 文件显示菜单
@@ -103,10 +214,124 @@ export class CommandDispatcher {
           return;
         }
 
-        // 文件菜单项可以在这里添加
-        // 目前增量改进功能已弃用
+        // 添加增量改进菜单项
+        menu.addItem((item) => {
+          item
+            .setTitle("增量改进笔记")
+            .setIcon("sparkles")
+            .onClick(async () => {
+              await this.improveNote(file.path);
+            });
+        });
       })
     );
+  }
+
+  /**
+   * 注册增量改进命令
+   */
+  private registerImproveCommands(): void {
+    this.registerCommand({
+      id: COMMAND_IDS.IMPROVE_NOTE,
+      name: "增量改进当前笔记",
+      icon: "sparkles",
+      handler: async () => {
+        const activeFile = this.plugin.app.workspace.getActiveFile();
+        if (activeFile && activeFile.extension === "md") {
+          await this.improveNote(activeFile.path);
+        }
+      },
+      checkCallback: (checking) => {
+        const activeFile = this.plugin.app.workspace.getActiveFile();
+        if (!activeFile || activeFile.extension !== "md") {
+          return false;
+        }
+        if (!checking) {
+          void this.improveNote(activeFile.path);
+        }
+        return true;
+      }
+    });
+  }
+
+  /**
+   * 注册深化命令
+   */
+  private registerDeepenCommands(): void {
+    this.registerCommand({
+      id: COMMAND_IDS.DEEPEN_CURRENT_NOTE,
+      name: "深化当前笔记",
+      icon: "git-branch",
+      handler: async () => {
+        const activeFile = this.plugin.app.workspace.getActiveFile();
+        if (activeFile && activeFile.extension === "md") {
+          await this.runDeepen(activeFile);
+        }
+      },
+      checkCallback: (checking) => {
+        const activeFile = this.plugin.app.workspace.getActiveFile();
+        if (!activeFile || activeFile.extension !== "md") {
+          return false;
+        }
+        if (!checking) {
+          void this.runDeepen(activeFile);
+        }
+        return true;
+      }
+    });
+  }
+
+  /**
+   * 注册合并重复对命令
+   * 
+   * 遵循 SSOT 第 11 章：对当前重复对启动 Merge
+   */
+  private registerMergeCommands(): void {
+    this.registerCommand({
+      id: COMMAND_IDS.MERGE_DUPLICATES,
+      name: "合并重复概念",
+      icon: "git-merge",
+      handler: async () => {
+        await this.openMergeFromWorkbench();
+      }
+    });
+  }
+
+  /**
+   * 从工作台启动深化
+   */
+  private async runDeepen(file: TFile): Promise<void> {
+    const workbench = await this.openWorkbench();
+    if (!workbench) {
+      new Notice("工作台未初始化，请稍后重试");
+      return;
+    }
+    await workbench.handleStartDeepen(file);
+  }
+
+  /**
+   * 从工作台打开合并流程
+   */
+  private async openMergeFromWorkbench(): Promise<void> {
+    // 打开工作台
+    const workbench = await this.openWorkbench();
+    if (!workbench) {
+      new Notice("工作台未初始化，请稍后重试");
+      return;
+    }
+
+    // 获取待处理的重复对
+    const components = this.plugin.getComponents();
+    const duplicateManager = components.duplicateManager;
+    const pendingPairs = duplicateManager.getPendingPairs();
+
+    if (pendingPairs.length === 0) {
+      new Notice("没有待处理的重复对");
+      return;
+    }
+
+    // 提示用户在工作台中选择重复对进行合并
+    new Notice(`有 ${pendingPairs.length} 个待处理的重复对，请在工作台中选择要合并的重复对`);
   }
 
   /**
@@ -120,9 +345,6 @@ export class CommandDispatcher {
       id: COMMAND_IDS.OPEN_WORKBENCH,
       name: "打开工作台",
       icon: "brain",
-      hotkeys: [
-        { modifiers: ["Mod", "Shift"], key: "w" }
-      ],
       handler: async () => {
         await this.openWorkbench();
       }
@@ -142,9 +364,6 @@ export class CommandDispatcher {
       id: COMMAND_IDS.CREATE_CONCEPT,
       name: "创建概念",
       icon: "plus",
-      hotkeys: [
-        { modifiers: ["Mod", "Shift"], key: "n" }
-      ],
       handler: async () => {
         await this.createConcept();
       }
@@ -170,7 +389,7 @@ export class CommandDispatcher {
           try {
             await def.handler();
           } catch (error) {
-            console.error(`命令执行失败: ${def.id}`, error);
+            this.logError(`命令执行失败: ${def.id}`, error, { commandId: def.id });
             const errorMessage = error instanceof Error ? error.message : String(error);
             new Notice(`命令执行失败: ${errorMessage}`);
           }
@@ -187,7 +406,7 @@ export class CommandDispatcher {
           try {
             return def.checkCallback!(checking);
           } catch (error) {
-            console.error(`命令检查失败: ${def.id}`, error);
+            this.logError(`命令检查失败: ${def.id}`, error, { commandId: def.id });
             return false;
           }
         },
@@ -203,7 +422,7 @@ export class CommandDispatcher {
           try {
             await def.handler();
           } catch (error) {
-            console.error(`命令执行失败: ${def.id}`, error);
+            this.logError(`命令执行失败: ${def.id}`, error, { commandId: def.id });
             const errorMessage = error instanceof Error ? error.message : String(error);
             new Notice(`命令执行失败: ${errorMessage}`);
           }
@@ -215,11 +434,15 @@ export class CommandDispatcher {
 
   /**
    * 执行命令
+   * 
+   * 注意：如果命令不存在会抛出异常，调用者需要处理
    */
   public async executeCommand(commandId: string): Promise<void> {
     const def = this.commands.get(commandId);
     if (!def) {
-      throw new Error(`未找到命令: ${commandId}`);
+      const error = new Error(`未找到命令: ${commandId}`);
+      this.logError("执行命令失败：命令不存在", error, { commandId });
+      throw error;
     }
 
     await def.handler();
@@ -319,6 +542,54 @@ export class CommandDispatcher {
       },
       onCancel: () => {
         // 用户取消，不做任何操作
+      }
+    });
+
+    modal.open();
+  }
+
+  /**
+   * 增量改进笔记
+   * 
+   * 遵循 SSOT 6.4：Incremental Edit 流程
+   * - 创建快照
+   * - 生成候选改写
+   * - DiffView 确认后落盘
+   */
+  private async improveNote(filePath: string): Promise<void> {
+    const components = this.plugin.getComponents();
+    const orchestrator = components.pipelineOrchestrator;
+
+    if (!orchestrator) {
+      new Notice("管线编排器未初始化");
+      return;
+    }
+
+    // 显示输入框获取改进指令
+    const modal = new SimpleInputModal(this.plugin.app, {
+      title: "增量改进笔记",
+      placeholder: "输入改进指令，例如：补充更多例子、深化定义、添加引用...",
+      onSubmit: async (instruction) => {
+        if (!instruction.trim()) {
+          new Notice("请输入改进指令");
+          return;
+        }
+
+        // 启动增量改进管线
+        const result = orchestrator.startIncrementalPipeline(filePath, instruction);
+        
+        if (!result.ok) {
+          new Notice(`启动增量改进失败: ${result.error.message}`);
+          return;
+        }
+
+        new Notice("增量改进任务已启动，请等待 AI 生成改进内容...");
+        
+        // 打开工作台以便查看进度
+        await this.openWorkbench();
+      },
+      onCancel: () => {
+        // 用户取消
       }
     });
 

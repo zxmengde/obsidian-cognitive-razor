@@ -2,6 +2,7 @@
 
 import { ILockManager, LockRecord, Result, ok, err } from "../types";
 import { ILogger } from "../types";
+import { formatCRTimestamp } from "../utils/date-utils";
 
 export class LockManager implements ILockManager {
   private locks: Map<string, LockRecord>;
@@ -42,8 +43,8 @@ export class LockManager implements ILockManager {
       key,
       type,
       taskId,
-      acquiredAt: new Date().toISOString(),
-      expiresAt: new Date(Date.now() + this.LOCK_TIMEOUT_MS).toISOString()
+      acquiredAt: formatCRTimestamp(),
+      expiresAt: formatCRTimestamp(new Date(Date.now() + this.LOCK_TIMEOUT_MS))
     };
 
     // 存储锁
@@ -90,7 +91,7 @@ export class LockManager implements ILockManager {
     for (const lock of locks) {
       if (!lock || !lock.key || !lock.taskId) continue;
       if (!lock.expiresAt) {
-        lock.expiresAt = new Date(Date.now() + this.LOCK_TIMEOUT_MS).toISOString();
+        lock.expiresAt = formatCRTimestamp(new Date(Date.now() + this.LOCK_TIMEOUT_MS));
       }
       this.locks.set(lock.key, lock);
     }

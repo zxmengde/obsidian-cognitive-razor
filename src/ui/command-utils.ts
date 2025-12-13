@@ -14,11 +14,35 @@ const COMMAND_PREFIX = "cognitive-razor";
  * 核心命令 ID 常量
  * 遵循 Requirements 9.2, 9.3, 9.4
  */
+/**
+ * 核心命令 ID 常量
+ * 
+ * 遵循 SSOT 第 11 章：命令与快捷键
+ * 至少需要：
+ * - 打开 Workbench
+ * - 创建概念
+ * - 对当前笔记启动 Incremental Edit
+ * - 对当前重复对启动 Merge
+ */
 export const COMMAND_IDS = {
+  // 核心命令（SSOT 第 11 章）
   CREATE_CONCEPT: `${COMMAND_PREFIX}:create-concept`,
+  OPEN_WORKBENCH: `${COMMAND_PREFIX}:open-workbench`,
+  IMPROVE_NOTE: `${COMMAND_PREFIX}:improve-note`,
+  MERGE_DUPLICATES: `${COMMAND_PREFIX}:merge-duplicates`,
+  DEEPEN_CURRENT_NOTE: `${COMMAND_PREFIX}:deepen-current-note`,
+
+  // 重要功能（阶段 2）
+  VIEW_DUPLICATES: `${COMMAND_PREFIX}:view-duplicates`,
+  RESUME_QUEUE: `${COMMAND_PREFIX}:resume-queue`,
+  CLEAR_QUEUE: `${COMMAND_PREFIX}:clear-queue`,
+  VIEW_OPERATION_HISTORY: `${COMMAND_PREFIX}:view-operation-history`,
+  
+  // 队列管理（已整合到工作台）
   OPEN_QUEUE: `${COMMAND_PREFIX}:open-queue`,
   PAUSE_QUEUE: `${COMMAND_PREFIX}:pause-queue`,
-  OPEN_WORKBENCH: `${COMMAND_PREFIX}:open-workbench`,
+  
+  // 其他命令（保留以兼容）
   CREATE_CONCEPT_FROM_SELECTION: `${COMMAND_PREFIX}:create-concept-from-selection`,
   CLEAR_COMPLETED_TASKS: `${COMMAND_PREFIX}:clear-completed-tasks`,
   RETRY_FAILED_TASKS: `${COMMAND_PREFIX}:retry-failed-tasks`,
@@ -32,12 +56,16 @@ export const COMMAND_IDS = {
 
 /**
  * 获取核心命令 ID 列表
+ * 
+ * 遵循 SSOT 第 11 章：命令与快捷键
  */
 export function getCoreCommandIds(): string[] {
   return [
+    COMMAND_IDS.OPEN_WORKBENCH,
     COMMAND_IDS.CREATE_CONCEPT,
-    COMMAND_IDS.OPEN_QUEUE,
-    COMMAND_IDS.PAUSE_QUEUE,
+    COMMAND_IDS.IMPROVE_NOTE,
+    COMMAND_IDS.MERGE_DUPLICATES,
+    COMMAND_IDS.DEEPEN_CURRENT_NOTE,
   ];
 }
 
