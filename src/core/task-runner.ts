@@ -1,15 +1,7 @@
 /** 任务执行器 - 负责执行单个任务，调用 Provider 和验证输出 */
 
 import {
-  ITaskRunner,
-  IProviderManager,
-  IPromptManager,
-  IValidator,
-  IUndoManager,
   ILogger,
-  IVectorIndex,
-  IFileStorage,
-  ISettingsStore,
   TaskRecord,
   TaskResult,
   TaskError,
@@ -19,19 +11,31 @@ import {
   NoteState,
   Result,
   ok,
-  err
+  err,
+  CognitiveRazorError,
+  toErr,
+  ImageGeneratePayload
 } from "../types";
-import { schemaRegistry, ISchemaRegistry } from "./schema-registry";
+import { schemaRegistry, SchemaRegistry } from "./schema-registry";
 import { createConceptSignature, generateSignatureText } from "./naming-utils";
 import { mapStandardizeOutput } from "./standardize-mapper";
+import type { ProviderManager } from "./provider-manager";
+import type { PromptManager } from "./prompt-manager";
+import type { UndoManager } from "./undo-manager";
+import type { VectorIndex } from "./vector-index";
+import type { FileStorage } from "../data/file-storage";
+import type { SettingsStore } from "../data/settings-store";
+import type { Validator } from "../data/validator";
+import { App, MarkdownView, TFile } from "obsidian";
+import { dataUrlToArrayBuffer, inferImageExtension } from "../utils/image";
 
 /** 任务管线顺序 */
 const TASK_PIPELINE_ORDER: TaskType[] = [
-  "standardizeClassify",
-  "enrich",
-  "reason:new",
-  "embedding",
-  "ground"
+  "define",
+  "tag",
+  "write",
+  "index",
+  "verify"
 ];
 
 
@@ -108,35 +112,39 @@ class InputValidator {
     /<\|im_start\|>/i
   ];
 
-  validate(input: string): Result<string> {
+  validate(input: string): string {
     if (typeof input !== "string") {
-      return err("E001", "输入必须是字符串");
+      throw new CognitiveRazorError("E001", "输入必须是字符串");
     }
     if (input.length > this.MAX_INPUT_LENGTH) {
-      return err("E001", `输入过长: ${input.length} 字符 (最大 ${this.MAX_INPUT_LENGTH})`);
+      throw new CognitiveRazorError("E001", `输入过长: ${input.length} 字符 (最大 ${this.MAX_INPUT_LENGTH})`, {
+        length: input.length,
+        maxLength: this.MAX_INPUT_LENGTH
+      });
     }
     for (const pattern of this.SUSPICIOUS_PATTERNS) {
       if (pattern.test(input)) {
-        return err("E001", "输入包含可疑指令，请检查后再试");
+        throw new CognitiveRazorError("E001", "输入包含可疑指令，请检查后再试");
       }
     }
     const sanitized = input.replace(/[\x00-\x1F\x7F]/g, "").replace(/\s+/g, " ").trim();
-    return ok(sanitized);
+    return sanitized;
   }
 }
 
 
 /** TaskRunner 依赖接口 */
 interface TaskRunnerDependencies {
-  providerManager: IProviderManager;
-  promptManager: IPromptManager;
-  validator: IValidator;
-  undoManager: IUndoManager;
+  providerManager: ProviderManager;
+  promptManager: PromptManager;
+  validator: Validator;
+  undoManager: UndoManager;
   logger: ILogger;
-  vectorIndex?: IVectorIndex;
-  fileStorage?: IFileStorage;
-  schemaRegistry?: ISchemaRegistry;
-  settingsStore?: ISettingsStore;
+  vectorIndex?: VectorIndex;
+  fileStorage?: FileStorage;
+  schemaRegistry?: SchemaRegistry;
+  settingsStore?: SettingsStore;
+  app: App;
 }
 
 /** 写入操作上下文 */
@@ -148,18 +156,19 @@ interface WriteContext {
   originalContent?: string;
 }
 
-export class TaskRunner implements ITaskRunner {
-  private providerManager: IProviderManager;
-  private promptManager: IPromptManager;
-  private validator: IValidator;
-  private undoManager: IUndoManager;
+export class TaskRunner {
+  private providerManager: ProviderManager;
+  private promptManager: PromptManager;
+  private validator: Validator;
+  private undoManager: UndoManager;
   private logger: ILogger;
-  private vectorIndex?: IVectorIndex;
-  private fileStorage?: IFileStorage;
-  private schemaRegistry: ISchemaRegistry;
-  private settingsStore?: ISettingsStore;
+  private vectorIndex?: VectorIndex;
+  private fileStorage?: FileStorage;
+  private schemaRegistry: SchemaRegistry;
+  private settingsStore?: SettingsStore;
   private abortControllers: Map<string, AbortController>;
   private inputValidator: InputValidator;
+  private app: App;
 
   constructor(deps: TaskRunnerDependencies) {
     this.providerManager = deps.providerManager;
@@ -172,6 +181,7 @@ export class TaskRunner implements ITaskRunner {
     // 使用注入的 SchemaRegistry 或默认单例
     this.schemaRegistry = deps.schemaRegistry || schemaRegistry;
     this.settingsStore = deps.settingsStore;
+    this.app = deps.app;
     this.abortControllers = new Map();
     this.inputValidator = new InputValidator();
 
@@ -205,22 +215,25 @@ export class TaskRunner implements ITaskRunner {
       // 根据任务类型分发
       let result: Result<TaskResult>;
 
-      switch (task.taskType) {
-        case "standardizeClassify":
-          result = await this.executeStandardizeClassify(task, abortController.signal);
-          break;
-        case "enrich":
-          result = await this.executeEnrich(task, abortController.signal);
-          break;
-        case "embedding":
-          result = await this.executeEmbedding(task, abortController.signal);
-          break;
-        case "reason:new":
-          result = await this.executeReasonNew(task, abortController.signal);
-          break;
-        case "ground":
-          result = await this.executeGround(task, abortController.signal);
-          break;
+        switch (task.taskType) {
+          case "define":
+            result = await this.executeDefine(task, abortController.signal);
+            break;
+          case "tag":
+            result = await this.executeTag(task, abortController.signal);
+            break;
+          case "index":
+            result = await this.executeIndex(task, abortController.signal);
+            break;
+          case "write":
+            result = await this.executeWrite(task, abortController.signal);
+            break;
+          case "verify":
+            result = await this.executeVerify(task, abortController.signal);
+            break;
+          case "image-generate":
+            result = await this.executeImageGenerate(task, abortController.signal);
+            break;
         default:
           result = err("E306", `未知的任务类型: ${task.taskType}`);
       }
@@ -448,10 +461,10 @@ export class TaskRunner implements ITaskRunner {
     }
 
     // 对于新概念创建流程，验证顺序
-    // standardizeClassify(0) → enrich(1) → reason:new(2) → embedding(3) → ground(4)
-    if (currentTaskType === "embedding") {
-      // embedding 必须在 reason:new 之后
-      return previousTaskType === "reason:new" || previousIndex <= 2;
+    // define(0) → tag(1) → write(2) → index(3) → verify(4)
+    if (currentTaskType === "index") {
+      // index 必须在 write 之后
+      return previousTaskType === "write" || previousIndex <= 2;
     }
 
     // 一般情况：当前任务索引应该大于等于前一个任务索引
@@ -468,12 +481,12 @@ export class TaskRunner implements ITaskRunner {
 
     // 新概念创建流程的下一步
     switch (currentTaskType) {
-      case "standardizeClassify":
-        return "enrich";
-      case "enrich":
-        return "reason:new";
-      case "reason:new":
-        return "embedding";
+      case "define":
+        return "tag";
+      case "tag":
+        return "write";
+      case "write":
+        return "index";
       default:
         return null;
     }
@@ -482,18 +495,14 @@ export class TaskRunner implements ITaskRunner {
 
   // 任务执行方法
 
-  /** 执行 standardizeClassify 任务 */
-  private async executeStandardizeClassify(
+  /** 执行 define 任务 */
+  private async executeDefine(
     task: TaskRecord,
     signal: AbortSignal
   ): Promise<Result<TaskResult>> {
     try {
       const userInput = task.payload.userInput as string;
-      const validated = this.inputValidator.validate(userInput);
-      if (!validated.ok) {
-        return this.createTaskError(task, validated.error!);
-      }
-      const sanitizedInput = validated.value;
+      const sanitizedInput = this.inputValidator.validate(userInput);
 
       // 构建 prompt（CTX_INPUT）
       const slots = {
@@ -501,20 +510,17 @@ export class TaskRunner implements ITaskRunner {
         CTX_LANGUAGE: this.getLanguage()
       };
 
-      const promptResult = this.promptManager.build(task.taskType, slots);
-      if (!promptResult.ok) {
-        return this.createTaskError(task, promptResult.error!);
-      }
+      const prompt = this.promptManager.build(task.taskType, slots);
 
       // 获取任务模型配置
-      const modelConfig = this.getTaskModelConfig("standardizeClassify");
+      const modelConfig = this.getTaskModelConfig("define");
 
       // 调用 LLM（使用用户配置的模型）
       const chatRequest: any = {
         providerId: task.providerRef || modelConfig.providerId,
         model: modelConfig.model,
         messages: [
-          { role: "user", content: promptResult.value }
+          { role: "user", content: prompt }
         ],
         temperature: modelConfig.temperature,
         topP: modelConfig.topP,
@@ -532,8 +538,8 @@ export class TaskRunner implements ITaskRunner {
         return this.createTaskError(task, chatResult.error!);
       }
 
-      // 使用 SchemaRegistry 的标准化 Schema 校验
-      const schema = this.schemaRegistry.getStandardizeClassifySchema();
+      // 使用 SchemaRegistry 的定义 Schema 校验
+      const schema = this.schemaRegistry.getDefineSchema();
       const validationResult = await this.validator.validate(
         chatResult.value.content,
         schema,
@@ -554,15 +560,15 @@ export class TaskRunner implements ITaskRunner {
         data: parsed as unknown as Record<string, unknown>
       });
     } catch (error) {
-      this.logger.error("TaskRunner", "执行 standardizeClassify 失败", error as Error, {
+      this.logger.error("TaskRunner", "执行 define 失败", error as Error, {
         taskId: task.id
       });
-      return err("E305", "执行 standardizeClassify 失败", error);
+      return toErr(error, "E305", "执行 define 失败");
     }
   }
 
-  /** 执行 enrich 任务 */
-  private async executeEnrich(
+  /** 执行 tag 任务 */
+  private async executeTag(
     task: TaskRecord,
     signal: AbortSignal
   ): Promise<Result<TaskResult>> {
@@ -573,20 +579,17 @@ export class TaskRunner implements ITaskRunner {
         CTX_LANGUAGE: this.getLanguage()
       };
 
-      const promptResult = this.promptManager.build(task.taskType, slots);
-      if (!promptResult.ok) {
-        return this.createTaskError(task, promptResult.error!);
-      }
+      const prompt = this.promptManager.build(task.taskType, slots);
 
       // 获取任务模型配置
-      const modelConfig = this.getTaskModelConfig("enrich");
+      const modelConfig = this.getTaskModelConfig("tag");
 
       // 调用 LLM（使用用户配置的模型）
       const chatRequest: any = {
         providerId: task.providerRef || modelConfig.providerId,
         model: modelConfig.model,
         messages: [
-          { role: "user", content: promptResult.value }
+          { role: "user", content: prompt }
         ],
         temperature: modelConfig.temperature,
         topP: modelConfig.topP,
@@ -637,16 +640,16 @@ export class TaskRunner implements ITaskRunner {
         data: parsed
       });
     } catch (error) {
-      this.logger.error("TaskRunner", "执行 enrich 失败", error as Error, {
+      this.logger.error("TaskRunner", "执行 tag 失败", error as Error, {
         taskId: task.id
       });
-      return err("E305", "执行 enrich 失败", error);
+      return toErr(error, "E305", "执行 tag 失败");
     }
   }
 
 
-  /** 执行 embedding 任务 */
-  private async executeEmbedding(
+  /** 执行 index 任务 */
+  private async executeIndex(
     task: TaskRecord,
     signal: AbortSignal
   ): Promise<Result<TaskResult>> {
@@ -679,7 +682,7 @@ export class TaskRunner implements ITaskRunner {
       }
 
       // 获取任务模型配置
-      const modelConfig = this.getTaskModelConfig("embedding");
+      const modelConfig = this.getTaskModelConfig("index");
 
       // 调用 Embedding API（使用用户配置的模型和向量维度）
       const embeddingDimension = this.settingsStore?.getSettings().embeddingDimension || 1536;
@@ -704,15 +707,15 @@ export class TaskRunner implements ITaskRunner {
         }
       });
     } catch (error) {
-      this.logger.error("TaskRunner", "执行 embedding 失败", error as Error, {
+      this.logger.error("TaskRunner", "执行 index 失败", error as Error, {
         taskId: task.id
       });
-      return err("E305", "执行 embedding 失败", error);
+      return err("E305", "执行 index 失败", error);
     }
   }
 
-  /** 执行 reason:new 任务 */
-  private async executeReasonNew(
+  /** 执行 write 任务 */
+  private async executeWrite(
     task: TaskRecord,
     signal: AbortSignal
   ): Promise<Result<TaskResult>> {
@@ -727,21 +730,18 @@ export class TaskRunner implements ITaskRunner {
         CTX_LANGUAGE: this.getLanguage()
       };
 
-      // 传递 conceptType 以选择正确的模板（reason-domain, reason-issue 等）
-      const promptResult = this.promptManager.build(task.taskType, slots, conceptType);
-      if (!promptResult.ok) {
-        return this.createTaskError(task, promptResult.error!);
-      }
+      // 传递 conceptType 以选择正确的模板（write-domain, write-issue 等）
+      const prompt = this.promptManager.build(task.taskType, slots, conceptType);
 
       // 获取任务模型配置
-      const modelConfig = this.getTaskModelConfig("reason:new");
+      const modelConfig = this.getTaskModelConfig("write");
 
       // 调用 LLM（使用用户配置的模型）
       const chatRequest: any = {
         providerId: task.providerRef || modelConfig.providerId,
         model: modelConfig.model,
         messages: [
-          { role: "user", content: promptResult.value }
+          { role: "user", content: prompt }
         ],
         temperature: modelConfig.temperature,
         topP: modelConfig.topP,
@@ -797,10 +797,10 @@ export class TaskRunner implements ITaskRunner {
         data
       });
     } catch (error) {
-      this.logger.error("TaskRunner", "执行 reason:new 失败", error as Error, {
+      this.logger.error("TaskRunner", "执行 write 失败", error as Error, {
         taskId: task.id
       });
-      return err("E305", "执行 reason:new 失败", error);
+      return toErr(error, "E305", "执行 write 失败");
     }
   }
 
@@ -808,8 +808,8 @@ export class TaskRunner implements ITaskRunner {
 
 
 
-  /** 执行 ground 任务（事实核查） */
-  private async executeGround(
+  /** 执行 verify 任务（校验） */
+  private async executeVerify(
     task: TaskRecord,
     signal: AbortSignal
   ): Promise<Result<TaskResult>> {
@@ -829,20 +829,17 @@ export class TaskRunner implements ITaskRunner {
         CTX_LANGUAGE: this.getLanguage()
       };
 
-      const promptResult = this.promptManager.build(task.taskType, slots, conceptType);
-      if (!promptResult.ok) {
-        return this.createTaskError(task, promptResult.error!);
-      }
+      const prompt = this.promptManager.build(task.taskType, slots, conceptType);
 
       // 获取任务模型配置
-      const modelConfig = this.getTaskModelConfig("ground");
+      const modelConfig = this.getTaskModelConfig("verify");
 
       // 调用 LLM（使用用户配置的模型）
       const chatRequest: any = {
         providerId: task.providerRef || modelConfig.providerId,
         model: modelConfig.model,
         messages: [
-          { role: "user", content: promptResult.value }
+          { role: "user", content: prompt }
         ],
         temperature: modelConfig.temperature,
         topP: modelConfig.topP,
@@ -885,7 +882,7 @@ export class TaskRunner implements ITaskRunner {
         requires_human_review: groundingResult.requires_human_review ?? true
       };
 
-      this.logger.info("TaskRunner", `Ground 任务完成: ${task.id}`, {
+      this.logger.info("TaskRunner", `Verify 任务完成: ${task.id}`, {
         overall_assessment: resultData.overall_assessment,
         issueCount: (resultData.issues as unknown[]).length
       });
@@ -896,11 +893,129 @@ export class TaskRunner implements ITaskRunner {
         data: resultData
       });
     } catch (error) {
-      this.logger.error("TaskRunner", "执行 ground 失败", error as Error, {
+      this.logger.error("TaskRunner", "执行 verify 失败", error as Error, {
         taskId: task.id
       });
-      return err("E305", "执行 ground 失败", error);
+      return toErr(error, "E305", "执行 verify 失败");
     }
+  }
+
+  /** 执行图片生成任务 */
+  private async executeImageGenerate(
+    task: TaskRecord,
+    signal?: AbortSignal
+  ): Promise<Result<TaskResult>> {
+    try {
+      if (!this.settingsStore) {
+        return this.createTaskError(task, { code: "E001", message: "设置未初始化" });
+      }
+      const payload = task.payload as unknown as ImageGeneratePayload;
+      if (!payload || !payload.userPrompt || !payload.filePath) {
+        return this.createTaskError(task, { code: "E001", message: "图片生成任务载荷缺失必要字段" });
+      }
+
+      const settings = this.settingsStore.getSettings();
+      const providerId = task.providerRef || settings.defaultProviderId;
+      if (!providerId) {
+        return this.createTaskError(task, { code: "E201", message: "请先配置 Provider" });
+      }
+
+      const messages = [
+        {
+          role: "system" as const,
+          content: "You return a single Markdown image reference with data URL. Do not add extra text."
+        },
+        {
+          role: "user" as const,
+          content: `User request: ${payload.userPrompt}\nContext before: ${payload.contextBefore}\nContext after: ${payload.contextAfter}`
+        }
+      ];
+
+      const imageResult = await this.providerManager.generateImage(
+        {
+          providerId,
+          model: "gemini-3-pro-image-preview",
+          messages,
+          aspectRatio: settings.imageGeneration.defaultAspectRatio,
+          imageSize: settings.imageGeneration.defaultImageSize || settings.imageGeneration.defaultSize
+        },
+        signal
+      );
+
+      if (!imageResult.ok) {
+        return this.createTaskError(task, imageResult.error);
+      }
+
+      const binaryResult = dataUrlToArrayBuffer(imageResult.value.imageUrl);
+      if (!binaryResult.ok) {
+        return this.createTaskError(task, binaryResult.error);
+      }
+
+      const file = this.app.vault.getAbstractFileByPath(payload.filePath);
+      if (!(file instanceof TFile)) {
+        return this.createTaskError(task, { code: "E003", message: "目标文件不存在" });
+      }
+
+      const currentContent = await this.app.vault.read(file);
+      await this.undoManager.createSnapshot(payload.filePath, currentContent, task.id, payload.frontmatter?.cruid);
+
+      const ext = inferImageExtension(imageResult.value.imageUrl);
+      const vaultAny = this.app.vault as any;
+      const attachmentPath = vaultAny.getAvailablePathForAttachment
+        ? vaultAny.getAvailablePathForAttachment(`generated-image.${ext}`, payload.filePath)
+        : file.parent
+          ? `${file.parent.path}/generated-image.${ext}`
+          : `generated-image.${ext}`;
+
+      await this.app.vault.createBinary(attachmentPath, binaryResult.value);
+
+      const markdown = `![${imageResult.value.altText || payload.userPrompt}](${attachmentPath})\n`;
+      await this.insertImageReference(file, currentContent, markdown, payload.cursorPosition);
+
+      return ok({
+        taskId: task.id,
+        state: "Completed",
+        data: {
+          localPath: attachmentPath,
+          imageUrl: imageResult.value.imageUrl,
+          revisedPrompt: imageResult.value.revisedPrompt,
+          altText: imageResult.value.altText || payload.userPrompt
+        }
+      });
+    } catch (error) {
+      this.logger.error("TaskRunner", "执行 image-generate 失败", error as Error, {
+        taskId: task.id
+      });
+      return toErr(error, "E305", "执行 image-generate 失败");
+    }
+  }
+
+  private async insertImageReference(
+    file: TFile,
+    originalContent: string,
+    markdown: string,
+    cursor: { line: number; ch: number }
+  ): Promise<void> {
+    // 尝试使用当前编辑器插入，若无则回退为直接写入
+    const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (activeView && activeView.file && activeView.file.path === file.path) {
+      const editor = activeView.editor;
+      editor.replaceRange(markdown, cursor);
+      await this.app.vault.modify(file, editor.getValue());
+      return;
+    }
+
+    const lines = originalContent.split("\n");
+    const lineIndex = Math.min(Math.max(cursor.line ?? lines.length, 0), lines.length);
+    if (lineIndex >= lines.length) {
+      lines.push("");
+    }
+    const targetLine = lines[lineIndex] ?? "";
+    const ch = Math.min(Math.max(cursor.ch ?? targetLine.length, 0), targetLine.length);
+    const updatedLine = `${targetLine.slice(0, ch)}${markdown}${targetLine.slice(ch)}`;
+    lines[lineIndex] = updatedLine;
+    const nextContent = lines.join("\n");
+    await this.app.vault.modify(file, nextContent);
   }
 
   // 辅助方法
@@ -918,12 +1033,13 @@ export class TaskRunner implements ITaskRunner {
     const taskConfig = settings?.taskModels?.[taskType];
     
     // 默认配置
-    const defaults: Record<TaskType, { model: string; temperature?: number }> = {
-      "standardizeClassify": { model: "gpt-4o", temperature: 0.3 },
-      "enrich": { model: "gpt-4o", temperature: 0.5 },
-      "embedding": { model: "text-embedding-3-small" },
-      "reason:new": { model: "gpt-4o", temperature: 0.7 },
-      "ground": { model: "gpt-4o", temperature: 0.3 }
+    const defaults: Record<TaskType, { model: string; temperature?: number; topP?: number }> = {
+      "define": { model: "gpt-4o", temperature: 0.3 },
+      "tag": { model: "gpt-4o", temperature: 0.5 },
+      "index": { model: "text-embedding-3-small" },
+      "write": { model: "gpt-4o", temperature: 0.7 },
+      "verify": { model: "gpt-4o", temperature: 0.3 },
+      "image-generate": { model: "gemini-3-pro-image-preview", temperature: 0.2, topP: 1 }
     };
 
     const defaultConfig = defaults[taskType] || { model: "gpt-4o" };
@@ -1122,12 +1238,13 @@ export class TaskRunner implements ITaskRunner {
    */
   private getRequiredCapability(taskType: TaskType): "chat" | "embedding" {
     switch (taskType) {
-      case "embedding":
+      case "index":
         return "embedding";
-      case "standardizeClassify":
-      case "enrich":
-      case "reason:new":
-      case "ground":
+      case "define":
+      case "tag":
+      case "write":
+      case "verify":
+      case "image-generate":
       default:
         return "chat";
     }

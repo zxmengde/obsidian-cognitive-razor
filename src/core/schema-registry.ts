@@ -40,16 +40,6 @@ export interface FieldDescription {
   philosophicalBasis?: string;
 }
 
-/** SchemaRegistry 接口 */
-export interface ISchemaRegistry {
-  getSchema(type: CRType): JSONSchema;
-  getStandardizeClassifySchema(): JSONSchema;
-  getFieldDescriptions(type: CRType): FieldDescription[];
-  getValidationRules(type: CRType): string[];
-  getAllTypes(): CRType[];
-  isValidType(type: string): type is CRType;
-}
-
 // Domain Schema
 
 const DOMAIN_SCHEMA: JSONSchema = {
@@ -517,9 +507,9 @@ const MECHANISM_SCHEMA: JSONSchema = {
   }
 };
 
-// StandardizeClassify Schema
+// Define 任务 Schema（原 StandardizeClassify）
 
-const STANDARDIZE_CLASSIFY_SCHEMA: JSONSchema = {
+const DEFINE_TASK_SCHEMA: JSONSchema = {
   $schema: "http://json-schema.org/draft-07/schema#",
   type: "object",
   required: ["classification_result"],
@@ -580,7 +570,7 @@ const STANDARDIZE_CLASSIFY_SCHEMA: JSONSchema = {
 
 // SchemaRegistry 实现
 
-export class SchemaRegistry implements ISchemaRegistry {
+export class SchemaRegistry {
   private schemas: Map<CRType, JSONSchema>;
   
   constructor() {
@@ -601,8 +591,8 @@ export class SchemaRegistry implements ISchemaRegistry {
     return schema;
   }
 
-  getStandardizeClassifySchema(): JSONSchema {
-    return STANDARDIZE_CLASSIFY_SCHEMA;
+  getDefineSchema(): JSONSchema {
+    return DEFINE_TASK_SCHEMA;
   }
 
   getFieldDescriptions(type: CRType): FieldDescription[] {

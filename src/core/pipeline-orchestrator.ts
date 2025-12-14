@@ -1,14 +1,6 @@
 
 import {
-  ITaskQueue,
-  ITaskRunner,
-  IDuplicateManager,
   ILogger,
-  IFileStorage,
-  IVectorIndex,
-  IUndoManager,
-  IPromptManager,
-  IProviderManager,
   TaskRecord,
   TaskType,
   CRType,
@@ -18,11 +10,11 @@ import {
   PluginSettings,
   PipelineContext,
   PipelineStage,
-  PipelineStateFile,
   StandardizedConcept,
   Result,
   ok,
-  err
+  err,
+  toErr
 } from "../types";
 import { App, TFile } from "obsidian";
 import YAML from "yaml";
@@ -32,6 +24,15 @@ import { FieldDescription, schemaRegistry } from "./schema-registry";
 import { mapStandardizeOutput } from "./standardize-mapper";
 import { generateUUID } from "../data/validators";
 import { formatCRTimestamp } from "../utils/date-utils";
+import type { CruidCache } from "./cruid-cache";
+import type { TaskQueue } from "./task-queue";
+import type { TaskRunner } from "./task-runner";
+import type { DuplicateManager } from "./duplicate-manager";
+import type { FileStorage } from "../data/file-storage";
+import type { VectorIndex } from "./vector-index";
+import type { UndoManager } from "./undo-manager";
+import type { PromptManager } from "./prompt-manager";
+import type { ProviderManager } from "./provider-manager";
 
 /**
  * 管线事件类型
@@ -65,15 +66,16 @@ type PipelineEventListener = (event: PipelineEvent) => void;
  */
 interface PipelineOrchestratorDependencies {
   app: App;
-  taskQueue: ITaskQueue;
-  taskRunner: ITaskRunner;
-  duplicateManager: IDuplicateManager;
+  taskQueue: TaskQueue;
+  taskRunner: TaskRunner;
+  duplicateManager: DuplicateManager;
   logger: ILogger;
-  fileStorage: IFileStorage;
-  vectorIndex: IVectorIndex;
-  undoManager: IUndoManager;
-  promptManager?: IPromptManager;
-  providerManager?: IProviderManager;
+  fileStorage: FileStorage;
+  vectorIndex: VectorIndex;
+  undoManager: UndoManager;
+  promptManager?: PromptManager;
+  providerManager?: ProviderManager;
+  cruidCache?: CruidCache;
   getSettings: () => PluginSettings;
 }
 
@@ -86,96 +88,24 @@ interface CreatePresetOptions {
   sources?: string;
 }
 
-/**
- * 管线编排器接口
- */
-interface IPipelineOrchestrator {
-  /** 启动新概念创建管线 */
-  startCreatePipeline(userInput: string, type?: CRType): Result<string>;
-
-  /** 直接标准化（不入队，用于 UI 交互） */
-  standardizeDirect(userInput: string): Promise<Result<StandardizedConcept>>;
-
-  /** 使用已标准化数据启动创建管线（跳过标准化阶段） */
-  startCreatePipelineWithStandardized(
-    standardizedData: StandardizedConcept,
-    selectedType: CRType
-  ): Result<string>;
-
-  /** 使用预设名称/路径/父级信息启动创建管线（Deepen） */
-  startCreatePipelineWithPreset(
-    standardizedData: StandardizedConcept,
-    selectedType: CRType,
-    options?: CreatePresetOptions
-  ): Result<string>;
-
-  /** 启动合并管线 */
-  startMergePipeline(
-    pair: DuplicatePair,
-    keepNodeId: string,
-    finalFileName: string
-  ): Result<string>;
-
-  /** 启动增量改进管线 */
-  startIncrementalPipeline(
-    filePath: string,
-    instruction: string
-  ): Result<string>;
-  
-  /** 确认创建（在 embedding 之后） */
-  confirmCreate(pipelineId: string): Promise<Result<void>>;
-
-  /** 更新标准化结果（用户编辑/类型歧义选择） */
-  updateStandardizedData(
-    pipelineId: string,
-    updates: Partial<PipelineContext["standardizedData"]>
-  ): Result<PipelineContext>;
-  
-  /** 确认写入（在 reason:new 之后） */
-  confirmWrite(pipelineId: string): Promise<Result<void>>;
-
-  /** 构建写入预览（返回当前内容与即将写入的内容） */
-  buildWritePreview(pipelineId: string): Promise<Result<{
-    targetPath: string;
-    newContent: string;
-    previousContent: string;
-  }>>;
-  
-  /** 取消管线 */
-  cancelPipeline(pipelineId: string): Result<void>;
-  
-  /** 获取管线上下文 */
-  getContext(pipelineId: string): PipelineContext | undefined;
-  
-  /** 获取所有活跃管线 */
-  getActivePipelines(): PipelineContext[];
-  
-  /** 订阅管线事件 */
-  subscribe(listener: PipelineEventListener): () => void;
-}
-
-export class PipelineOrchestrator implements IPipelineOrchestrator {
+export class PipelineOrchestrator {
   private app: App;
-  private taskQueue: ITaskQueue;
-  private taskRunner: ITaskRunner;
-  private duplicateManager: IDuplicateManager;
+  private taskQueue: TaskQueue;
+  private taskRunner: TaskRunner;
+  private duplicateManager: DuplicateManager;
   private logger: ILogger;
-  private fileStorage: IFileStorage;
-  private vectorIndex: IVectorIndex;
-  private undoManager: IUndoManager;
-  private promptManager?: IPromptManager;
-  private providerManager?: IProviderManager;
+  private fileStorage: FileStorage;
+  private vectorIndex: VectorIndex;
+  private undoManager: UndoManager;
+  private promptManager?: PromptManager;
+  private providerManager?: ProviderManager;
+  private cruidCache?: CruidCache;
   private getSettings: () => PluginSettings;
   
   private pipelines: Map<string, PipelineContext>;
   private listeners: PipelineEventListener[];
   private taskToPipeline: Map<string, string>; // taskId -> pipelineId
   private unsubscribeQueue?: () => void;
-
-  // 管线状态持久化
-  private static readonly PIPELINE_STATE_FILE = "data/pipeline-state.json";
-  private pipelineSaveChain: Promise<void> = Promise.resolve();
-  private lastPersistedPipelineState: string | null = null;
 
   constructor(deps: PipelineOrchestratorDependencies) {
     this.app = deps.app;
@@ -188,6 +118,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     this.undoManager = deps.undoManager;
     this.promptManager = deps.promptManager;
     this.providerManager = deps.providerManager;
+    this.cruidCache = deps.cruidCache;
     this.getSettings = deps.getSettings;
     
     this.pipelines = new Map();
@@ -196,9 +127,6 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
     // 订阅任务队列事件
     this.subscribeToTaskQueue();
-
-    // 异步加载持久化的管线状态
-    void this.loadPipelineState();
 
     this.logger.debug("PipelineOrchestrator", "管线编排器初始化完成");
   }
@@ -269,7 +197,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
    * 遵循 A-FUNC-03：任务执行前必须找到匹配的 Provider 与 PDD 模板
    * 
    * @param taskType 任务类型
-   * @param conceptType 知识类型（可选，用于 reason:new 任务）
+   * @param conceptType 知识类型（可选，用于 write 任务）
    * @returns 校验结果
    */
   private validatePrerequisites(taskType: TaskType, conceptType?: CRType): Result<void> {
@@ -339,7 +267,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
   /**
    * 启动新概念创建管线
    * 
-   * 修改：standardizeClassify 不进入队列，使用 standardizeDirect 直接执行
+   * 修改：define 不进入队列，使用 standardizeDirect 直接执行
    * 此方法已废弃，保留以兼容旧代码
    */
   startCreatePipeline(userInput: string, type?: CRType): Result<string> {
@@ -362,7 +290,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
   async standardizeDirect(userInput: string): Promise<Result<StandardizedConcept>> {
     try {
       // 前置校验
-      const prerequisiteCheck = this.validatePrerequisites("standardizeClassify");
+      const prerequisiteCheck = this.validatePrerequisites("define");
       if (!prerequisiteCheck.ok) {
         return prerequisiteCheck as Result<StandardizedConcept>;
       }
@@ -397,17 +325,18 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
       // 获取 Provider 配置
       const settings = this.getSettings();
-      const taskConfig = settings.taskModels["standardizeClassify"];
+      const taskConfig = settings.taskModels["define"];
       const providerId = taskConfig.providerId;
 
       // 构建 prompt
-      const promptResult = this.promptManager.build(
-        "standardizeClassify",
-        { CTX_INPUT: sanitizedInput }
-      );
-
-      if (!promptResult.ok) {
-        return err(promptResult.error.code, promptResult.error.message);
+      let prompt: string;
+      try {
+        prompt = this.promptManager.build("define", { CTX_INPUT: sanitizedInput });
+      } catch (error) {
+        this.logger.error("PipelineOrchestrator", "构建标准化提示词失败", error as Error, {
+          event: "STANDARDIZE_DIRECT_ERROR"
+        });
+        return toErr(error, "E002", "构建标准化提示词失败");
       }
 
       // 直接调用 API
@@ -415,7 +344,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
         providerId,
         model: taskConfig.model,
         messages: [
-          { role: "system", content: promptResult.value },
+          { role: "system", content: prompt },
           { role: "user", content: sanitizedInput }
         ],
         temperature: taskConfig.temperature,
@@ -466,7 +395,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
    * 使用已标准化数据启动创建管线（跳过标准化阶段）
    * 
    * 遵循 Requirements 4.3：
-   * - 跳过标准化阶段，直接从 enrich 开始
+   * - 跳过标准化阶段，直接从 tag 开始
    * - 用户已通过 standardizeDirect 获得标准化结果并选择了类型
    * 
    * @param standardizedData 标准化数据
@@ -491,13 +420,13 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     options?: CreatePresetOptions
   ): Result<string> {
     try {
-      // 前置校验 enrich 任务
-      const prerequisiteCheck = this.validatePrerequisites("enrich");
+      // 前置校验 tag 任务
+      const prerequisiteCheck = this.validatePrerequisites("tag");
       if (!prerequisiteCheck.ok) {
         return prerequisiteCheck as Result<string>;
       }
 
-      // 在 enrich 之前检查重复名称/路径，避免浪费 API 调用
+      // 在 tag 之前检查重复名称/路径，避免浪费 API 调用
       const duplicateCheck = this.checkDuplicateByName(
         standardizedData,
         selectedType,
@@ -522,7 +451,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
         pipelineId,
         nodeId,
         type: selectedType,
-        stage: "enriching", // 直接进入 enriching 阶段
+        stage: "tagging", // 直接进入 tagging 阶段
         userInput: standardizedData.standardNames[selectedType].chinese,
         standardizedData: {
           standardNames: standardizedData.standardNames,
@@ -550,36 +479,37 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
         parents: options?.parents
       });
 
-      // 创建 enrich 任务
+      // 创建 tag 任务
       const settings = this.getSettings();
-      const taskResult = this.taskQueue.enqueue({
-        nodeId,
-        taskType: "enrich",
-        state: "Pending",
-        attempt: 0,
-        maxAttempts: settings.maxRetryAttempts,
-        providerRef: this.getProviderIdForTask("enrich"),
-        payload: {
-          pipelineId,
-          standardizedData: context.standardizedData,
-          conceptType: selectedType,
-          userInput: context.userInput
-        }
-      });
-
-      if (!taskResult.ok) {
+      let taskId: string;
+      try {
+        taskId = this.taskQueue.enqueue({
+          nodeId,
+          taskType: "tag",
+          state: "Pending",
+          attempt: 0,
+          maxAttempts: settings.maxRetryAttempts,
+          providerRef: this.getProviderIdForTask("tag"),
+          payload: {
+            pipelineId,
+            standardizedData: context.standardizedData,
+            conceptType: selectedType,
+            userInput: context.userInput
+          }
+        });
+      } catch (error) {
         this.pipelines.delete(pipelineId);
-        return err(taskResult.error.code, `创建任务失败: ${taskResult.error.message}`, taskResult.error);
+        return toErr(error, "E305", "创建任务失败") as Result<string>;
       }
 
       // 记录任务到管线的映射
-      this.taskToPipeline.set(taskResult.value, pipelineId);
+      this.taskToPipeline.set(taskId, pipelineId);
 
       // 发布事件
       this.publishEvent({
         type: "stage_changed",
         pipelineId,
-        stage: "enriching",
+        stage: "tagging",
         context,
         timestamp: now
       });
@@ -613,27 +543,16 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
       statusTransition: "Stub → Draft"
     });
 
-    if (context.embedding && context.standardizedData) {
-      const signature = createConceptSignature(
-        {
-          standardName: context.standardizedData.standardNames[context.type],
-          aliases: context.enrichedData?.aliases || [],
-          coreDefinition: context.standardizedData.coreDefinition
-        },
-        context.type,
-        this.getSettings().namingTemplate
-      );
-      await this.vectorIndex.upsert({
-        uid: context.nodeId,
-        type: context.type,
-        name: signature.standardName,
-        path: targetPath,
-        embedding: context.embedding,
-        updated: formatCRTimestamp()
-      });
-    }
+     if (context.embedding) {
+       await this.vectorIndex.upsert({
+         uid: context.nodeId,
+         type: context.type,
+         embedding: context.embedding,
+         updated: formatCRTimestamp()
+       });
+     }
 
-    context.stage = "deduplicating";
+    context.stage = "checking_duplicates";
     context.updatedAt = formatCRTimestamp();
     if (context.embedding) {
       await this.duplicateManager.detect(
@@ -680,13 +599,13 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
     await this.atomicWriteVault(targetPath, newContent);
 
-    // 更新向量索引并去重（复用已有向量）
-    const entry = this.vectorIndex.getEntry(context.nodeId);
-    if (entry) {
-      const updatedEntry = { ...entry, path: targetPath, updated: formatCRTimestamp() };
-      await this.vectorIndex.upsert(updatedEntry);
-      await this.duplicateManager.detect(context.nodeId, entry.type, entry.embedding);
-    }
+     // 更新向量索引并去重（复用已有向量）
+     const entry = this.vectorIndex.getEntry(context.nodeId);
+     if (entry) {
+       const updatedEntry = { ...entry, updated: formatCRTimestamp() };
+       await this.vectorIndex.upsert(updatedEntry);
+       await this.duplicateManager.detect(context.nodeId, entry.type, entry.embedding);
+     }
 
     context.stage = "completed";
     context.updatedAt = formatCRTimestamp();
@@ -750,12 +669,12 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     if (context.deleteNodeId) {
       await this.vectorIndex.delete(context.deleteNodeId);
     }
-    const entry = this.vectorIndex.getEntry(context.nodeId);
-    if (entry) {
-      const updatedEntry = { ...entry, path: targetPath, updated: formatCRTimestamp() };
-      await this.vectorIndex.upsert(updatedEntry);
-      await this.duplicateManager.detect(context.nodeId, entry.type, entry.embedding);
-    }
+     const entry = this.vectorIndex.getEntry(context.nodeId);
+     if (entry) {
+       const updatedEntry = { ...entry, updated: formatCRTimestamp() };
+       await this.vectorIndex.upsert(updatedEntry);
+       await this.duplicateManager.detect(context.nodeId, entry.type, entry.embedding);
+     }
 
     // 去重记录清理
     if (context.mergePairId) {
@@ -804,24 +723,26 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
     const settings = this.getSettings();
     if (settings.enableGrounding) {
-      context.stage = "grounding";
-      const taskResult = this.taskQueue.enqueue({
-        nodeId: context.nodeId,
-        taskType: "ground",
-        state: "Pending",
-        attempt: 0,
-        maxAttempts: settings.maxRetryAttempts,
-        providerRef: this.getProviderIdForTask("ground"),
-        payload: {
-          pipelineId: context.pipelineId,
-          currentContent: improved,
-          conceptType: context.type
-        }
-      });
-
-      if (!taskResult.ok) {
+      context.stage = "verifying";
+      let verifyTaskId: string;
+      try {
+        verifyTaskId = this.taskQueue.enqueue({
+          nodeId: context.nodeId,
+          taskType: "verify",
+          state: "Pending",
+          attempt: 0,
+          maxAttempts: settings.maxRetryAttempts,
+          providerRef: this.getProviderIdForTask("verify"),
+          payload: {
+            pipelineId: context.pipelineId,
+            currentContent: improved,
+            conceptType: context.type
+          }
+        });
+      } catch (error) {
+        const converted = toErr(error, "E305", "Verify 任务创建失败");
         context.stage = "failed";
-        context.error = { code: taskResult.error.code, message: taskResult.error.message };
+        context.error = { code: converted.error.code, message: converted.error.message };
         this.publishEvent({
           type: "pipeline_failed",
           pipelineId: context.pipelineId,
@@ -832,11 +753,11 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
         return;
       }
 
-      this.taskToPipeline.set(taskResult.value, context.pipelineId);
+      this.taskToPipeline.set(verifyTaskId, context.pipelineId);
       this.publishEvent({
         type: "stage_changed",
         pipelineId: context.pipelineId,
-        stage: "grounding",
+        stage: "verifying",
         context,
         timestamp: context.updatedAt
       });
@@ -885,24 +806,26 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
     const settings = this.getSettings();
     if (settings.enableGrounding) {
-      context.stage = "grounding";
-      const taskResult = this.taskQueue.enqueue({
-        nodeId: context.nodeId,
-        taskType: "ground",
-        state: "Pending",
-        attempt: 0,
-        maxAttempts: settings.maxRetryAttempts,
-        providerRef: this.getProviderIdForTask("ground"),
-        payload: {
-          pipelineId: context.pipelineId,
-          currentContent: mergedContent.value,
-          conceptType: context.type
-        }
-      });
-
-      if (!taskResult.ok) {
+      context.stage = "verifying";
+      let verifyTaskId: string;
+      try {
+        verifyTaskId = this.taskQueue.enqueue({
+          nodeId: context.nodeId,
+          taskType: "verify",
+          state: "Pending",
+          attempt: 0,
+          maxAttempts: settings.maxRetryAttempts,
+          providerRef: this.getProviderIdForTask("verify"),
+          payload: {
+            pipelineId: context.pipelineId,
+            currentContent: mergedContent.value,
+            conceptType: context.type
+          }
+        });
+      } catch (error) {
+        const converted = toErr(error, "E305", "Verify 任务创建失败");
         context.stage = "failed";
-        context.error = { code: taskResult.error.code, message: taskResult.error.message };
+        context.error = { code: converted.error.code, message: converted.error.message };
         this.publishEvent({
           type: "pipeline_failed",
           pipelineId: context.pipelineId,
@@ -913,11 +836,11 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
         return;
       }
 
-      this.taskToPipeline.set(taskResult.value, context.pipelineId);
+      this.taskToPipeline.set(verifyTaskId, context.pipelineId);
       this.publishEvent({
         type: "stage_changed",
         pipelineId: context.pipelineId,
-        stage: "grounding",
+        stage: "verifying",
         context,
         timestamp: context.updatedAt
       });
@@ -946,12 +869,29 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     finalFileName: string
   ): Result<string> {
     // 确定主笔记和被删除笔记
-    const isKeepA = keepNodeId === pair.noteA.nodeId;
-    const keepNote = isKeepA ? pair.noteA : pair.noteB;
-    const deleteNote = isKeepA ? pair.noteB : pair.noteA;
+    const isKeepA = keepNodeId === pair.nodeIdA;
+    const keepId = isKeepA ? pair.nodeIdA : pair.nodeIdB;
+    const deleteId = isKeepA ? pair.nodeIdB : pair.nodeIdA;
+
+    const nameA = this.cruidCache?.getName(pair.nodeIdA) || pair.nodeIdA;
+    const nameB = this.cruidCache?.getName(pair.nodeIdB) || pair.nodeIdB;
+
+    const keepPath = this.cruidCache?.getPath(keepId);
+    const deletePath = this.cruidCache?.getPath(deleteId);
+    if (!keepPath || !deletePath) {
+      return err("E306", "无法定位合并笔记文件（可能已被移动或删除）", {
+        keepNodeId: keepId,
+        deleteNodeId: deleteId,
+        keepPath: keepPath || null,
+        deletePath: deletePath || null
+      });
+    }
+
+    const keepNote = { nodeId: keepId, name: this.cruidCache?.getName(keepId) || keepId, path: keepPath };
+    const deleteNote = { nodeId: deleteId, name: this.cruidCache?.getName(deleteId) || deleteId, path: deletePath };
 
     // 前置校验
-    const prereqResult = this.validatePrerequisites("reason:new", pair.type);
+    const prereqResult = this.validatePrerequisites("write", pair.type);
     if (!prereqResult.ok) {
       return prereqResult as Result<string>;
     }
@@ -965,7 +905,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
       nodeId: keepNote.nodeId,
       type: pair.type,
       stage: "idle",
-      userInput: `合并 ${pair.noteA.name} 和 ${pair.noteB.name}`,
+      userInput: `合并 ${nameA} 和 ${nameB}`,
       mergePairId: pair.id,
       deleteFilePath: deleteNote.path,
       deleteNoteName: deleteNote.name,
@@ -975,7 +915,6 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
     };
 
     this.pipelines.set(pipelineId, context);
-    this.queueSavePipelineState();
 
     this.logger.info("PipelineOrchestrator", `启动合并管线: ${pipelineId}`, {
       keepNodeId,
@@ -1039,7 +978,7 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
       context.filePath = keepNote.path;
 
       // 2. 创建双快照（SSOT 要求）
-      context.stage = "writing";
+      context.stage = "saving";
       context.updatedAt = formatCRTimestamp();
 
       const keepSnapshotResult = await this.undoManager.createSnapshot(
@@ -1065,13 +1004,13 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
       });
 
       // 3. 调用 LLM 生成合并内容
-      context.stage = "reasoning";
+      context.stage = "saving";
       context.updatedAt = formatCRTimestamp();
 
       this.publishEvent({
         type: "stage_changed",
         pipelineId: context.pipelineId,
-        stage: "reasoning",
+        stage: "writing",
         context,
         timestamp: context.updatedAt
       });
@@ -1104,13 +1043,13 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
       context.newContent = mergeResult.value.finalContent;
 
       // 4. 进入等待确认阶段
-      context.stage = "awaiting_write_confirm";
+      context.stage = "review_changes";
       context.updatedAt = formatCRTimestamp();
 
       this.publishEvent({
         type: "confirmation_required",
         pipelineId: context.pipelineId,
-        stage: "awaiting_write_confirm",
+        stage: "review_changes",
         context,
         timestamp: context.updatedAt
       });
@@ -1165,15 +1104,15 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
 
     // 使用 buildOperation 构建 merge prompt
     let promptContent: string;
-    const promptResult = this.promptManager.buildOperation("merge", slots);
-    
-    if (!promptResult.ok) {
-      // 如果 merge 模板不可用，使用简化的合并 prompt
+    try {
+      promptContent = this.promptManager.buildOperation("merge", slots);
+    } catch (error) {
+      // 如果 merge 模板不可用或构建失败，使用简化的合并 prompt
       this.logger.warn("PipelineOrchestrator", "merge 模板不可用，使用简化 prompt", {
         pipelineId: context.pipelineId,
-        error: promptResult.error
+        error
       });
-      
+
       promptContent = this.buildSimpleMergePrompt(
         keepNoteName,
         deleteNoteName,
@@ -1182,12 +1121,10 @@ export class PipelineOrchestrator implements IPipelineOrchestrator {
         type,
         language
       );
-    } else {
-      promptContent = promptResult.value;
     }
 
     // 获取任务模型配置
-    const taskConfig = settings.taskModels?.["reason:new"];
+    const taskConfig = settings.taskModels?.["write"];
     const providerId = taskConfig?.providerId || settings.defaultProviderId || "default";
     const model = taskConfig?.model || "gpt-4o";
 
@@ -1297,7 +1234,7 @@ ${deleteContent}
     instruction: string
   ): Result<string> {
     // 前置校验
-    const prereqResult = this.validatePrerequisites("reason:new");
+    const prereqResult = this.validatePrerequisites("write");
     if (!prereqResult.ok) {
       return prereqResult as Result<string>;
     }
@@ -1327,7 +1264,6 @@ ${deleteContent}
     };
 
     this.pipelines.set(pipelineId, context);
-    this.queueSavePipelineState();
 
     this.logger.info("PipelineOrchestrator", `启动增量改进管线: ${pipelineId}`, {
       filePath,
@@ -1380,13 +1316,13 @@ ${deleteContent}
       });
 
       // 4. 调用 LLM 生成改进内容
-      context.stage = "reasoning";
+      context.stage = "writing";
       context.updatedAt = formatCRTimestamp();
 
       this.publishEvent({
         type: "stage_changed",
         pipelineId: context.pipelineId,
-        stage: "reasoning",
+        stage: "writing",
         context,
         timestamp: context.updatedAt
       });
@@ -1414,13 +1350,13 @@ ${deleteContent}
       context.newContent = improveResult.value.finalContent;
 
       // 5. 进入等待确认阶段
-      context.stage = "awaiting_write_confirm";
+      context.stage = "review_changes";
       context.updatedAt = formatCRTimestamp();
 
       this.publishEvent({
         type: "confirmation_required",
         pipelineId: context.pipelineId,
-        stage: "awaiting_write_confirm",
+        stage: "review_changes",
         context,
         timestamp: context.updatedAt
       });
@@ -1472,19 +1408,18 @@ ${deleteContent}
         CTX_LANGUAGE: language
       };
 
-      const promptResult = this.promptManager.buildOperation("incremental", slots);
-      if (promptResult.ok) {
-        promptContent = promptResult.value;
-      } else {
+      try {
+        promptContent = this.promptManager.buildOperation("incremental", slots);
+      } catch (error) {
         this.logger.warn("PipelineOrchestrator", "incremental 模板不可用，使用简化 prompt", {
           pipelineId: context.pipelineId,
-          error: promptResult.error
+          error
         });
       }
     }
 
     // 获取任务模型配置
-    const taskConfig = settings.taskModels?.["reason:new"];
+    const taskConfig = settings.taskModels?.["write"];
     const providerId = taskConfig?.providerId || settings.defaultProviderId || "default";
     const model = taskConfig?.model || "gpt-4o";
 
@@ -1604,9 +1539,9 @@ ${currentContent}
   /**
    * 确认创建（在 embedding 之后）
    * 
-   * 遵循 A-FUNC-05：确认创建后先生成 Stub，再执行 reason:new
+   * 遵循 A-FUNC-05：确认创建后先生成 Stub，再执行 write
    * 遵循 A-UCD-03：写入需显式确认
-   * 遵循设计文档：Stub 状态仅含 frontmatter，后续 reason:new 完成后转为 Draft
+   * 遵循设计文档：Stub 状态仅含 frontmatter，后续 write 完成后转为 Draft
    */
   async confirmCreate(pipelineId: string): Promise<Result<void>> {
     const context = this.pipelines.get(pipelineId);
@@ -1614,8 +1549,8 @@ ${currentContent}
       return err("E307", `管线不存在: ${pipelineId}`);
     }
 
-    if (context.stage !== "awaiting_create_confirm") {
-      return err("E306", `管线状态不正确: ${context.stage}，期望: awaiting_create_confirm`);
+    if (context.stage !== "review_draft") {
+      return err("E306", `管线状态不正确: ${context.stage}，期望: review_draft`);
     }
 
     try {
@@ -1629,46 +1564,48 @@ ${currentContent}
         return stubResult as Result<void>;
       }
 
-      // 2. 更新阶段为 reasoning
-      context.stage = "reasoning";
+      // 2. 更新阶段为 writing
+      context.stage = "writing";
       context.updatedAt = formatCRTimestamp();
 
-      // 3. 创建 reason:new 任务
+      // 3. 创建 write 任务
       const settings = this.getSettings();
-      const taskResult = this.taskQueue.enqueue({
-        nodeId: context.nodeId,
-        taskType: "reason:new",
-        state: "Pending",
-        attempt: 0,
-        maxAttempts: settings.maxRetryAttempts,
-        providerRef: this.getProviderIdForTask("reason:new"),
-        payload: {
-          pipelineId,
-          standardizedData: context.standardizedData,
-          conceptType: context.type,
-          coreDefinition: context.standardizedData?.coreDefinition,
-          enrichedData: context.enrichedData,
-          embedding: context.embedding,
-          filePath: context.filePath, // 传递 Stub 文件路径
-          skipSnapshot: true, // 创建流程不保存快照
-          userInput: context.userInput,
-          sources: context.sources
-        }
-      });
-
-      if (!taskResult.ok) {
+      let taskId: string;
+      try {
+        taskId = this.taskQueue.enqueue({
+          nodeId: context.nodeId,
+          taskType: "write",
+          state: "Pending",
+          attempt: 0,
+          maxAttempts: settings.maxRetryAttempts,
+          providerRef: this.getProviderIdForTask("write"),
+          payload: {
+            pipelineId,
+            standardizedData: context.standardizedData,
+            conceptType: context.type,
+            coreDefinition: context.standardizedData?.coreDefinition,
+            enrichedData: context.enrichedData,
+            embedding: context.embedding,
+            filePath: context.filePath,
+            skipSnapshot: true,
+            userInput: context.userInput,
+            sources: context.sources
+          }
+        });
+      } catch (error) {
         context.stage = "failed";
-        context.error = { code: taskResult.error.code, message: taskResult.error.message };
-        return err(taskResult.error.code, `创建任务失败: ${taskResult.error.message}`, taskResult.error);
+        const converted = toErr(error, "E305", "创建任务失败");
+        context.error = { code: converted.error.code, message: converted.error.message };
+        return converted as Result<void>;
       }
 
-      this.taskToPipeline.set(taskResult.value, pipelineId);
+      this.taskToPipeline.set(taskId, pipelineId);
 
       // 发布事件
       this.publishEvent({
         type: "stage_changed",
         pipelineId,
-        stage: "reasoning",
+        stage: "writing",
         context,
         timestamp: context.updatedAt
       });
@@ -1826,7 +1763,7 @@ ${currentContent}
   }
 
   /**
-   * 确认写入（在 reason:new 之后）
+   * 确认写入（在 write 之后）
    * 
    * 遵循 A-FUNC-05：确认写入后执行去重检测，Stub → Draft 状态转换
    * 遵循 A-UCD-03：写入需显式确认，确认后提供撤销
@@ -1839,8 +1776,8 @@ ${currentContent}
       return err("E307", `管线不存在: ${pipelineId}`);
     }
 
-    if (context.stage !== "awaiting_write_confirm") {
-      return err("E306", `管线状态不正确: ${context.stage}，期望: awaiting_write_confirm`);
+    if (context.stage !== "review_changes") {
+      return err("E306", `管线状态不正确: ${context.stage}，期望: review_changes`);
     }
 
     try {
@@ -1881,7 +1818,7 @@ ${currentContent}
       return err("E307", `管线不存在: ${pipelineId}`);
     }
 
-    if (!["awaiting_write_confirm", "writing", "deduplicating"].includes(context.stage)) {
+    if (!["review_changes", "saving", "checking_duplicates"].includes(context.stage)) {
       return err("E306", `当前阶段不支持预览: ${context.stage}`);
     }
 
@@ -1900,7 +1837,14 @@ ${currentContent}
     // 取消所有关联的任务
     for (const [taskId, pid] of this.taskToPipeline.entries()) {
       if (pid === pipelineId) {
-        this.taskQueue.cancel(taskId);
+        try {
+          this.taskQueue.cancel(taskId);
+        } catch (error) {
+          this.logger.warn("PipelineOrchestrator", `取消任务失败: ${taskId}`, {
+            pipelineId,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
         this.taskToPipeline.delete(taskId);
       }
     }
@@ -2000,31 +1944,31 @@ ${currentContent}
 
     // 根据任务类型更新管线状态并触发下一步
     switch (task.taskType) {
-      case "standardizeClassify":
+      case "define":
         await this.handleStandardizeCompleted(context, task);
         break;
-      case "enrich":
-        await this.handleEnrichCompleted(context, task);
+      case "tag":
+        await this.handleTagCompleted(context, task);
         break;
-      case "embedding":
-        await this.handleEmbeddingCompleted(context, task);
+      case "index":
+        await this.handleIndexCompleted(context, task);
         break;
-      case "reason:new":
-        await this.handleReasonNewCompleted(context, task);
+      case "write":
+        await this.handleWriteCompleted(context, task);
         break;
-      case "ground":
-        await this.handleGroundCompleted(context, task);
+      case "verify":
+        await this.handleVerifyCompleted(context, task);
         break;
     }
   }
 
   /**
-   * 处理 Ground 任务完成
+   * 处理 Verify 任务完成
    * 
-   * Ground 完成后进入等待写入确认阶段（需要用户确认）
-   * 如果 Ground 发现严重问题，记录到上下文中供用户参考
+   * Verify 完成后进入等待写入确认阶段（需要用户确认）
+   * 如果 Verify 发现严重问题，记录到上下文中供用户参考
    */
-  private async handleGroundCompleted(
+  private async handleVerifyCompleted(
     context: PipelineContext,
     task: TaskRecord
   ): Promise<void> {
@@ -2032,7 +1976,7 @@ ${currentContent}
     
     if (result) {
       context.groundingResult = result;
-      // 记录 Ground 结果到上下文（供 UI 展示）
+      // 记录 Verify 结果到上下文（供 UI 展示）
       // 使用 generatedContent 的扩展字段存储 grounding 结果
       if (context.generatedContent && typeof context.generatedContent === "object") {
         (context.generatedContent as Record<string, unknown>)._groundingResult = {
@@ -2044,13 +1988,13 @@ ${currentContent}
         };
       }
 
-      this.logger.info("PipelineOrchestrator", `Ground 完成: ${context.pipelineId}`, {
+      this.logger.info("PipelineOrchestrator", `Verify 完成: ${context.pipelineId}`, {
         overall_assessment: result.overall_assessment,
         issueCount: Array.isArray(result.issues) ? result.issues.length : 0
       });
     }
 
-    // Ground 完成后进入等待写入确认阶段（需要用户确认）
+    // Verify 完成后进入等待写入确认阶段（需要用户确认）
     this.transitionToAwaitingWriteConfirm(context);
   }
 
@@ -2086,35 +2030,48 @@ ${currentContent}
       result.primaryType = primaryType;
     }
 
-    // 进入 enrich 阶段
-    context.stage = "enriching";
+    // 进入 tag 阶段
+    context.stage = "tagging";
     context.updatedAt = formatCRTimestamp();
 
-    // 创建 enrich 任务
+    // 创建 tag 任务
     const settings = this.getSettings();
-    const taskResult = this.taskQueue.enqueue({
-      nodeId: context.nodeId,
-      taskType: "enrich",
-      state: "Pending",
-      attempt: 0,
-      maxAttempts: settings.maxRetryAttempts,
-      providerRef: this.getProviderIdForTask("enrich"),
-      payload: {
+    let tagTaskId: string;
+    try {
+      tagTaskId = this.taskQueue.enqueue({
+        nodeId: context.nodeId,
+        taskType: "tag",
+        state: "Pending",
+        attempt: 0,
+        maxAttempts: settings.maxRetryAttempts,
+        providerRef: this.getProviderIdForTask("tag"),
+        payload: {
+          pipelineId: context.pipelineId,
+          standardizedData: context.standardizedData,
+          conceptType: context.type,
+          userInput: context.userInput
+        }
+      });
+    } catch (error) {
+      const converted = toErr(error, "E305", "创建 tag 任务失败");
+      context.stage = "failed";
+      context.error = { code: converted.error.code, message: converted.error.message };
+      this.publishEvent({
+        type: "pipeline_failed",
         pipelineId: context.pipelineId,
-        standardizedData: context.standardizedData,
-        conceptType: context.type,
-        userInput: context.userInput
-      }
-    });
-
-    if (taskResult.ok) {
-      this.taskToPipeline.set(taskResult.value, context.pipelineId);
+        stage: "failed",
+        context,
+        timestamp: context.updatedAt
+      });
+      return;
     }
+
+    this.taskToPipeline.set(tagTaskId, context.pipelineId);
 
     this.publishEvent({
       type: "stage_changed",
       pipelineId: context.pipelineId,
-      stage: "enriching",
+      stage: "tagging",
       context,
       timestamp: context.updatedAt
     });
@@ -2123,10 +2080,10 @@ ${currentContent}
   /**
    * 处理丰富完成
    * 
-   * enrich 完成后直接进入等待创建确认阶段
-   * embedding 将在 reason:new 完成后执行
+   * tag 完成后直接进入等待创建确认阶段
+   * index 将在 write 完成后执行
    */
-  private async handleEnrichCompleted(
+  private async handleTagCompleted(
     context: PipelineContext,
     task: TaskRecord
   ): Promise<void> {
@@ -2147,10 +2104,10 @@ ${currentContent}
     context.enrichedData = result;
 
     // 注意：重复名称检查已移至 startCreatePipelineWithStandardized 中
-    // 在 enrich 之前进行检查，避免浪费 API 调用
+    // 在 tag 之前进行检查，避免浪费 API 调用
 
     // 进入等待创建确认阶段（自动确认）
-    context.stage = "awaiting_create_confirm";
+    context.stage = "review_draft";
     context.updatedAt = formatCRTimestamp();
 
     this.logger.info("PipelineOrchestrator", `自动确认创建并生成内容: ${context.pipelineId}`);
@@ -2174,7 +2131,7 @@ ${currentContent}
    * 注意：此方法已废弃，embedding 现在直接执行不进入队列
    * 保留此方法以防万一有遗留的 embedding 任务
    */
-  private async handleEmbeddingCompleted(
+  private async handleIndexCompleted(
     context: PipelineContext,
     task: TaskRecord
   ): Promise<void> {
@@ -2200,7 +2157,7 @@ ${currentContent}
     }
 
     // 进入等待创建确认阶段（自动确认，无需 UI）
-    context.stage = "awaiting_create_confirm";
+    context.stage = "review_draft";
     context.updatedAt = formatCRTimestamp();
 
     this.logger.info("PipelineOrchestrator", `自动确认创建并生成内容: ${context.pipelineId}`);
@@ -2219,11 +2176,11 @@ ${currentContent}
   }
 
   /**
-   * 处理 reason:new 完成
+   * 处理 write 完成
    * 
-   * reason:new 完成后执行 embedding，然后可选执行 ground 阶段或直接写入
+   * write 完成后执行 index，然后可选执行 verify 阶段或直接写入
    */
-  private async handleReasonNewCompleted(
+  private async handleWriteCompleted(
     context: PipelineContext,
     task: TaskRecord
   ): Promise<void> {
@@ -2244,14 +2201,14 @@ ${currentContent}
       context.filePath = `${fileName}.md`;
     }
 
-    // reason:new 完成后，执行 embedding
-    context.stage = "embedding";
+    // write 完成后，执行 index
+    context.stage = "indexing";
     context.updatedAt = formatCRTimestamp();
 
     this.publishEvent({
       type: "stage_changed",
       pipelineId: context.pipelineId,
-      stage: "embedding",
+      stage: "indexing",
       context,
       timestamp: context.updatedAt
     });
@@ -2261,15 +2218,15 @@ ${currentContent}
   }
 
   /**
-   * 启动 Ground 任务
+   * 启动 Verify 任务
    * 
-   * 遵循 A-FUNC-05：可选 ground 阶段，在 reason:new 与写入之间
+   * 遵循 A-FUNC-05：可选 verify 阶段，在 write 与写入之间
    */
-  private async startGroundTask(context: PipelineContext): Promise<void> {
-    context.stage = "reasoning"; // 复用 reasoning 阶段表示 ground 进行中
+  private async startVerifyTask(context: PipelineContext): Promise<void> {
+    context.stage = "verifying"; // Verify 执行中
     context.updatedAt = formatCRTimestamp();
 
-    this.logger.info("PipelineOrchestrator", `启动 Ground 任务: ${context.pipelineId}`);
+    this.logger.info("PipelineOrchestrator", `启动 Verify 任务: ${context.pipelineId}`);
 
     // 将生成的内容转换为字符串用于验证
     const contentToVerify = typeof context.generatedContent === "string"
@@ -2277,26 +2234,27 @@ ${currentContent}
       : JSON.stringify(context.generatedContent, null, 2);
 
     const settings = this.getSettings();
-    const taskResult = this.taskQueue.enqueue({
-      nodeId: context.nodeId,
-      taskType: "ground",
-      state: "Pending",
-      attempt: 0,
-      maxAttempts: settings.maxRetryAttempts,
-      providerRef: this.getProviderIdForTask("ground"),
-      payload: {
-        pipelineId: context.pipelineId,
-        currentContent: contentToVerify,
-        conceptType: context.type,
-        standardizedData: context.standardizedData
-      }
-    });
-
-    if (taskResult.ok) {
-      this.taskToPipeline.set(taskResult.value, context.pipelineId);
-    } else {
-      // Ground 任务创建失败，跳过 Ground 直接进入写入确认
-      this.logger.warn("PipelineOrchestrator", `Ground 任务创建失败，跳过: ${context.pipelineId}`);
+    try {
+      const taskId = this.taskQueue.enqueue({
+        nodeId: context.nodeId,
+        taskType: "verify",
+        state: "Pending",
+        attempt: 0,
+        maxAttempts: settings.maxRetryAttempts,
+        providerRef: this.getProviderIdForTask("verify"),
+        payload: {
+          pipelineId: context.pipelineId,
+          currentContent: contentToVerify,
+          conceptType: context.type,
+          standardizedData: context.standardizedData
+        }
+      });
+      this.taskToPipeline.set(taskId, context.pipelineId);
+    } catch (error) {
+      const converted = toErr(error, "E305", "Verify 任务创建失败");
+      this.logger.warn("PipelineOrchestrator", `Verify 任务创建失败，跳过: ${context.pipelineId}`, {
+        error: converted.error
+      });
       this.transitionToAwaitingWriteConfirm(context);
     }
   }
@@ -2305,14 +2263,14 @@ ${currentContent}
    * 转换到等待写入确认阶段
    */
   private transitionToAwaitingWriteConfirm(context: PipelineContext): void {
-    context.stage = "awaiting_write_confirm";
+    context.stage = "review_changes";
     context.updatedAt = formatCRTimestamp();
 
     // 发布确认请求事件
     this.publishEvent({
       type: "confirmation_required",
       pipelineId: context.pipelineId,
-      stage: "awaiting_write_confirm",
+      stage: "review_changes",
       context,
       timestamp: context.updatedAt
     });
@@ -2322,13 +2280,13 @@ ${currentContent}
 
   /**
    * 自动确认写入（无需用户确认）
-   * 用于 reason:new 和 enrich 任务完成后的自动写入
+   * 用于 write 和 tag 任务完成后的自动写入
    */
   private async autoConfirmWrite(context: PipelineContext): Promise<void> {
     this.logger.info("PipelineOrchestrator", `自动写入（无需确认）: ${context.pipelineId}`);
 
     // 直接进入写入确认阶段，避免 UI 交互
-    context.stage = "awaiting_write_confirm";
+    context.stage = "review_changes";
     context.updatedAt = formatCRTimestamp();
 
     // 直接调用 confirmWrite 逻辑
@@ -3207,7 +3165,7 @@ ${currentContent}
   /**
    * 直接执行 embedding（不进入队列）
    * 
-   * 在 reason:new 完成后执行，用于生成向量嵌入
+   * 在 write 完成后执行，用于生成向量嵌入
    */
   private async executeEmbeddingDirect(context: PipelineContext): Promise<void> {
     try {
@@ -3215,15 +3173,15 @@ ${currentContent}
         throw new Error("ProviderManager 未初始化");
       }
 
-      this.logger.info("PipelineOrchestrator", `直接执行 embedding: ${context.pipelineId}`);
+      this.logger.info("PipelineOrchestrator", `直接执行 index: ${context.pipelineId}`);
 
       // 构建嵌入文本
       const embeddingText = this.buildEmbeddingText(context);
 
       // 获取 Provider 配置和任务模型配置
       const settings = this.getSettings();
-      const taskConfig = settings.taskModels["embedding"];
-      const providerId = taskConfig?.providerId || this.getProviderIdForTask("embedding");
+      const taskConfig = settings.taskModels["index"];
+      const providerId = taskConfig?.providerId || this.getProviderIdForTask("index");
       const embeddingModel = taskConfig?.model || "text-embedding-3-small";
       const embeddingDimension = settings.embeddingDimension || 1536;
 
@@ -3250,8 +3208,8 @@ ${currentContent}
       // embedding 完成后，检查是否启用 Ground 阶段
       const settings2 = this.getSettings();
       if (settings2.enableGrounding) {
-        // 启用 Ground：创建 ground 任务（Ground 完成后需要用户确认）
-        await this.startGroundTask(context);
+        // 启用 Verify：创建 verify 任务（完成后需要用户确认）
+        await this.startVerifyTask(context);
       } else {
         // 未启用 Ground：直接写入，无需用户确认
         await this.autoConfirmWrite(context);
@@ -3288,89 +3246,6 @@ ${currentContent}
   }
 
   /**
-   * 管线状态持久化：保存（串行化写入，避免并发写入冲突）
-   */
-  private queueSavePipelineState(): void {
-    const state: PipelineStateFile = {
-      version: "1.0.0",
-      pipelines: this.getActivePipelines(),
-      lastUpdated: formatCRTimestamp()
-    };
-
-    const content = JSON.stringify(state, null, 2);
-    if (content === this.lastPersistedPipelineState) {
-      return;
-    }
-    this.lastPersistedPipelineState = content;
-
-    this.pipelineSaveChain = this.pipelineSaveChain
-      .then(async () => {
-        const result = await this.fileStorage.atomicWrite(
-          PipelineOrchestrator.PIPELINE_STATE_FILE,
-          content
-        );
-        if (!result.ok) {
-          this.logger.warn("PipelineOrchestrator", "保存管线状态失败", {
-            error: result.error
-          });
-        }
-      })
-      .catch((error) => {
-        this.logger.error("PipelineOrchestrator", "保存管线状态异常", error as Error);
-      });
-  }
-
-  /**
-   * 管线状态持久化：加载并恢复（仅恢复未 completed/failed 的管线）
-   */
-  private async loadPipelineState(): Promise<void> {
-    try {
-      const exists = await this.fileStorage.exists(PipelineOrchestrator.PIPELINE_STATE_FILE);
-      if (!exists) return;
-
-      const readResult = await this.fileStorage.read(PipelineOrchestrator.PIPELINE_STATE_FILE);
-      if (!readResult.ok) {
-        this.logger.warn("PipelineOrchestrator", "读取管线状态失败", { error: readResult.error });
-        return;
-      }
-
-      let parsed: PipelineStateFile;
-      try {
-        parsed = JSON.parse(readResult.value) as PipelineStateFile;
-      } catch (error) {
-        this.logger.warn("PipelineOrchestrator", "解析管线状态失败", { error });
-        return;
-      }
-
-      if (!parsed || !Array.isArray(parsed.pipelines)) return;
-
-      let restored = 0;
-      for (const ctx of parsed.pipelines) {
-        if (!ctx || typeof ctx.pipelineId !== "string") continue;
-        if (ctx.stage === "completed" || ctx.stage === "failed") continue;
-        this.pipelines.set(ctx.pipelineId, ctx);
-        restored++;
-      }
-
-      if (restored > 0) {
-        this.logger.info("PipelineOrchestrator", "已恢复活跃管线", { restored });
-        // 通知 UI：让工作台等订阅者刷新
-        for (const ctx of this.getActivePipelines()) {
-          this.publishEvent({
-            type: "stage_changed",
-            pipelineId: ctx.pipelineId,
-            stage: ctx.stage,
-            context: ctx,
-            timestamp: ctx.updatedAt
-          });
-        }
-      }
-    } catch (error) {
-      this.logger.error("PipelineOrchestrator", "加载管线状态失败", error as Error);
-    }
-  }
-
-  /**
    * 发布事件
    */
   private publishEvent(event: PipelineEvent): void {
@@ -3382,7 +3257,5 @@ ${currentContent}
       }
     }
 
-    // 管线状态变更后自动持久化（阶段 2.4）
-    this.queueSavePipelineState();
   }
 }

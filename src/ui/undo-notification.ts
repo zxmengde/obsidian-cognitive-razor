@@ -3,7 +3,7 @@
  * 在写入操作后显示带有撤销按钮的通知
  */
 
-import { Notice } from "obsidian";
+import { Notice, setIcon } from "obsidian";
 
 /**
  * 撤销通知选项
@@ -57,39 +57,38 @@ export class UndoNotification {
 
     // 创建通知容器
     const container = this.notice.noticeEl.createDiv({
-      cls: "undo-notification-container",
+      cls: "cr-undo-notification-container",
     });
 
     // 添加图标（如果支持 innerHTML）
     const icon = container.createDiv({
-      cls: "undo-notification-icon",
+      cls: "cr-undo-notification-icon",
     });
-    if (icon && typeof icon.innerHTML !== 'undefined') {
-      icon.innerHTML = "↶"; // 撤销图标
-    }
+    icon.setAttr("aria-hidden", "true");
+    setIcon(icon, "rotate-ccw");
 
     // 内容区域
     const content = container.createDiv({
-      cls: "undo-notification-content",
+      cls: "cr-undo-notification-content",
     });
 
     // 添加消息文本
     content.createDiv({
       text: this.options.message,
-      cls: "undo-notification-message",
+      cls: "cr-undo-notification-message",
     });
 
     // 添加文件路径（简化显示）
     const fileName = this.options.filePath.split("/").pop() || this.options.filePath;
     content.createDiv({
       text: `文件: ${fileName}`,
-      cls: "undo-notification-file",
+      cls: "cr-undo-notification-file",
     });
 
     // 添加撤销按钮
     const undoButton = container.createEl("button", {
       text: "撤销",
-      cls: "undo-notification-button",
+      cls: "cr-undo-notification-button",
       attr: {
         "aria-label": `撤销操作: ${this.options.message}`,
       },
@@ -101,21 +100,34 @@ export class UndoNotification {
 
     // 添加进度条
     const progressBar = container.createDiv({
-      cls: "undo-notification-progress",
+      cls: "cr-undo-notification-progress",
     });
     const progressFill = progressBar.createDiv({
-      cls: "undo-notification-progress-fill",
+      cls: "cr-undo-notification-progress-fill",
     });
 
     // 动画进度条（如果支持 style）
     const duration = this.options.timeout || 5000;
+    const prefersReducedMotion =
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
     if (progressFill && progressFill.style) {
-      progressFill.style.transition = `width ${duration}ms linear`;
-      setTimeout(() => {
-        if (progressFill && progressFill.style) {
-          progressFill.style.width = "0%";
-        }
-      }, 10);
+      // 初始宽度
+      progressFill.style.width = "100%";
+
+      if (prefersReducedMotion) {
+        // 尊重减少动画偏好：不做宽度动画，仅保留静态进度条
+        progressFill.style.transition = "none";
+      } else {
+        progressFill.style.transition = `width ${duration}ms linear`;
+        setTimeout(() => {
+          if (progressFill && progressFill.style) {
+            progressFill.style.width = "0%";
+          }
+        }, 10);
+      }
     }
 
     // 设置超时

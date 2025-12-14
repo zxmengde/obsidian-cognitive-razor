@@ -64,6 +64,26 @@ export class CommandDispatcher {
   }
 
   /**
+   * 获取 i18n 文本
+   */
+  private t(path: string): string {
+    try {
+      const keys = path.split(".");
+      let current: unknown = this.plugin.getI18n().t();
+      for (const key of keys) {
+        if (current && typeof current === "object" && key in current) {
+          current = (current as Record<string, unknown>)[key];
+        } else {
+          return path;
+        }
+      }
+      return typeof current === "string" ? current : path;
+    } catch {
+      return path;
+    }
+  }
+
+  /**
    * 记录错误日志
    */
   private logError(context: string, error: unknown, extra?: Record<string, unknown>): void {
@@ -117,10 +137,24 @@ export class CommandDispatcher {
    * 注册工具类命令（阶段 2）
    */
   private registerUtilityCommands(): void {
+    const t = this.plugin.getI18n().t();
+
+    // 插入图片
+    this.registerCommand({
+      id: COMMAND_IDS.INSERT_IMAGE,
+      name: this.t("workbench.buttons.insertImage"),
+      icon: "image",
+      editorRequired: true,
+      handler: async () => {
+        const workbench = await this.openWorkbench();
+        await workbench?.startImageInsert();
+      }
+    });
+
     // 查看重复概念
     this.registerCommand({
       id: COMMAND_IDS.VIEW_DUPLICATES,
-      name: "查看重复概念",
+      name: t.workbench.duplicates.title,
       icon: "copy",
       handler: async () => {
         const workbench = await this.openWorkbench();
@@ -131,44 +165,44 @@ export class CommandDispatcher {
     // 暂停队列
     this.registerCommand({
       id: COMMAND_IDS.PAUSE_QUEUE,
-      name: "暂停任务队列",
+      name: t.workbench.queueStatus.pauseQueue,
       icon: "pause",
       handler: async () => {
         const taskQueue = this.taskQueue ?? this.plugin.getComponents().taskQueue;
         if (!taskQueue) {
-          new Notice("任务队列未初始化");
+          new Notice(t.workbench.notifications.systemNotInitialized);
           return;
         }
         await taskQueue.pause();
-        new Notice("任务队列已暂停");
+        new Notice(t.workbench.queueStatus.pauseQueue);
       }
     });
 
     // 恢复队列
     this.registerCommand({
       id: COMMAND_IDS.RESUME_QUEUE,
-      name: "恢复任务队列",
+      name: t.workbench.queueStatus.resumeQueue,
       icon: "play",
       handler: async () => {
         const taskQueue = this.taskQueue ?? this.plugin.getComponents().taskQueue;
         if (!taskQueue) {
-          new Notice("任务队列未初始化");
+          new Notice(t.workbench.notifications.systemNotInitialized);
           return;
         }
         await taskQueue.resume();
-        new Notice("任务队列已恢复");
+        new Notice(t.workbench.queueStatus.queueResumed);
       }
     });
 
     // 清空队列（取消所有 Pending/Running/Failed 任务）
     this.registerCommand({
       id: COMMAND_IDS.CLEAR_QUEUE,
-      name: "清空任务队列",
+      name: t.workbench.queueStatus.clearFailed || "清空任务队列",
       icon: "trash",
       handler: async () => {
         const taskQueue = this.taskQueue ?? this.plugin.getComponents().taskQueue;
         if (!taskQueue) {
-          new Notice("任务队列未初始化");
+          new Notice(t.workbench.notifications.systemNotInitialized);
           return;
         }
 
@@ -177,20 +211,22 @@ export class CommandDispatcher {
 
         let cancelled = 0;
         for (const task of cancellable) {
-          const result = taskQueue.cancel(task.id);
-          if (result.ok) {
+          try {
+            taskQueue.cancel(task.id);
             cancelled++;
+          } catch (error) {
+            console.warn(`[Cognitive Razor] 取消任务失败`, task.id, error);
           }
         }
 
-        new Notice(`已取消 ${cancelled} 个任务`);
+        new Notice(`${t.workbench.notifications.clearComplete}: ${cancelled}`);
       }
     });
 
     // 查看操作历史（合并历史）
     this.registerCommand({
       id: COMMAND_IDS.VIEW_OPERATION_HISTORY,
-      name: "查看操作历史",
+      name: t.workbench.recentOps.title,
       icon: "history",
       handler: async () => {
         const workbench = await this.openWorkbench();
@@ -214,10 +250,10 @@ export class CommandDispatcher {
           return;
         }
 
-        // 添加增量改进菜单项
+        // 添加改进菜单项
         menu.addItem((item) => {
           item
-            .setTitle("增量改进笔记")
+            .setTitle("改进笔记")
             .setIcon("sparkles")
             .onClick(async () => {
               await this.improveNote(file.path);
@@ -233,7 +269,7 @@ export class CommandDispatcher {
   private registerImproveCommands(): void {
     this.registerCommand({
       id: COMMAND_IDS.IMPROVE_NOTE,
-      name: "增量改进当前笔记",
+      name: "改进笔记",
       icon: "sparkles",
       handler: async () => {
         const activeFile = this.plugin.app.workspace.getActiveFile();
@@ -289,7 +325,7 @@ export class CommandDispatcher {
   private registerMergeCommands(): void {
     this.registerCommand({
       id: COMMAND_IDS.MERGE_DUPLICATES,
-      name: "合并重复概念",
+      name: "合并",
       icon: "git-merge",
       handler: async () => {
         await this.openMergeFromWorkbench();
@@ -549,7 +585,7 @@ export class CommandDispatcher {
   }
 
   /**
-   * 增量改进笔记
+   * 改进笔记
    * 
    * 遵循 SSOT 6.4：Incremental Edit 流程
    * - 创建快照
@@ -561,13 +597,13 @@ export class CommandDispatcher {
     const orchestrator = components.pipelineOrchestrator;
 
     if (!orchestrator) {
-      new Notice("管线编排器未初始化");
+      new Notice(this.t("workbench.notifications.orchestratorNotInitialized"));
       return;
     }
 
     // 显示输入框获取改进指令
     const modal = new SimpleInputModal(this.plugin.app, {
-      title: "增量改进笔记",
+      title: "改进笔记",
       placeholder: "输入改进指令，例如：补充更多例子、深化定义、添加引用...",
       onSubmit: async (instruction) => {
         if (!instruction.trim()) {
@@ -575,15 +611,15 @@ export class CommandDispatcher {
           return;
         }
 
-        // 启动增量改进管线
+        // 启动改进管线
         const result = orchestrator.startIncrementalPipeline(filePath, instruction);
         
         if (!result.ok) {
-          new Notice(`启动增量改进失败: ${result.error.message}`);
+          new Notice(`启动改进失败: ${result.error.message}`);
           return;
         }
 
-        new Notice("增量改进任务已启动，请等待 AI 生成改进内容...");
+        new Notice(this.t("workbench.notifications.improveStarted"));
         
         // 打开工作台以便查看进度
         await this.openWorkbench();

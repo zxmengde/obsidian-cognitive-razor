@@ -2,8 +2,6 @@ import { App, TFile } from "obsidian";
 import {
   CRType,
   ILogger,
-  IVectorIndex,
-  IFileStorage,
   Result,
   ok,
   err,
@@ -14,6 +12,8 @@ import { extractFrontmatter } from "./frontmatter-utils";
 import { schemaRegistry } from "./schema-registry";
 import { generateFilePath, sanitizeFileName } from "./naming-utils";
 import { PipelineOrchestrator } from "./pipeline-orchestrator";
+import type { VectorIndex } from "./vector-index";
+import type { FileStorage } from "../data/file-storage";
 
 export type DeepenMode = "hierarchical" | "abstract";
 
@@ -58,8 +58,8 @@ export type DeepenPlan = HierarchicalPlan | AbstractPlan;
 interface DeepenDependencies {
   app: App;
   logger: ILogger;
-  vectorIndex: IVectorIndex;
-  fileStorage: IFileStorage;
+  vectorIndex: VectorIndex;
+  fileStorage: FileStorage;
   pipelineOrchestrator: PipelineOrchestrator;
   getSettings: () => PluginSettings;
 }
@@ -87,8 +87,8 @@ const MAX_CREATABLE = 200;
 export class DeepenOrchestrator {
   private app: App;
   private logger: ILogger;
-  private vectorIndex: IVectorIndex;
-  private fileStorage: IFileStorage;
+  private vectorIndex: VectorIndex;
+  private fileStorage: FileStorage;
   private pipelineOrchestrator: PipelineOrchestrator;
   private getSettings: () => PluginSettings;
 
@@ -275,7 +275,7 @@ export class DeepenOrchestrator {
         return err(startResult.error.code, startResult.error.message);
       }
 
-      // 将 sources 写入上下文，确保 reason:new 可用
+      // 将 sources 写入上下文，确保 write 可用
       const context = this.pipelineOrchestrator.getContext(startResult.value);
       if (context) {
         context.sources = sources;

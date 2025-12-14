@@ -146,13 +146,11 @@ export function validateCRFrontmatter(data: unknown): Result<CRFrontmatter> {
 /** 验证任务类型 */
 export function isValidTaskType(type: string): type is TaskType {
   return [
-    "embedding",
-    "standardizeClassify",
-    "enrich",
-    "reason:new",
-    "reason:incremental",
-    "reason:merge",
-    "ground",
+    "define",
+    "tag",
+    "write",
+    "index",
+    "verify",
   ].includes(type);
 }
 
@@ -256,36 +254,18 @@ export function validateDuplicatePair(data: unknown): Result<DuplicatePair> {
     return err("MISSING_FIELD", "缺少必填字段: id");
   }
 
-  if (!pair.noteA || typeof pair.noteA !== "object") {
-    return err("MISSING_FIELD", "缺少必填字段: noteA");
+  if (!pair.nodeIdA || typeof pair.nodeIdA !== "string") {
+    return err("MISSING_FIELD", "缺少必填字段: nodeIdA");
+  }
+  if (!isValidUUID(pair.nodeIdA)) {
+    return err("INVALID_UUID", `无效的 nodeIdA: ${pair.nodeIdA}`);
   }
 
-  if (!pair.noteA.nodeId || !isValidUUID(pair.noteA.nodeId)) {
-    return err("INVALID_UUID", `无效的 noteA.nodeId: ${pair.noteA.nodeId}`);
+  if (!pair.nodeIdB || typeof pair.nodeIdB !== "string") {
+    return err("MISSING_FIELD", "缺少必填字段: nodeIdB");
   }
-
-  if (!pair.noteA.name || typeof pair.noteA.name !== "string") {
-    return err("MISSING_FIELD", "缺少必填字段: noteA.name");
-  }
-
-  if (!pair.noteA.path || typeof pair.noteA.path !== "string") {
-    return err("MISSING_FIELD", "缺少必填字段: noteA.path");
-  }
-
-  if (!pair.noteB || typeof pair.noteB !== "object") {
-    return err("MISSING_FIELD", "缺少必填字段: noteB");
-  }
-
-  if (!pair.noteB.nodeId || !isValidUUID(pair.noteB.nodeId)) {
-    return err("INVALID_UUID", `无效的 noteB.nodeId: ${pair.noteB.nodeId}`);
-  }
-
-  if (!pair.noteB.name || typeof pair.noteB.name !== "string") {
-    return err("MISSING_FIELD", "缺少必填字段: noteB.name");
-  }
-
-  if (!pair.noteB.path || typeof pair.noteB.path !== "string") {
-    return err("MISSING_FIELD", "缺少必填字段: noteB.path");
+  if (!isValidUUID(pair.nodeIdB)) {
+    return err("INVALID_UUID", `无效的 nodeIdB: ${pair.nodeIdB}`);
   }
 
   if (!pair.type || !isValidCRType(pair.type)) {

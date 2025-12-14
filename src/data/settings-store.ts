@@ -34,6 +34,7 @@ export const REQUIRED_SETTINGS_FIELDS: (keyof PluginSettings)[] = [
   "providers",
   "defaultProviderId",
   "taskModels",
+  "imageGeneration",
   "logLevel",
   "embeddingDimension",
   "providerTimeoutMs",
@@ -62,6 +63,7 @@ export const TASK_TYPES: TaskType[] = [
   "write",
   "index",
   "verify",
+  "image-generate",
 ];
 
 /** 任务模型默认配置 */
@@ -95,6 +97,12 @@ export const DEFAULT_TASK_MODEL_CONFIGS: Record<TaskType, TaskModelConfig> = {
     temperature: 0.3,
     topP: 1.0,
   },
+  "image-generate": {
+    providerId: "",
+    model: "gemini-3-pro-image-preview",
+    temperature: 0.2,
+    topP: 1.0,
+  },
 };
 
 /** 参数推荐范围 */
@@ -113,6 +121,17 @@ export const PARAM_RECOMMENDATIONS = {
     options: [256, 512, 1024, 1536, 3072],
   },
 } as const;
+
+/** 默认图片生成设置 */
+export const DEFAULT_IMAGE_SETTINGS: PluginSettings["imageGeneration"] = {
+  enabled: true,
+  defaultSize: "1024x1024",
+  defaultImageSize: "2K",
+  defaultAspectRatio: "1:1",
+  defaultQuality: "standard",
+  defaultStyle: "natural",
+  contextWindowSize: 500
+};
 
 /** 生成新的默认任务模型配置副本 */
 export function createDefaultTaskModels(): Record<TaskType, TaskModelConfig> {
@@ -178,6 +197,9 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   
   // 任务模型配置
   taskModels: createDefaultTaskModels(),
+
+  // 图片生成配置
+  imageGeneration: { ...DEFAULT_IMAGE_SETTINGS },
   
   // 日志级别
   logLevel: "info",
@@ -236,6 +258,7 @@ export class SettingsStore {
 
       // 合并设置（保留默认值）
       this.settings = this.mergeSettings(DEFAULT_SETTINGS, data);
+      this.ensureBackwardCompatibility();
       
       return ok(undefined);
     } catch (error) {
@@ -400,7 +423,8 @@ export class SettingsStore {
       ...DEFAULT_SETTINGS,
       directoryScheme: { ...DEFAULT_SETTINGS.directoryScheme },
       providers: { ...DEFAULT_SETTINGS.providers },
-      taskModels: createDefaultTaskModels()
+      taskModels: createDefaultTaskModels(),
+      imageGeneration: { ...DEFAULT_IMAGE_SETTINGS }
     };
   }
 
@@ -758,6 +782,76 @@ export class SettingsStore {
       });
     }
 
+    // 图片生成配置
+    if (settings.imageGeneration !== undefined) {
+      const img = settings.imageGeneration as Record<string, unknown>;
+      if (typeof img !== "object" || img === null) {
+        errors.push({
+          field: "imageGeneration",
+          message: "imageGeneration must be an object",
+          expectedType: "object",
+          actualType: img === null ? "null" : typeof img
+        });
+      } else {
+        if (typeof img.enabled !== "boolean") {
+          errors.push({
+            field: "imageGeneration.enabled",
+            message: "imageGeneration.enabled must be a boolean",
+            expectedType: "boolean",
+            actualType: typeof img.enabled
+          });
+        }
+        if (typeof img.defaultSize !== "string") {
+          errors.push({
+            field: "imageGeneration.defaultSize",
+            message: "imageGeneration.defaultSize must be a string",
+            expectedType: "string",
+            actualType: typeof img.defaultSize
+          });
+        }
+        if (img.defaultImageSize !== undefined && typeof img.defaultImageSize !== "string") {
+          errors.push({
+            field: "imageGeneration.defaultImageSize",
+            message: "imageGeneration.defaultImageSize must be a string",
+            expectedType: "string",
+            actualType: typeof img.defaultImageSize
+          });
+        }
+        if (img.defaultAspectRatio !== undefined && typeof img.defaultAspectRatio !== "string") {
+          errors.push({
+            field: "imageGeneration.defaultAspectRatio",
+            message: "imageGeneration.defaultAspectRatio must be a string",
+            expectedType: "string",
+            actualType: typeof img.defaultAspectRatio
+          });
+        }
+        if (typeof img.defaultQuality !== "string") {
+          errors.push({
+            field: "imageGeneration.defaultQuality",
+            message: "imageGeneration.defaultQuality must be a string",
+            expectedType: "string",
+            actualType: typeof img.defaultQuality
+          });
+        }
+        if (typeof img.defaultStyle !== "string") {
+          errors.push({
+            field: "imageGeneration.defaultStyle",
+            message: "imageGeneration.defaultStyle must be a string",
+            expectedType: "string",
+            actualType: typeof img.defaultStyle
+          });
+        }
+        if (typeof img.contextWindowSize !== "number") {
+          errors.push({
+            field: "imageGeneration.contextWindowSize",
+            message: "imageGeneration.contextWindowSize must be a number",
+            expectedType: "number",
+            actualType: typeof img.contextWindowSize
+          });
+        }
+      }
+    }
+
     // 任务超时
     if (settings.taskTimeoutMs !== undefined) {
       if (typeof settings.taskTimeoutMs !== "number") {
@@ -916,7 +1010,8 @@ export class SettingsStore {
       ...this.settings,
       directoryScheme: { ...this.settings.directoryScheme },
       providers: { ...this.settings.providers },
-      taskModels: { ...this.settings.taskModels }
+      taskModels: { ...this.settings.taskModels },
+      imageGeneration: { ...this.settings.imageGeneration }
     };
 
     // 基础字段
@@ -1026,6 +1121,16 @@ export class SettingsStore {
       next.taskModels = mergedTaskModels;
     }
 
+    if (partial.imageGeneration !== undefined) {
+      if (!this.isPlainObject(partial.imageGeneration)) {
+        return err("E001", "imageGeneration 必须是对象");
+      }
+      next.imageGeneration = {
+        ...next.imageGeneration,
+        ...(partial.imageGeneration as PluginSettings["imageGeneration"])
+      };
+    }
+
     // 版本号
     if (partial.version !== undefined) {
       if (typeof partial.version !== "string") {
@@ -1067,6 +1172,36 @@ export class SettingsStore {
     }
 
     return merged;
+  }
+
+  /** 向后兼容：填充新字段缺省值，修复缺失的任务模型配置 */
+  private ensureBackwardCompatibility(): void {
+    // 填充图片生成配置
+    if (!this.settings.imageGeneration) {
+      this.settings.imageGeneration = { ...DEFAULT_IMAGE_SETTINGS };
+    } else {
+      this.settings.imageGeneration = {
+        ...DEFAULT_IMAGE_SETTINGS,
+        ...this.settings.imageGeneration
+      };
+    }
+
+    // 确保 taskModels 包含新增的任务类型
+    const taskModels: Record<TaskType, TaskModelConfig> = {
+      ...createDefaultTaskModels(),
+      ...this.settings.taskModels
+    };
+    for (const taskType of TASK_TYPES) {
+      if (!taskModels[taskType]) {
+        taskModels[taskType] = { ...DEFAULT_TASK_MODEL_CONFIGS[taskType] };
+      } else {
+        taskModels[taskType] = {
+          ...DEFAULT_TASK_MODEL_CONFIGS[taskType],
+          ...taskModels[taskType]
+        };
+      }
+    }
+    this.settings.taskModels = taskModels;
   }
 
   private normalizeProviderConfig(
@@ -1164,6 +1299,47 @@ export class SettingsStore {
   /** 更新部分设置 */
   async update(partial: Partial<PluginSettings>): Promise<Result<void>> {
     return this.updateSettings(partial);
+  }
+
+  /**
+   * 重置指定任务模型配置到默认值
+   */
+  async resetTaskModel(taskType: TaskType): Promise<Result<void>> {
+    if (!DEFAULT_TASK_MODEL_CONFIGS[taskType]) {
+      return err("E001", `未知的任务类型: ${taskType}`);
+    }
+    const taskModels = {
+      ...this.settings.taskModels,
+      [taskType]: { ...DEFAULT_TASK_MODEL_CONFIGS[taskType] }
+    };
+    return this.updateSettings({ taskModels });
+  }
+
+  /**
+   * 重置所有任务模型配置到默认值
+   */
+  async resetAllTaskModels(): Promise<Result<void>> {
+    const taskModels = createDefaultTaskModels();
+    return this.updateSettings({ taskModels });
+  }
+
+  /**
+   * 判断任务模型配置是否为默认值
+   */
+  isTaskModelDefault(taskType: TaskType): boolean {
+    const current = this.settings.taskModels[taskType];
+    const defaults = DEFAULT_TASK_MODEL_CONFIGS[taskType];
+    if (!current || !defaults) return false;
+
+    return (
+      current.providerId === defaults.providerId &&
+      current.model === defaults.model &&
+      current.temperature === defaults.temperature &&
+      current.topP === defaults.topP &&
+      current.reasoning_effort === defaults.reasoning_effort &&
+      current.maxTokens === defaults.maxTokens &&
+      current.embeddingDimension === defaults.embeddingDimension
+    );
   }
 
   /**

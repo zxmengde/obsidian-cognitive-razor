@@ -1,12 +1,7 @@
 /** 重复管理器：检测和管理重复概念 */
 
 import {
-  IDuplicateManager,
-  IVectorIndex,
-  IFileStorage,
   ILogger,
-  ISettingsStore,
-  ILockManager,
   DuplicatePair,
   DuplicatePairStatus,
   DuplicatePairsStore,
@@ -16,23 +11,27 @@ import {
   err
 } from "../types";
 import { formatCRTimestamp } from "../utils/date-utils";
+import type { VectorIndex } from "./vector-index";
+import type { FileStorage } from "../data/file-storage";
+import type { SettingsStore } from "../data/settings-store";
+import type { SimpleLockManager } from "./lock-manager";
 
-export class DuplicateManager implements IDuplicateManager {
-  private vectorIndex: IVectorIndex;
-  private fileStorage: IFileStorage;
+export class DuplicateManager {
+  private vectorIndex: VectorIndex;
+  private fileStorage: FileStorage;
   private logger: ILogger;
-  private settingsStore: ISettingsStore;
-  private lockManager: ILockManager;
+  private settingsStore: SettingsStore;
+  private lockManager: SimpleLockManager;
   private storePath: string;
   private store: DuplicatePairsStore | null;
   private listeners: Array<(pairs: DuplicatePair[]) => void>;
 
   constructor(
-    vectorIndex: IVectorIndex,
-    fileStorage: IFileStorage,
+    vectorIndex: VectorIndex,
+    fileStorage: FileStorage,
     logger: ILogger,
-    settingsStore: ISettingsStore,
-    lockManager: ILockManager,
+    settingsStore: SettingsStore,
+    lockManager: SimpleLockManager,
     storePath: string = "data/duplicate-pairs.json"
   ) {
     this.vectorIndex = vectorIndex;
@@ -71,6 +70,13 @@ export class DuplicateManager implements IDuplicateManager {
 
         try {
           this.store = JSON.parse(readResult.value);
+          const migrated = this.migrateStoreSchema();
+          if (migrated) {
+            const saveResult = await this.saveStore();
+            if (!saveResult.ok) {
+              return saveResult;
+            }
+          }
           this.logger.info("DuplicateManager", "重复对存储加载成功", {
             pairCount: this.store!.pairs.length,
             dismissedCount: this.store!.dismissedPairs.length
@@ -109,12 +115,12 @@ export class DuplicateManager implements IDuplicateManager {
   ): Promise<Result<DuplicatePair[]>> {
     // 获取类型锁，防止同类型的并发去重检测
     const typeLockKey = `type:${type}`;
-    const lockResult = this.lockManager.acquire(typeLockKey, "type", nodeId);
-    if (!lockResult.ok) {
+    const acquired = this.lockManager.tryAcquire(typeLockKey);
+    if (!acquired) {
       this.logger.warn("DuplicateManager", "类型锁冲突，跳过去重检测", {
         nodeId,
         type,
-        error: lockResult.error
+        lockKey: typeLockKey
       });
       // 类型锁冲突时返回空数组，不阻塞流程
       return ok([]);
@@ -130,7 +136,6 @@ export class DuplicateManager implements IDuplicateManager {
       const topK = settings.topK;
       const dismissedSet = new Set(this.store.dismissedPairs);
       const existingPairIds = new Set(this.store.pairs.map((p) => p.id));
-      const selfEntry = this.vectorIndex.getEntry(nodeId);
 
       this.logger.debug("DuplicateManager", "开始检测重复", {
         nodeId,
@@ -185,28 +190,17 @@ export class DuplicateManager implements IDuplicateManager {
           continue;
         }
 
-        const noteAName = selfEntry?.name || nodeId;
-        const noteAPath = selfEntry?.path || "";
-
         this.logger.debug("DuplicateManager", "创建重复对", {
           pairId,
-          noteA: { nodeId, name: noteAName, path: noteAPath },
-          noteB: { nodeId: duplicate.uid, name: duplicate.name, path: duplicate.path }
+          nodeIdA: nodeId,
+          nodeIdB: duplicate.uid
         });
 
         // 创建新的重复对
         const pair: DuplicatePair = {
           id: pairId,
-          noteA: {
-            nodeId,
-            name: noteAName,
-            path: noteAPath
-          },
-          noteB: {
-            nodeId: duplicate.uid,
-            name: duplicate.name,
-            path: duplicate.path
-          },
+          nodeIdA: nodeId,
+          nodeIdB: duplicate.uid,
           type,
           similarity: duplicate.similarity,
           detectedAt: formatCRTimestamp(),
@@ -241,7 +235,7 @@ export class DuplicateManager implements IDuplicateManager {
       return err("E305", "检测重复失败", error);
     } finally {
       // 释放类型锁
-      this.lockManager.release(lockResult.value);
+      this.lockManager.release(typeLockKey);
     }
   }
 
@@ -353,9 +347,9 @@ export class DuplicateManager implements IDuplicateManager {
       const pair = this.store.pairs[pairIndex];
 
       // 确定被删除的节点
-      const deleteNodeId = keepNodeId === pair.noteA.nodeId 
-        ? pair.noteB.nodeId 
-        : pair.noteA.nodeId;
+      const deleteNodeId = keepNodeId === pair.nodeIdA 
+        ? pair.nodeIdB 
+        : pair.nodeIdA;
 
       // 更新状态
       this.store.pairs[pairIndex].status = "merged";
@@ -498,6 +492,59 @@ export class DuplicateManager implements IDuplicateManager {
     return this.store.pairs.filter(p => p.status === "dismissed");
   }
 
+  /**
+   * 清理包含指定 nodeId 的重复对（用于笔记删除后的关联数据清理）
+   */
+  async removePairsByNodeId(nodeId: string): Promise<Result<number>> {
+    try {
+      if (!this.store) {
+        return err("E306", "重复管理器未初始化");
+      }
+
+      const before = this.store.pairs.length;
+      this.store.pairs = this.store.pairs.filter((p) => {
+        const includesNode = p.nodeIdA === nodeId || p.nodeIdB === nodeId;
+        // 合并中的记录需要保留，避免与管线的 completeMerge 发生竞态
+        if (p.status === "merging") {
+          return true;
+        }
+        // 仅清理无法再处理的记录（pending/dismissed）
+        if (includesNode && (p.status === "pending" || p.status === "dismissed")) {
+          return false;
+        }
+        return true;
+      });
+      const removed = before - this.store.pairs.length;
+
+      if (removed === 0) {
+        return ok(0);
+      }
+
+      // 清理 dismissedPairs 中不存在的记录，避免历史列表膨胀
+      const existingIds = new Set(this.store.pairs.map((p) => p.id));
+      this.store.dismissedPairs = this.store.dismissedPairs.filter((id) => existingIds.has(id));
+
+      const saveResult = await this.saveStore();
+      if (!saveResult.ok) {
+        return saveResult as Result<number>;
+      }
+
+      this.notifyListeners();
+
+      this.logger.info("DuplicateManager", "已清理删除笔记关联的重复对", {
+        nodeId,
+        removed
+      });
+
+      return ok(removed);
+    } catch (error) {
+      this.logger.error("DuplicateManager", "清理重复对失败", error as Error, {
+        nodeId
+      });
+      return err("E305", "清理重复对失败", error);
+    }
+  }
+
   /** 创建空存储 */
   private createEmptyStore(): DuplicatePairsStore {
     return {
@@ -505,6 +552,61 @@ export class DuplicateManager implements IDuplicateManager {
       pairs: [],
       dismissedPairs: []
     };
+  }
+
+  /**
+   * 迁移存储结构：
+   * - 旧格式：pairs[].noteA/noteB（包含 name/path）
+   * - 新格式：pairs[].nodeIdA/nodeIdB（仅保存 cruid）
+   */
+  private migrateStoreSchema(): boolean {
+    if (!this.store) {
+      return false;
+    }
+
+    let changed = false;
+    const migratedPairs: DuplicatePair[] = [];
+
+    for (const raw of this.store.pairs as unknown as Array<Record<string, unknown>>) {
+      if (!raw || typeof raw !== "object") {
+        changed = true;
+        continue;
+      }
+
+      if (typeof raw.nodeIdA === "string" && typeof raw.nodeIdB === "string") {
+        migratedPairs.push(raw as unknown as DuplicatePair);
+        continue;
+      }
+
+      const noteA = raw.noteA as { nodeId?: unknown } | undefined;
+      const noteB = raw.noteB as { nodeId?: unknown } | undefined;
+      const nodeIdA = typeof noteA?.nodeId === "string" ? noteA.nodeId : null;
+      const nodeIdB = typeof noteB?.nodeId === "string" ? noteB.nodeId : null;
+
+      if (!nodeIdA || !nodeIdB) {
+        changed = true;
+        continue;
+      }
+
+      migratedPairs.push({
+        id: String(raw.id || `${nodeIdA}--${nodeIdB}`),
+        nodeIdA,
+        nodeIdB,
+        type: raw.type as CRType,
+        similarity: typeof raw.similarity === "number" ? raw.similarity : 0,
+        detectedAt: typeof raw.detectedAt === "string" ? raw.detectedAt : formatCRTimestamp(),
+        status: raw.status === "pending" || raw.status === "merging" || raw.status === "merged" || raw.status === "dismissed"
+          ? (raw.status as DuplicatePairStatus)
+          : "pending"
+      });
+      changed = true;
+    }
+
+    if (changed) {
+      this.store.pairs = migratedPairs;
+    }
+
+    return changed;
   }
 
   /** 保存存储 */

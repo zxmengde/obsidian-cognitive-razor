@@ -1,14 +1,14 @@
 /** 提示词管理器：加载、验证和构建提示词模板 */
 
 import {
-  IPromptManager,
-  IFileStorage,
   ILogger,
   TaskType,
   Result,
   ok,
-  err
+  err,
+  CognitiveRazorError
 } from "../types";
+import type { FileStorage } from "../data/file-storage";
 
 /** 提示词模板结构 */
 interface PromptTemplate {
@@ -39,25 +39,29 @@ const TASK_BLOCKS = [
  * - 任务型模板槽位：用于现有 TaskType
  */
 const TASK_SLOT_MAPPING: Record<TaskType, { required: string[]; optional: string[] }> = {
-  "embedding": {
+  "index": {
     required: ["CTX_INPUT"],
     optional: ["CTX_LANGUAGE"]
   },
-  "standardizeClassify": {
+  "define": {
     required: ["CTX_INPUT"],
     optional: ["CTX_LANGUAGE"]
   },
-  "enrich": {
+  "tag": {
     required: ["CTX_META"],
     optional: ["CTX_LANGUAGE"]
   },
-  "reason:new": {
+  "write": {
     required: ["CTX_META"],
     optional: ["CTX_SOURCES", "CTX_LANGUAGE"]
   },
-  "ground": {
+  "verify": {
     required: ["CTX_META", "CTX_CURRENT"],
     optional: ["CTX_SOURCES", "CTX_LANGUAGE"]
+  },
+  "image-generate": {
+    required: ["USER_PROMPT", "CONTEXT_BEFORE", "CONTEXT_AFTER"],
+    optional: ["CONCEPT_TYPE", "CONCEPT_NAME", "CTX_LANGUAGE"]
   }
 };
 
@@ -210,15 +214,15 @@ function replaceVariable(template: string, varName: string, value: string): stri
 }
 
 
-export class PromptManager implements IPromptManager {
-  private fileStorage: IFileStorage;
+export class PromptManager {
+  private fileStorage: FileStorage;
   private logger: ILogger;
   private promptsDir: string;
   private templateCache: Map<string, PromptTemplate>;
   private baseComponentsCache: Map<string, string>;
 
   constructor(
-    fileStorage: IFileStorage,
+    fileStorage: FileStorage,
     logger: ILogger,
     promptsDir: string = "prompts"
   ) {
@@ -234,18 +238,13 @@ export class PromptManager implements IPromptManager {
   }
 
   /** 构建 prompt */
-  build(taskType: TaskType, slots: Record<string, string>, conceptType?: string): Result<string> {
+  build(taskType: TaskType, slots: Record<string, string>, conceptType?: string): string {
     try {
-      // 获取模板 ID（对于 reason:new 任务，根据知识类型选择模板）
+      // 获取模板 ID（对于 write 任务，根据知识类型选择模板）
       const templateId = this.resolveTemplateId(taskType, conceptType);
 
       // 加载模板
-      const templateResult = this.loadTemplate(templateId);
-      if (!templateResult.ok) {
-        return templateResult as Result<string>;
-      }
-
-      const template = templateResult.value;
+      const template = this.loadTemplate(templateId);
 
       // A-PDD-04: 验证槽位是否符合任务-槽位映射表
       const providedSlotKeys = Object.keys(slots);
@@ -257,14 +256,20 @@ export class PromptManager implements IPromptManager {
             taskType,
             missingRequired: slotValidation.missingRequired
           });
-          return err("E002", `缺少必需槽位: ${slotValidation.missingRequired.join(", ")}`);
+          throw new CognitiveRazorError("E002", `缺少必需槽位: ${slotValidation.missingRequired.join(", ")}`, {
+            taskType,
+            missingRequired: slotValidation.missingRequired
+          });
         }
         if (slotValidation.extraSlots && slotValidation.extraSlots.length > 0) {
           this.logger.error("PromptManager", "存在不允许的槽位", undefined, {
             taskType,
             extraSlots: slotValidation.extraSlots
           });
-          return err("E002", `任务 ${taskType} 不允许使用槽位: ${slotValidation.extraSlots.join(", ")}`);
+          throw new CognitiveRazorError("E002", `任务 ${taskType} 不允许使用槽位: ${slotValidation.extraSlots.join(", ")}`, {
+            taskType,
+            extraSlots: slotValidation.extraSlots
+          });
         }
       }
 
@@ -283,7 +288,10 @@ export class PromptManager implements IPromptManager {
           taskType,
           unreplacedVars
         });
-        return err("E002", `存在未替换的变量: ${unreplacedVars.join(", ")}`);
+        throw new CognitiveRazorError("E002", `存在未替换的变量: ${unreplacedVars.join(", ")}`, {
+          taskType,
+          unreplacedVars
+        });
       }
 
       this.logger.debug("PromptManager", "Prompt 构建成功", {
@@ -292,24 +300,20 @@ export class PromptManager implements IPromptManager {
         promptLength: prompt.length
       });
 
-      return ok(prompt);
+      return prompt;
     } catch (error) {
-      this.logger.error("PromptManager", "构建 prompt 失败", error as Error, {
-        taskType
-      });
-      return err("E002", "构建 prompt 失败", error);
+      if (error instanceof CognitiveRazorError) {
+        throw error;
+      }
+      this.logger.error("PromptManager", "构建 prompt 失败", error as Error, { taskType });
+      throw new CognitiveRazorError("E002", "构建 prompt 失败", error);
     }
   }
 
   /** 验证模板 */
-  validateTemplate(templateId: string): Result<boolean> {
+  validateTemplate(templateId: string): boolean {
     try {
-      const templateResult = this.loadTemplate(templateId);
-      if (!templateResult.ok) {
-        return templateResult as Result<boolean>;
-      }
-
-      const template = templateResult.value;
+      const template = this.loadTemplate(templateId);
 
       // A-PDD-01: 验证区块顺序
       const blockValidation = validateBlockOrder(template.content);
@@ -319,19 +323,23 @@ export class PromptManager implements IPromptManager {
           error: blockValidation.error,
           missingBlocks: blockValidation.missingBlocks
         });
-        return err("E002", blockValidation.error || "模板区块验证失败");
+        throw new CognitiveRazorError("E002", blockValidation.error || "模板区块验证失败", {
+          templateId,
+          missingBlocks: blockValidation.missingBlocks
+        });
       }
 
       this.logger.debug("PromptManager", "模板验证通过", {
         templateId
       });
 
-      return ok(true);
+      return true;
     } catch (error) {
-      this.logger.error("PromptManager", "验证模板失败", error as Error, {
-        templateId
-      });
-      return err("E002", "验证模板失败", error);
+      if (error instanceof CognitiveRazorError) {
+        throw error;
+      }
+      this.logger.error("PromptManager", "验证模板失败", error as Error, { templateId });
+      throw new CognitiveRazorError("E002", "验证模板失败", error);
     }
   }
 
@@ -347,25 +355,26 @@ export class PromptManager implements IPromptManager {
     return mapping ? mapping.optional : [];
   }
 
-  /** 获取模板 ID（对于 reason:new 任务，根据知识类型选择模板） */
+  /** 获取模板 ID（对于 write 任务，根据知识类型选择模板） */
   resolveTemplateId(taskType: TaskType, conceptType?: string): string {
     // 将任务类型映射到模板文件名
     const mapping: Record<TaskType, string> = {
-      "standardizeClassify": "standardizeClassify",
-      "enrich": "enrich",
-      "embedding": "embedding",
-      "reason:new": "reason-domain", // 默认值，会被 conceptType 覆盖
-      "ground": "ground"
+      "define": "define",
+      "tag": "tag",
+      "index": "index",
+      "write": "write-domain", // 默认值，会被 conceptType 覆盖
+      "verify": "verify",
+      "image-generate": "generate-image"
     };
 
-    // 对于 reason:new 任务，根据知识类型选择模板
-    if (taskType === "reason:new" && conceptType) {
+    // 对于 write 任务，根据知识类型选择模板
+    if (taskType === "write" && conceptType) {
       const typeMapping: Record<string, string> = {
-        "Domain": "reason-domain",
-        "Issue": "reason-issue",
-        "Theory": "reason-theory",
-        "Entity": "reason-entity",
-        "Mechanism": "reason-mechanism"
+        "Domain": "write-domain",
+        "Issue": "write-issue",
+        "Theory": "write-theory",
+        "Entity": "write-entity",
+        "Mechanism": "write-mechanism"
       };
       return typeMapping[conceptType] || mapping[taskType];
     }
@@ -387,44 +396,39 @@ export class PromptManager implements IPromptManager {
    * @param slots 槽位值
    * @returns 构建的 prompt
    */
-  buildOperation(operation: string, slots: Record<string, string>): Result<string> {
+  buildOperation(operation: string, slots: Record<string, string>): string {
     try {
       const slotMapping = OPERATION_SLOT_MAPPING[operation];
       if (!slotMapping) {
-        return err("E002", `不支持的操作类型: ${operation}`);
+        throw new CognitiveRazorError("E002", `不支持的操作类型: ${operation}`);
       }
 
       // 加载操作模板（遵循路线图：prompts/_base/operations/<operation>.md）
       const templateId = `_base/operations/${operation}`;
-      const templateResult = this.loadTemplate(templateId);
-      if (!templateResult.ok) {
-        return templateResult as Result<string>;
-      }
-
-      const template = templateResult.value;
+      const template = this.loadTemplate(templateId);
 
       // 1) 先按契约校验传入槽位是否合法（缺少必需/包含额外）
       const allowedSlots = new Set([...slotMapping.required, ...slotMapping.optional]);
       const missingRequired = slotMapping.required.filter((slot) => !(slot in slots));
       if (missingRequired.length > 0) {
-        return err("E001", `缺少必需槽位: ${missingRequired.join(", ")}`);
+        throw new CognitiveRazorError("E001", `缺少必需槽位: ${missingRequired.join(", ")}`);
       }
 
       const extraProvided = Object.keys(slots).filter((slot) => !allowedSlots.has(slot));
       if (extraProvided.length > 0) {
-        return err("E002", `操作 ${operation} 不支持槽位: ${extraProvided.join(", ")}`);
+        throw new CognitiveRazorError("E002", `操作 ${operation} 不支持槽位: ${extraProvided.join(", ")}`);
       }
 
       // 2) 模板自身的占位符也必须全部被填充，且不允许未知占位符
       const templateSlots = extractPlaceholderNames(template.content);
       const unknownTemplateSlots = templateSlots.filter((slot) => !allowedSlots.has(slot));
       if (unknownTemplateSlots.length > 0) {
-        return err("E002", `模板存在未声明的槽位: ${unknownTemplateSlots.join(", ")}`);
+        throw new CognitiveRazorError("E002", `模板存在未声明的槽位: ${unknownTemplateSlots.join(", ")}`);
       }
 
       const missingTemplateSlots = templateSlots.filter((slot) => !(slot in slots));
       if (missingTemplateSlots.length > 0) {
-        return err("E001", `缺少必需槽位: ${missingTemplateSlots.join(", ")}`);
+        throw new CognitiveRazorError("E001", `缺少必需槽位: ${missingTemplateSlots.join(", ")}`);
       }
 
       // 替换变量
@@ -440,7 +444,10 @@ export class PromptManager implements IPromptManager {
           operation,
           unreplacedVars
         });
-        return err("E002", `存在未替换的占位符: ${unreplacedVars[0]}`);
+        throw new CognitiveRazorError("E002", `存在未替换的占位符: ${unreplacedVars[0]}`, {
+          operation,
+          unreplacedVars
+        });
       }
 
       this.logger.debug("PromptManager", "操作 Prompt 构建成功", {
@@ -448,27 +455,32 @@ export class PromptManager implements IPromptManager {
         promptLength: prompt.length
       });
 
-      return ok(prompt);
+      return prompt;
     } catch (error) {
-      this.logger.error("PromptManager", "构建操作 prompt 失败", error as Error, {
-        operation
-      });
-      return err("E002", "构建操作 prompt 失败", error);
+      if (error instanceof CognitiveRazorError) {
+        throw error;
+      }
+      this.logger.error("PromptManager", "构建操作 prompt 失败", error as Error, { operation });
+      throw new CognitiveRazorError("E002", "构建操作 prompt 失败", error);
     }
   }
 
   /** 加载模板 */
-  private loadTemplate(templateId: string): Result<PromptTemplate> {
+  private loadTemplate(templateId: string): PromptTemplate {
     // 检查缓存
     if (this.templateCache.has(templateId)) {
-      return ok(this.templateCache.get(templateId)!);
+      return this.templateCache.get(templateId)!;
     }
 
     this.logger.error("PromptManager", "模板未加载，请先调用 preloadTemplate", undefined, {
       templateId
     });
     
-    return err("E002", `模板未加载: ${templateId}，请先调用 preloadTemplate 或 preloadAllTemplates`);
+    throw new CognitiveRazorError(
+      "E002",
+      `模板未加载: ${templateId}，请先调用 preloadTemplate 或 preloadAllTemplates`,
+      { templateId }
+    );
   }
 
   /** 预加载基础组件 */
@@ -596,14 +608,14 @@ export class PromptManager implements IPromptManager {
   /** 预加载所有模板 */
   async preloadAllTemplates(): Promise<Result<void>> {
     const templateIds = [
-      "standardizeClassify",
-      "enrich",
-      "reason-domain",
-      "reason-issue",
-      "reason-theory",
-      "reason-entity",
-      "reason-mechanism",
-      "ground",
+      "define",
+      "tag",
+      "write-domain",
+      "write-issue",
+      "write-theory",
+      "write-entity",
+      "write-mechanism",
+      "verify",
       "merge",
       "_base/operations/create",
       "_base/operations/merge",

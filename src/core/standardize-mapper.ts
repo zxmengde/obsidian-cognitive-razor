@@ -29,7 +29,7 @@ function normalizeConfidences(confidences: Record<CRType, number>): Record<CRTyp
   return normalized;
 }
 
-/** 映射 standardizeClassify 输出为 StandardizedConcept */
+/** 映射 define 任务输出为 StandardizedConcept */
 export function mapStandardizeOutput(raw: Record<string, any>): StandardizedConcept {
   const standardNames: StandardizedConcept["standardNames"] = {
     Domain: { chinese: "", english: "" },

@@ -62,16 +62,7 @@ export const NETWORK_ERROR_CONFIG: RetryConfig = {
   baseDelayMs: 1000, // 1s, 2s, 4s, 8s, 16s
 };
 
-/** RetryHandler 接口 */
-interface IRetryHandler {
-  /** 带重试的异步操作执行 */
-  executeWithRetry<T>(
-    operation: () => Promise<Result<T>>,
-    config: RetryConfig
-  ): Promise<Result<T>>;
-}
-
-export class RetryHandler implements IRetryHandler {
+export class RetryHandler {
   private logger?: ILogger;
 
   constructor(logger?: ILogger) {

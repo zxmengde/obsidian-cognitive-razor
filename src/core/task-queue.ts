@@ -1,33 +1,32 @@
 /** 任务队列 - 负责任务调度、并发控制和持久化 */
 
 import {
-  ITaskQueue,
-  ITaskRunner,
-  ILockManager,
-  IFileStorage,
   ILogger,
-  ISettingsStore,
   TaskRecord,
   TaskResult,
   QueueStatus,
   QueueEventListener,
   QueueEvent,
   QueueStateFile,
-  MinimalTaskRecord,
   Result,
   ok,
-  err
+  err,
+  CognitiveRazorError
 } from "../types";
 import { formatCRTimestamp } from "../utils/date-utils";
 import { RetryHandler } from "./retry-handler";
+import type { SimpleLockManager } from "./lock-manager";
+import type { TaskRunner } from "./task-runner";
+import type { FileStorage } from "../data/file-storage";
+import type { SettingsStore } from "../data/settings-store";
 
-export class TaskQueue implements ITaskQueue {
-  private lockManager: ILockManager;
-  private fileStorage: IFileStorage;
+export class TaskQueue {
+  private lockManager: SimpleLockManager;
+  private fileStorage: FileStorage;
   private logger: ILogger;
-  private settingsStore: ISettingsStore;
+  private settingsStore: SettingsStore;
   private queuePath: string;
-  private taskRunner?: ITaskRunner; // 可选，稍后通过 setTaskRunner 注入
+  private taskRunner?: TaskRunner; // 可选，稍后通过 setTaskRunner 注入
   private retryHandler: RetryHandler; // 重试处理器
   
   private tasks: Map<string, TaskRecord>;
@@ -41,10 +40,10 @@ export class TaskQueue implements ITaskQueue {
   private static readonly DEFAULT_TASK_HISTORY_LIMIT = 300;
 
   constructor(
-    lockManager: ILockManager,
-    fileStorage: IFileStorage,
+    lockManager: SimpleLockManager,
+    fileStorage: FileStorage,
     logger: ILogger,
-    settingsStore: ISettingsStore,
+    settingsStore: SettingsStore,
     queuePath: string = "data/queue-state.json"
   ) {
     this.lockManager = lockManager;
@@ -69,7 +68,7 @@ export class TaskQueue implements ITaskQueue {
   }
 
   /** 设置 TaskRunner（依赖注入，避免循环依赖） */
-  setTaskRunner(taskRunner: ITaskRunner): void {
+  setTaskRunner(taskRunner: TaskRunner): void {
     this.taskRunner = taskRunner;
     this.logger.debug("TaskQueue", "TaskRunner 已注入");
 
@@ -92,7 +91,7 @@ export class TaskQueue implements ITaskQueue {
           // 继续初始化，使用空队列
         } else {
           try {
-            const queueState: QueueStateFile = JSON.parse(readResult.value);
+            const queueState = JSON.parse(readResult.value) as unknown;
             await this.restoreQueueState(queueState);
           } catch (parseError) {
             this.logger.warn("TaskQueue", "解析队列状态失败，使用空队列", {
@@ -116,7 +115,7 @@ export class TaskQueue implements ITaskQueue {
   }
 
   /** 入队任务 - 检查锁冲突和重复入队 */
-  enqueue(task: Omit<TaskRecord, 'id' | 'created' | 'updated'>): Result<string> {
+  enqueue(task: Omit<TaskRecord, "id" | "created" | "updated">): string {
     try {
       // 生成任务 ID
       const taskId = this.generateTaskId();
@@ -133,12 +132,16 @@ export class TaskQueue implements ITaskQueue {
             existingTaskState: existingTask.state,
             existingTaskType: existingTask.taskType
           });
-          return err("E400", `节点 ${task.nodeId} 已有任务在队列中（${existingTask.taskType}，状态：${existingTask.state}），无法重复入队`, {
-            nodeId: task.nodeId,
-            existingTaskId: existingTask.id,
-            existingTaskType: existingTask.taskType,
-            existingTaskState: existingTask.state
-          });
+          throw new CognitiveRazorError(
+            "E400",
+            `节点 ${task.nodeId} 已有任务在队列中（${existingTask.taskType}，状态：${existingTask.state}），无法重复入队`,
+            {
+              nodeId: task.nodeId,
+              existingTaskId: existingTask.id,
+              existingTaskType: existingTask.taskType,
+              existingTaskState: existingTask.state
+            }
+          );
         }
       }
 
@@ -151,10 +154,14 @@ export class TaskQueue implements ITaskQueue {
           nodeId: task.nodeId,
           lockType: "node"
         });
-        return err("E400", `节点 ${task.nodeId} 已被锁定，无法入队`, {
-          lockKey: nodeLockKey,
-          lockType: "node"
-        });
+        throw new CognitiveRazorError(
+          "E400",
+          `节点 ${task.nodeId} 已被锁定，无法入队`,
+          {
+            lockKey: nodeLockKey,
+            lockType: "node"
+          }
+        );
       }
 
       // 注意：类型锁已移至 DuplicateManager.detect() 中获取
@@ -196,23 +203,26 @@ export class TaskQueue implements ITaskQueue {
       // 事件驱动调度：入队后立即尝试调度
       this.tryScheduleAll();
 
-      return ok(taskId);
+      return taskId;
     } catch (error) {
-      this.logger.error("TaskQueue", "任务入队失败", error as Error, {
+      this.logger.error("TaskQueue", "任务入队失败", error instanceof Error ? error : new Error(String(error)), {
         nodeId: task.nodeId,
         taskType: task.taskType
       });
-      return err("E305", "任务入队失败", error);
+      if (error instanceof CognitiveRazorError) {
+        throw error;
+      }
+      throw new CognitiveRazorError("E305", "任务入队失败", error);
     }
   }
 
   /** 取消任务 - 支持 Pending/Running/Failed 状态 */
-  cancel(taskId: string): Result<boolean> {
+  cancel(taskId: string): boolean {
     try {
       const task = this.tasks.get(taskId);
       if (!task) {
         this.logger.warn("TaskQueue", "任务不存在", { taskId });
-        return err("E307", `任务不存在: ${taskId}`);
+        throw new CognitiveRazorError("E307", `任务不存在: ${taskId}`);
       }
 
       // 可以取消 Pending、Running 或 Failed 状态的任务
@@ -222,7 +232,7 @@ export class TaskQueue implements ITaskQueue {
           taskId,
           state: task.state
         });
-        return err("E306", `任务状态不允许取消: ${task.state}`);
+        throw new CognitiveRazorError("E306", `任务状态不允许取消: ${task.state}`);
       }
 
       // 记录之前的状态
@@ -252,9 +262,6 @@ export class TaskQueue implements ITaskQueue {
       // 从处理中集合移除
       this.processingTasks.delete(taskId);
 
-      // 持久化
-      this.saveQueue();
-
       // 发布事件
       this.publishEvent({
         type: "task-cancelled",
@@ -270,12 +277,15 @@ export class TaskQueue implements ITaskQueue {
         newState: "Cancelled"
       });
 
-      return ok(true);
+      return true;
     } catch (error) {
       this.logger.error("TaskQueue", "取消任务失败", error as Error, {
         taskId
       });
-      return err("E305", "取消任务失败", error);
+      if (error instanceof CognitiveRazorError) {
+        throw error;
+      }
+      throw new CognitiveRazorError("E305", "取消任务失败", error);
     }
   }
 
@@ -369,8 +379,6 @@ export class TaskQueue implements ITaskQueue {
     Object.assign(task, updates);
     task.updated = formatCRTimestamp();
 
-    this.saveQueue();
-
     return ok(undefined);
   }
 
@@ -403,9 +411,6 @@ export class TaskQueue implements ITaskQueue {
         this.tasks.delete(taskId);
       }
 
-      // 持久化
-      await this.saveQueue();
-
       this.logger.info("TaskQueue", `清理了 ${tasksToRemove.length} 个已完成任务`);
 
       return ok(tasksToRemove.length);
@@ -436,9 +441,6 @@ export class TaskQueue implements ITaskQueue {
           retriedCount++;
         }
       }
-
-      // 持久化
-      await this.saveQueue();
 
       this.logger.info("TaskQueue", `重试了 ${retriedCount} 个失败任务`);
 
@@ -498,22 +500,20 @@ export class TaskQueue implements ITaskQueue {
     for (const task of this.tasks.values()) {
       if (task.state === "Pending") {
         // 检查节点锁
-        const lockResult = this.lockManager.acquire(task.nodeId, "node", task.id);
-        if (!lockResult.ok) {
+        const acquired = this.lockManager.tryAcquire(task.nodeId);
+        if (!acquired) {
           continue;
         }
 
         // 标记为处理中
         this.processingTasks.add(task.id);
-        task.lockKey = lockResult.value;
+        task.lockKey = task.nodeId;
 
         // 更新任务状态
         const previousState = task.state;
         task.state = "Running";
         task.startedAt = formatCRTimestamp();
         task.updated = task.startedAt;
-
-        this.saveQueue();
 
         // 发布事件
         this.publishEvent({
@@ -656,9 +656,6 @@ export class TaskQueue implements ITaskQueue {
 
     this.trimHistory();
 
-    // 持久化
-    await this.saveQueue();
-
     // 事件驱动调度：任务完成后立即尝试调度下一个
     this.tryScheduleAll();
   }
@@ -763,9 +760,6 @@ export class TaskQueue implements ITaskQueue {
 
     this.trimHistory();
 
-    // 持久化
-    await this.saveQueue();
-
     // 事件驱动调度：任务失败后立即尝试调度下一个
     this.tryScheduleAll();
   }
@@ -807,9 +801,6 @@ export class TaskQueue implements ITaskQueue {
 
     this.trimHistory();
 
-    // 持久化
-    await this.saveQueue();
-
     // 发布失败事件
     this.publishEvent({
       type: "task-failed",
@@ -829,63 +820,31 @@ export class TaskQueue implements ITaskQueue {
   }
 
   /**
-   * 将完整 TaskRecord 转换为精简版 MinimalTaskRecord
-   * 
-   * 只保留断电恢复所需的最小字段，剥离大型 payload 和 result 数据
-   */
-  private toMinimalTaskRecord(task: TaskRecord): MinimalTaskRecord {
-    return {
-      id: task.id,
-      nodeId: task.nodeId,
-      taskType: task.taskType,
-      state: task.state,
-      providerRef: task.providerRef,
-      attempt: task.attempt,
-      maxAttempts: task.maxAttempts,
-      payload: {
-        userInput: task.payload?.userInput as string | undefined,
-        conceptType: task.payload?.conceptType as string | undefined,
-        filePath: task.payload?.filePath as string | undefined,
-        pipelineId: task.payload?.pipelineId as string | undefined,
-      },
-      created: task.created,
-      updated: task.updated,
-      startedAt: task.startedAt,
-      completedAt: task.completedAt,
-      // 只保留最后一条错误
-      lastError: task.errors && task.errors.length > 0 
-        ? task.errors[task.errors.length - 1] 
-        : undefined,
-    };
-  }
-
-  /**
    * 保存队列状态
    * 
    * 遵循 Requirements 2.2：入队成功后立即写入 queue-state.json
    * 
-   * 优化：持久化时将 TaskRecord 转换为 MinimalTaskRecord，
-   * 剥离大型 payload 和 result 数据，减少文件体积
+   * Phase 2.2：仅持久化最小队列状态（pendingTasks + paused）
    * 
    * 注意：此方法是异步的，但在 enqueue 中被调用时不会阻塞返回。
-   * 这是为了保持 ITaskQueue 接口的同步特性。
+   * 这是为了保持同步 API，避免阻塞入队流程。
    * 写入操作会立即开始，但可能在 enqueue 返回后完成。
    */
   private saveQueue(): Promise<void> {
-    const settings = this.settingsStore.getSettings();
-    
-    // 转换为精简版任务记录
-    const minimalTasks = Array.from(this.tasks.values()).map(
-      task => this.toMinimalTaskRecord(task)
-    );
-    
+    const pendingTasks = Array.from(this.tasks.values())
+      .filter((task) => task.state === "Pending" || task.state === "Running")
+      .map((task) => ({
+        id: task.id,
+        nodeId: task.nodeId,
+        taskType: task.taskType,
+        attempt: task.attempt,
+        maxAttempts: task.maxAttempts,
+      }));
+
     const queueState: QueueStateFile = {
       version: "1.0.0",
-      tasks: minimalTasks,
-      concurrency: settings.concurrency,
+      pendingTasks,
       paused: this.paused,
-      stats: this.calculateStats(),
-      locks: this.lockManager.getActiveLocks()
     };
 
     const content = JSON.stringify(queueState, null, 2);
@@ -908,7 +867,7 @@ export class TaskQueue implements ITaskQueue {
         } else {
           this.logger.debug("TaskQueue", "队列状态已持久化", {
             path: this.queuePath,
-            taskCount: queueState.tasks.length
+            pendingTasks: queueState.pendingTasks.length
           });
         }
       })
@@ -937,35 +896,74 @@ export class TaskQueue implements ITaskQueue {
   }
 
   /**
-   * 将精简版 MinimalTaskRecord 转换回完整 TaskRecord
-   * 
-   * 恢复时重建完整的 TaskRecord 结构，缺失的字段使用默认值
+   * 归一化持久化队列状态（兼容旧格式）
    */
-  private fromMinimalTaskRecord(minimal: MinimalTaskRecord): TaskRecord {
+  private normalizeQueueState(raw: unknown): { state: QueueStateFile; migrated: boolean } | null {
+    if (!raw || typeof raw !== "object") {
+      return null;
+    }
+
+    const obj = raw as Record<string, unknown>;
+    const paused = typeof obj.paused === "boolean" ? obj.paused : false;
+
+    // 新格式：pendingTasks
+    if (Array.isArray(obj.pendingTasks)) {
+      const pendingTasks = obj.pendingTasks
+        .filter((t) => t && typeof t === "object")
+        .map((t) => t as Record<string, unknown>)
+        .filter((t) => typeof t.id === "string" && typeof t.nodeId === "string" && typeof t.taskType === "string")
+        .map((t) => ({
+          id: String(t.id),
+          nodeId: String(t.nodeId),
+          taskType: t.taskType as any,
+          attempt: typeof t.attempt === "number" ? t.attempt : 0,
+          maxAttempts: typeof t.maxAttempts === "number" ? t.maxAttempts : 1,
+        }));
+
+      return {
+        state: { version: "1.0.0", pendingTasks, paused },
+        migrated: false,
+      };
+    }
+
+    // 旧格式：tasks（包含 state/payload/locks/stats 等）
+    if (Array.isArray(obj.tasks)) {
+      const pendingTasks = obj.tasks
+        .filter((t) => t && typeof t === "object")
+        .map((t) => t as Record<string, unknown>)
+        .filter((t) => t.state === "Pending" || t.state === "Running")
+        .filter((t) => typeof t.id === "string" && typeof t.nodeId === "string" && typeof t.taskType === "string")
+        .map((t) => ({
+          id: String(t.id),
+          nodeId: String(t.nodeId),
+          taskType: t.taskType as any,
+          attempt: typeof t.attempt === "number" ? t.attempt : 0,
+          maxAttempts: typeof t.maxAttempts === "number" ? t.maxAttempts : 1,
+        }));
+
+      return {
+        state: { version: "1.0.0", pendingTasks, paused },
+        migrated: true,
+      };
+    }
+
     return {
-      id: minimal.id,
-      nodeId: minimal.nodeId,
-      taskType: minimal.taskType,
-      state: minimal.state,
-      providerRef: minimal.providerRef,
-      attempt: minimal.attempt,
-      maxAttempts: minimal.maxAttempts,
-      payload: minimal.payload as Record<string, unknown>,
-      created: minimal.created,
-      updated: minimal.updated,
-      startedAt: minimal.startedAt,
-      completedAt: minimal.completedAt,
-      // 从 lastError 恢复 errors 数组
-      errors: minimal.lastError ? [minimal.lastError] : undefined,
+      state: { version: "1.0.0", pendingTasks: [], paused },
+      migrated: true,
     };
   }
 
   /**
-   * 从持久化文件恢复队列状态（包含锁清理）
-   * 
-   * 注意：持久化文件中存储的是 MinimalTaskRecord，需要转换回 TaskRecord
+   * 从持久化文件恢复队列状态
    */
-  private async restoreQueueState(queueState: QueueStateFile): Promise<void> {
+  private async restoreQueueState(raw: unknown): Promise<void> {
+    const normalized = this.normalizeQueueState(raw);
+    if (!normalized) {
+      return;
+    }
+
+    const { state: queueState, migrated } = normalized;
+
     // 先清空内存状态
     this.tasks.clear();
     this.processingTasks.clear();
@@ -973,100 +971,37 @@ export class TaskQueue implements ITaskQueue {
     // 恢复暂停状态
     this.paused = queueState.paused;
 
-    // 恢复锁状态（用于后续清理）
-    if (queueState.locks && queueState.locks.length > 0) {
-      this.lockManager.restoreLocks(queueState.locks);
-    } else {
-      this.lockManager.clear();
-    }
-
     const now = formatCRTimestamp();
-    const recoveredRunning: string[] = [];
 
-    // 恢复任务，处理 Running → Pending 的恢复逻辑
-    for (const minimalTask of queueState.tasks) {
-      // 从精简版转换为完整 TaskRecord
-      const restoredTask: TaskRecord = this.fromMinimalTaskRecord(minimalTask);
-
-      // 重启后不存在正在运行的任务，统一降级为 Pending 并释放锁
-      if (restoredTask.state === "Running") {
-        restoredTask.state = "Pending";
-        restoredTask.startedAt = undefined;
-        restoredTask.completedAt = undefined;
-        restoredTask.lockKey = undefined;
-        restoredTask.updated = now;
-        recoveredRunning.push(restoredTask.id);
-        this.lockManager.releaseByTaskId(restoredTask.id);
-      } else {
-        // 清理残留锁引用，锁管理器在上一步已恢复对应锁
-        if (restoredTask.lockKey) {
-          this.lockManager.release(restoredTask.lockKey);
-        }
-        restoredTask.lockKey = undefined;
-      }
+    for (const persisted of queueState.pendingTasks) {
+      const restoredTask: TaskRecord = {
+        id: persisted.id,
+        nodeId: persisted.nodeId,
+        taskType: persisted.taskType,
+        state: "Pending",
+        attempt: persisted.attempt,
+        maxAttempts: persisted.maxAttempts,
+        payload: {},
+        created: now,
+        updated: now,
+      };
 
       this.tasks.set(restoredTask.id, restoredTask);
     }
 
-    // 清除无任务关联的锁，避免阻塞后续调度
-    const releasedLocks = this.releaseLocksWithoutTasks();
-
-    if (recoveredRunning.length > 0 || releasedLocks > 0) {
-      this.logger.warn("TaskQueue", "重启恢复时清理未完成任务和锁", {
-        recoveredRunning,
-        releasedLocks
-      });
-    }
-
-    // 启动时不保留任何锁，运行时会在调度阶段重新获取
+    // 启动时不保留任何锁
     this.lockManager.clear();
-
-    // 统计恢复的任务状态
-    const stats = {
-      pending: 0,
-      running: 0,
-      completed: 0,
-      failed: 0,
-      cancelled: 0
-    };
-    
-    for (const task of this.tasks.values()) {
-      switch (task.state) {
-        case "Pending": stats.pending++; break;
-        case "Running": stats.running++; break;
-        case "Completed": stats.completed++; break;
-        case "Failed": stats.failed++; break;
-        case "Cancelled": stats.cancelled++; break;
-      }
-    }
 
     this.logger.info("TaskQueue", "队列状态恢复成功", {
       taskCount: this.tasks.size,
       paused: this.paused,
-      stats,
-      recoveredRunning: recoveredRunning.length
+      migrated
     });
 
-    // 持久化清理后的状态，避免下一次启动重复恢复
-    await this.saveQueue();
-  }
-
-  /**
-   * 释放与当前任务集不匹配的锁
-   */
-  private releaseLocksWithoutTasks(): number {
-    const activeLocks = this.lockManager.getActiveLocks();
-    const validTaskIds = new Set(Array.from(this.tasks.keys()));
-    let released = 0;
-
-    for (const lock of activeLocks) {
-      if (!validTaskIds.has(lock.taskId)) {
-        this.lockManager.release(lock.key);
-        released++;
-      }
+    // 若检测到旧格式，立即落盘为最小结构以减少文件体积
+    if (migrated) {
+      await this.saveQueue();
     }
-
-    return released;
   }
 
   /**
@@ -1100,36 +1035,6 @@ export class TaskQueue implements ITaskQueue {
         limit
       });
     }
-  }
-
-  /**
-   * 计算统计信息
-   */
-  private calculateStats() {
-    let totalProcessed = 0;
-    let totalFailed = 0;
-    let totalCancelled = 0;
-    let lastProcessedAt: string | undefined;
-
-    for (const task of this.tasks.values()) {
-      if (task.state === "Completed") {
-        totalProcessed++;
-        if (!lastProcessedAt || task.completedAt! > lastProcessedAt) {
-          lastProcessedAt = task.completedAt;
-        }
-      } else if (task.state === "Failed") {
-        totalFailed++;
-      } else if (task.state === "Cancelled") {
-        totalCancelled++;
-      }
-    }
-
-    return {
-      totalProcessed,
-      totalFailed,
-      totalCancelled,
-      lastProcessedAt
-    };
   }
 
   /**

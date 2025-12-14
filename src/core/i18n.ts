@@ -31,11 +31,16 @@ interface Translations {
   // 工作台
   workbench: {
     title: string;
+    buttons: {
+      improveNote: string;
+      deepen: string;
+      insertImage: string;
+    };
     createConcept: {
       title: string;
       placeholder: string;
       startButton: string;
-      standardizing: string;
+      defining: string;
       selectType: string;
       create: string;
     };
@@ -116,17 +121,40 @@ interface Translations {
       autoSelect: string;
       saveEdit: string;
       generatedContentPreview: string;
+      progressTitle: string;
+      progressHint: string;
+      empty: string;
+      kind: {
+        create: string;
+        incremental: string;
+        merge: string;
+      };
       stages: {
         idle: string;
-        standardizing: string;
-        enriching: string;
-        embedding: string;
-        awaiting_create_confirm: string;
-        reasoning: string;
-        grounding: string;
-        awaiting_write_confirm: string;
+        defining: string;
+        tagging: string;
+        indexing: string;
+        review_draft: string;
         writing: string;
-        deduplicating: string;
+        verifying: string;
+        review_changes: string;
+        saving: string;
+        checking_duplicates: string;
+        completed: string;
+        failed: string;
+      };
+      stageMessages: {
+        default: string;
+        idle: string;
+        defining: string;
+        tagging: string;
+        indexing: string;
+        review_draft: string;
+        writing: string;
+        verifying: string;
+        review_changes: string;
+        saving: string;
+        checking_duplicates: string;
         completed: string;
         failed: string;
       };
@@ -152,6 +180,7 @@ interface Translations {
       standardizeFailed: string;
       standardizeComplete: string;
       pluginNotInitialized: string;
+      openMarkdownFirst: string;
       createFailed: string;
       conceptCreated: string;
       selectDuplicates: string;
@@ -165,6 +194,7 @@ interface Translations {
       duplicateManagerNotInitialized: string;
       dismissFailed: string;
       dismissSuccess: string;
+      orchestratorNotInitialized: string;
       queueResumed: string;
       queuePaused: string;
       taskCancelled: string;
@@ -183,6 +213,11 @@ interface Translations {
       writeSuccess: string;
       writePreviewFailed: string;
       mergeCancelled: string;
+      mergeStarted: string;
+      improveStarted: string;
+      imageTaskCreated: string;
+      imageGenerationFailed: string;
+      featureDisabled: string;
     };
   };
   deepen: {
@@ -347,8 +382,6 @@ interface Translations {
         title: string;
         logLevel: string;
         logLevelDesc: string;
-        logFormat: string;
-        logFormatDesc: string;
         clearLogs: string;
         clearLogsDesc: string;
         levels: {
@@ -381,6 +414,17 @@ interface Translations {
     networkRestored: string;
     networkOffline: string;
   };
+  setupWizard: {
+    title: string;
+  };
+  modals: {
+    addProvider: {
+      title: string;
+    };
+    editProvider: {
+      title: string;
+    };
+  };
 
   // 确认对话框
   confirmDialogs: {
@@ -400,23 +444,23 @@ interface Translations {
 
   // 任务类型
   taskTypes: {
-    standardizeClassify: {
+    define: {
       name: string;
       desc: string;
     };
-    enrich: {
+    tag: {
       name: string;
       desc: string;
     };
-    embedding: {
+    index: {
       name: string;
       desc: string;
     };
-    "reason:new": {
+    write: {
       name: string;
       desc: string;
     };
-    ground: {
+    verify: {
       name: string;
       desc: string;
     };
@@ -438,6 +482,60 @@ interface Translations {
     Theory: string;
     Entity: string;
     Mechanism: string;
+  };
+
+  taskModels: {
+    title: string;
+    resetAll: string;
+    resetAllConfirm: string;
+    reset: string;
+    resetConfirm: string;
+    isDefault: string;
+    isCustom: string;
+    recommended: string;
+    fields: {
+      provider: string;
+      providerDesc: string;
+      useDefaultProvider: string;
+      model: string;
+      modelDesc: string;
+      temperature: string;
+      temperatureDesc: string;
+      topP: string;
+      topPDesc: string;
+      reasoningEffort: string;
+      reasoningEffortDesc: string;
+      embeddingDimension: string;
+      embeddingDimensionDesc: string;
+    };
+    tasks: {
+      define: { name: string; desc: string };
+      tag: { name: string; desc: string };
+      write: { name: string; desc: string };
+      index: { name: string; desc: string };
+      verify: { name: string; desc: string };
+    };
+    reasoningEffortOptions: {
+      notSet: string;
+      low: string;
+      medium: string;
+      high: string;
+    };
+    validation: {
+      temperature: string;
+      topP: string;
+    };
+  };
+
+  imageGeneration: {
+    title: string;
+    enabled: { name: string; desc: string };
+    defaultSize: { name: string; desc: string; square: string; landscape: string; portrait: string };
+    defaultQuality: { name: string; desc: string; standard: string; hd: string };
+    defaultStyle: { name: string; desc: string; vivid: string; natural: string };
+    defaultAspectRatio: { name: string; desc: string };
+    defaultImageSize: { name: string; desc: string };
+    contextWindowSize: { name: string; desc: string };
   };
 }
 
@@ -497,11 +595,16 @@ export class I18n {
       },
       workbench: {
         title: "工作台",
+      buttons: {
+        improveNote: "改进当前笔记",
+        deepen: "深化当前笔记",
+        insertImage: "插入图片",
+      },
         createConcept: {
           title: "创建概念",
           placeholder: "输入概念描述...",
-          startButton: "启动标准化",
-          standardizing: "标准化中...",
+          startButton: "开始",
+          defining: "定义中...",
           selectType: "请选择概念类型",
           create: "创建",
         },
@@ -575,28 +678,51 @@ export class I18n {
           stage: "阶段",
           view: "查看",
           confirmCreate: "确认创建",
-          previewWrite: "预览写入",
-          groundingResult: "Ground 结果：",
-          chineseName: "中文名称：",
-          englishName: "英文名称：",
-          autoSelect: "自动选择",
-          saveEdit: "保存编辑",
-          generatedContentPreview: "生成内容预览（写入前）",
-          stages: {
-            idle: "空闲",
-            standardizing: "标准化",
-            enriching: "丰富中",
-            embedding: "向量嵌入",
-            awaiting_create_confirm: "等待创建确认",
-            reasoning: "内容生成",
-            grounding: "Ground 校验",
-            awaiting_write_confirm: "等待写入确认",
-            writing: "写入中",
-            deduplicating: "去重中",
-            completed: "已完成",
-            failed: "失败",
-          },
+        previewWrite: "预览写入",
+        groundingResult: "校验结果：",
+        chineseName: "中文名称：",
+        englishName: "英文名称：",
+        autoSelect: "自动选择",
+        saveEdit: "保存编辑",
+        generatedContentPreview: "生成内容预览（写入前）",
+        progressTitle: "AI 阶段进度",
+        progressHint: "实时显示 LLM 调用阶段与写入状态",
+        empty: "当前没有进行中的管线",
+        kind: {
+          create: "创建",
+          incremental: "增量改进",
+          merge: "合并",
         },
+        stages: {
+          idle: "空闲",
+          defining: "定义中",
+          tagging: "标记中",
+          indexing: "索引中",
+          review_draft: "确认草稿",
+          writing: "撰写中",
+          verifying: "校验中",
+          review_changes: "确认修改",
+          saving: "写入中",
+          checking_duplicates: "查重中",
+          completed: "已完成",
+          failed: "失败",
+        },
+        stageMessages: {
+          default: "AI 正在处理该步骤",
+          idle: "等待新任务开始",
+          defining: "分析输入并完成概念定义",
+          tagging: "扩展别名、标签等上下文",
+          indexing: "生成语义向量以便搜索",
+          review_draft: "等待确认创建草稿",
+          writing: "生成正文或合并内容",
+          verifying: "AI 校验中，确保输出可靠",
+          review_changes: "等待用户确认写入",
+          saving: "写入文件并生成快照",
+          checking_duplicates: "刷新查重索引，清理历史记录",
+          completed: "流程已完成，可在历史中撤销",
+          failed: "流程失败，请查看错误信息或重试",
+        },
+      },
         typeConfidenceTable: {
           type: "类型",
           standardName: "标准名称",
@@ -615,9 +741,10 @@ export class I18n {
         notifications: {
           systemNotInitialized: "系统未初始化",
           enterDescription: "请输入概念描述",
-          standardizeFailed: "标准化失败",
-          standardizeComplete: "标准化完成，请选择类型",
+          standardizeFailed: "定义失败",
+          standardizeComplete: "定义完成，请选择类型",
           pluginNotInitialized: "插件未初始化",
+          openMarkdownFirst: "请先打开一个 Markdown 笔记",
           createFailed: "创建失败",
           conceptCreated: "概念创建已启动",
           selectDuplicates: "请先选择要合并的重复对",
@@ -629,6 +756,7 @@ export class I18n {
           previewFailed: "显示预览失败",
           mergeTaskCreated: "合并任务已创建",
           duplicateManagerNotInitialized: "重复管理器未初始化",
+          orchestratorNotInitialized: "管线编排器未初始化",
           dismissFailed: "忽略失败",
           dismissSuccess: "已忽略重复对",
           queueResumed: "队列已恢复运行",
@@ -642,13 +770,18 @@ export class I18n {
           undoSuccessRestored: "撤销成功（文件已恢复）",
           confirmCreateFailed: "确认创建失败",
           confirmCreateWaiting: "已确认创建，等待内容生成",
-          standardizeUpdated: "已更新标准化结果",
+          standardizeUpdated: "已更新定义结果",
           undoDismissSuccess: "已撤销忽略，重复对已恢复到待处理列表",
           deletePairSuccess: "已删除重复对记录",
           writeFailed: "写入失败",
           writeSuccess: "已写入，支持撤销",
           writePreviewFailed: "无法生成写入预览",
           mergeCancelled: "已取消合并",
+          mergeStarted: "合并任务已启动，请等待 AI 生成合并内容...",
+          improveStarted: "改进任务已启动，请等待 AI 生成改进内容...",
+          imageTaskCreated: "图片生成任务已创建",
+          imageGenerationFailed: "图片生成任务创建失败",
+          featureDisabled: "功能已关闭",
         },
       },
       deepen: {
@@ -791,8 +924,8 @@ export class I18n {
           },
           features: {
             title: "功能开关",
-            enableGrounding: "启用事实核查 (Ground)",
-            enableGroundingDesc: "在内容生成后执行事实核查验证（会增加一次 LLM 调用）",
+            enableGrounding: "启用校验",
+            enableGroundingDesc: "在撰写完成后执行校验验证（会增加一次 LLM 调用）",
           },
           queue: {
             title: "队列参数",
@@ -811,8 +944,6 @@ export class I18n {
             title: "日志设置",
             logLevel: "日志级别",
             logLevelDesc: "设置日志记录的详细程度",
-            logFormat: "日志格式",
-            logFormatDesc: "选择日志文件的输出格式（JSON: 结构化, Pretty: 易读, Compact: 紧凑）",
             clearLogs: "清除日志",
             clearLogsDesc: "清空所有日志文件",
             levels: {
@@ -822,6 +953,17 @@ export class I18n {
               error: "错误",
             },
           },
+        },
+      },
+      setupWizard: {
+        title: "配置 AI Provider",
+      },
+      modals: {
+        addProvider: {
+          title: "添加 AI Provider",
+        },
+        editProvider: {
+          title: "编辑 AI Provider",
         },
       },
       notices: {
@@ -838,8 +980,8 @@ export class I18n {
         noLogsToClean: "没有日志文件需要清除",
         languageChanged: "语言已切换为: {language}",
         logLevelChanged: "日志级别已设置为: {level}（将在下次启动时生效）",
-        groundingEnabled: "事实核查已启用",
-        groundingDisabled: "事实核查已禁用",
+        groundingEnabled: "校验已启用",
+        groundingDisabled: "校验已禁用",
         networkRestored: "网络已恢复，队列可继续运行",
         networkOffline: "AI 服务离线，队列已暂停",
       },
@@ -858,24 +1000,24 @@ export class I18n {
         },
       },
       taskTypes: {
-        standardizeClassify: {
-          name: "标准化分类",
-          desc: "标准化输入并分类知识类型",
+        define: {
+          name: "定义",
+          desc: "标准化输入并确定知识类型",
         },
-        enrich: {
-          name: "丰富",
-          desc: "生成别名和标签",
+        tag: {
+          name: "标记",
+          desc: "生成别名与标签",
         },
-        embedding: {
-          name: "嵌入",
-          desc: "生成向量嵌入",
+        index: {
+          name: "索引",
+          desc: "生成语义向量以便检索",
         },
-        "reason:new": {
-          name: "新概念生成",
-          desc: "为新概念生成完整内容",
+        write: {
+          name: "撰写",
+          desc: "生成完整正文或合并内容",
         },
-        ground: {
-          name: "事实核查",
+        verify: {
+          name: "校验",
           desc: "验证生成内容的准确性",
         },
       },
@@ -893,6 +1035,83 @@ export class I18n {
         Entity: "实体对象的存储目录。默认: 4-实体，支持相对路径如 CR/4-实体",
         Mechanism: "机制原理的存储目录。默认: 5-机制，支持相对路径如 CR/5-机制",
       },
+      taskModels: {
+        title: "任务模型配置",
+        resetAll: "重置全部",
+        resetAllConfirm: "确定要将所有任务配置重置为默认值吗？此操作不可撤销。",
+        reset: "重置",
+        resetConfirm: "确定要将此任务配置重置为默认值吗？",
+        isDefault: "默认值",
+        isCustom: "自定义",
+        recommended: "推荐",
+        fields: {
+          provider: "Provider",
+          providerDesc: "选择 AI Provider（留空则使用默认 Provider）",
+          useDefaultProvider: "使用默认 Provider",
+          model: "模型名称",
+          modelDesc: "指定使用的模型（如 gpt-4o, claude-3-opus）",
+          temperature: "Temperature",
+          temperatureDesc: "控制生成内容的随机性 (0-2)，较低值更确定，较高值更创意",
+          topP: "Top P",
+          topPDesc: "核采样参数 (0-1)，控制生成内容的多样性",
+          reasoningEffort: "推理强度",
+          reasoningEffortDesc: "用于支持推理的模型（如 o1, o3）",
+          embeddingDimension: "嵌入维度",
+          embeddingDimensionDesc: "向量嵌入的维度大小",
+        },
+        tasks: {
+          define: { name: "Define (定义)", desc: "分析和定义概念的核心含义" },
+          tag: { name: "Tag (标记)", desc: "标记和分类概念" },
+          write: { name: "Write (撰写)", desc: "撰写和扩展概念内容" },
+          index: { name: "Index (索引)", desc: "生成语义向量并建立索引" },
+          verify: { name: "Verify (校验)", desc: "验证和检查概念质量" },
+        },
+        reasoningEffortOptions: {
+          notSet: "不设置",
+          low: "低",
+          medium: "中",
+          high: "高",
+        },
+        validation: {
+          temperature: "Temperature 需在 0-2 之间",
+          topP: "Top P 需在 0-1 之间",
+        }
+      },
+      imageGeneration: {
+        title: "图片生成设置",
+        enabled: { name: "启用图片生成", desc: "允许在笔记中插入 AI 生成的图片" },
+        defaultSize: {
+          name: "默认图片尺寸",
+          desc: "生成图片的默认尺寸",
+          square: "正方形 (1024×1024)",
+          landscape: "横向 (1792×1024)",
+          portrait: "纵向 (1024×1792)"
+        },
+        defaultQuality: {
+          name: "图片质量",
+          desc: "standard: 标准质量，hd: 高清质量（消耗更多 token）",
+          standard: "标准",
+          hd: "高清"
+        },
+        defaultStyle: {
+          name: "图片风格",
+          desc: "vivid: 鲜艳生动，natural: 自然真实",
+          vivid: "鲜艳",
+          natural: "自然"
+        },
+        defaultAspectRatio: {
+          name: "宽高比",
+          desc: "Gemini 预览 API 使用的宽高比，例如 1:1 或 16:9"
+        },
+        defaultImageSize: {
+          name: "输出分辨率",
+          desc: "传给 image_config.image_size 的值（如 2K/1K 或 1024x1024）"
+        },
+        contextWindowSize: {
+          name: "上下文窗口大小",
+          desc: "读取光标前后用于提示词的字符数"
+        }
+      }
     };
   }
 
@@ -916,11 +1135,16 @@ export class I18n {
       },
       workbench: {
         title: "Workbench",
+      buttons: {
+        improveNote: "Improve Current Note",
+        deepen: "Deepen Current Note",
+        insertImage: "Insert Image",
+      },
         createConcept: {
           title: "Create Concept",
           placeholder: "Enter concept description...",
-          startButton: "Start Standardization",
-          standardizing: "Standardizing...",
+          startButton: "Start",
+          defining: "Defining...",
           selectType: "Please select concept type",
           create: "Create",
         },
@@ -994,28 +1218,51 @@ export class I18n {
           stage: "Stage",
           view: "View",
           confirmCreate: "Confirm Create",
-          previewWrite: "Preview Write",
-          groundingResult: "Grounding Result:",
-          chineseName: "Chinese Name:",
-          englishName: "English Name:",
-          autoSelect: "Auto Select",
-          saveEdit: "Save Edit",
-          generatedContentPreview: "Generated Content Preview (before write)",
-          stages: {
-            idle: "Idle",
-            standardizing: "Standardizing",
-            enriching: "Enriching",
-            embedding: "Embedding",
-            awaiting_create_confirm: "Awaiting Create Confirmation",
-            reasoning: "Generating Content",
-            grounding: "Grounding Check",
-            awaiting_write_confirm: "Awaiting Write Confirmation",
-            writing: "Writing",
-            deduplicating: "Deduplicating",
-            completed: "Completed",
-            failed: "Failed",
-          },
+        previewWrite: "Preview Write",
+        groundingResult: "Verification Result:",
+        chineseName: "Chinese Name:",
+        englishName: "English Name:",
+        autoSelect: "Auto Select",
+        saveEdit: "Save Edit",
+        generatedContentPreview: "Generated Content Preview (before write)",
+        progressTitle: "AI Progress",
+        progressHint: "Live view of LLM stages and write status",
+        empty: "No pipelines are currently running",
+        kind: {
+          create: "Create",
+          incremental: "Incremental Edit",
+          merge: "Merge",
         },
+        stages: {
+          idle: "Idle",
+          defining: "Defining",
+          tagging: "Tagging",
+          indexing: "Indexing",
+          review_draft: "Review Draft",
+          writing: "Writing",
+          verifying: "Verifying",
+          review_changes: "Review Changes",
+          saving: "Saving",
+          checking_duplicates: "Checking Duplicates",
+          completed: "Completed",
+          failed: "Failed",
+        },
+        stageMessages: {
+          default: "AI is processing this stage",
+          idle: "Waiting for a new task",
+          defining: "Analyzing the input and finishing the definition",
+          tagging: "Generating aliases, tags, and related context",
+          indexing: "Creating semantic vectors for search",
+          review_draft: "Waiting for draft confirmation",
+          writing: "Generating or merging note content",
+          verifying: "Running verification to ensure reliability",
+          review_changes: "Waiting for confirmation before writing to disk",
+          saving: "Writing to the vault and creating a snapshot",
+          checking_duplicates: "Refreshing duplicate indices and cleaning up",
+          completed: "Pipeline finished successfully. You can undo from history.",
+          failed: "Pipeline failed. See the error for details.",
+        },
+      },
         typeConfidenceTable: {
           type: "Type",
           standardName: "Standard Name",
@@ -1034,9 +1281,10 @@ export class I18n {
         notifications: {
           systemNotInitialized: "System not initialized",
           enterDescription: "Please enter concept description",
-          standardizeFailed: "Standardization failed",
-          standardizeComplete: "Standardization complete, please select type",
+          standardizeFailed: "Definition failed",
+          standardizeComplete: "Definition complete, please select type",
           pluginNotInitialized: "Plugin not initialized",
+          openMarkdownFirst: "Please open a Markdown note first",
           createFailed: "Creation failed",
           conceptCreated: "Concept creation started",
           selectDuplicates: "Please select duplicates to merge first",
@@ -1048,6 +1296,7 @@ export class I18n {
           previewFailed: "Failed to show preview",
           mergeTaskCreated: "Merge task created",
           duplicateManagerNotInitialized: "Duplicate manager not initialized",
+          orchestratorNotInitialized: "Pipeline orchestrator not initialized",
           dismissFailed: "Dismiss failed",
           dismissSuccess: "Duplicate pair dismissed",
           queueResumed: "Queue resumed",
@@ -1061,13 +1310,18 @@ export class I18n {
           undoSuccessRestored: "Undo successful (file restored)",
           confirmCreateFailed: "Confirm create failed",
           confirmCreateWaiting: "Creation confirmed, waiting for content generation",
-          standardizeUpdated: "Standardization result updated",
+          standardizeUpdated: "Definition result updated",
           undoDismissSuccess: "Dismiss undone, duplicate pair restored to pending list",
           deletePairSuccess: "Duplicate pair record deleted",
           writeFailed: "Write failed",
           writeSuccess: "Written, undo available",
           writePreviewFailed: "Cannot generate write preview",
           mergeCancelled: "Merge cancelled",
+          mergeStarted: "Merge task started. Please wait for AI to finish.",
+          improveStarted: "Improvement task started. Please wait for AI to finish.",
+          imageTaskCreated: "Image generation task queued",
+          imageGenerationFailed: "Failed to start image generation",
+          featureDisabled: "Feature is disabled",
         },
       },
       deepen: {
@@ -1210,8 +1464,8 @@ export class I18n {
           },
           features: {
             title: "Feature Toggles",
-            enableGrounding: "Enable Grounding",
-            enableGroundingDesc: "Perform fact-checking verification after content generation (adds one LLM call)",
+            enableGrounding: "Enable Verification",
+            enableGroundingDesc: "Run verification after writing (adds one LLM call)",
           },
           queue: {
             title: "Queue Parameters",
@@ -1230,8 +1484,6 @@ export class I18n {
             title: "Logging Settings",
             logLevel: "Log Level",
             logLevelDesc: "Set the verbosity of logging",
-            logFormat: "Log Format",
-            logFormatDesc: "Choose the output format for log files (JSON: structured, Pretty: readable, Compact: concise)",
             clearLogs: "Clear Logs",
             clearLogsDesc: "Clear all log files",
             levels: {
@@ -1241,6 +1493,17 @@ export class I18n {
               error: "Error",
             },
           },
+        },
+      },
+      setupWizard: {
+        title: "Configure AI Provider",
+      },
+      modals: {
+        addProvider: {
+          title: "Add AI Provider",
+        },
+        editProvider: {
+          title: "Edit AI Provider",
         },
       },
       notices: {
@@ -1257,8 +1520,8 @@ export class I18n {
         noLogsToClean: "No log files to clean",
         languageChanged: "Language changed to: {language}",
         logLevelChanged: "Log level set to: {level} (will take effect on next startup)",
-        groundingEnabled: "Grounding enabled",
-        groundingDisabled: "Grounding disabled",
+        groundingEnabled: "Verification enabled",
+        groundingDisabled: "Verification disabled",
         networkRestored: "Network restored, queue can continue",
         networkOffline: "AI service offline, queue paused",
       },
@@ -1277,25 +1540,25 @@ export class I18n {
         },
       },
       taskTypes: {
-        standardizeClassify: {
-          name: "Standardize & Classify",
-          desc: "Standardize input and classify knowledge type",
+        define: {
+          name: "Define",
+          desc: "Normalize the input and determine the concept type",
         },
-        enrich: {
-          name: "Enrich",
+        tag: {
+          name: "Tag",
           desc: "Generate aliases and tags",
         },
-        embedding: {
-          name: "Embedding",
-          desc: "Generate vector embeddings",
+        index: {
+          name: "Index",
+          desc: "Produce semantic vectors for retrieval",
         },
-        "reason:new": {
-          name: "New Concept",
-          desc: "Generate complete content for new concept",
+        write: {
+          name: "Write",
+          desc: "Generate full content or merge results",
         },
-        ground: {
-          name: "Grounding",
-          desc: "Verify accuracy of generated content",
+        verify: {
+          name: "Verify",
+          desc: "Check the accuracy of generated content",
         },
       },
       crTypes: {
@@ -1312,6 +1575,83 @@ export class I18n {
         Entity: "Storage directory for entities. Default: 4-实体, supports relative paths like CR/4-实体",
         Mechanism: "Storage directory for mechanisms. Default: 5-机制, supports relative paths like CR/5-机制",
       },
+      taskModels: {
+        title: "Task Model Configuration",
+        resetAll: "Reset All",
+        resetAllConfirm: "Are you sure you want to reset all task configurations to default values? This action cannot be undone.",
+        reset: "Reset",
+        resetConfirm: "Are you sure you want to reset this task configuration to default values?",
+        isDefault: "Default",
+        isCustom: "Custom",
+        recommended: "Recommended",
+        fields: {
+          provider: "Provider",
+          providerDesc: "Select AI Provider (leave empty to use default Provider)",
+          useDefaultProvider: "Use Default Provider",
+          model: "Model Name",
+          modelDesc: "Specify the model to use (e.g., gpt-4o, claude-3-opus)",
+          temperature: "Temperature",
+          temperatureDesc: "Controls randomness (0-2), lower values are more deterministic, higher values are more creative",
+          topP: "Top P",
+          topPDesc: "Nucleus sampling parameter (0-1), controls diversity",
+          reasoningEffort: "Reasoning Effort",
+          reasoningEffortDesc: "For models that support reasoning (e.g., o1, o3)",
+          embeddingDimension: "Embedding Dimension",
+          embeddingDimensionDesc: "Dimension size for vector embeddings",
+        },
+        tasks: {
+          define: { name: "Define", desc: "Analyze and define core concept meaning" },
+          tag: { name: "Tag", desc: "Tag and categorize concepts" },
+          write: { name: "Write", desc: "Write and expand concept content" },
+          index: { name: "Index", desc: "Generate semantic vectors and build index" },
+          verify: { name: "Verify", desc: "Validate and check concept quality" },
+        },
+        reasoningEffortOptions: {
+          notSet: "Not Set",
+          low: "Low",
+          medium: "Medium",
+          high: "High",
+        },
+        validation: {
+          temperature: "Temperature must be between 0 and 2",
+          topP: "Top P must be between 0 and 1",
+        }
+      },
+      imageGeneration: {
+        title: "Image Generation",
+        enabled: { name: "Enable image generation", desc: "Allow inserting AI-generated images into notes" },
+        defaultSize: {
+          name: "Default image size",
+          desc: "Default canvas size when generating images",
+          square: "Square (1024×1024)",
+          landscape: "Landscape (1792×1024)",
+          portrait: "Portrait (1024×1792)"
+        },
+        defaultQuality: {
+          name: "Image quality",
+          desc: "standard: standard quality, hd: high quality (costs more tokens)",
+          standard: "Standard",
+          hd: "HD"
+        },
+        defaultStyle: {
+          name: "Image style",
+          desc: "vivid: vibrant, natural: realistic",
+          vivid: "Vivid",
+          natural: "Natural"
+        },
+        defaultAspectRatio: {
+          name: "Aspect ratio",
+          desc: "Aspect ratio for Gemini image preview API, e.g., 1:1 or 16:9"
+        },
+        defaultImageSize: {
+          name: "Output resolution",
+          desc: "Value passed to image_config.image_size (e.g., 2K/1K or 1024x1024)"
+        },
+        contextWindowSize: {
+          name: "Context window size",
+          desc: "Characters before/after cursor to include in prompt"
+        }
+      }
     };
   }
 }

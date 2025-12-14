@@ -96,11 +96,11 @@ UI 层 → 应用层 → 数据层
 
 | 路径 | 用途 |
 |------|------|
-| `prompts/standardizeClassify.md` | 标准化和分类 |
-| `prompts/enrich.md` | 内容丰富（别名、标签） |
-| `prompts/ground.md` | 接地验证 |
+| `prompts/define.md` | 定义 |
+| `prompts/tag.md` | 标记（别名、标签） |
+| `prompts/verify.md` | 校验 |
 | `prompts/merge.md` | 概念合并 |
-| `prompts/reason-*.md` | 各类型推理模板 |
+| `prompts/write-*.md` | 各类型撰写模板 |
 | `prompts/_base/` | 基础组件模板 |
 | `prompts/_type/` | 类型特定模板 |
 

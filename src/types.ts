@@ -64,7 +64,8 @@ export type TaskType =
   | "tag"      // 标记
   | "write"    // 撰写
   | "index"    // 索引
-  | "verify";  // 校验
+  | "verify"   // 校验
+  | "image-generate"; // 图片生成
 
 /**
  * 任务状态
@@ -291,6 +292,68 @@ export interface ChatResponse {
 }
 
 /**
+ * 图片预览消息
+ */
+export interface ImagePreviewMessage {
+  /** 角色 */
+  role: "system" | "user" | "assistant";
+  /** 内容（Markdown 或纯文本） */
+  content: string;
+}
+
+/**
+ * 图片生成请求
+ */
+export interface ImageGenerateRequest {
+  /** Provider ID */
+  providerId: string;
+  /** 模型名称（默认 gemini-3-pro-image-preview） */
+  model: string;
+  /** 消息列表（映射到 chat completions） */
+  messages: ImagePreviewMessage[];
+  /** 宽高比，如 16:9、1:1 */
+  aspectRatio?: string;
+  /** 图片尺寸，如 2K/1K/1024x1024 */
+  imageSize?: string;
+  /** 是否流式（图片生成要求 false） */
+  stream?: false;
+}
+
+/**
+ * 图片生成响应
+ */
+export interface ImageGenerateResponse {
+  /** data:image/...;base64,... 或临时 URL */
+  imageUrl: string;
+  /** 经过 LLM 优化后的提示词（可选） */
+  revisedPrompt?: string;
+  /** 用于 alt 文本的描述（可选） */
+  altText?: string;
+}
+
+/**
+ * 图片生成任务载荷
+ */
+export interface ImageGeneratePayload {
+  userPrompt: string;
+  contextBefore: string;
+  contextAfter: string;
+  frontmatter: CRFrontmatter;
+  filePath: string;
+  cursorPosition: { line: number; ch: number };
+}
+
+/**
+ * 图片生成结果
+ */
+export interface ImageGenerateResult {
+  imageUrl: string;
+  localPath: string;
+  description: string;
+  revisedPrompt?: string;
+}
+
+/**
  * 嵌入请求
  */
 export interface EmbedRequest {
@@ -422,9 +485,20 @@ export interface PluginSettings {
   /** Provider 配置 */
   providers: Record<string, ProviderConfig>;
   defaultProviderId: string;
-  
+
   /** 任务模型配置 */
   taskModels: Record<TaskType, TaskModelConfig>;
+
+  /** 图片生成功能配置 */
+  imageGeneration: {
+    enabled: boolean;
+    defaultSize: "1024x1024" | "1792x1024" | "1024x1792" | string;
+    defaultQuality: "standard" | "hd";
+    defaultStyle: "vivid" | "natural";
+    defaultAspectRatio?: string;
+    defaultImageSize?: string;
+    contextWindowSize: number;
+  };
   
   /** 日志级别 */
   logLevel: "debug" | "info" | "warn" | "error";

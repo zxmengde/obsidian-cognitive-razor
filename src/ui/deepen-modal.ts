@@ -51,11 +51,15 @@ export class DeepenModal extends Modal {
     contentEl.empty();
     contentEl.addClass("cr-scope");
     contentEl.addClass("cr-deepen-modal");
+    contentEl.setAttr("role", "dialog");
+    contentEl.setAttr("aria-modal", "true");
 
     const title = this.options.labels.titlePrefix
       ? `${this.options.labels.titlePrefix}${this.options.parentTitle}`
       : `深化：${this.options.parentTitle}`;
-    contentEl.createEl("h2", { text: title });
+    const titleEl = contentEl.createEl("h2", { text: title });
+    titleEl.id = `cr-deepen-title-${Date.now()}`;
+    contentEl.setAttr("aria-labelledby", titleEl.id);
 
     this.renderSummary(contentEl);
     if (this.options.looseStructure && this.options.labels.looseStructureHint) {
@@ -136,16 +140,53 @@ export class DeepenModal extends Modal {
       items.forEach((item) => {
         const key = this.buildKey(item);
         const row = groupEl.createDiv({ cls: "cr-deepen-item" });
+        row.setAttr("tabindex", "0");
 
         const checkbox = row.createEl("input", { type: "checkbox" });
         checkbox.disabled = item.status !== "creatable";
         checkbox.checked = this.selected.has(key) && item.status === "creatable";
+        checkbox.setAttr("tabindex", "-1");
+
+        // 可访问性：将整行视为可切换项
+        row.setAttr("role", "checkbox");
+        row.setAttr("aria-checked", String(checkbox.checked));
+        row.setAttr("aria-disabled", String(checkbox.disabled));
+        row.setAttr("aria-label", `${item.targetType}: ${item.name}`);
+
+        row.addEventListener("click", (e) => {
+          if (e.target === checkbox) return;
+          if (checkbox.disabled) return;
+          checkbox.click();
+        });
+
+        row.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            if (!checkbox.disabled) {
+              checkbox.click();
+            }
+            return;
+          }
+
+          // 可选：方向键在列表项之间移动焦点
+          if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+            e.preventDefault();
+            const all = Array.from(container.querySelectorAll(".cr-deepen-item[tabindex=\"0\"]")) as HTMLElement[];
+            const idx = all.indexOf(row);
+            if (idx < 0 || all.length === 0) return;
+            const delta = e.key === "ArrowDown" ? 1 : -1;
+            const next = all[(idx + delta + all.length) % all.length];
+            next?.focus();
+          }
+        });
+
         checkbox.addEventListener("change", () => {
           if (checkbox.checked) {
             this.selected.add(key);
           } else {
             this.selected.delete(key);
           }
+          row.setAttr("aria-checked", String(checkbox.checked));
           this.updateConfirmState();
         });
 

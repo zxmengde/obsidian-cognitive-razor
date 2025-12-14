@@ -28,19 +28,25 @@ export class MergeNameSelectionModal extends Modal {
     private options: {
       onConfirm: (finalFileName: string, keepNodeId: string) => Promise<void>;
       onCancel: () => void;
+      resolveName?: (nodeId: string) => string;
     }
   ) {
     super(app);
-    this.selectedValue = pair.noteA.name;
+    this.selectedValue = this.resolveName(pair.nodeIdA);
   }
 
   onOpen(): void {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("cr-merge-modal");
+    contentEl.addClass("cr-scope");
+    contentEl.setAttr("role", "dialog");
+    contentEl.setAttr("aria-modal", "true");
 
     // 标题
-    contentEl.createEl("h2", { text: "选择合并后的笔记名称", cls: "cr-modal-title" });
+    const titleEl = contentEl.createEl("h2", { text: "选择合并后的笔记名称", cls: "cr-modal-title" });
+    titleEl.id = `cr-merge-title-${this.pair.id}`;
+    contentEl.setAttr("aria-labelledby", titleEl.id);
 
     // 信息提示
     const infoEl = contentEl.createDiv({ cls: "cr-merge-info" });
@@ -50,8 +56,10 @@ export class MergeNameSelectionModal extends Modal {
     });
     
     const notesList = infoEl.createDiv({ cls: "cr-notes-list" });
-    notesList.createDiv({ text: this.pair.noteA.name, cls: "cr-note-item" });
-    notesList.createDiv({ text: this.pair.noteB.name, cls: "cr-note-item" });
+    const nameA = this.resolveName(this.pair.nodeIdA);
+    const nameB = this.resolveName(this.pair.nodeIdB);
+    notesList.createDiv({ text: nameA, cls: "cr-note-item" });
+    notesList.createDiv({ text: nameB, cls: "cr-note-item" });
     
     const similarityBadge = infoEl.createDiv({ cls: "cr-similarity-badge" });
     similarityBadge.textContent = `相似度: ${(this.pair.similarity * 100).toFixed(1)}%`;
@@ -59,8 +67,19 @@ export class MergeNameSelectionModal extends Modal {
     // 选择保留哪个笔记
     contentEl.createEl("h3", { text: "1. 选择保留哪个笔记", cls: "cr-section-title" });
     const keepNoteSection = contentEl.createDiv({ cls: "cr-radio-group" });
+    keepNoteSection.setAttr("role", "radiogroup");
+    keepNoteSection.setAttr("aria-label", "选择保留哪个笔记");
 
-    let keepNodeId = this.pair.noteA.nodeId;
+    let keepNodeId = this.pair.nodeIdA;
+
+    const updateRadioCardAria = (container: HTMLElement, groupName: string): void => {
+      const cards = Array.from(container.querySelectorAll("label.cr-radio-card"));
+      for (const card of cards) {
+        const input = card.querySelector(`input[type="radio"][name="${groupName}"]`) as HTMLInputElement | null;
+        if (!input) continue;
+        card.setAttr("aria-checked", String(input.checked));
+      }
+    };
 
     const createRadioCard = (
       container: HTMLElement, 
@@ -71,10 +90,41 @@ export class MergeNameSelectionModal extends Modal {
       onChange: () => void
     ) => {
       const label = container.createEl("label", { cls: "cr-radio-card" });
+      label.setAttr("tabindex", "0");
+      label.setAttr("role", "radio");
+      label.setAttr("aria-checked", String(isChecked));
+      label.setAttr("aria-label", `保留“${name}”作为主体`);
+
       const radio = label.createEl("input", { type: "radio", value });
       radio.name = groupName;
       radio.checked = isChecked;
-      radio.addEventListener("change", onChange);
+      radio.setAttr("tabindex", "-1");
+      radio.setAttr("aria-label", `保留“${name}”`);
+      radio.addEventListener("change", () => {
+        onChange();
+        updateRadioCardAria(container, groupName);
+      });
+
+      label.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          radio.click();
+          return;
+        }
+
+        // 可选：方向键在卡片间移动并切换选择
+        if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === "ArrowLeft" || e.key === "ArrowUp") {
+          e.preventDefault();
+          const cards = Array.from(container.querySelectorAll("label.cr-radio-card")) as HTMLElement[];
+          const idx = cards.indexOf(label);
+          if (idx < 0) return;
+          const delta = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : -1;
+          const next = cards[(idx + delta + cards.length) % cards.length];
+          next?.focus();
+          const nextInput = next?.querySelector(`input[type=\"radio\"][name=\"${groupName}\"]`) as HTMLInputElement | null;
+          nextInput?.click();
+        }
+      });
       
       const content = label.createDiv({ cls: "cr-radio-content" });
       content.createDiv({ text: `保留 "${name}"`, cls: "cr-radio-title" });
@@ -85,24 +135,24 @@ export class MergeNameSelectionModal extends Modal {
 
     const keepNoteARadio = createRadioCard(
       keepNoteSection, 
-      this.pair.noteA.name, 
+      nameA, 
       "a", 
       "keep-note", 
       true, 
-      () => { keepNodeId = this.pair.noteA.nodeId; }
+      () => { keepNodeId = this.pair.nodeIdA; }
     );
 
     const keepNoteBRadio = createRadioCard(
       keepNoteSection, 
-      this.pair.noteB.name, 
+      nameB, 
       "b", 
       "keep-note", 
       false, 
       () => {
-        keepNodeId = this.pair.noteB.nodeId;
+        keepNodeId = this.pair.nodeIdB;
         // 如果选择保留 B，且未输入自定义名称，默认名称也切换到 B
         if (!this.customInput?.value.trim()) {
-          this.selectedValue = this.pair.noteB.name;
+          this.selectedValue = nameB;
           // 更新名称选择部分的选中状态 (需要重新渲染或手动更新 DOM，这里简化处理，假设用户会手动确认)
           // 更好的做法是让名称选择部分响应状态变化，但为了保持简单，这里暂不自动切换 UI 选中状态，只切换值
           // 或者我们可以触发名称选择部分的 radio 点击
@@ -115,6 +165,8 @@ export class MergeNameSelectionModal extends Modal {
     // 选择名称
     contentEl.createEl("h3", { text: "2. 选择合并后的名称", cls: "cr-section-title" });
     const nameOptionsSection = contentEl.createDiv({ cls: "cr-radio-group-vertical" });
+    nameOptionsSection.setAttr("role", "radiogroup");
+    nameOptionsSection.setAttr("aria-label", "选择合并后的名称");
 
     const createNameRadio = (
       container: HTMLElement,
@@ -123,10 +175,45 @@ export class MergeNameSelectionModal extends Modal {
       onChange: () => void
     ) => {
       const label = container.createEl("label", { cls: "cr-radio-row" });
+      label.setAttr("tabindex", "0");
+      label.setAttr("role", "radio");
+      label.setAttr("aria-checked", String(isChecked));
+      label.setAttr("aria-label", `使用名称：${name}`);
       const radio = label.createEl("input", { type: "radio", value: name });
       radio.name = "merge-name";
       radio.checked = isChecked;
-      radio.addEventListener("change", onChange);
+      radio.setAttr("tabindex", "-1");
+      radio.setAttr("aria-label", `名称：${name}`);
+      radio.addEventListener("change", () => {
+        onChange();
+        const rows = Array.from(container.querySelectorAll("label.cr-radio-row"));
+        for (const row of rows) {
+          const input = row.querySelector('input[type="radio"][name="merge-name"]') as HTMLInputElement | null;
+          if (!input) continue;
+          row.setAttr("aria-checked", String(input.checked));
+        }
+      });
+
+      label.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          radio.click();
+          return;
+        }
+
+        // 可选：方向键在选项间移动并切换选择
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+          e.preventDefault();
+          const rows = Array.from(container.querySelectorAll("label.cr-radio-row")) as HTMLElement[];
+          const idx = rows.indexOf(label);
+          if (idx < 0) return;
+          const delta = e.key === "ArrowDown" ? 1 : -1;
+          const next = rows[(idx + delta + rows.length) % rows.length];
+          next?.focus();
+          const nextInput = next?.querySelector('input[type="radio"][name="merge-name"]') as HTMLInputElement | null;
+          nextInput?.click();
+        }
+      });
       
       label.createSpan({ text: name, cls: "cr-radio-label-text" });
       return radio;
@@ -135,10 +222,10 @@ export class MergeNameSelectionModal extends Modal {
     // 选项 1: 保留 noteA 的名称
     const optionARadio = createNameRadio(
       nameOptionsSection,
-      this.pair.noteA.name,
+      nameA,
       true,
       () => {
-        this.selectedValue = this.pair.noteA.name;
+        this.selectedValue = nameA;
         if (this.customInput) this.customInput.value = "";
       }
     );
@@ -146,10 +233,10 @@ export class MergeNameSelectionModal extends Modal {
     // 选项 2: 使用 noteB 的名称
     const optionBRadio = createNameRadio(
       nameOptionsSection,
-      this.pair.noteB.name,
+      nameB,
       false,
       () => {
-        this.selectedValue = this.pair.noteB.name;
+        this.selectedValue = nameB;
         if (this.customInput) this.customInput.value = "";
       }
     );
@@ -161,7 +248,8 @@ export class MergeNameSelectionModal extends Modal {
     this.customInput = customSection.createEl("input", {
       type: "text",
       placeholder: "输入新笔记名称（不含 .md 扩展名）",
-      cls: "cr-input-full"
+      cls: "cr-input-full",
+      attr: { "aria-label": "输入自定义笔记名称" }
     });
 
     this.customInput.oninput = () => {
@@ -220,6 +308,14 @@ export class MergeNameSelectionModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
   }
+
+  private resolveName(nodeId: string): string {
+    try {
+      return this.options.resolveName ? this.options.resolveName(nodeId) : nodeId;
+    } catch {
+      return nodeId;
+    }
+  }
 }
 
 /**
@@ -251,26 +347,28 @@ export class MergeDiffModal extends Modal {
   onOpen(): void {
     const { contentEl } = this;
     contentEl.empty();
-
-    this.modalEl.style.width = "90%";
-    this.modalEl.style.maxWidth = "1200px";
+    contentEl.addClass("cr-scope");
+    contentEl.addClass("cr-merge-diff-modal");
+    this.modalEl.addClass("cr-merge-diff-modal");
+    contentEl.setAttr("role", "dialog");
+    contentEl.setAttr("aria-modal", "true");
 
     contentEl.createEl("h2", { text: this.options.title });
 
-    const badge = contentEl.createDiv({ cls: "merge-diff-badge" });
+    const badge = contentEl.createDiv({ cls: "cr-merge-diff-badge" });
     badge.createEl("span", { text: "自动快照已启用", cls: "cr-badge" });
 
-    const infoEl = contentEl.createDiv({ cls: "merge-diff-info" });
+    const infoEl = contentEl.createDiv({ cls: "cr-merge-diff-info" });
     infoEl.createEl("p", {
       text: `合并 "${this.options.deleteNoteName}" 到 "${this.options.keepNoteName}"`,
-      cls: "merge-diff-description"
+      cls: "cr-merge-diff-description"
     });
     infoEl.createEl("p", {
       text: "操作前会为双方创建快照，可随时恢复。",
-      cls: "merge-diff-warning"
+      cls: "cr-merge-diff-warning"
     });
 
-    const controlRow = contentEl.createDiv({ cls: "merge-diff-controls" });
+    const controlRow = contentEl.createDiv({ cls: "cr-merge-diff-controls" });
     const diffBtn = controlRow.createEl("button", {
       text: "差异视图",
       cls: "cr-toggle-btn cr-toggle-active"
@@ -303,16 +401,13 @@ export class MergeDiffModal extends Modal {
       this.renderDiffPanel();
     });
 
-    this.diffContainer = contentEl.createDiv({ cls: "merge-diff-panel" });
-    this.fullPreviewContainer = contentEl.createDiv({ cls: "merge-full-preview" });
+    this.diffContainer = contentEl.createDiv({ cls: "cr-merge-diff-panel" });
+    this.fullPreviewContainer = contentEl.createDiv({ cls: "cr-merge-full-preview" });
     this.renderDiffPanel();
     this.renderFullPreview();
     this.syncModeVisibility();
 
-    const buttonContainer = contentEl.createDiv({ cls: "modal-button-container" });
-    buttonContainer.style.display = "flex";
-    buttonContainer.style.justifyContent = "flex-end";
-    buttonContainer.style.gap = "10px";
+    const buttonContainer = contentEl.createDiv({ cls: "cr-modal-button-container" });
 
     const confirmBtn = buttonContainer.createEl("button", {
       text: "✓ 确认合并",
@@ -366,24 +461,52 @@ export class MergeDiffModal extends Modal {
   private renderFullPreview(): void {
     if (!this.fullPreviewContainer) return;
     this.fullPreviewContainer.empty();
-    this.fullPreviewContainer.addClass("merge-full-preview");
+    this.fullPreviewContainer.addClass("cr-merge-full-preview");
 
-    const wrapper = this.fullPreviewContainer.createDiv({ cls: "merge-full-grid" });
-    const beforeBox = wrapper.createDiv({ cls: "merge-full-box" });
+    const wrapper = this.fullPreviewContainer.createDiv({ cls: "cr-merge-full-grid" });
+    const beforeBox = wrapper.createDiv({ cls: "cr-merge-full-box" });
     beforeBox.createEl("h4", { text: `原内容 (${this.options.keepNoteName})` });
-    const beforeScroll = beforeBox.createDiv({ cls: "merge-full-content" });
+    const beforeScroll = beforeBox.createDiv({ cls: "cr-merge-full-content" });
     beforeScroll.createEl("pre", {
       text: this.options.beforeContent,
-      cls: "merge-full-pre"
+      cls: "cr-merge-full-pre"
     });
 
-    const afterBox = wrapper.createDiv({ cls: "merge-full-box" });
+    const afterBox = wrapper.createDiv({ cls: "cr-merge-full-box" });
     afterBox.createEl("h4", { text: "合并后内容" });
-    const afterScroll = afterBox.createDiv({ cls: "merge-full-content" });
+    const afterScroll = afterBox.createDiv({ cls: "cr-merge-full-content" });
     afterScroll.createEl("pre", {
       text: this.options.afterContent,
-      cls: "merge-full-pre"
+      cls: "cr-merge-full-pre"
     });
+
+    this.bindSyncedScroll(beforeScroll, afterScroll);
+  }
+
+  /**
+   * 同步两个滚动容器的滚动位置（用于左右内容对齐预览）
+   * 使用 requestAnimationFrame 防止循环触发
+   */
+  private bindSyncedScroll(a: HTMLElement, b: HTMLElement): void {
+    let syncing = false;
+    let raf: number | null = null;
+
+    const sync = (from: HTMLElement, to: HTMLElement) => {
+      if (syncing) return;
+      syncing = true;
+      if (raf !== null) {
+        cancelAnimationFrame(raf);
+      }
+      raf = requestAnimationFrame(() => {
+        to.scrollTop = from.scrollTop;
+        to.scrollLeft = from.scrollLeft;
+        syncing = false;
+        raf = null;
+      });
+    };
+
+    a.addEventListener("scroll", () => sync(a, b), { passive: true });
+    b.addEventListener("scroll", () => sync(b, a), { passive: true });
   }
 
   private syncModeVisibility(): void {

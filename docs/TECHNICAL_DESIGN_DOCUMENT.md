@@ -1,7 +1,7 @@
 # Cognitive Razor—技术设计文档
 
-**版本**: 2.0.0
-**最后更新**: 2025-12-13
+**版本**: 2.1.0
+**最后更新**: 2025-12-14
 **状态**: 单一真理源（SSOT）
 
 ## 文档说明
@@ -80,7 +80,8 @@ Cognitive Razor 是一个 Obsidian 桌面插件，提供 AI 驱动的知识管�
 ┌─────────────────▼───────────────────────┐
 │         应用层 (src/core/)              │
 │  PipelineOrchestrator, TaskQueue,       │
-│  VectorIndex, DuplicateManager          │
+│  VectorIndex, DuplicateManager,         │
+│  CruidCache, SimpleLockManager          │
 └─────────────────┬───────────────────────┘
                   │ 单向依赖
 ┌─────────────────▼───────────────────────┐
@@ -101,11 +102,14 @@ Cognitive Razor 是一个 Obsidian 桌面插件，提供 AI 驱动的知识管�
 | PipelineOrchestrator | 管线编排，协调任务链 | `src/core/pipeline-orchestrator.ts` |
 | TaskQueue | 任务调度，并发控制 | `src/core/task-queue.ts` |
 | TaskRunner | 任务执行，调用 Provider API | `src/core/task-runner.ts` |
+| ImageInsertOrchestrator | 图片生成任务编排 | `src/core/image-insert-orchestrator.ts` |
 | VectorIndex | 向量索引，相似度搜索 | `src/core/vector-index.ts` |
 | DuplicateManager | 重复检测和管理 | `src/core/duplicate-manager.ts` |
 | UndoManager | 快照创建和恢复 | `src/core/undo-manager.ts` |
-| IndexHealer | 索引自愈 | `src/core/index-healer.ts` |
+| CruidCache | cruid → TFile 映射缓存（SSOT） | `src/core/cruid-cache.ts` |
+| SimpleLockManager | 内存互斥锁（无持久化） | `src/core/lock-manager.ts` |
 | WorkbenchPanel | 统一工作台 UI | `src/ui/workbench-panel.ts` |
+| ImageInsertModal | 图片生成输入与上下文预览 | `src/ui/image-insert-modal.ts` |
 
 ### 2.3 架构约束
 
@@ -213,11 +217,12 @@ interface TaskRecord {
 }
 
 type TaskType = 
-  | "embedding"              // 生成向量嵌入
-  | "standardizeClassify"    // 标准化和分类
-  | "enrich"                 // 内容生成
-  | "reason:new"             // 新概念推理
-  | "ground";                // 接地验证
+  | "define"    // 定义概念
+  | "tag"       // 生成别名与标签
+  | "write"     // 撰写正文
+  | "index"     // 生成向量索引
+  | "verify"    // 校验内容
+  | "image-generate"; // 图片生成（chat completions image preview）
 
 type TaskState = 
   | "Pending"      // 等待中
@@ -244,9 +249,7 @@ interface VectorIndexMeta {
 
 interface ConceptMeta {
   id: string;              // 概念 UID
-  name: string;            // 概念名称
   type: CRType;            // 知识类型
-  notePath: string;        // Vault 内笔记路径（对外暴露）
   vectorFilePath: string;  // 向量文件路径（内部使用）
   lastModified: number;    // 最后修改时间
   hasEmbedding: boolean;   // 是否有嵌入向量
@@ -258,7 +261,6 @@ interface ConceptMeta {
 ```typescript
 interface ConceptVector {
   id: string;              // 概念 UID
-  name: string;            // 概念名称
   type: CRType;            // 知识类型
   embedding: number[];     // 向量嵌入（1536 维）
   metadata: {
@@ -271,7 +273,8 @@ interface ConceptVector {
 ```
 
 **路径语义约束**：
-- `VectorEntry.path` 和 `SearchResult.path` 必须返回 `notePath`（Vault 内笔记路径）
+- `VectorEntry` 不再存储 `name/path`（避免 SSOT 违规）
+- `SearchResult.name/path` 在运行时通过 `CruidCache` 解析（`cruid → TFile.basename/path`）
 - `vectorFilePath` 仅作为内部字段，不对外暴露
 
 ### 4.4 重复对模型
@@ -279,16 +282,8 @@ interface ConceptVector {
 ```typescript
 interface DuplicatePair {
   id: string;
-  noteA: {
-    nodeId: string;
-    name: string;
-    path: string;
-  };
-  noteB: {
-    nodeId: string;
-    name: string;
-    path: string;
-  };
+  nodeIdA: string;         // 仅保存 cruid
+  nodeIdB: string;         // 仅保存 cruid
   type: CRType;
   similarity: number;      // 相似度 (0-1)
   detectedAt: string;      // 检测时间
@@ -324,30 +319,31 @@ interface SnapshotRecord {
 **流程图**：
 
 ```
-用户输入 → 标准化 → 丰富 → 推理 → 嵌入 → 去重 → 写入文件
+用户输入 → 定义 → 标记 → 撰写 → 索引 → 查重 → 写入文件
 ```
 
 **阶段说明**：
-1. **标准化**（`standardizeClassify`）
+1. **定义**（`define`）
     - 输入：用户描述
     - 输出：五种类型的标准名称 + 类型置信度
     - 用户选择最终类型和名称
-2. **丰富**（`enrich`）
+2. **标记**（`tag`）
     - 输入：标准化元数据
     - 输出：别名列表、标签列表
-3. **推理**（`reason:new`）
+3. **撰写**（`write`）
     - 输入：类型、名称、元数据
     - 输出：结构化内容（根据类型 Schema）
-4. **嵌入**（`embedding`）
+4. **索引**（`index`）
     - 输入：笔记全文
     - 输出：1536 维向量
-5. **去重**（`dedup`）
+5. **查重**（`checking_duplicates`）
     - 在同类型桶内检索相似概念
     - 相似度超过阈值则生成重复对
 6. **写入**
     - 生成 frontmatter + 正文
     - 自动写入文件（无需用户确认）
     - **不创建快照**（删除文件即可回退）
+
 **特殊模式**：
 - **Deepen 预设路径**：支持 `targetPathOverride` 参数，用于批量创建时预设文件路径
 - **抽象深化**：支持 `sources` 参数，传递来源笔记正文用于抽象推理
@@ -463,7 +459,7 @@ interface SnapshotRecord {
 
 **详细步骤**：
 1. **相似检索**
-    - 读取当前笔记的 embedding
+    - 读取当前笔记的索引向量（embedding）
     - 在同类型桶内检索相似概念
     - 返回 topK 候选
 2. **用户勾选**
@@ -471,11 +467,23 @@ interface SnapshotRecord {
     - 用户勾选多个概念
 3. **生成抽象概念**
     - 拼接当前笔记 + 所选相似笔记的完整正文
-    - 作为 `CTX_SOURCES` 传入 `reason:new`
+    - 作为 `CTX_SOURCES` 传入 `write`
     - 生成 1 个同类型、更抽象的概念
 4. **关系写入**
     - 新笔记 `parents` 字段写入来源笔记标题
     - **不修改来源笔记**
+
+### 5.5 Image Generate（图片生成流程）
+
+1. Workbench/命令触发 → 校验编辑模式与光标位置，读取前后上下文（默认各 500 字符）与 frontmatter。
+2. ImageInsertOrchestrator 入队 `image-generate` 任务，payload 包含用户描述、上下文、光标位置、frontmatter。
+3. TaskRunner 执行：
+   - 调用 ProviderManager.generateImage（chat completions 模型 `gemini-3-pro-image-preview`，带 `extra_body.google.image_config`）。
+   - 解析 Markdown data URL，解码二进制。
+   - 记录快照（UndoManager）。
+   - 使用 `vault.getAvailablePathForAttachment` 生成附件路径并写入图片文件。
+   - 在光标处插入 `![alt](path)` Markdown。
+4. 任务完成后可撤销，队列状态实时刷新。
 
 ## 6. Prompt 系统
 
@@ -500,6 +508,7 @@ prompts/
 │   ├── theory-core.md
 │   ├── entity-core.md
 │   └── mechanism-core.md
+├── generate-image.md         # 图片生成模板（chat completions image preview）
 └── *.md                      # 任务模板（过渡形态）
 ```
 
@@ -537,10 +546,11 @@ prompts/
 
 | 任务类型 | 必需槽位 | 可选槽位 |
 |-|-|-|
-| `standardizeClassify` | `CTX_INPUT` | `CTX_LANGUAGE` |
-| `enrich` | `CTX_META` | `CTX_LANGUAGE` |
-| `reason:new` | `CTX_META` | `CTX_SOURCES`, `CTX_LANGUAGE` |
-| `ground` | `CTX_META`, `CTX_CURRENT` | `CTX_SOURCES`, `CTX_LANGUAGE` |
+| `define` | `CTX_INPUT` | `CTX_LANGUAGE` |
+| `tag` | `CTX_META` | `CTX_LANGUAGE` |
+| `write` | `CTX_META` | `CTX_SOURCES`, `CTX_LANGUAGE` |
+| `index` | `CTX_INPUT` | `CTX_LANGUAGE` |
+| `verify` | `CTX_META`, `CTX_CURRENT` | `CTX_SOURCES`, `CTX_LANGUAGE` |
 
 **操作模块槽位**：
 
@@ -598,29 +608,24 @@ data/vectors/
 2. 计算余弦相似度（点积，向量已归一化）
 3. 返回 topK 结果
 
-### 7.2 索引自愈
+### 7.2 CruidCache（SSOT）
 
-**触发源**：
+`CruidCache` 是 `cruid → TFile` 的单一事实来源（SSOT），用于在运行时解析名称/路径，避免在索引中冗余存储。
+
+**监听源**：
 
 | 事件 | 触发时机 | 处理逻辑 |
 |---|-|-|
-| `vault.delete` | 文件删除 | 清理向量索引 + 重复对 |
-| `vault.rename` | 文件重命名/移动 | 更新 `notePath` |
-| `vault.modify` | 文件修改 | 检测 frontmatter 变更，必要时重建索引 |
+| `metadataCache.changed` | frontmatter 解析/变更 | 更新 cruid 映射 |
+| `vault.rename` | 文件重命名/移动 | 更新 path 映射 |
+| `vault.delete` | 文件删除 | 移除映射并触发关联清理 |
 
-**自愈目标**：
-1. **cruid → notePath 映射保持正确**
-    - 文件移动后更新 `notePath`
-    - 文件删除后清理索引条目
-2. **笔记删除后不残留 cruid**
-    - 从向量索引删除
-    - 从重复对列表删除
-3. **父笔记重命名后同步 parents[]**
-    - 查找所有引用该笔记的子笔记
-    - 更新 `parents` 字段中的标题字符串
-**防抖处理**：
-- `modify` 事件使用 1000ms 防抖
-- 避免频繁触发索引重建
+**删除清理**（通过订阅 `CruidCache.onDelete` 执行）：
+1. `VectorIndex.delete(cruid)`：删除向量索引条目与向量文件（不存在则忽略）
+2. `DuplicateManager.removePairsByNodeId(cruid)`：清理 `pending/dismissed` 的重复对（保留 `merging`，避免与 Merge 管线竞态）
+
+**关键变化**：
+- `VectorIndex` 与 `DuplicatePair` 不再持久化 `name/path`，因此 `vault.rename/modify` 不需要索引回写
 
 ### 7.3 文件存储结构
 
@@ -630,7 +635,6 @@ data/vectors/
 data/
 ├── app.log                    # 运行日志
 ├── queue-state.json           # 任务队列状态
-├── pipeline-state.json        # 管线状态
 ├── duplicate-pairs.json       # 重复对列表
 ├── snapshots/                 # 快照目录
 │   ├── index.json
@@ -640,19 +644,23 @@ data/
     └── {type}/{uid}.json
 ```
 
+`app.log` 采用 JSON Lines（单行一条结构化日志），不再提供可切换的格式选项，方便脚本分析与问题定位。
+
 **持久化策略**：
 
 | 文件 | 更新时机 | 格式 |
 |---|-|---|
-| `queue-state.json` | 任务状态变更 | 精简版 TaskRecord |
-| `pipeline-state.json` | 管线阶段变更 | PipelineContext |
-| `duplicate-pairs.json` | 重复对变更 | DuplicatePair[] |
+| `queue-state.json` | 入队 / 暂停状态变更 | MinimalQueueState（pendingTasks + paused） |
+| `duplicate-pairs.json` | 重复对变更 | DuplicatePair[]（仅 nodeIdA/nodeIdB） |
 | `vectors/index.json` | 索引变更 | VectorIndexMeta |
 | `snapshots/index.json` | 快照创建/删除 | SnapshotRecord[] |
 
 **原子写入**：
 - 快照恢复使用原子写入（temp file + rename）
 - 确保数据完整性
+
+**离线迁移**：
+- 提供 `scripts/migrate-phase1-2-data.js` 用于迁移 `data/` 下的旧格式文件（可选，默认会生成备份）
 
 ## 8. 并发与锁
 
@@ -668,55 +676,25 @@ data/
 ### 8.2 锁管理
 
 ```typescript
-interface LockRecord {
-  key: string;              // 锁键（nodeId 或 type）
-  type: "node" | "type";    // 锁类型
-  taskId: string;           // 持有锁的任务 ID
-  acquiredAt: string;       // 获取时间
-  expiresAt?: string;       // 过期时间（用于僵尸锁清理）
+class SimpleLockManager {
+  private processingCruids = new Set<string>();
+  tryAcquire(key: string): boolean;
+  release(key: string): void;
+  isLocked(key: string): boolean;
+  clear(): void;
 }
 ```
 
-**锁生命周期**：
-1. **获取锁**
-    - 任务开始前尝试获取锁
-    - 如果锁已被占用，任务等待或失败
-2. **持有锁**
-    - 任务执行期间持有锁
-    - 锁记录持久化到 `queue-state.json`
-3. **释放锁**
-    - 任务完成/失败/取消后释放锁
-    - 从锁记录中删除
-4. **僵尸锁清理**
-    - 检查 `expiresAt` 字段
-    - 超时锁自动释放
+**设计决策**：
+- 锁仅存在于内存：不做超时、不做持久化
+- 节点锁 key = `cruid`
+- 类型锁 key = `type:${CRType}`（用于 `DuplicateManager.detect` 的同类型互斥）
 
 ### 8.3 重启恢复
 
-**管线持久化**：
-
-```typescript
-interface PipelineStateFile {
-  version: string;
-  pipelines: PipelineContext[];
-  lastUpdated: string;
-}
-```
-
-**恢复策略**：
-1. **加载管线状态**
-    - 读取 `data/pipeline-state.json`
-    - 过滤出未完成的管线（非 `completed` / `failed`）
-2. **恢复管线**
-    - 重新发布阶段事件，驱动 UI 刷新
-    - 不自动继续执行（等待用户操作）
-3. **锁恢复**
-    - 读取 `queue-state.json` 中的锁记录
-    - 恢复锁状态
-    - 清理过期锁
-**关键约束**：
-- 锁恢复策略必须只有一个权威分支
-- 不得出现 restore 后又 clear 互相抵消的情况
+- **锁**：重启后自动清空，不存在僵尸锁
+- **队列状态**：仅持久化 `pendingTasks`（最小字段）与 `paused`，不恢复锁
+- **管线状态**：仅存在于内存，重启后清空（无 `pipeline-state.json`）
 
 ## 9. 错误处理
 
@@ -753,6 +731,9 @@ if (!result.ok) {
 // 继续处理 result.value
 ```
 
+> **同步 API 约定**  
+> 纯同步逻辑（例如 `TaskQueue.enqueue/cancel`）直接抛出 `CognitiveRazorError`，由异步边界使用 `toErr()` 转换为 `Result`。这样既避免了层层返回 Result，也能确保 UI 在 catch 中立即反馈错误。
+
 ### 9.2 错误码分类
 
 | 前缀 | 类别 | 示例 |
@@ -782,6 +763,12 @@ if (!result.ok) {
 - 最大重试次数：`maxRetryAttempts`（默认 3）
 - 退避策略：指数退避（1s, 2s, 4s）
 
+### 9.4 UI 通知策略
+
+- UI 层定义 `ERROR_NOTICE_DURATION = 6000`（毫秒），所有错误类 `Notice` 必须使用该常量，确保反馈时长一致且不会因主题差异导致闪烁。
+- `WorkbenchPanel.showErrorNotice()` 统一封装错误提示，其它无权访问视图实例的组件（如 `DuplicatePreviewModal`、`MergeHistoryModal`）直接传入常量参数，维持相同行为。
+- 成功与中性提示继续沿用 Obsidian 默认展示时长，避免与错误提示混淆。
+
 ## 10. UI 规范
 
 ### 10.1 Workbench 四区布局
@@ -807,6 +794,7 @@ if (!result.ok) {
     - 输入框：用户输入概念描述
     - 创建按钮：启动创建管线
     - 深化按钮：对当前笔记执行 Deepen
+- AI 进度面板：实时显示所有活跃管线的阶段进度（Define → Tag → Write → Index → Verify → Save），提供进度条、阶段提示、失败状态以及快速操作（查看上下文、确认、预览 Diff）
 2. **重复概念区**
     - 显示待处理的重复对
     - 支持排序（相似度/时间/类型）
@@ -822,13 +810,22 @@ if (!result.ok) {
     - 查看快照：显示 Side-by-Side Diff
     - 恢复快照：恢复到快照状态
 
+#### 阶段 3 UI/UX 增强
+
+- 类型置信度表使用 `.cr-confidence-high/.medium/.low` 三个语义类，全部引用主题变量，`renderTypeConfidenceTable()` 不再写入内联颜色，第三方主题可直接覆盖。
+- 标准化入口按钮使用 `setIcon("corner-down-left")` 渲染 Lucide 图标，加载期间仅切换 `is-loading` 类，由 `styles.css` 的 `::after` spinner 负责动画，`SimpleInputModal` 与之保持一致。
+- `改进当前笔记` 按钮通过 `workspace.on("active-leaf-change")` 动态检测激活的 Markdown 笔记：无笔记时禁用并展示“请先打开一个 Markdown 笔记”提示，避免二次点击才看到报错。
+- 所有 `cr-collapsible-section` 头部都带 `aria-controls`，同时 `collapseState` 默认让重复概念与历史记录折叠，强调主操作区；`toggle` 逻辑保证状态与 `aria-expanded` 同步。
+- Workbench 内部错误提示调用 `showErrorNotice()`，确保 6 秒展示时间，与文档 9.4 的策略一致。
+- 设置页的“任务模型配置”采用手风琴卡片：每个任务展示 Provider/模型/参数，实时显示“默认值/自定义”状态，并提供单个/全部重置。无 Provider 时禁用输入并提示配置。
+
 ### 10.2 DiffView 规范
 
 **显示模式**：
 1. **Side-by-Side**（默认）
     - 左侧：原始内容
     - 右侧：新内容
-    - 高亮差异行
+    - 左右面板同步滚动（使用 `requestAnimationFrame` 防止循环触发）
 2. **Unified**（可切换）
     - 统一视图
     - 删除行标记为红色
@@ -852,6 +849,34 @@ if (!result.ok) {
 | `MergeNameSelectionModal` | 合并后名称选择 | A/B 名称 | 最终名称 |
 | `SimpleInputModal` | 单行输入 | 提示文本 | 用户输入 |
 
+### 10.4 主题与样式
+
+- 所有插件样式必须在 `.cr-scope` 下生效，避免污染全局 UI。
+- 颜色必须引用 Obsidian CSS 变量（如 `--text-normal`、`--background-primary`、`--interactive-accent`），禁止硬编码 HEX 与 `rgba(...)`。
+- 半透明/叠加色使用 `color-mix()` 生成（例如成功/失败底色），确保第三方主题兼容。
+- 禁止使用 `!important`，通过提高选择器特异性解决覆盖问题。
+- 插件自定义类名统一使用 `cr-` 前缀。
+
+### 10.5 图标规范
+
+- 所有图标使用 Obsidian 的 `setIcon()` API（Lucide 图标库）渲染，禁止内联 SVG 字符串。
+- icon-only 按钮必须提供 `aria-label`。
+
+### 10.6 无障碍与键盘
+
+- 所有可交互元素必须可通过键盘完成操作：
+  - 具备可聚焦性（原生控件或 `tabindex="0"`）
+  - 使用 `aria-*` 提供语义（例如 `role="dialog"`、`aria-modal="true"`、`aria-label`/`aria-labelledby`、`aria-checked` 等）
+  - 支持 `Enter`/`Space` 触发主要动作
+  - 可选：方向键在列表/卡片项之间移动焦点并切换选择
+- Modal 必须设置 `role="dialog"` 与 `aria-modal="true"`，并提供标题绑定（`aria-labelledby`）。
+
+### 10.7 动画偏好
+
+- 必须尊重 `prefers-reduced-motion`：
+  - 禁用非必要动画（加载指示、进度条等应提供无动画替代）
+  - UndoNotification 的进度条在 reduce 模式下显示静态状态，不做宽度动画
+
 ## 11. 命令系统
 
 ### 11.1 命令列表
@@ -862,6 +887,7 @@ if (!result.ok) {
 | `create-concept` | 创建概念 | 启动创建流程 |
 | `improve-current-note` | 增量改进当前笔记 | 对当前笔记执行 Incremental Edit |
 | `deepen-current-note` | 深化当前笔记 | 对当前笔记执行 Deepen |
+| `insert-image` | 插入图片 | 读取上下文并创建图片生成任务 |
 | `merge-duplicates` | 合并重复对 | 启动 Merge 流程 |
 | `view-duplicates` | 查看重复概念 | 打开重复概念列表 |
 | `view-history` | 查看操作历史 | 打开快照列表 |
@@ -908,18 +934,28 @@ interface PluginSettings {
   maxSnapshotAgeDays: number;       // 快照保留天数
   
   // 功能开关
-  enableGrounding: boolean;         // 启用 Ground 校验
+  enableGrounding: boolean;         // 启用校验
   
   // Provider 配置
   providers: Record<string, ProviderConfig>;
   defaultProviderId: string;
-  
+
   // 任务模型配置
   taskModels: Record<TaskType, TaskModelConfig>;
-  
+
+  // 图片生成配置
+  imageGeneration: {
+    enabled: boolean;
+    defaultSize: "1024x1024" | "1792x1024" | "1024x1792" | string;
+    defaultQuality: "standard" | "hd";
+    defaultStyle: "vivid" | "natural";
+    defaultAspectRatio?: string;
+    defaultImageSize?: string;
+    contextWindowSize: number;
+  };
+
   // 日志设置
   logLevel: "debug" | "info" | "warn" | "error";
-  logFormat: "json" | "pretty" | "compact";
   
   // 嵌入设置
   embeddingDimension: number;       // 向量维度（默认 1536）

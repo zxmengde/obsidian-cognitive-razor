@@ -31,6 +31,7 @@ export const COMMAND_IDS = {
   IMPROVE_NOTE: `${COMMAND_PREFIX}:improve-note`,
   MERGE_DUPLICATES: `${COMMAND_PREFIX}:merge-duplicates`,
   DEEPEN_CURRENT_NOTE: `${COMMAND_PREFIX}:deepen-current-note`,
+  INSERT_IMAGE: `${COMMAND_PREFIX}:insert-image`,
 
   // 重要功能（阶段 2）
   VIEW_DUPLICATES: `${COMMAND_PREFIX}:view-duplicates`,

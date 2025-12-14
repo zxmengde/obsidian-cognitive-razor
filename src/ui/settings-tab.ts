@@ -11,17 +11,19 @@
  * - System: Logging, Backup, Import/Export
  */
 
-import { App, PluginSettingTab, Setting, Notice } from "obsidian";
+import { App, PluginSettingTab, Setting, Notice, setIcon } from "obsidian";
 import type CognitiveRazorPlugin from "../../main";
-import type { ProviderConfig, CRType } from "../types"; // Import CRType explicitly
+import type { ProviderConfig, CRType, TaskType, TaskModelConfig } from "../types"; // Import CRType explicitly
 import { ProviderConfigModal, ConfirmModal } from "./modals";
 import { formatMessage } from "../core/i18n";
+import { DEFAULT_TASK_MODEL_CONFIGS, PARAM_RECOMMENDATIONS } from "../data/settings-store";
 
 type SettingsTabId = "general" | "providers" | "tasks" | "knowledge" | "system";
 
 export class CognitiveRazorSettingTab extends PluginSettingTab {
   plugin: CognitiveRazorPlugin;
   activeTab: SettingsTabId = "general";
+  private taskAccordionState: Record<string, boolean> = {};
 
   constructor(app: App, plugin: CognitiveRazorPlugin) {
     super(app, plugin);
@@ -81,7 +83,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
       
       // 图标
       const icon = item.createSpan({ cls: "cr-nav-icon" });
-      icon.innerHTML = this.getIconSvg(tab.icon);
+      setIcon(icon, tab.icon);
       
       // 文字
       item.createSpan({ text: tab.name, cls: "cr-nav-text" });
@@ -91,19 +93,6 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
         this.display();
       };
     });
-  }
-
-  /**
-   * 获取图标 SVG
-   */
-  private getIconSvg(name: string): string {
-    const icons: Record<string, string> = {
-      settings: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M12 1v6m0 6v6m5.2-13.2l-4.2 4.2m0 6l4.2 4.2M23 12h-6m-6 0H1m18.2 5.2l-4.2-4.2m-6 0l-4.2 4.2"></path></svg>',
-      bot: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"></rect><circle cx="12" cy="5" r="2"></circle><path d="M12 7v4m-4 4h.01M16 15h.01"></path></svg>',
-      folder: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>',
-      wrench: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg>'
-    };
-    return icons[name] || icons.settings;
   }
 
   /**
@@ -323,7 +312,11 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
     const group = container.createDiv({ cls: "cr-setting-group cr-collapsible-group" });
     
     const header = group.createDiv({ cls: "cr-setting-group-header" });
-    const icon = header.createSpan({ cls: "cr-collapse-icon", text: "▶" });
+    const icon = header.createEl("span", { 
+      cls: "cr-collapse-icon",
+      attr: { "aria-hidden": "true" }
+    });
+    setIcon(icon, "chevron-right");
     header.createEl("h3", { text: title, cls: "cr-setting-group-title" });
 
     const content = group.createDiv({ cls: "cr-setting-group-content cr-collapsed" });
@@ -332,10 +325,10 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
       const isCollapsed = content.hasClass("cr-collapsed");
       if (isCollapsed) {
         content.removeClass("cr-collapsed");
-        icon.textContent = "▼";
+        icon.classList.add("is-expanded");
       } else {
         content.addClass("cr-collapsed");
-        icon.textContent = "▶";
+        icon.classList.remove("is-expanded");
       }
     };
 
@@ -529,144 +522,389 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
       }
     ]);
 
-    // 任务模型配置
+    // 任务模型配置（手风琴）
     this.renderTaskModelsSection(container);
+
+    // 图片生成设置
+    this.renderImageGenerationSettings(container);
   }
 
   /**
-   * 任务模型配置区域
+   * 任务模型配置区域（手风琴布局）
    */
   private renderTaskModelsSection(container: HTMLElement): void {
     const t = this.plugin.getI18n().t();
     const providerIds = Object.keys(this.plugin.settings.providers);
+    const containerEl = container.createDiv({ cls: "cr-task-models-container" });
 
-    const taskGroup = container.createDiv({ cls: "cr-setting-group" });
-    taskGroup.createEl("h3", { text: t.settings.groups?.taskModels || "任务模型配置", cls: "cr-setting-group-title" });
+    // Header
+    const header = containerEl.createDiv({ cls: "cr-task-model-header" });
+    header.createEl("h3", { text: t.taskModels?.title || "任务模型配置" });
 
-    const taskTypes: Array<{ key: string; name: string; desc: string }> = [
-      { key: "standardizeClassify", name: t.taskTypes.standardizeClassify.name, desc: t.taskTypes.standardizeClassify.desc },
-      { key: "enrich", name: t.taskTypes.enrich.name, desc: t.taskTypes.enrich.desc },
-      { key: "embedding", name: t.taskTypes.embedding.name, desc: t.taskTypes.embedding.desc },
-      { key: "reason:new", name: t.taskTypes["reason:new"].name, desc: t.taskTypes["reason:new"].desc },
-      { key: "ground", name: t.taskTypes.ground.name, desc: t.taskTypes.ground.desc }
+    const resetAllBtn = header.createEl("button", {
+      text: t.taskModels?.resetAll || "重置全部",
+      cls: "cr-task-model-reset-all"
+    });
+    resetAllBtn.addEventListener("click", () => {
+      new ConfirmModal(this.app, {
+        title: t.taskModels?.resetAll || "重置全部",
+        message: t.taskModels?.resetAllConfirm || "确定要将所有任务配置重置为默认值吗？此操作不可撤销。",
+        onConfirm: async () => {
+          const result = await this.plugin.settingsStore.resetAllTaskModels();
+          if (!result.ok) {
+            new Notice(result.error.message);
+            return;
+          }
+          this.plugin.settings = this.plugin.settingsStore.getSettings();
+          this.display();
+        }
+      }).open();
+    });
+
+    const tasks: Array<{ key: TaskType; name: string; desc: string }> = [
+      { key: "define", name: t.taskModels?.tasks?.define?.name || t.taskTypes.define.name, desc: t.taskModels?.tasks?.define?.desc || t.taskTypes.define.desc },
+      { key: "tag", name: t.taskModels?.tasks?.tag?.name || t.taskTypes.tag.name, desc: t.taskModels?.tasks?.tag?.desc || t.taskTypes.tag.desc },
+      { key: "write", name: t.taskModels?.tasks?.write?.name || t.taskTypes.write.name, desc: t.taskModels?.tasks?.write?.desc || t.taskTypes.write.desc },
+      { key: "index", name: t.taskModels?.tasks?.index?.name || t.taskTypes.index.name, desc: t.taskModels?.tasks?.index?.desc || t.taskTypes.index.desc },
+      { key: "verify", name: t.taskModels?.tasks?.verify?.name || t.taskTypes.verify.name, desc: t.taskModels?.tasks?.verify?.desc || t.taskTypes.verify.desc },
     ];
 
-    taskTypes.forEach(taskType => {
-      const taskConfig = this.plugin.settings.taskModels[taskType.key as keyof typeof this.plugin.settings.taskModels];
-      
-      const setting = new Setting(taskGroup)
-        .setName(taskType.name)
-        .setDesc(taskType.desc);
+    tasks.forEach((task) => {
+      this.renderTaskModelCard(containerEl, task, providerIds);
+    });
+  }
 
-      // Provider 选择
-      setting.addDropdown(dropdown => {
-        if (providerIds.length === 0) {
-          dropdown.addOption("", t.settings.advanced.taskModels.configureProviderFirst);
-        } else {
-          dropdown.addOption("", t.settings.advanced.taskModels.useDefaultProvider);
-          providerIds.forEach(id => dropdown.addOption(id, id));
+  /**
+   * 渲染单个任务模型卡片
+   */
+  private renderTaskModelCard(root: HTMLElement, task: { key: TaskType; name: string; desc: string }, providerIds: string[]): void {
+    const t = this.plugin.getI18n().t();
+    const taskConfig = this.plugin.settings.taskModels[task.key] || DEFAULT_TASK_MODEL_CONFIGS[task.key];
+    const isIndexTask = task.key === "index";
+    const card = root.createDiv({ cls: "cr-task-model-card" });
+
+    const header = card.createDiv({ cls: "cr-task-model-card-header" });
+    const titleWrapper = header.createDiv({ cls: "cr-task-model-card-title" });
+    const chevron = titleWrapper.createSpan({ cls: "collapse-icon", attr: { "aria-hidden": "true" } });
+    setIcon(chevron, "chevron-right");
+    const expanded = this.taskAccordionState[task.key] ?? false;
+    if (expanded) chevron.addClass("is-expanded");
+    const title = titleWrapper.createDiv();
+    title.createEl("div", { text: task.name, cls: "cr-task-model-name" });
+    title.createEl("div", { text: task.desc, cls: "cr-task-model-desc" });
+
+    const actions = header.createDiv({ cls: "cr-task-model-card-actions" });
+
+    const status = actions.createDiv({ cls: "cr-task-model-status" });
+    const statusDot = status.createDiv({ cls: "cr-task-model-status-dot" });
+    const statusText = status.createSpan();
+
+    const applyStatus = (): void => {
+      const isDefault = this.plugin.settingsStore.isTaskModelDefault(task.key);
+      statusDot.className = "cr-task-model-status-dot " + (isDefault ? "is-default" : "is-custom");
+      statusText.setText(
+        isDefault ? (t.taskModels?.isDefault || "默认值") : (t.taskModels?.isCustom || "自定义")
+      );
+    };
+    applyStatus();
+
+    const resetBtn = actions.createEl("button", { text: t.taskModels?.reset || "重置", cls: "cr-task-model-reset-btn" });
+    resetBtn.addEventListener("click", () => {
+      new ConfirmModal(this.app, {
+        title: t.taskModels?.reset || "重置",
+        message: t.taskModels?.resetConfirm || "确定要将此任务配置重置为默认值吗？",
+        onConfirm: async () => {
+          const result = await this.plugin.settingsStore.resetTaskModel(task.key);
+          if (!result.ok) {
+            new Notice(result.error.message);
+            return;
+          }
+          this.plugin.settings = this.plugin.settingsStore.getSettings();
+          this.taskAccordionState[task.key] = true;
+          this.display();
         }
-        dropdown
-          .setValue(taskConfig?.providerId || "")
-          .onChange(async (val) => {
-            const taskModels = { ...this.plugin.settings.taskModels };
-            taskModels[taskType.key as keyof typeof taskModels] = { ...taskConfig, providerId: val };
-            await this.plugin.settingsStore.update({ taskModels });
-          });
-      });
+      }).open();
+    });
 
-      // 模型名称
-      setting.addText(text => {
-        text
-          .setPlaceholder(t.settings.advanced.taskModels.modelNamePlaceholder)
-          .setValue(taskConfig?.model || "")
-          .onChange(async (val) => {
-            const taskModels = { ...this.plugin.settings.taskModels };
-            taskModels[taskType.key as keyof typeof taskModels] = { ...taskConfig, model: val };
-            await this.plugin.settingsStore.update({ taskModels });
-          });
-        text.inputEl.style.width = "150px";
+    const contentWrapper = card.createDiv({ cls: "cr-task-model-card-content" });
+    if (expanded) contentWrapper.addClass("is-expanded");
+    const body = contentWrapper.createDiv({ cls: "cr-task-model-card-body" });
+
+    const toggle = (): void => {
+      const next = !contentWrapper.hasClass("is-expanded");
+      this.taskAccordionState[task.key] = next;
+      contentWrapper.toggleClass("is-expanded", next);
+      chevron.toggleClass("is-expanded", next);
+    };
+    header.addEventListener("click", (e) => {
+      if ((e.target as HTMLElement).closest("button")) return;
+      toggle();
+    });
+
+    const disabledInputs = providerIds.length === 0;
+    const providerHint = disabledInputs ? (t.taskModels?.fields?.providerDesc || "选择 AI Provider（留空则使用默认 Provider）") : "";
+
+    // Provider
+    this.renderFieldRow(body, t.taskModels?.fields?.provider || "Provider", providerHint, (control) => {
+      const dropdown = control.createEl("select", { cls: "dropdown" });
+      const defaultOption = dropdown.createEl("option", { value: "", text: t.taskModels?.fields?.useDefaultProvider || "使用默认 Provider" });
+      defaultOption.value = "";
+      providerIds.forEach((id) => dropdown.createEl("option", { value: id, text: id }));
+      dropdown.value = taskConfig?.providerId || "";
+      if (disabledInputs) {
+        dropdown.disabled = true;
+      } else {
+        dropdown.onchange = async () => {
+          await this.persistTaskModel(task.key, { providerId: dropdown.value });
+          applyStatus();
+        };
+      }
+    });
+
+    // 模型
+    this.renderFieldRow(body, t.taskModels?.fields?.model || "模型名称", t.taskModels?.fields?.modelDesc || "", (control) => {
+      const input = control.createEl("input", { type: "text", cls: "model-input" });
+      input.placeholder = t.taskModels?.fields?.modelDesc || "gpt-4o";
+      input.value = taskConfig?.model || "";
+      input.disabled = disabledInputs;
+      input.addEventListener("change", async () => {
+        await this.persistTaskModel(task.key, { model: input.value });
+        applyStatus();
       });
     });
 
-    // 高级参数配置（可折叠）
-    this.renderCollapsibleGroup(container, t.settings.advanced.taskModels.advancedParams || "高级参数配置", [
-      {
-        name: t.settings.advanced.temperature.name,
-        desc: t.settings.advanced.temperature.desc,
-        control: (setting) => {
-          const taskTypeSelect = setting.controlEl.createEl("select", { cls: "dropdown" });
-          taskTypes.forEach(tt => {
-            const option = taskTypeSelect.createEl("option", { value: tt.key, text: tt.name });
-          });
-          
-          const tempInput = setting.controlEl.createEl("input", { 
-            type: "text", 
-            attr: { placeholder: "0.7", style: "width: 80px; margin-left: 8px;" }
-          });
-          
-          const updateTemp = () => {
-            const selectedTask = taskTypeSelect.value as keyof typeof this.plugin.settings.taskModels;
-            const config = this.plugin.settings.taskModels[selectedTask];
-            tempInput.value = config?.temperature?.toString() || "";
-          };
-          
-          taskTypeSelect.addEventListener("change", updateTemp);
-          updateTemp();
-          
-          tempInput.addEventListener("blur", async () => {
-            const selectedTask = taskTypeSelect.value as keyof typeof this.plugin.settings.taskModels;
-            const num = parseFloat(tempInput.value);
-            if (!isNaN(num) && num >= 0 && num <= 2) {
-              const taskModels = { ...this.plugin.settings.taskModels };
-              const config = taskModels[selectedTask];
-              taskModels[selectedTask] = { ...config, temperature: num };
-              await this.plugin.settingsStore.update({ taskModels });
+    if (!isIndexTask) {
+      // Temperature
+      this.renderFieldRow(
+        body,
+        t.taskModels?.fields?.temperature || "Temperature",
+        `${t.taskModels?.recommended || "推荐"}: ${this.getTemperatureRecommendation(task.key)}`,
+        (control) => {
+          const input = control.createEl("input", { type: "number", cls: "numeric-input", attr: { min: "0", max: "2", step: "0.1" } });
+          input.value = taskConfig?.temperature?.toString() || "";
+          input.disabled = disabledInputs;
+          input.addEventListener("blur", async () => {
+            const parsed = parseFloat(input.value);
+            if (Number.isNaN(parsed) || parsed < 0 || parsed > 2) {
+              new Notice(t.taskModels?.validation?.temperature || "Temperature 需在 0-2 之间");
+              input.value = taskConfig?.temperature?.toString() || "";
+              return;
             }
+            await this.persistTaskModel(task.key, { temperature: parsed });
+            applyStatus();
           });
         }
-      },
-      {
-        name: t.settings.advanced.reasoningEffort.name,
-        desc: t.settings.advanced.reasoningEffort.desc,
-        control: (setting) => {
-          const taskTypeSelect = setting.controlEl.createEl("select", { cls: "dropdown" });
-          taskTypes.forEach(tt => {
-            const option = taskTypeSelect.createEl("option", { value: tt.key, text: tt.name });
-          });
-          
-          const effortSelect = setting.controlEl.createEl("select", { 
-            cls: "dropdown",
-            attr: { style: "margin-left: 8px;" }
-          });
-          effortSelect.createEl("option", { value: "", text: t.settings.advanced.taskModels.notSet });
-          effortSelect.createEl("option", { value: "low", text: t.settings.advanced.taskModels.low });
-          effortSelect.createEl("option", { value: "medium", text: t.settings.advanced.taskModels.medium });
-          effortSelect.createEl("option", { value: "high", text: t.settings.advanced.taskModels.high });
-          
-          const updateEffort = () => {
-            const selectedTask = taskTypeSelect.value as keyof typeof this.plugin.settings.taskModels;
-            const config = this.plugin.settings.taskModels[selectedTask];
-            effortSelect.value = config?.reasoning_effort || "";
-          };
-          
-          taskTypeSelect.addEventListener("change", updateEffort);
-          updateEffort();
-          
-          effortSelect.addEventListener("change", async () => {
-            const selectedTask = taskTypeSelect.value as keyof typeof this.plugin.settings.taskModels;
-            const value = effortSelect.value as "low" | "medium" | "high" | "";
-            const taskModels = { ...this.plugin.settings.taskModels };
-            const config = taskModels[selectedTask];
-            taskModels[selectedTask] = { 
-              ...config, 
-              reasoning_effort: value || undefined 
-            };
-            await this.plugin.settingsStore.update({ taskModels });
+      );
+
+      // TopP
+      this.renderFieldRow(
+        body,
+        t.taskModels?.fields?.topP || "Top P",
+        `${t.taskModels?.recommended || "推荐"}: ${PARAM_RECOMMENDATIONS.topP.default.recommended}`,
+        (control) => {
+          const input = control.createEl("input", { type: "number", cls: "numeric-input", attr: { min: "0", max: "1", step: "0.01" } });
+          input.value = taskConfig?.topP?.toString() || "";
+          input.disabled = disabledInputs;
+          input.addEventListener("blur", async () => {
+            const parsed = parseFloat(input.value);
+            if (Number.isNaN(parsed) || parsed < 0 || parsed > 1) {
+              new Notice(t.taskModels?.validation?.topP || "Top P 需在 0-1 之间");
+              input.value = taskConfig?.topP?.toString() || "";
+              return;
+            }
+            await this.persistTaskModel(task.key, { topP: parsed });
+            applyStatus();
           });
         }
-      }
-    ]);
+      );
+
+      // Reasoning effort
+      this.renderFieldRow(
+        body,
+        t.taskModels?.fields?.reasoningEffort || "推理强度",
+        t.taskModels?.fields?.reasoningEffortDesc || "",
+        (control) => {
+          const select = control.createEl("select", { cls: "dropdown" });
+          select.createEl("option", { value: "", text: t.taskModels?.reasoningEffortOptions?.notSet || "不设置" });
+          select.createEl("option", { value: "low", text: t.taskModels?.reasoningEffortOptions?.low || "低" });
+          select.createEl("option", { value: "medium", text: t.taskModels?.reasoningEffortOptions?.medium || "中" });
+          select.createEl("option", { value: "high", text: t.taskModels?.reasoningEffortOptions?.high || "高" });
+          select.value = taskConfig?.reasoning_effort || "";
+          select.disabled = disabledInputs;
+          select.addEventListener("change", async () => {
+            await this.persistTaskModel(task.key, { reasoning_effort: select.value as TaskModelConfig["reasoning_effort"] });
+            applyStatus();
+          });
+        }
+      );
+    } else {
+      // Embedding dimension
+      this.renderFieldRow(
+        body,
+        t.taskModels?.fields?.embeddingDimension || "嵌入维度",
+        `${t.taskModels?.recommended || "推荐"}: ${PARAM_RECOMMENDATIONS.embeddingDimension.recommended}`,
+        (control) => {
+          const select = control.createEl("select", { cls: "dropdown" });
+          PARAM_RECOMMENDATIONS.embeddingDimension.options.forEach((opt) => {
+            select.createEl("option", { value: opt.toString(), text: opt.toString() });
+          });
+          select.value = (taskConfig?.embeddingDimension || PARAM_RECOMMENDATIONS.embeddingDimension.options[3]).toString();
+          select.disabled = disabledInputs;
+          select.addEventListener("change", async () => {
+            await this.persistTaskModel(task.key, { embeddingDimension: parseInt(select.value, 10) });
+            applyStatus();
+          });
+        }
+      );
+    }
+  }
+
+  private renderFieldRow(
+    container: HTMLElement,
+    label: string,
+    hint: string,
+    renderControl: (control: HTMLElement) => void
+  ): void {
+    const row = container.createDiv({ cls: "cr-task-model-field" });
+    row.createDiv({ cls: "cr-task-model-field-label", text: label });
+    const control = row.createDiv({ cls: "cr-task-model-field-control" });
+    renderControl(control);
+    if (hint) {
+      row.createDiv({ cls: "cr-task-model-field-hint", text: hint });
+    }
+  }
+
+  private async persistTaskModel(taskType: TaskType, partial: Partial<TaskModelConfig>): Promise<void> {
+    const taskModels = { ...this.plugin.settings.taskModels };
+    taskModels[taskType] = {
+      ...DEFAULT_TASK_MODEL_CONFIGS[taskType],
+      ...taskModels[taskType],
+      ...partial
+    };
+    const result = await this.plugin.settingsStore.update({ taskModels });
+    if (result.ok) {
+      this.plugin.settings = this.plugin.settingsStore.getSettings();
+    } else {
+      new Notice(result.error.message);
+    }
+  }
+
+  private getTemperatureRecommendation(taskType: TaskType): string {
+    const temp = PARAM_RECOMMENDATIONS.temperature as Record<string, { recommended: string }>;
+    return temp[taskType]?.recommended || temp.define.recommended;
+  }
+
+  /**
+   * 图片生成设置
+   */
+  private renderImageGenerationSettings(container: HTMLElement): void {
+    const t = this.plugin.getI18n().t();
+    const group = container.createDiv({ cls: "cr-setting-group" });
+    group.createEl("h3", { text: t.imageGeneration?.title || "图片生成设置", cls: "cr-setting-group-title" });
+
+    new Setting(group)
+      .setName(t.imageGeneration?.enabled?.name || "启用图片生成")
+      .setDesc(t.imageGeneration?.enabled?.desc || "允许在笔记中插入 AI 生成的图片")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.imageGeneration.enabled)
+          .onChange(async (val) => {
+            await this.plugin.settingsStore.update({
+              imageGeneration: { ...this.plugin.settings.imageGeneration, enabled: val }
+            });
+          })
+      );
+
+    new Setting(group)
+      .setName(t.imageGeneration?.defaultSize?.name || "默认图片尺寸")
+      .setDesc(t.imageGeneration?.defaultSize?.desc || "选择生成图片的默认尺寸")
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOption("1024x1024", t.imageGeneration?.defaultSize?.square || "正方形 (1024×1024)")
+          .addOption("1792x1024", t.imageGeneration?.defaultSize?.landscape || "横向 (1792×1024)")
+          .addOption("1024x1792", t.imageGeneration?.defaultSize?.portrait || "纵向 (1024×1792)")
+          .setValue(this.plugin.settings.imageGeneration.defaultSize)
+          .onChange(async (val) => {
+            await this.plugin.settingsStore.update({
+              imageGeneration: { ...this.plugin.settings.imageGeneration, defaultSize: val }
+            });
+          });
+      });
+
+    new Setting(group)
+      .setName(t.imageGeneration?.defaultQuality?.name || "图片质量")
+      .setDesc(t.imageGeneration?.defaultQuality?.desc || "standard: 标准质量，hd: 高清质量")
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOption("standard", t.imageGeneration?.defaultQuality?.standard || "标准")
+          .addOption("hd", t.imageGeneration?.defaultQuality?.hd || "高清")
+          .setValue(this.plugin.settings.imageGeneration.defaultQuality)
+          .onChange(async (val) => {
+            await this.plugin.settingsStore.update({
+              imageGeneration: { ...this.plugin.settings.imageGeneration, defaultQuality: val as "standard" | "hd" }
+            });
+          });
+      });
+
+    new Setting(group)
+      .setName(t.imageGeneration?.defaultStyle?.name || "图片风格")
+      .setDesc(t.imageGeneration?.defaultStyle?.desc || "选择图片风格")
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOption("vivid", t.imageGeneration?.defaultStyle?.vivid || "鲜艳")
+          .addOption("natural", t.imageGeneration?.defaultStyle?.natural || "自然")
+          .setValue(this.plugin.settings.imageGeneration.defaultStyle)
+          .onChange(async (val) => {
+            await this.plugin.settingsStore.update({
+              imageGeneration: { ...this.plugin.settings.imageGeneration, defaultStyle: val as "vivid" | "natural" }
+            });
+          });
+      });
+
+    new Setting(group)
+      .setName(t.imageGeneration?.defaultAspectRatio?.name || "宽高比")
+      .setDesc(t.imageGeneration?.defaultAspectRatio?.desc || "Gemini 图像预览使用的宽高比")
+      .addDropdown((dropdown) => {
+        ["1:1", "16:9", "9:16", "4:3", "3:4"].forEach((ratio) => dropdown.addOption(ratio, ratio));
+        dropdown
+          .setValue(this.plugin.settings.imageGeneration.defaultAspectRatio || "1:1")
+          .onChange(async (val) => {
+            await this.plugin.settingsStore.update({
+              imageGeneration: { ...this.plugin.settings.imageGeneration, defaultAspectRatio: val }
+            });
+          });
+      });
+
+    new Setting(group)
+      .setName(t.imageGeneration?.defaultImageSize?.name || "输出分辨率")
+      .setDesc(t.imageGeneration?.defaultImageSize?.desc || "Google image_config.image_size，如 2K/1K")
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOption("2K", "2K")
+          .addOption("1K", "1K")
+          .addOption("1024x1024", "1024x1024")
+          .setValue(this.plugin.settings.imageGeneration.defaultImageSize || "2K")
+          .onChange(async (val) => {
+            await this.plugin.settingsStore.update({
+              imageGeneration: { ...this.plugin.settings.imageGeneration, defaultImageSize: val }
+            });
+          });
+      });
+
+    new Setting(group)
+      .setName(t.imageGeneration?.contextWindowSize?.name || "上下文窗口大小")
+      .setDesc(t.imageGeneration?.contextWindowSize?.desc || "读取光标前后用于提示词的字符数")
+      .addSlider((slider) => {
+        slider
+          .setLimits(100, 1000, 50)
+          .setValue(this.plugin.settings.imageGeneration.contextWindowSize)
+          .setDynamicTooltip()
+          .onChange(async (val) => {
+            await this.plugin.settingsStore.update({
+              imageGeneration: { ...this.plugin.settings.imageGeneration, contextWindowSize: val }
+            });
+          });
+      });
   }
 
 
@@ -823,6 +1061,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
     const t = this.plugin.getI18n().t();
     new ProviderConfigModal(this.app, {
       mode: "add",
+      title: t.modals.addProvider.title,
       onSave: async (id, config) => {
         const result = await this.plugin.settingsStore.addProvider(id, config);
         if (result.ok) {
@@ -841,6 +1080,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
     const t = this.plugin.getI18n().t();
     new ProviderConfigModal(this.app, {
       mode: "edit",
+      title: t.modals.editProvider.title,
       providerId: id,
       currentConfig: config,
       onSave: async (pid, newConfig) => {

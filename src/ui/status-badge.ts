@@ -13,7 +13,7 @@
  * - 空闲: [CR: ✓]
  */
 
-import { Plugin, Menu } from "obsidian";
+import { Plugin, Menu, setIcon } from "obsidian";
 import type { QueueStatus } from "../types";
 import { formatStatusBadgeText } from "./status-badge-format";
 
@@ -49,8 +49,11 @@ export class StatusBadge {
     this.statusBarItem.empty();
 
     // 使用格式化函数生成状态文本
-    const statusText = formatStatusBadgeText(this.queueStatus, this.isOffline);
-    
+    const statusDisplay = formatStatusBadgeText(this.queueStatus, this.isOffline);
+
+    const iconSpan = this.statusBarItem.createSpan({ cls: "cr-status-icon" });
+    setIcon(iconSpan, statusDisplay.icon);
+
     // 创建状态文本元素
     const textSpan = this.statusBarItem.createSpan({
       cls: "cr-status-text",
@@ -58,7 +61,7 @@ export class StatusBadge {
         "aria-label": this.getAriaLabel()
       }
     });
-    textSpan.textContent = statusText;
+    textSpan.textContent = statusDisplay.text;
 
     // 根据状态添加样式类
     this.updateStatusClasses();
@@ -280,7 +283,7 @@ export class StatusBadge {
    * 获取当前状态文本（用于测试）
    */
   public getStatusText(): string {
-    return formatStatusBadgeText(this.queueStatus, this.isOffline);
+    return formatStatusBadgeText(this.queueStatus, this.isOffline).text;
   }
 
   /**

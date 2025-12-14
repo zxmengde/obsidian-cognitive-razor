@@ -7,7 +7,7 @@
  * - 用于创建概念等简单输入场景
  */
 
-import { App, Modal, Notice } from "obsidian";
+import { App, Modal, Notice, setIcon } from "obsidian";
 
 /**
  * 简单输入 Modal 选项
@@ -69,7 +69,7 @@ export class SimpleInputModal extends Modal {
         "title": "提交 (Enter)"
       }
     });
-    submitBtn.innerHTML = `⏎`;
+    setIcon(submitBtn, "corner-down-left");
 
     // 自动聚焦
     input.focus();

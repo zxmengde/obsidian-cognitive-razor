@@ -1,8 +1,6 @@
 /** 撤销管理器 - 负责快照的创建、恢复和管理 */
 
 import {
-  IUndoManager,
-  IFileStorage,
   ILogger,
   SnapshotRecord,
   SnapshotIndex,
@@ -10,13 +8,16 @@ import {
   SnapshotMetadata,
   Result,
   ok,
-  err
+  err,
+  CognitiveRazorError,
+  toErr
 } from "../types";
+import type { FileStorage } from "../data/file-storage";
 import { formatCRTimestamp } from "../utils/date-utils";
 import { createHash } from "crypto";
 
-export class UndoManager implements IUndoManager {
-  private fileStorage: IFileStorage;
+export class UndoManager {
+  private fileStorage: FileStorage;
   private logger: ILogger;
   private snapshotsDir: string;
   private indexPath: string;
@@ -26,7 +27,7 @@ export class UndoManager implements IUndoManager {
   private readonly MAX_SNAPSHOT_SIZE = 10 * 1024 * 1024; // 10MB 防止 OOM
 
   constructor(
-    fileStorage: IFileStorage,
+    fileStorage: FileStorage,
     logger: ILogger,
     snapshotsDir: string = "data/snapshots",
     maxSnapshots: number = 100,
@@ -158,10 +159,7 @@ export class UndoManager implements IUndoManager {
       }
 
       // 路径合法性校验（防止路径遍历 / 绝对路径）
-      const pathValidation = this.validateFilePath(filePath);
-      if (!pathValidation.ok) {
-        return pathValidation as Result<string>;
-      }
+      this.validateFilePath(filePath);
 
       // 内容大小校验
       const fileSize = Buffer.byteLength(content, 'utf8');
@@ -193,10 +191,7 @@ export class UndoManager implements IUndoManager {
       };
       
       // 验证快照记录完整性
-      const validationResult = this.validateSnapshotRecord(snapshot);
-      if (!validationResult.ok) {
-        return validationResult as Result<string>;
-      }
+      this.validateSnapshotRecord(snapshot);
 
       // 保存快照文件
       const snapshotPath = `${this.snapshotsDir}/${snapshotId}.json`;
@@ -240,7 +235,7 @@ export class UndoManager implements IUndoManager {
         filePath,
         taskId
       });
-      return err("E303", "创建快照失败", error);
+      return toErr(error, "E303", "创建快照失败");
     }
   }
 
@@ -506,17 +501,16 @@ export class UndoManager implements IUndoManager {
   /**
    * 验证文件路径，防止路径遍历 / 绝对路径 / 非 md 文件
    */
-  private validateFilePath(filePath: string): Result<void> {
+  private validateFilePath(filePath: string): void {
     if (filePath.includes("..")) {
-      return err("E303", "文件路径不能包含 '..'");
+      throw new CognitiveRazorError("E303", "文件路径不能包含 '..'");
     }
     if (/^([A-Za-z]:|\\\\|\/)/.test(filePath)) {
-      return err("E303", "文件路径必须是相对路径");
+      throw new CognitiveRazorError("E303", "文件路径必须是相对路径");
     }
     if (!filePath.endsWith(".md")) {
-      return err("E303", "仅支持 Markdown 文件快照 (.md)");
+      throw new CognitiveRazorError("E303", "仅支持 Markdown 文件快照 (.md)");
     }
-    return ok(undefined);
   }
 
   /**
@@ -534,50 +528,48 @@ export class UndoManager implements IUndoManager {
    * Property 11: Snapshot Record Completeness
    * 快照记录必须包含所有必需字段: id, nodeId, taskId, path, content, created, fileSize, checksum
    */
-  private validateSnapshotRecord(snapshot: SnapshotRecord): Result<void> {
+  private validateSnapshotRecord(snapshot: SnapshotRecord): void {
     const requiredFields: (keyof SnapshotRecord)[] = [
       'id', 'nodeId', 'taskId', 'path', 'content', 'created', 'fileSize', 'checksum'
     ];
     
     for (const field of requiredFields) {
       if (snapshot[field] === undefined || snapshot[field] === null) {
-        return err("E303", `快照记录缺少必需字段: ${field}`);
+        throw new CognitiveRazorError("E303", `快照记录缺少必需字段: ${field}`);
       }
     }
     
     // 验证字段类型
     if (typeof snapshot.id !== 'string' || snapshot.id.length === 0) {
-      return err("E303", "快照 ID 必须是非空字符串");
+      throw new CognitiveRazorError("E303", "快照 ID 必须是非空字符串");
     }
     if (typeof snapshot.nodeId !== 'string' || snapshot.nodeId.length === 0) {
-      return err("E303", "节点 ID 必须是非空字符串");
+      throw new CognitiveRazorError("E303", "节点 ID 必须是非空字符串");
     }
     if (typeof snapshot.taskId !== 'string' || snapshot.taskId.length === 0) {
-      return err("E303", "任务 ID 必须是非空字符串");
+      throw new CognitiveRazorError("E303", "任务 ID 必须是非空字符串");
     }
     if (typeof snapshot.path !== 'string' || snapshot.path.length === 0) {
-      return err("E303", "文件路径必须是非空字符串");
+      throw new CognitiveRazorError("E303", "文件路径必须是非空字符串");
     }
     if (typeof snapshot.content !== 'string') {
-      return err("E303", "文件内容必须是字符串");
+      throw new CognitiveRazorError("E303", "文件内容必须是字符串");
     }
     if (typeof snapshot.created !== 'string' || snapshot.created.length === 0) {
-      return err("E303", "创建时间必须是非空字符串");
+      throw new CognitiveRazorError("E303", "创建时间必须是非空字符串");
     }
     if (typeof snapshot.fileSize !== 'number' || snapshot.fileSize < 0) {
-      return err("E303", "文件大小必须是非负数");
+      throw new CognitiveRazorError("E303", "文件大小必须是非负数");
     }
     if (typeof snapshot.checksum !== 'string' || snapshot.checksum.length === 0) {
-      return err("E303", "校验和必须是非空字符串");
+      throw new CognitiveRazorError("E303", "校验和必须是非空字符串");
     }
     
     // 验证 ISO 8601 时间格式
     const dateRegex = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
     if (!dateRegex.test(snapshot.created)) {
-      return err("E303", "创建时间必须是 yyyy-MM-DD HH:mm:ss 格式");
+      throw new CognitiveRazorError("E303", "创建时间必须是 yyyy-MM-DD HH:mm:ss 格式");
     }
-    
-    return ok(undefined);
   }
 
   /**

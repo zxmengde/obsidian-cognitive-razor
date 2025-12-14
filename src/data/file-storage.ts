@@ -1,7 +1,6 @@
 /** FileStorage - 提供原子化文件操作，确保数据完整性 */
 
 import { 
-  IFileStorage, 
   Result, 
   ok, 
   err,
@@ -30,15 +29,8 @@ export const APP_LOG_FILE = `${DATA_DIR}/app.log`;
 /** 默认队列状态 */
 export const DEFAULT_QUEUE_STATE: QueueStateFile = {
   version: "1.0.0",
-  tasks: [],
-  concurrency: 1,
+  pendingTasks: [],
   paused: false,
-  stats: {
-    totalProcessed: 0,
-    totalFailed: 0,
-    totalCancelled: 0,
-  },
-  locks: [],
 };
 
 
@@ -68,7 +60,7 @@ export const DEFAULT_SNAPSHOT_INDEX: SnapshotIndex = {
  * 默认向量索引元数据
  */
 export const DEFAULT_VECTOR_INDEX_META: VectorIndexMeta = {
-  version: "2.0",
+  version: "3.0",
   lastUpdated: Date.now(),
   stats: {
     totalConcepts: 0,
@@ -84,7 +76,7 @@ export const DEFAULT_VECTOR_INDEX_META: VectorIndexMeta = {
 };
 
 /** FileStorage 实现类 - 目录初始化、原子写入、数据完整性校验 */
-export class FileStorage implements IFileStorage {
+export class FileStorage {
   private vault: Vault;
   private basePath: string;
   private initialized = false;

@@ -494,7 +494,7 @@ export class SimpleDiffView extends Modal {
     const diffContainer = contentEl.createDiv({ cls: "cr-unified-diff" });
 
     diffLines.forEach((line, index) => {
-      const row = diffContainer.createDiv({ cls: `cr-diff-row cr-${line.type}` });
+      const row = diffContainer.createDiv({ cls: `cr-diff-row cr-diff-${line.type}` });
       row.createSpan({
         text: line.type === "add" ? "+" : line.type === "remove" ? "-" : " ",
         cls: "cr-diff-prefix"
@@ -609,4 +609,32 @@ export function renderSideBySideDiff(
   });
   const rightContent = rightPanel.createDiv({ cls: "cr-panel-content-wrapper" });
   renderContentWithLineNumbers(rightContent, newContent);
+
+  bindSyncedScroll(leftContent, rightContent);
+}
+
+/**
+ * 同步两个滚动容器的滚动位置（Side-by-Side Diff）
+ * 使用 requestAnimationFrame 防止循环触发
+ */
+function bindSyncedScroll(a: HTMLElement, b: HTMLElement): void {
+  let syncing = false;
+  let raf: number | null = null;
+
+  const sync = (from: HTMLElement, to: HTMLElement) => {
+    if (syncing) return;
+    syncing = true;
+    if (raf !== null) {
+      cancelAnimationFrame(raf);
+    }
+    raf = requestAnimationFrame(() => {
+      to.scrollTop = from.scrollTop;
+      to.scrollLeft = from.scrollLeft;
+      syncing = false;
+      raf = null;
+    });
+  };
+
+  a.addEventListener("scroll", () => sync(a, b), { passive: true });
+  b.addEventListener("scroll", () => sync(b, a), { passive: true });
 }

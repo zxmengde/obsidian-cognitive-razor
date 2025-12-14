@@ -11,6 +11,11 @@
 
 import type { QueueStatus } from "../types";
 
+export interface StatusBadgeFormatResult {
+  text: string;
+  icon: string;
+}
+
 /**
  * 格式化状态徽章文本
  * 
@@ -25,10 +30,10 @@ import type { QueueStatus } from "../types";
  * @param isOffline 是否离线（可选，默认 false）
  * @returns 格式化的状态文本
  */
-export function formatStatusBadgeText(status: QueueStatus, isOffline: boolean = false): string {
+export function formatStatusBadgeText(status: QueueStatus, isOffline: boolean = false): StatusBadgeFormatResult {
   // 离线状态
   if (isOffline) {
-    return "[CR: 📴]";
+    return { text: "[CR: OFFLINE]", icon: "plug-zap" };
   }
 
   const { running, pending, failed, paused } = status;
@@ -36,26 +41,26 @@ export function formatStatusBadgeText(status: QueueStatus, isOffline: boolean = 
 
   // 空闲状态：没有活动任务且没有失败任务
   if (activeCount === 0 && failed === 0) {
-    return "[CR: ✓]";
+    return { text: "[CR: IDLE]", icon: "check" };
   }
 
   // 暂停状态：队列暂停且有活动任务
   if (paused && activeCount > 0) {
-    return `[CR: ⏸️ ${activeCount}]`;
+    return { text: `[CR: ${activeCount} PAUSED]`, icon: "pause" };
   }
 
   // 有失败任务的状态
   if (failed > 0) {
     if (activeCount > 0) {
       // 有活动任务且有失败：[CR: running/pending ⚠️failed]
-      return `[CR: ${running}/${pending} ⚠️${failed}]`;
+      return { text: `[CR: ${running}/${pending} FAIL ${failed}]`, icon: "alert-triangle" };
     } else {
       // 只有失败任务，没有活动任务
-      return `[CR: ⚠️${failed}]`;
+      return { text: `[CR: FAIL ${failed}]`, icon: "alert-triangle" };
     }
   }
 
   // 正常状态：有活动任务，无失败
   // [CR: running/pending ⏳]
-  return `[CR: ${running}/${pending} ⏳]`;
+  return { text: `[CR: ${running}/${pending}]`, icon: "loader-2" };
 }

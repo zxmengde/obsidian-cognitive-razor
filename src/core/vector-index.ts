@@ -1,7 +1,6 @@
 /** VectorIndex - 按类型分桶存储向量，支持延迟加载和增量更新 */
 
 import {
-  IVectorIndex,
   ILogger,
   VectorEntry,
   SearchResult,
@@ -11,20 +10,22 @@ import {
   ok,
   err,
   Err,
-  IFileStorage,
   ConceptVector,
   VectorIndexMeta,
   ConceptMeta,
 } from "../types";
 import { VECTORS_DIR, DEFAULT_VECTOR_INDEX_META } from "../data/file-storage";
+import type { FileStorage } from "../data/file-storage";
 import { formatCRTimestamp } from "../utils/date-utils";
+import type { CruidCache } from "./cruid-cache";
 
 /** VectorIndex 实现类 - 分桶存储、延迟加载、增量更新 */
-export class VectorIndex implements IVectorIndex {
-  private fileStorage: IFileStorage;
+export class VectorIndex {
+  private fileStorage: FileStorage;
   private logger: ILogger | null;
   private model: string;
   private dimension: number;
+  private cruidCache: CruidCache | null;
   
   // 元数据索引（轻量级，始终在内存中）
   private indexMeta: VectorIndexMeta | null = null;
@@ -34,15 +35,17 @@ export class VectorIndex implements IVectorIndex {
 
   /** 构造函数 */
   constructor(
-    fileStorage: IFileStorage,
+    fileStorage: FileStorage,
     model: string = "text-embedding-3-small",
     dimension: number = 1536,
-    logger: ILogger | null = null
+    logger: ILogger | null = null,
+    cruidCache: CruidCache | null = null
   ) {
     this.fileStorage = fileStorage;
     this.logger = logger;
     this.model = model;
     this.dimension = dimension;
+    this.cruidCache = cruidCache;
   }
 
   /** 加载索引元数据 */
@@ -78,8 +81,8 @@ export class VectorIndex implements IVectorIndex {
 
       this.indexMeta = metaResult.value;
       
-      // 迁移旧格式数据：检测并修复缺少 notePath 的条目
-      const migrationResult = await this.migrateOldFormat();
+      // 迁移旧格式数据：移除冗余字段（name/notePath 等）
+      const migrationResult = await this.migrateMetaSchema();
       if (!migrationResult.ok) {
         // 迁移失败不阻断加载，仅记录警告
         this.logger?.warn("VectorIndex", "迁移旧格式数据时出现警告", {
@@ -98,43 +101,62 @@ export class VectorIndex implements IVectorIndex {
   }
   
   /**
-   * 迁移旧格式数据
-   * 旧格式：只有 filePath（向量文件路径）
-   * 新格式：notePath（笔记路径）+ vectorFilePath（向量文件路径）
+   * 迁移索引元数据结构（删除冗余字段，修复旧字段命名）
+   *
+   * 目标：ConceptMeta 中不再保存 name/notePath；向量文件不再保存 name。
    */
-  private async migrateOldFormat(): Promise<Result<void>> {
+  private async migrateMetaSchema(): Promise<Result<void>> {
     if (!this.indexMeta) {
       return ok(undefined);
     }
     
     let needsSave = false;
-    const conceptsToMigrate: string[] = [];
+    const migratedConceptIds: string[] = [];
     
     for (const [uid, meta] of Object.entries(this.indexMeta.concepts)) {
-      // 检测旧格式：有 filePath 但没有 notePath/vectorFilePath
-      const legacyMeta = meta as unknown as { filePath?: string; notePath?: string; vectorFilePath?: string };
-      
-      if (legacyMeta.filePath && !legacyMeta.notePath) {
-        // 旧格式条目，需要迁移
-        conceptsToMigrate.push(uid);
-        
-        // 设置 vectorFilePath（从旧的 filePath）
-        (meta as unknown as { vectorFilePath: string }).vectorFilePath = legacyMeta.filePath;
-        
-        // notePath 无法自动推断，标记为空字符串（需要重建）
-        (meta as unknown as { notePath: string }).notePath = "";
-        
-        // 删除旧字段
+      const legacyMeta = meta as unknown as Record<string, unknown>;
+      let migrated = false;
+
+      // 兼容：旧字段 filePath → vectorFilePath
+      if (typeof legacyMeta.filePath === "string" && typeof legacyMeta.vectorFilePath !== "string") {
+        (legacyMeta as Record<string, unknown>).vectorFilePath = legacyMeta.filePath;
         delete legacyMeta.filePath;
-        
+        migrated = true;
+      }
+
+      // 移除冗余字段
+      if ("name" in legacyMeta) {
+        delete legacyMeta.name;
+        migrated = true;
+      }
+      if ("notePath" in legacyMeta) {
+        delete legacyMeta.notePath;
+        migrated = true;
+      }
+
+      // 修复缺失的 id / vectorFilePath
+      if (typeof legacyMeta.id !== "string") {
+        (legacyMeta as Record<string, unknown>).id = uid;
+        migrated = true;
+      }
+      if (typeof legacyMeta.vectorFilePath !== "string") {
+        const type = typeof legacyMeta.type === "string" ? legacyMeta.type : "Entity";
+        (legacyMeta as Record<string, unknown>).vectorFilePath = `${type}/${uid}.json`;
+        migrated = true;
+      }
+
+      if (migrated) {
         needsSave = true;
+        migratedConceptIds.push(uid);
       }
     }
     
     if (needsSave) {
-      this.logger?.warn("VectorIndex", `迁移了 ${conceptsToMigrate.length} 个旧格式条目，notePath 需要通过重新索引修复`, {
-        migratedCount: conceptsToMigrate.length,
-        conceptIds: conceptsToMigrate
+      // 更新版本号（仅用于诊断，不影响功能）
+      this.indexMeta.version = "3.0";
+
+      this.logger?.info("VectorIndex", `向量索引元数据已迁移，共 ${migratedConceptIds.length} 个条目`, {
+        migratedCount: migratedConceptIds.length
       });
       const saveResult = await this.saveIndexMeta();
       if (!saveResult.ok) {
@@ -170,7 +192,6 @@ export class VectorIndex implements IVectorIndex {
       // 构建概念向量数据
       const conceptVector: ConceptVector = {
         id: entry.uid,
-        name: entry.name,
         type: entry.type,
         embedding: normalizedEmbedding,
         metadata: {
@@ -210,9 +231,7 @@ export class VectorIndex implements IVectorIndex {
 
       this.indexMeta.concepts[entry.uid] = {
         id: entry.uid,
-        name: entry.name,
         type: entry.type,
-        notePath: entry.path,
         vectorFilePath: `${entry.type}/${entry.uid}.json`,
         lastModified: now,
         hasEmbedding: true,
@@ -333,12 +352,12 @@ export class VectorIndex implements IVectorIndex {
         }
       }
 
-      // 转换为 SearchResult 格式（path 语义为 notePath）
+      // 转换为 SearchResult 格式（name/path 运行时通过 CruidCache 解析）
       const searchResults: SearchResult[] = topResults.map((r) => ({
         uid: r.vector.id,
         similarity: r.similarity,
-        name: r.vector.name,
-        path: this.indexMeta!.concepts[r.vector.id]?.notePath || "",
+        name: this.cruidCache?.getName(r.vector.id) || r.vector.id,
+        path: this.cruidCache?.getPath(r.vector.id) || "",
       }));
 
       return ok(searchResults);
@@ -374,7 +393,7 @@ export class VectorIndex implements IVectorIndex {
     };
   }
 
-  /** 根据 UID 获取条目（path 语义为 notePath） */
+  /** 根据 UID 获取条目（用于复用已有向量） */
   getEntry(uid: string): VectorEntry | undefined {
     if (!this.indexMeta) {
       return undefined;
@@ -392,31 +411,11 @@ export class VectorIndex implements IVectorIndex {
         uid: cached.id,
         type: cached.type,
         embedding: cached.embedding,
-        name: cached.name,
-        path: meta.notePath,
         updated: formatCRTimestamp(new Date(cached.metadata.updatedAt)),
       };
     }
 
     // 否则返回元数据（不包含向量）
-    return undefined;
-  }
-
-  /**
-   * 根据笔记路径查找 UID
-   * 用于索引自愈：文件删除/重命名时定位对应的索引条目
-   */
-  findUidByPath(notePath: string): string | undefined {
-    if (!this.indexMeta) {
-      return undefined;
-    }
-
-    for (const [uid, meta] of Object.entries(this.indexMeta.concepts)) {
-      if (meta.notePath === notePath) {
-        return uid;
-      }
-    }
-
     return undefined;
   }
 

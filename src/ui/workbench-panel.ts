@@ -11,14 +11,16 @@
  * Requirements: 5.1
  */
 
-import { ItemView, WorkspaceLeaf, Notice, TFile, App, Modal } from "obsidian";
+import { ItemView, WorkspaceLeaf, Notice, TFile, App, Modal, setIcon, MarkdownView, Editor } from "obsidian";
 import type {
   DuplicatePair,
   QueueStatus,
   CRType,
   StandardizedConcept,
   TaskRecord,
-  SnapshotMetadata
+  SnapshotMetadata,
+  PipelineStage,
+  CRFrontmatter
 } from "../types";
 import { renderNamingTemplate } from "../core/naming-utils";
 
@@ -34,8 +36,10 @@ import { DeepenModal } from "./deepen-modal";
 import { AbstractModal } from "./abstract-modal";
 import type { DeepenPlan, HierarchicalPlan, AbstractPlan } from "../core/deepen-orchestrator";
 import { formatMessage } from "../core/i18n";
+import { ImageInsertModal } from "./image-insert-modal";
 
 export const WORKBENCH_VIEW_TYPE = "cognitive-razor-workbench";
+const ERROR_NOTICE_DURATION = 6000;
 
 /**
  * 区域折叠状态
@@ -87,6 +91,8 @@ export class WorkbenchPanel extends ItemView {
   private currentPipelineId: string | null = null;
   private pipelineContexts: Map<string, PipelineContext> = new Map();
   private pendingConceptInput: string | null = null;
+  private improveBtn: HTMLButtonElement | null = null;
+  private insertImageBtn: HTMLButtonElement | null = null;
 
   // 重复对管理相关
   private selectedDuplicates: Set<string> = new Set();
@@ -97,9 +103,9 @@ export class WorkbenchPanel extends ItemView {
   // 区域折叠状态（默认全部展开）
   private collapseState: SectionCollapseState = {
     createConcept: false,
-    duplicates: false,
-    queueStatus: false,
-    recentOps: false,
+    duplicates: true,
+    queueStatus: true,
+    recentOps: true,
   };
 
   // 区域内容容器引用（用于折叠/展开）
@@ -148,6 +154,73 @@ export class WorkbenchPanel extends ItemView {
     if (logger) {
       logger.warn("WorkbenchPanel", context, extra);
     }
+  }
+
+  private showErrorNotice(message: string): void {
+    new Notice(message, ERROR_NOTICE_DURATION);
+  }
+
+  private getCruidCache() {
+    return this.plugin?.getComponents().cruidCache;
+  }
+
+  private resolveNoteName(nodeId: string): string {
+    const cache = this.getCruidCache();
+    return cache?.getName(nodeId) || nodeId;
+  }
+
+  private resolveNotePath(nodeId: string): string | null {
+    const cache = this.getCruidCache();
+    return cache?.getPath(nodeId) || null;
+  }
+
+  private getPipelineStageLabel(stage: PipelineStage): string {
+    const translated = this.t(`workbench.pipeline.stages.${stage}`);
+    return translated || stage;
+  }
+
+  private getPipelineStageMessage(stage: PipelineStage): string {
+    const message = this.t(`workbench.pipeline.stageMessages.${stage}`);
+    if (message && !message.startsWith("workbench.pipeline.stageMessages")) {
+      return message;
+    }
+    return this.t("workbench.pipeline.stageMessages.default");
+  }
+
+  private getPipelineStageSequence(kind: PipelineContext["kind"]): PipelineStage[] {
+    const sequences: Record<PipelineContext["kind"], PipelineStage[]> = {
+      create: [
+        "defining",
+        "tagging",
+        "review_draft",
+        "writing",
+        "indexing",
+        "verifying",
+        "review_changes",
+        "saving",
+        "checking_duplicates",
+        "completed"
+      ],
+      incremental: [
+        "writing",
+        "indexing",
+        "verifying",
+        "review_changes",
+        "saving",
+        "checking_duplicates",
+        "completed"
+      ],
+      merge: [
+        "writing",
+        "indexing",
+        "verifying",
+        "review_changes",
+        "saving",
+        "checking_duplicates",
+        "completed"
+      ]
+    };
+    return sequences[kind] ?? ["completed"];
   }
 
   /**
@@ -226,7 +299,11 @@ export class WorkbenchPanel extends ItemView {
       cls: "cr-status-text",
       text: this.t("workbench.queueStatus.noTasks")
     });
-    const expandIcon = queueIndicator.createSpan({ cls: "cr-expand-icon", text: "▶" });
+    const expandIcon = queueIndicator.createEl("span", {
+      cls: "cr-expand-icon",
+      attr: { "aria-hidden": "true" }
+    });
+    setIcon(expandIcon, "chevron-right");
 
     // 中间：快速统计（只显示有值的）
     const stats = statusBar.createDiv({ cls: "cr-quick-stats" });
@@ -240,7 +317,7 @@ export class WorkbenchPanel extends ItemView {
         "title": this.t("workbench.queueStatus.pauseQueue")
       }
     });
-    pauseBtn.innerHTML = "⏸";
+    setIcon(pauseBtn, "pause");
     pauseBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       this.handleTogglePause();
@@ -255,11 +332,11 @@ export class WorkbenchPanel extends ItemView {
       const isExpanded = detailsContainer.style.display !== "none";
       if (isExpanded) {
         detailsContainer.style.display = "none";
-        expandIcon.textContent = "▶";
+        expandIcon.classList.remove("is-expanded");
         queueIndicator.setAttribute("aria-expanded", "false");
       } else {
         detailsContainer.style.display = "block";
-        expandIcon.textContent = "▼";
+        expandIcon.classList.add("is-expanded");
         queueIndicator.setAttribute("aria-expanded", "true");
         this.renderQueueDetails(detailsContainer);
       }
@@ -305,12 +382,14 @@ export class WorkbenchPanel extends ItemView {
     if (!pauseBtn) return;
 
     if (isPaused) {
-      pauseBtn.innerHTML = "▶";
+      pauseBtn.innerHTML = "";
+      setIcon(pauseBtn, "play");
       pauseBtn.setAttribute("aria-label", this.t("workbench.queueStatus.resumeQueue"));
       pauseBtn.setAttribute("title", this.t("workbench.queueStatus.resumeQueue"));
       pauseBtn.addClass("is-paused");
     } else {
-      pauseBtn.innerHTML = "⏸";
+      pauseBtn.innerHTML = "";
+      setIcon(pauseBtn, "pause");
       pauseBtn.setAttribute("aria-label", this.t("workbench.queueStatus.pauseQueue"));
       pauseBtn.setAttribute("title", this.t("workbench.queueStatus.pauseQueue"));
       pauseBtn.removeClass("is-paused");
@@ -355,7 +434,7 @@ export class WorkbenchPanel extends ItemView {
     this.renderCollapsibleSection(
       sections,
       this.t("workbench.recentOps.title"),
-      "history",
+      "recentOps",
       (content) => {
         this.recentOpsContainer = content;
         this.refreshRecentOps();
@@ -369,30 +448,58 @@ export class WorkbenchPanel extends ItemView {
   private renderCollapsibleSection(
     container: HTMLElement,
     title: string,
-    id: string,
+    sectionKey: keyof SectionCollapseState,
     renderContent: (content: HTMLElement) => void
   ): void {
     const section = container.createDiv({ cls: "cr-collapsible-section" });
     
     const header = section.createDiv({ cls: "cr-section-header" });
-    const icon = header.createSpan({ cls: "cr-collapse-icon", text: "▶" });
+    header.setAttr("role", "button");
+    header.setAttr("tabindex", "0");
+    header.setAttr("aria-expanded", "false");
+    const contentId = `cr-section-${sectionKey}`;
+    header.setAttr("aria-controls", contentId);
+
+    const icon = header.createEl("span", {
+      cls: "cr-collapse-icon",
+      attr: { "aria-hidden": "true" }
+    });
+    setIcon(icon, "chevron-right");
     header.createEl("h3", { text: title, cls: "cr-section-title" });
     
     const badge = header.createSpan({ cls: "cr-badge", text: "0" });
     badge.style.display = "none";
 
     const content = section.createDiv({ cls: "cr-section-content cr-collapsed" });
+    content.setAttr("id", contentId);
 
-    header.onclick = () => {
-      const isCollapsed = content.hasClass("cr-collapsed");
-      if (isCollapsed) {
-        content.removeClass("cr-collapsed");
-        icon.textContent = "▼";
-      } else {
+    const applyCollapsedState = (collapsed: boolean): void => {
+      if (collapsed) {
         content.addClass("cr-collapsed");
-        icon.textContent = "▶";
+        icon.classList.remove("is-expanded");
+        header.setAttr("aria-expanded", "false");
+      } else {
+        content.removeClass("cr-collapsed");
+        icon.classList.add("is-expanded");
+        header.setAttr("aria-expanded", "true");
       }
     };
+
+    applyCollapsedState(this.collapseState[sectionKey]);
+
+    const toggle = () => {
+      const nextState = !this.collapseState[sectionKey];
+      this.collapseState[sectionKey] = nextState;
+      applyCollapsedState(nextState);
+    };
+
+    header.onclick = () => toggle();
+    header.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        toggle();
+      }
+    });
 
     renderContent(content);
   }
@@ -404,6 +511,7 @@ export class WorkbenchPanel extends ItemView {
     this.queueStatusContainer = null;
     this.recentOpsContainer = null;
     this.pipelineStatusContainer = null;
+    this.improveBtn = null;
     if (this.pipelineUnsubscribe) {
       this.pipelineUnsubscribe();
       this.pipelineUnsubscribe = null;
@@ -436,10 +544,10 @@ export class WorkbenchPanel extends ItemView {
       cls: "cr-search-action-btn",
       attr: {
         "aria-label": this.t("workbench.createConcept.startButton"),
-        "title": `${this.t("workbench.createConcept.standardizing")} (Enter)`
+        "title": `${this.t("workbench.createConcept.defining")} (Enter)`
       }
     });
-    this.standardizeBtn.innerHTML = `⏎`;
+    setIcon(this.standardizeBtn, "corner-down-left");
 
     // Event Listeners
     this.standardizeBtn.addEventListener("click", () => this.handleStandardize());
@@ -460,22 +568,39 @@ export class WorkbenchPanel extends ItemView {
 
     // 增量改进入口（改进当前笔记）
     const improveSection = container.createDiv({ cls: "cr-improve-section" });
-    const improveBtn = improveSection.createEl("button", {
-      text: "改进当前笔记",
+    const improveLabel = this.t("workbench.buttons.improveNote");
+    const deepenLabel = this.t("workbench.buttons.deepen");
+    const insertImageLabel = this.t("workbench.buttons.insertImage");
+    this.improveBtn = improveSection.createEl("button", {
+      text: improveLabel,
       cls: "cr-btn-secondary",
-      attr: { "aria-label": "改进当前笔记" }
+      attr: { "aria-label": improveLabel }
     });
-    improveBtn.addEventListener("click", () => {
+    this.improveBtn.addEventListener("click", () => {
       void this.handleStartIncremental();
     });
+    this.updateImproveButtonState();
+    this.registerEvent(this.app.workspace.on("active-leaf-change", () => {
+      this.updateImproveButtonState();
+    }));
 
     const deepenBtn = improveSection.createEl("button", {
-      text: "深化",
+      text: deepenLabel,
       cls: "cr-btn-secondary",
-      attr: { "aria-label": "深化当前笔记" }
+      attr: { "aria-label": deepenLabel }
     });
     deepenBtn.addEventListener("click", () => {
       void this.handleStartDeepen();
+    });
+
+    // 插入图片
+    this.insertImageBtn = improveSection.createEl("button", {
+      text: insertImageLabel,
+      cls: "cr-btn-secondary",
+      attr: { "aria-label": insertImageLabel }
+    });
+    this.insertImageBtn.addEventListener("click", () => {
+      void this.startImageInsert();
     });
 
     // 结果容器
@@ -484,6 +609,58 @@ export class WorkbenchPanel extends ItemView {
 
     this.typeConfidenceTableContainer = container.createDiv({ cls: "cr-type-confidence-table" });
     this.typeConfidenceTableContainer.style.display = "none";
+
+    this.renderPipelineStatusPanel(container);
+  }
+
+  private updateImproveButtonState(): void {
+    if (!this.improveBtn) {
+      return;
+    }
+    const activeFile = this.app.workspace.getActiveFile();
+    const hasMarkdown = !!activeFile && activeFile.extension === "md";
+    const improveLabel = this.t("workbench.buttons.improveNote");
+    const needMarkdownLabel = this.t("workbench.notifications.openMarkdownFirst");
+    this.improveBtn.textContent = improveLabel;
+    this.improveBtn.setAttr("aria-label", improveLabel);
+    this.improveBtn.disabled = !hasMarkdown;
+    this.improveBtn.setAttr("aria-disabled", String(!hasMarkdown));
+    this.improveBtn.setAttr(
+      "title",
+      hasMarkdown ? improveLabel : needMarkdownLabel
+    );
+
+    if (this.insertImageBtn) {
+      const imgEnabled = this.plugin?.settings.imageGeneration?.enabled !== false;
+      const label = this.t("workbench.buttons.insertImage");
+      this.insertImageBtn.textContent = label;
+      this.insertImageBtn.setAttr("aria-label", label);
+      this.insertImageBtn.disabled = !hasMarkdown || !imgEnabled;
+      this.insertImageBtn.setAttr("aria-disabled", String(!hasMarkdown || !imgEnabled));
+      this.insertImageBtn.setAttr(
+        "title",
+        !imgEnabled ? this.t("workbench.notifications.featureDisabled") : hasMarkdown ? label : needMarkdownLabel
+      );
+    }
+  }
+
+  private renderPipelineStatusPanel(container: HTMLElement): void {
+    const panel = container.createDiv({ cls: "cr-pipeline-status" });
+    const header = panel.createDiv({ cls: "cr-pipeline-status-header" });
+    header.createEl("h4", { text: this.t("workbench.pipeline.progressTitle") });
+    header.createSpan({
+      cls: "cr-pipeline-status-hint",
+      text: this.t("workbench.pipeline.progressHint")
+    });
+
+    const list = panel.createDiv({ cls: "cr-pipeline-list" });
+    list.setAttr("role", "list");
+    list.createDiv({
+      cls: "cr-empty-state",
+      text: this.t("workbench.pipeline.empty")
+    });
+
+    this.pipelineStatusContainer = panel;
   }
 
   /**
@@ -502,14 +679,24 @@ export class WorkbenchPanel extends ItemView {
       { label: this.t("workbench.queueStatus.failed"), value: status.failed, cls: "failed" }
     ];
 
+    let renderedCount = 0;
     stats.forEach(stat => {
       // 只显示有值的项
       if (stat.value > 0) {
         const item = this.queueStatusContainer!.createDiv({ cls: `cr-stat-item cr-stat-${stat.cls}` });
         item.createSpan({ cls: "cr-stat-value", text: stat.value.toString() });
         item.createSpan({ cls: "cr-stat-label", text: stat.label });
+        renderedCount++;
       }
     });
+
+    // 空状态：队列无待处理/运行/失败任务时显示占位
+    if (renderedCount === 0) {
+      this.queueStatusContainer.createDiv({
+        cls: "cr-empty-stat",
+        text: this.t("workbench.queueStatus.noTasks")
+      });
+    }
 
     // 更新左侧状态指示器文本
     this.updateStatusIndicator(status);
@@ -564,7 +751,7 @@ export class WorkbenchPanel extends ItemView {
         "title": this.t("workbench.duplicates.refresh") || "Refresh"
       }
     });
-    refreshBtn.innerHTML = `↺`;
+    setIcon(refreshBtn, "refresh-cw");
     refreshBtn.onclick = () => this.refreshDuplicates();
 
     // List Container
@@ -652,7 +839,8 @@ export class WorkbenchPanel extends ItemView {
       cls: "cr-collapse-icon",
       attr: { "aria-hidden": "true" }
     });
-    collapseIcon.textContent = this.collapseState[sectionKey] ? "▶" : "▼";
+    setIcon(collapseIcon, "chevron-right");
+    collapseIcon.classList.toggle("is-expanded", !this.collapseState[sectionKey]);
 
     // 标题
     const titleEl = header.createEl("h3", {
@@ -706,8 +894,8 @@ export class WorkbenchPanel extends ItemView {
     // 切换状态
     this.collapseState[sectionKey] = !this.collapseState[sectionKey];
 
-    // 更新图标
-    icon.textContent = this.collapseState[sectionKey] ? "▶" : "▼";
+    // 更新图标（chevron-right 旋转 90° 即为 chevron-down）
+    icon.classList.toggle("is-expanded", !this.collapseState[sectionKey]);
 
     // 更新内容显示
     const content = this.sectionContents.get(sectionKey);
@@ -726,13 +914,13 @@ export class WorkbenchPanel extends ItemView {
    */
   private async handleStandardize(descriptionOverride?: string): Promise<void> {
     if (!this.plugin) {
-      new Notice(this.t("workbench.notifications.systemNotInitialized"));
+      this.showErrorNotice(this.t("workbench.notifications.systemNotInitialized"));
       return;
     }
 
     const description = (descriptionOverride ?? this.conceptInput?.value ?? "").trim();
     if (!description) {
-      new Notice(this.t("workbench.notifications.enterDescription"));
+      this.showErrorNotice(this.t("workbench.notifications.enterDescription"));
       return;
     }
 
@@ -744,7 +932,7 @@ export class WorkbenchPanel extends ItemView {
     // 禁用按钮并显示加载状态
     if (this.standardizeBtn) {
       this.standardizeBtn.disabled = true;
-      this.standardizeBtn.innerHTML = `<div class="cr-loading-spinner" style="width: 16px; height: 16px; border-width: 2px;"></div>`;
+      this.standardizeBtn.classList.add("is-loading");
     }
 
     try {
@@ -755,7 +943,7 @@ export class WorkbenchPanel extends ItemView {
       const result = await po.standardizeDirect(description);
 
       if (!result.ok) {
-        new Notice(`${this.t("workbench.notifications.standardizeFailed")}: ${result.error.message}`);
+        this.showErrorNotice(`${this.t("workbench.notifications.standardizeFailed")}: ${result.error.message}`);
         return;
       }
 
@@ -769,7 +957,7 @@ export class WorkbenchPanel extends ItemView {
     } catch (error) {
       this.logError("标准化失败", error);
       const errorMessage = error instanceof Error ? error.message : String(error);
-      new Notice(`${this.t("workbench.notifications.standardizeFailed")}: ${errorMessage}`);
+      this.showErrorNotice(`${this.t("workbench.notifications.standardizeFailed")}: ${errorMessage}`);
     } finally {
       this.resetStandardizeButton();
     }
@@ -781,7 +969,7 @@ export class WorkbenchPanel extends ItemView {
   public async startQuickCreate(description: string): Promise<void> {
     const value = description.trim();
     if (!value) {
-      new Notice(this.t("workbench.notifications.enterDescription"));
+      this.showErrorNotice(this.t("workbench.notifications.enterDescription"));
       return;
     }
 
@@ -800,31 +988,31 @@ export class WorkbenchPanel extends ItemView {
    */
   public async handleStartIncremental(): Promise<void> {
     if (!this.plugin) {
-      new Notice(this.t("workbench.notifications.pluginNotInitialized"));
+      this.showErrorNotice(this.t("workbench.notifications.pluginNotInitialized"));
       return;
     }
 
     const activeFile = this.app.workspace.getActiveFile();
     if (!activeFile || activeFile.extension !== "md") {
-      new Notice("请先打开一个 Markdown 笔记");
+      this.showErrorNotice(this.t("workbench.notifications.openMarkdownFirst"));
       return;
     }
 
     const orchestrator = this.plugin.getComponents().pipelineOrchestrator;
     if (!orchestrator) {
-      new Notice("管线编排器未初始化");
+      this.showErrorNotice(this.t("workbench.notifications.orchestratorNotInitialized"));
       return;
     }
 
     const modal = new SimpleInputModal(this.app, {
-      title: "增量改进",
+      title: "改进笔记",
       placeholder: "请输入改进指令（例如：补充更多示例、优化定义、添加相关理论）",
       onSubmit: async (instruction) => {
         const result = orchestrator.startIncrementalPipeline(activeFile.path, instruction);
         if (result.ok) {
-          new Notice("增量改进任务已启动，请等待 AI 生成改进内容...");
+          new Notice(this.t("workbench.notifications.improveStarted"));
         } else {
-          new Notice(`启动失败: ${result.error.message}`);
+          this.showErrorNotice(`启动失败: ${result.error.message}`);
         }
       }
     });
@@ -837,26 +1025,26 @@ export class WorkbenchPanel extends ItemView {
    */
   public async handleStartDeepen(file?: TFile): Promise<void> {
     if (!this.plugin) {
-      new Notice(this.t("workbench.notifications.pluginNotInitialized"));
+      this.showErrorNotice(this.t("workbench.notifications.pluginNotInitialized"));
       return;
     }
 
     const targetFile = file ?? this.app.workspace.getActiveFile();
     if (!targetFile || targetFile.extension !== "md") {
-      new Notice("请先打开一个 Markdown 笔记");
+      this.showErrorNotice(this.t("workbench.notifications.openMarkdownFirst"));
       return;
     }
 
     const components = this.plugin.getComponents();
     const orchestrator = components.deepenOrchestrator;
     if (!orchestrator) {
-      new Notice(this.t("deepen.notInitialized"));
+      this.showErrorNotice(this.t("deepen.notInitialized"));
       return;
     }
 
     const prepareResult = await orchestrator.prepare(targetFile);
     if (!prepareResult.ok) {
-      new Notice(prepareResult.error.message);
+      this.showErrorNotice(prepareResult.error.message);
       return;
     }
 
@@ -872,7 +1060,7 @@ export class WorkbenchPanel extends ItemView {
     if (!this.plugin) return;
     const orchestrator = this.plugin.getComponents().deepenOrchestrator;
     if (!orchestrator) {
-      new Notice(this.t("deepen.notInitialized"));
+      this.showErrorNotice(this.t("deepen.notInitialized"));
       return;
     }
 
@@ -911,7 +1099,7 @@ export class WorkbenchPanel extends ItemView {
             : formatMessage(this.t("deepen.started"), { count: started });
           new Notice(msg);
         } else {
-          new Notice(result.error.message);
+          this.showErrorNotice(result.error.message);
         }
       },
       onCancel: () => {
@@ -926,7 +1114,7 @@ export class WorkbenchPanel extends ItemView {
     if (!this.plugin) return;
     const orchestrator = this.plugin.getComponents().deepenOrchestrator;
     if (!orchestrator) {
-      new Notice(this.t("deepen.notInitialized"));
+      this.showErrorNotice(this.t("deepen.notInitialized"));
       return;
     }
 
@@ -949,7 +1137,7 @@ export class WorkbenchPanel extends ItemView {
         if (result.ok) {
           new Notice(formatMessage(this.t("deepen.started"), { count: 1 }));
         } else {
-          new Notice(result.error.message);
+          this.showErrorNotice(result.error.message);
         }
       },
       onCancel: () => {
@@ -984,7 +1172,7 @@ export class WorkbenchPanel extends ItemView {
   private resetStandardizeButton(): void {
     if (this.standardizeBtn) {
       this.standardizeBtn.disabled = false;
-      this.standardizeBtn.innerHTML = `⏎`;
+      this.standardizeBtn.classList.remove("is-loading");
     }
   }
 
@@ -1056,15 +1244,9 @@ export class WorkbenchPanel extends ItemView {
       const confidenceBar = confidenceCell.createDiv({ cls: "cr-confidence-bar" });
       const confidenceFill = confidenceBar.createDiv({ cls: "cr-confidence-fill" });
       confidenceFill.style.width = `${confidence * 100}%`;
-      
-      // 根据置信度调整颜色
-      if (confidence > 0.8) {
-        confidenceFill.style.background = "var(--interactive-accent)";
-      } else if (confidence > 0.6) {
-        confidenceFill.style.background = "var(--color-orange)";
-      } else {
-        confidenceFill.style.background = "var(--text-muted)";
-      }
+      const confidenceLevel =
+        confidence > 0.8 ? "high" : confidence > 0.6 ? "medium" : "low";
+      confidenceFill.addClass(`cr-confidence-${confidenceLevel}`);
       
       confidenceCell.createEl("span", {
         text: `${(confidence * 100).toFixed(0)}%`,
@@ -1097,7 +1279,7 @@ export class WorkbenchPanel extends ItemView {
     standardizedData: StandardizedConcept
   ): Promise<void> {
     if (!this.plugin) {
-      new Notice(this.t("workbench.notifications.pluginNotInitialized"));
+      this.showErrorNotice(this.t("workbench.notifications.pluginNotInitialized"));
       return;
     }
 
@@ -1106,12 +1288,12 @@ export class WorkbenchPanel extends ItemView {
       const po = components.pipelineOrchestrator;
 
       // 使用标准化数据和选择的类型启动创建管线
-      const result = po.startCreatePipelineWithStandardized(standardizedData, selectedType);
+    const result = po.startCreatePipelineWithStandardized(standardizedData, selectedType);
 
-      if (!result.ok) {
-        new Notice(`${this.t("workbench.notifications.createFailed")}: ${result.error.message}`);
-        return;
-      }
+    if (!result.ok) {
+      this.showErrorNotice(`${this.t("workbench.notifications.createFailed")}: ${result.error.message}`);
+      return;
+    }
 
       this.currentPipelineId = result.value;
       new Notice(`${this.t("workbench.notifications.conceptCreated")} (${result.value})`);
@@ -1119,12 +1301,12 @@ export class WorkbenchPanel extends ItemView {
       // 隐藏表格并重置输入（任务 10.5）
       this.hideTypeConfidenceTable();
       this.resetConceptInput();
-    } catch (error) {
-      this.logError("创建概念失败", error);
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      new Notice(`${this.t("workbench.notifications.createFailed")}: ${errorMessage}`);
-    }
+  } catch (error) {
+    this.logError("创建概念失败", error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    this.showErrorNotice(`${this.t("workbench.notifications.createFailed")}: ${errorMessage}`);
   }
+}
 
   /**
    * 隐藏类型置信度表格
@@ -1169,21 +1351,6 @@ export class WorkbenchPanel extends ItemView {
 
     this.standardizedResultContainer.style.display = "block";
 
-    const stageLabel: Record<PipelineContext["stage"], string> = {
-      idle: "空闲",
-      standardizing: "标准化",
-      enriching: "丰富中",
-      embedding: "向量嵌入",
-      awaiting_create_confirm: "等待创建确认",
-      reasoning: "内容生成",
-      grounding: "Ground 校验",
-      awaiting_write_confirm: "等待写入确认",
-      writing: "写入中",
-      deduplicating: "去重中",
-      completed: "已完成",
-      failed: "失败"
-    };
-
     // 创建管线的过渡界面不再展示，直接交由管线列表与通知处理
     if (ctx.kind === "create") {
       this.standardizedResultContainer.style.display = "none";
@@ -1193,8 +1360,18 @@ export class WorkbenchPanel extends ItemView {
     // 非创建管线：直接提供预览/确认入口
     if (ctx.kind) {
       const summary = this.standardizedResultContainer.createDiv({ cls: "cr-pipeline-summary" });
-      summary.createEl("div", { text: `管线类型：${ctx.kind === "incremental" ? "增量改进" : "合并"}` });
-      summary.createEl("div", { text: `阶段：${stageLabel[ctx.stage] || ctx.stage}` });
+      const kindLabel = this.t(`workbench.pipeline.kind.${ctx.kind}`);
+      summary.createEl("div", {
+        text: `${this.t("workbench.pipeline.type")}: ${kindLabel || ctx.kind}`
+      });
+      const stageInfo = summary.createDiv({ cls: "cr-pipeline-stage" });
+      stageInfo.createSpan({
+        text: `${this.t("workbench.pipeline.stage")}: ${this.getPipelineStageLabel(ctx.stage)}`
+      });
+      stageInfo.createSpan({
+        text: this.getPipelineStageMessage(ctx.stage),
+        cls: "cr-pipeline-stage-desc"
+      });
       this.renderGroundingResult(summary, ctx);
 
       const actions = summary.createDiv({ cls: "cr-pipeline-actions" });
@@ -1213,9 +1390,12 @@ export class WorkbenchPanel extends ItemView {
     this.standardizedResultContainer.createEl("h4", {
       text: `管线 ${ctx.pipelineId}`
     });
-    this.standardizedResultContainer.createEl("div", {
-      text: `阶段：${stageLabel[ctx.stage] || ctx.stage}`,
-      cls: "cr-pipeline-stage"
+    const stageText = this.getPipelineStageLabel(ctx.stage);
+    const stageRow = this.standardizedResultContainer.createDiv({ cls: "cr-pipeline-stage" });
+    stageRow.createSpan({ text: `${this.t("workbench.pipeline.stage")}: ${stageText}` });
+    stageRow.createSpan({
+      text: this.getPipelineStageMessage(ctx.stage),
+      cls: "cr-pipeline-stage-desc"
     });
 
     // 标准化结果编辑区
@@ -1288,19 +1468,19 @@ export class WorkbenchPanel extends ItemView {
 
     const actions = this.standardizedResultContainer.createDiv({ cls: "cr-button-container" });
 
-    if (ctx.stage === "awaiting_create_confirm") {
+    if (ctx.stage === "review_draft") {
       const confirmBtn = actions.createEl("button", { text: this.t("workbench.pipeline.confirmCreate"), cls: "mod-cta cr-btn-small" });
       confirmBtn.addEventListener("click", async () => {
         const po = this.plugin?.getComponents().pipelineOrchestrator;
         if (!po) return;
         const result = await po.confirmCreate(ctx.pipelineId);
         if (!result.ok) {
-          new Notice(`${this.t("workbench.notifications.confirmCreateFailed")}: ${result.error.message}`);
+          this.showErrorNotice(`${this.t("workbench.notifications.confirmCreateFailed")}: ${result.error.message}`);
         } else {
           new Notice(this.t("workbench.notifications.confirmCreateWaiting"));
         }
       });
-    } else if (ctx.stage === "awaiting_write_confirm") {
+    } else if (ctx.stage === "review_changes") {
       const previewBtn = actions.createEl("button", { text: this.t("workbench.pipeline.previewWrite"), cls: "mod-cta cr-btn-small" });
       previewBtn.addEventListener("click", () => this.showWritePreview(ctx));
     } else if (ctx.stage === "failed" && ctx.error) {
@@ -1333,7 +1513,7 @@ export class WorkbenchPanel extends ItemView {
       new Notice(this.t("workbench.notifications.standardizeUpdated"));
       this.renderPipelinePreview();
     } else {
-      new Notice(`${this.t("common.error")}: ${result.error.message}`);
+      this.showErrorNotice(`${this.t("common.error")}: ${result.error.message}`);
     }
   }
 
@@ -1345,7 +1525,7 @@ export class WorkbenchPanel extends ItemView {
     const po = this.plugin.getComponents().pipelineOrchestrator;
     const preview = await po.buildWritePreview(ctx.pipelineId);
     if (!preview.ok) {
-      new Notice(`${this.t("workbench.notifications.writePreviewFailed")}: ${preview.error.message}`);
+      this.showErrorNotice(`${this.t("workbench.notifications.writePreviewFailed")}: ${preview.error.message}`);
       return;
     }
 
@@ -1353,7 +1533,7 @@ export class WorkbenchPanel extends ItemView {
     const titlePrefix = ctx.kind === "merge"
       ? "合并预览"
       : ctx.kind === "incremental"
-        ? "增量改进预览"
+        ? "改进预览"
         : this.t("workbench.pipeline.previewWrite");
     const cancelNotice = ctx.kind === "incremental"
       ? "已取消改进"
@@ -1374,7 +1554,7 @@ export class WorkbenchPanel extends ItemView {
       async () => {
         const result = await po.confirmWrite(ctx.pipelineId);
         if (!result.ok) {
-          new Notice(`${this.t("workbench.notifications.writeFailed")}: ${result.error.message}`);
+          this.showErrorNotice(`${this.t("workbench.notifications.writeFailed")}: ${result.error.message}`);
         } else {
           new Notice(successNotice);
         }
@@ -1394,7 +1574,7 @@ export class WorkbenchPanel extends ItemView {
     const wrapper = container.createDiv({ cls: "cr-grounding-result" });
     wrapper.setAttr("aria-live", "polite");
 
-    wrapper.createEl("h4", { text: "Ground 校验结果" });
+    wrapper.createEl("h4", { text: this.t("workbench.pipeline.groundingResult") });
 
     const assessment = wrapper.createDiv({ cls: "cr-assessment" });
     assessment.createEl("strong", { text: "总体评估: " });
@@ -1500,6 +1680,7 @@ export class WorkbenchPanel extends ItemView {
       type: "checkbox",
       cls: "cr-duplicate-checkbox"
     });
+    checkbox.dataset.pairId = pair.id;
     // 检查是否已选中
     if (this.selectedDuplicates.has(pair.id)) {
       checkbox.checked = true;
@@ -1526,9 +1707,11 @@ export class WorkbenchPanel extends ItemView {
 
     // Header (Notes)
     const header = content.createDiv({ cls: "cr-duplicate-header" });
-    header.createDiv({ cls: "cr-duplicate-note", text: pair.noteA.name });
+    const nameA = this.resolveNoteName(pair.nodeIdA);
+    const nameB = this.resolveNoteName(pair.nodeIdB);
+    header.createDiv({ cls: "cr-duplicate-note", text: nameA });
     header.createDiv({ cls: "cr-duplicate-arrow", text: "↔" });
-    header.createDiv({ cls: "cr-duplicate-note", text: pair.noteB.name });
+    header.createDiv({ cls: "cr-duplicate-note", text: nameB });
 
     // Metadata
     const meta = content.createDiv({ cls: "cr-duplicate-meta" });
@@ -1542,14 +1725,14 @@ export class WorkbenchPanel extends ItemView {
       cls: "cr-icon-btn",
       attr: { "aria-label": this.t("workbench.duplicates.merge") }
     });
-    mergeBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 9l3 3-3 3"></path><line x1="15" y1="4" x2="15" y2="20"></line></svg>`;
+    setIcon(mergeBtn, "git-merge");
     mergeBtn.onclick = (e) => { e.stopPropagation(); this.handleMergeDuplicate(pair); };
 
     const dismissBtn = actions.createEl("button", {
       cls: "cr-icon-btn",
       attr: { "aria-label": this.t("workbench.duplicates.dismiss") }
     });
-    dismissBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
+    setIcon(dismissBtn, "x");
     dismissBtn.onclick = (e) => { e.stopPropagation(); this.handleDismissDuplicate(pair); };
 
     // Click to preview
@@ -1602,10 +1785,7 @@ export class WorkbenchPanel extends ItemView {
 
     checkboxes.forEach(cb => {
       cb.checked = !allChecked;
-      const pairId = this.allDuplicates.find(p =>
-        cb.parentElement?.textContent?.includes(p.noteA.name) &&
-        cb.parentElement?.textContent?.includes(p.noteB.name)
-      )?.id;
+      const pairId = cb.dataset.pairId;
 
       if (pairId) {
         if (!allChecked) {
@@ -1621,7 +1801,7 @@ export class WorkbenchPanel extends ItemView {
    * 批量合并（已弃用）
    */
   private async handleBatchMerge(): Promise<void> {
-    new Notice("合并功能已被弃用");
+    this.showErrorNotice("合并功能已被弃用");
   }
 
   /**
@@ -1629,7 +1809,7 @@ export class WorkbenchPanel extends ItemView {
    */
   private async handleBatchDismiss(): Promise<void> {
     if (this.selectedDuplicates.size === 0) {
-      new Notice(this.t("workbench.notifications.selectDuplicates"));
+      this.showErrorNotice(this.t("workbench.notifications.selectDuplicates"));
       return;
     }
 
@@ -1642,7 +1822,7 @@ export class WorkbenchPanel extends ItemView {
     if (!confirmed) return;
 
     if (!this.plugin) {
-      new Notice(this.t("workbench.notifications.pluginNotInitialized"));
+      this.showErrorNotice(this.t("workbench.notifications.pluginNotInitialized"));
       return;
     }
 
@@ -1650,7 +1830,7 @@ export class WorkbenchPanel extends ItemView {
     const duplicateManager = components.duplicateManager;
 
     if (!duplicateManager) {
-      new Notice(this.t("workbench.notifications.duplicateManagerNotInitialized"));
+      this.showErrorNotice(this.t("workbench.notifications.duplicateManagerNotInitialized"));
       return;
     }
 
@@ -1695,16 +1875,29 @@ export class WorkbenchPanel extends ItemView {
   private async handleShowDuplicatePreview(pair: DuplicatePair): Promise<void> {
     try {
       // 读取两个笔记的内容
-      const fileA = this.app.vault.getAbstractFileByPath(pair.noteA.path);
-      const fileB = this.app.vault.getAbstractFileByPath(pair.noteB.path);
+      const pathA = this.resolveNotePath(pair.nodeIdA);
+      const pathB = this.resolveNotePath(pair.nodeIdB);
+
+      if (!pathA) {
+        this.showErrorNotice(`${this.t("workbench.notifications.fileNotFound")}: ${pair.nodeIdA}`);
+        return;
+      }
+
+      if (!pathB) {
+        this.showErrorNotice(`${this.t("workbench.notifications.fileNotFound")}: ${pair.nodeIdB}`);
+        return;
+      }
+
+      const fileA = this.app.vault.getAbstractFileByPath(pathA);
+      const fileB = this.app.vault.getAbstractFileByPath(pathB);
 
       if (!fileA || !(fileA instanceof TFile)) {
-        new Notice(`${this.t("workbench.notifications.fileNotFound")}: ${pair.noteA.path}`);
+        this.showErrorNotice(`${this.t("workbench.notifications.fileNotFound")}: ${pathA}`);
         return;
       }
 
       if (!fileB || !(fileB instanceof TFile)) {
-        new Notice(`${this.t("workbench.notifications.fileNotFound")}: ${pair.noteB.path}`);
+        this.showErrorNotice(`${this.t("workbench.notifications.fileNotFound")}: ${pathB}`);
         return;
       }
 
@@ -1716,7 +1909,7 @@ export class WorkbenchPanel extends ItemView {
     } catch (error) {
       this.logError("显示预览失败", error, { pairId: pair.id });
       const errorMessage = error instanceof Error ? error.message : String(error);
-      new Notice(`${this.t("workbench.notifications.previewFailed")}: ${errorMessage}`);
+      this.showErrorNotice(`${this.t("workbench.notifications.previewFailed")}: ${errorMessage}`);
     }
   }
 
@@ -1733,6 +1926,10 @@ export class WorkbenchPanel extends ItemView {
       pair,
       contentA,
       contentB,
+      {
+        resolveName: (nodeId: string) => this.resolveNoteName(nodeId),
+        resolvePath: (nodeId: string) => this.resolveNotePath(nodeId),
+      },
       () => this.handleMergeDuplicate(pair),
       () => this.handleDismissDuplicate(pair)
     );
@@ -1842,11 +2039,11 @@ export class WorkbenchPanel extends ItemView {
    */
   private getOperationDisplayName(taskId: string): string {
     const operationNames: Record<string, string> = {
-      enrich: "内容生成",
-      merge: "合并笔记",
-      "incremental-improve": "增量改进",
+      enrich: "标记",
+      merge: "合并",
+      "incremental-improve": "改进",
       "manual-edit": "手动编辑",
-      standardize: "标准化",
+      standardize: "定义",
       create: "创建笔记",
     };
 
@@ -1865,7 +2062,7 @@ export class WorkbenchPanel extends ItemView {
    */
   private async handleUndoSnapshot(snapshotId: string): Promise<void> {
     if (!this.plugin) {
-      new Notice(this.t("workbench.notifications.pluginNotInitialized"));
+      this.showErrorNotice(this.t("workbench.notifications.pluginNotInitialized"));
       return;
     }
 
@@ -1873,11 +2070,11 @@ export class WorkbenchPanel extends ItemView {
 
     try {
       // 恢复快照
-      const restoreResult = await undoManager.restoreSnapshot(snapshotId);
-      if (!restoreResult.ok) {
-        new Notice(`${this.t("workbench.notifications.undoFailed")}: ${restoreResult.error.message}`);
-        return;
-      }
+    const restoreResult = await undoManager.restoreSnapshot(snapshotId);
+    if (!restoreResult.ok) {
+      this.showErrorNotice(`${this.t("workbench.notifications.undoFailed")}: ${restoreResult.error.message}`);
+      return;
+    }
 
       const snapshot = restoreResult.value;
 
@@ -1900,20 +2097,20 @@ export class WorkbenchPanel extends ItemView {
     } catch (error) {
       this.logError("撤销操作失败", error, { snapshotId });
       const errorMessage = error instanceof Error ? error.message : String(error);
-      new Notice(`${this.t("workbench.notifications.undoFailed")}: ${errorMessage}`);
+      this.showErrorNotice(`${this.t("workbench.notifications.undoFailed")}: ${errorMessage}`);
     }
   }
 
   private async handleViewSnapshotDiff(snapshot: SnapshotMetadata): Promise<void> {
     if (!this.plugin) {
-      new Notice(this.t("workbench.notifications.pluginNotInitialized"));
+      this.showErrorNotice(this.t("workbench.notifications.pluginNotInitialized"));
       return;
     }
 
     const undoManager = this.plugin.getComponents().undoManager;
     const snapshotResult = await undoManager.restoreSnapshot(snapshot.id);
     if (!snapshotResult.ok) {
-      new Notice(`${this.t("workbench.notifications.undoFailed")}: ${snapshotResult.error.message}`);
+      this.showErrorNotice(`${this.t("workbench.notifications.undoFailed")}: ${snapshotResult.error.message}`);
       return;
     }
 
@@ -1931,7 +2128,7 @@ export class WorkbenchPanel extends ItemView {
       onRestore: async () => {
         const restoreResult = await undoManager.restoreSnapshotToFile(snapshot.id);
         if (!restoreResult.ok) {
-          new Notice(`${this.t("workbench.notifications.undoFailed")}: ${restoreResult.error.message}`);
+          this.showErrorNotice(`${this.t("workbench.notifications.undoFailed")}: ${restoreResult.error.message}`);
           return;
         }
         new Notice(this.t("workbench.notifications.undoSuccess"));
@@ -1946,7 +2143,7 @@ export class WorkbenchPanel extends ItemView {
    */
   private async handleClearAllSnapshots(): Promise<void> {
     if (!this.plugin) {
-      new Notice(this.t("workbench.notifications.pluginNotInitialized"));
+      this.showErrorNotice(this.t("workbench.notifications.pluginNotInitialized"));
       return;
     }
 
@@ -1964,7 +2161,7 @@ export class WorkbenchPanel extends ItemView {
       new Notice(`${this.t("workbench.notifications.clearComplete")} (${result.value})`);
       await this.refreshRecentOps();
     } else {
-      new Notice(`${this.t("common.error")}: ${result.error.message}`);
+      this.showErrorNotice(`${this.t("common.error")}: ${result.error.message}`);
     }
   }
 
@@ -2059,7 +2256,7 @@ export class WorkbenchPanel extends ItemView {
    */
   private async handleUndoFromToast(snapshotId: string): Promise<void> {
     if (!this.plugin) {
-      new Notice(this.t("workbench.notifications.pluginNotInitialized"));
+      this.showErrorNotice(this.t("workbench.notifications.pluginNotInitialized"));
       return;
     }
 
@@ -2067,11 +2264,11 @@ export class WorkbenchPanel extends ItemView {
 
     try {
       // 恢复快照
-      const restoreResult = await undoManager.restoreSnapshot(snapshotId);
-      if (!restoreResult.ok) {
-        new Notice(`${this.t("workbench.notifications.undoFailed")}: ${restoreResult.error.message}`);
-        return;
-      }
+    const restoreResult = await undoManager.restoreSnapshot(snapshotId);
+    if (!restoreResult.ok) {
+      this.showErrorNotice(`${this.t("workbench.notifications.undoFailed")}: ${restoreResult.error.message}`);
+      return;
+    }
 
       const snapshot = restoreResult.value;
 
@@ -2094,7 +2291,7 @@ export class WorkbenchPanel extends ItemView {
     } catch (error) {
       this.logError("撤销操作失败（Toast）", error, { snapshotId });
       const errorMessage = error instanceof Error ? error.message : String(error);
-      new Notice(`${this.t("workbench.notifications.undoFailed")}: ${errorMessage}`);
+      this.showErrorNotice(`${this.t("workbench.notifications.undoFailed")}: ${errorMessage}`);
     }
   }
 
@@ -2105,22 +2302,35 @@ export class WorkbenchPanel extends ItemView {
    */
   private async handleMergeDuplicate(pair: DuplicatePair): Promise<void> {
     if (!this.plugin) {
-      new Notice(this.t("workbench.notifications.pluginNotInitialized"));
+      this.showErrorNotice(this.t("workbench.notifications.pluginNotInitialized"));
       return;
     }
 
     try {
       // 读取两个笔记的内容
-      const fileA = this.app.vault.getAbstractFileByPath(pair.noteA.path);
-      const fileB = this.app.vault.getAbstractFileByPath(pair.noteB.path);
+      const pathA = this.resolveNotePath(pair.nodeIdA);
+      const pathB = this.resolveNotePath(pair.nodeIdB);
+
+      if (!pathA) {
+        this.showErrorNotice(`${this.t("workbench.notifications.fileNotFound")}: ${pair.nodeIdA}`);
+        return;
+      }
+
+      if (!pathB) {
+        this.showErrorNotice(`${this.t("workbench.notifications.fileNotFound")}: ${pair.nodeIdB}`);
+        return;
+      }
+
+      const fileA = this.app.vault.getAbstractFileByPath(pathA);
+      const fileB = this.app.vault.getAbstractFileByPath(pathB);
 
       if (!fileA || !(fileA instanceof TFile)) {
-        new Notice(`${this.t("workbench.notifications.fileNotFound")}: ${pair.noteA.path}`);
+        this.showErrorNotice(`${this.t("workbench.notifications.fileNotFound")}: ${pathA}`);
         return;
       }
 
       if (!fileB || !(fileB instanceof TFile)) {
-        new Notice(`${this.t("workbench.notifications.fileNotFound")}: ${pair.noteB.path}`);
+        this.showErrorNotice(`${this.t("workbench.notifications.fileNotFound")}: ${pathB}`);
         return;
       }
 
@@ -2132,7 +2342,7 @@ export class WorkbenchPanel extends ItemView {
     } catch (error) {
       this.logError("显示合并预览失败", error, { pairId: pair.id });
       const errorMessage = error instanceof Error ? error.message : String(error);
-      new Notice(`${this.t("workbench.notifications.previewFailed")}: ${errorMessage}`);
+      this.showErrorNotice(`${this.t("workbench.notifications.previewFailed")}: ${errorMessage}`);
     }
   }
 
@@ -2145,9 +2355,11 @@ export class WorkbenchPanel extends ItemView {
     contentA: string,
     contentB: string
   ): void {
+    const nameA = this.resolveNoteName(pair.nodeIdA);
+    const nameB = this.resolveNoteName(pair.nodeIdB);
     const diffView = new SimpleDiffView(
       this.app,
-      `${this.t("workbench.duplicates.merge")}: ${pair.noteA.name} ↔ ${pair.noteB.name}`,
+      `${this.t("workbench.duplicates.merge")}: ${nameA} ↔ ${nameB}`,
       contentA,
       contentB,
       async () => {
@@ -2170,7 +2382,7 @@ export class WorkbenchPanel extends ItemView {
    */
   private async confirmMerge(pair: DuplicatePair): Promise<void> {
     if (!this.plugin) {
-      new Notice(this.t("workbench.notifications.pluginNotInitialized"));
+      this.showErrorNotice(this.t("workbench.notifications.pluginNotInitialized"));
       return;
     }
 
@@ -2178,7 +2390,7 @@ export class WorkbenchPanel extends ItemView {
     const orchestrator = components.pipelineOrchestrator;
 
     if (!orchestrator) {
-      new Notice("管线编排器未初始化");
+      this.showErrorNotice(this.t("workbench.notifications.orchestratorNotInitialized"));
       return;
     }
 
@@ -2190,28 +2402,29 @@ export class WorkbenchPanel extends ItemView {
         onConfirm: async (finalFileName: string, keepNodeId: string) => {
           try {
             // 启动合并管线
-            const result = orchestrator.startMergePipeline(pair, keepNodeId, finalFileName);
-            
-            if (!result.ok) {
-              new Notice(`启动合并失败: ${result.error.message}`);
-              return;
-            }
+        const result = orchestrator.startMergePipeline(pair, keepNodeId, finalFileName);
+        
+        if (!result.ok) {
+          this.showErrorNotice(`启动合并失败: ${result.error.message}`);
+          return;
+        }
 
-            new Notice(`合并任务已启动，请等待 AI 生成合并内容...`);
+            new Notice(this.t("workbench.notifications.mergeStarted"));
             
             // 更新重复对状态为 merging
             const duplicateManager = components.duplicateManager;
             if (duplicateManager) {
               await duplicateManager.updateStatus(pair.id, "merging");
             }
-          } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            new Notice(`启动合并失败: ${errorMessage}`);
-          }
-        },
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        this.showErrorNotice(`启动合并失败: ${errorMessage}`);
+      }
+    },
         onCancel: () => {
           new Notice(this.t("workbench.notifications.mergeCancelled"));
-        }
+        },
+        resolveName: (nodeId: string) => components.cruidCache?.getName(nodeId) || nodeId
       }
     );
     modal.open();
@@ -2222,38 +2435,38 @@ export class WorkbenchPanel extends ItemView {
    */
   private async handleDismissDuplicate(pair: DuplicatePair): Promise<void> {
     if (!this.plugin) {
-      new Notice(this.t("workbench.notifications.pluginNotInitialized"));
+      this.showErrorNotice(this.t("workbench.notifications.pluginNotInitialized"));
       return;
     }
 
     try {
       // 获取 DuplicateManager
       const components = this.plugin.getComponents();
-      const duplicateManager = components.duplicateManager;
+    const duplicateManager = components.duplicateManager;
 
-      if (!duplicateManager) {
-        new Notice(this.t("workbench.notifications.duplicateManagerNotInitialized"));
-        return;
-      }
+    if (!duplicateManager) {
+      this.showErrorNotice(this.t("workbench.notifications.duplicateManagerNotInitialized"));
+      return;
+    }
 
       // 更新状态为 dismissed
-      const result = await duplicateManager.updateStatus(pair.id, "dismissed");
+    const result = await duplicateManager.updateStatus(pair.id, "dismissed");
 
-      if (!result.ok) {
-        new Notice(`${this.t("workbench.notifications.dismissFailed")}: ${result.error.message}`);
-        return;
-      }
+    if (!result.ok) {
+      this.showErrorNotice(`${this.t("workbench.notifications.dismissFailed")}: ${result.error.message}`);
+      return;
+    }
 
-      new Notice(`${this.t("workbench.notifications.dismissSuccess")}: ${pair.noteA.name} ↔ ${pair.noteB.name}`);
+      new Notice(`${this.t("workbench.notifications.dismissSuccess")}: ${this.resolveNoteName(pair.nodeIdA)} ↔ ${this.resolveNoteName(pair.nodeIdB)}`);
 
       // 刷新重复列表
       this.refreshDuplicates();
-    } catch (error) {
-      this.logError("忽略重复对失败", error, { pairId: pair.id });
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      new Notice(`${this.t("workbench.notifications.dismissFailed")}: ${errorMessage}`);
-    }
+  } catch (error) {
+    this.logError("忽略重复对失败", error, { pairId: pair.id });
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    this.showErrorNotice(`${this.t("workbench.notifications.dismissFailed")}: ${errorMessage}`);
   }
+}
 
   /**
    * 刷新重复列表
@@ -2270,17 +2483,18 @@ export class WorkbenchPanel extends ItemView {
       // 获取待处理的重复对（同步方法）
       const pairs = duplicateManager.getPendingPairs();
       this.updateDuplicates(pairs);
-    } catch (error) {
-      this.logWarn("刷新重复列表失败", { error });
-    }
+  } catch (error) {
+    this.logWarn("刷新重复列表失败", { error });
+    this.showErrorNotice(`${this.t("common.error")}: ${error instanceof Error ? error.message : String(error)}`);
   }
+}
 
   /**
    * 处理切换队列状态
    */
   private async handleToggleQueue(): Promise<void> {
     if (!this.plugin) {
-      new Notice(this.t("workbench.notifications.pluginNotInitialized"));
+      this.showErrorNotice(this.t("workbench.notifications.pluginNotInitialized"));
       return;
     }
 
@@ -2316,7 +2530,7 @@ export class WorkbenchPanel extends ItemView {
       // A-UCD-03: 写入完成后显示撤销通知
       if (event.type === "pipeline_completed" && event.context.snapshotId && event.context.filePath) {
         const kindLabel = event.context.kind === "create" ? "创建"
-          : event.context.kind === "incremental" ? "增量改进"
+          : event.context.kind === "incremental" ? "改进"
             : "合并";
         this.showUndoToast(
           `${kindLabel}完成: ${event.context.filePath.split("/").pop()}`,
@@ -2327,13 +2541,13 @@ export class WorkbenchPanel extends ItemView {
       
       // 管线失败时显示错误通知
       if (event.type === "pipeline_failed" && event.context.error) {
-        new Notice(event.context.error.message, 8000); // 显示8秒
+        this.showErrorNotice(event.context.error.message);
       }
 
       // merge / incremental 进入待写入确认阶段时：自动弹出 Diff 预览
       if (event.type === "confirmation_required" &&
           (event.context.kind === "merge" || event.context.kind === "incremental") &&
-          event.context.stage === "awaiting_write_confirm") {
+          event.context.stage === "review_changes") {
         void this.showWritePreview(event.context);
       }
        
@@ -2346,27 +2560,11 @@ export class WorkbenchPanel extends ItemView {
    */
   public updatePipelineContexts(contexts: PipelineContext[]): void {
     if (!this.pipelineStatusContainer) return;
-    const list = this.pipelineStatusContainer.querySelector(".cr-pipeline-list");
+    const list = this.pipelineStatusContainer.querySelector(".cr-pipeline-list") as HTMLElement | null;
     if (!list) return;
-
-    const stageLabel: Record<PipelineContext["stage"], string> = {
-      idle: "空闲",
-      standardizing: "标准化",
-      enriching: "丰富中",
-      embedding: "向量嵌入",
-      awaiting_create_confirm: "等待创建确认",
-      reasoning: "内容生成",
-      grounding: "Ground 校验",
-      awaiting_write_confirm: "等待写入确认",
-      writing: "写入中",
-      deduplicating: "去重中",
-      completed: "已完成",
-      failed: "失败"
-    };
 
     this.pipelineContexts = new Map(contexts.map((c) => [c.pipelineId, c]));
 
-    // 维持当前选中的管线
     if (!this.currentPipelineId && contexts.length > 0) {
       this.currentPipelineId = contexts[0].pipelineId;
     }
@@ -2377,40 +2575,110 @@ export class WorkbenchPanel extends ItemView {
     list.empty();
 
     if (contexts.length === 0) {
-      list.createEl("div", { text: this.t("workbench.queueStatus.noPipeline"), cls: "cr-empty-text" });
+      list.createDiv({
+        cls: "cr-empty-state",
+        text: this.t("workbench.pipeline.empty")
+      });
       this.currentPipelineId = null;
       this.renderPipelinePreview();
       return;
     }
 
     contexts.forEach((ctx) => {
-      const item = list.createDiv({ cls: "cr-pipeline-item" });
-      item.createEl("div", { text: `${this.t("workbench.pipeline.id")}: ${ctx.pipelineId}`, cls: "cr-pipeline-id" });
-      item.createEl("div", { text: `${this.t("workbench.pipeline.type")}: ${ctx.type}`, cls: "cr-pipeline-type" });
-      item.createEl("div", { text: `${this.t("workbench.pipeline.stage")}: ${stageLabel[ctx.stage] || ctx.stage}`, cls: "cr-pipeline-stage" });
+      const card = list.createDiv({ cls: "cr-pipeline-card", attr: { role: "listitem" } });
+      if (ctx.pipelineId === this.currentPipelineId) {
+        card.addClass("is-active");
+      }
+      card.setAttr("data-kind", ctx.kind);
 
-      const actions = item.createDiv({ cls: "cr-pipeline-actions" });
+      const header = card.createDiv({ cls: "cr-pipeline-card-header" });
+      const kindLabel = this.t(`workbench.pipeline.kind.${ctx.kind}`);
+      header.createEl("div", {
+        text: `${kindLabel || ctx.kind} · ${this.t("workbench.pipeline.id")} ${ctx.pipelineId}`,
+        cls: "cr-pipeline-kind"
+      });
+      const stageTag = header.createDiv({ cls: "cr-pipeline-stage-tag" });
+      stageTag.setText(this.getPipelineStageLabel(ctx.stage));
+      if (ctx.stage === "failed") {
+        stageTag.addClass("is-error");
+      } else if (ctx.stage === "completed") {
+        stageTag.addClass("is-success");
+      }
+
+      const stageSequence = this.getPipelineStageSequence(ctx.kind);
+      const totalSteps = stageSequence.length || 1;
+      let currentIndex = stageSequence.indexOf(ctx.stage);
+      if (currentIndex === -1) {
+        currentIndex = stageSequence.indexOf("completed");
+      }
+      if (currentIndex === -1) {
+        currentIndex = 0;
+      }
+      const ratio = ctx.stage === "failed"
+        ? currentIndex / totalSteps
+        : Math.min(totalSteps, currentIndex + 1) / totalSteps;
+      const progress = Math.max(0, Math.min(100, Math.round(ratio * 100)));
+
+      const progressBar = card.createDiv({
+        cls: `cr-pipeline-progress${ctx.stage === "failed" ? " is-error" : ""}`,
+        attr: {
+          role: "progressbar",
+          "aria-valuemin": "0",
+          "aria-valuemax": "100",
+          "aria-valuenow": progress.toString()
+        }
+      });
+      progressBar.createDiv({
+        cls: "cr-pipeline-progress-fill",
+        attr: { style: `width: ${progress}%` }
+      });
+
+      const stepsContainer = card.createDiv({ cls: "cr-pipeline-steps" });
+      stageSequence.forEach((stage, index) => {
+        const step = stepsContainer.createDiv({ cls: "cr-pipeline-step" });
+        if (ctx.stage === "failed") {
+          if (index < currentIndex) {
+            step.addClass("is-complete");
+          } else if (index === currentIndex) {
+            step.addClass("is-error");
+          }
+        } else {
+          if (index < currentIndex) {
+            step.addClass("is-complete");
+          } else if (index === currentIndex) {
+            step.addClass("is-current");
+          }
+        }
+        step.createSpan({ text: this.getPipelineStageLabel(stage) });
+      });
+
+      const message = card.createDiv({ cls: "cr-pipeline-message" });
+      if (ctx.stage === "failed" && ctx.error) {
+        message.textContent = ctx.error.message;
+      } else {
+        message.textContent = this.getPipelineStageMessage(ctx.stage);
+      }
+
+      const actions = card.createDiv({ cls: "cr-pipeline-card-actions" });
       const viewBtn = actions.createEl("button", { text: this.t("workbench.pipeline.view"), cls: "cr-btn-small" });
       viewBtn.addEventListener("click", () => {
         this.currentPipelineId = ctx.pipelineId;
         this.renderPipelinePreview();
       });
 
-      if (ctx.stage === "awaiting_create_confirm") {
+      if (ctx.stage === "review_draft") {
         const btn = actions.createEl("button", { text: this.t("workbench.pipeline.confirmCreate"), cls: "mod-cta cr-btn-small" });
         btn.addEventListener("click", async () => {
           const po = this.plugin?.getComponents().pipelineOrchestrator;
           if (!po) return;
           const result = await po.confirmCreate(ctx.pipelineId);
           if (!result.ok) {
-            new Notice(`${this.t("workbench.notifications.confirmCreateFailed")}: ${result.error.message}`);
+            this.showErrorNotice(`${this.t("workbench.notifications.confirmCreateFailed")}: ${result.error.message}`);
           }
         });
-      } else if (ctx.stage === "awaiting_write_confirm") {
+      } else if (ctx.stage === "review_changes") {
         const btn = actions.createEl("button", { text: this.t("workbench.pipeline.previewWrite"), cls: "mod-cta cr-btn-small" });
         btn.addEventListener("click", () => this.showWritePreview(ctx));
-      } else if (ctx.stage === "failed" && ctx.error) {
-        actions.createEl("span", { text: ctx.error.message, cls: "cr-error-text" });
       }
     });
 
@@ -2622,14 +2890,14 @@ export class WorkbenchPanel extends ItemView {
     if (!this.plugin) return;
 
     const taskQueue = this.plugin.getComponents().taskQueue;
-    const result = taskQueue.cancel(taskId);
-
-    if (result.ok) {
+    try {
+      taskQueue.cancel(taskId);
       new Notice(this.t("workbench.notifications.taskCancelled"));
       this.refreshQueueDetailsIfVisible();
       this.updateQueueStatus(taskQueue.getStatus());
-    } else {
-      new Notice(`${this.t("workbench.notifications.cancelFailed")}: ${result.error.message}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.showErrorNotice(`${this.t("workbench.notifications.cancelFailed")}: ${message}`);
     }
   }
 
@@ -2647,7 +2915,7 @@ export class WorkbenchPanel extends ItemView {
       this.refreshQueueDetailsIfVisible();
       this.updateQueueStatus(taskQueue.getStatus());
     } else {
-      new Notice(`${this.t("workbench.notifications.cancelFailed")}: ${result.error.message}`);
+      this.showErrorNotice(`${this.t("workbench.notifications.cancelFailed")}: ${result.error.message}`);
     }
   }
 
@@ -2665,7 +2933,7 @@ export class WorkbenchPanel extends ItemView {
       this.refreshQueueDetailsIfVisible();
       this.updateQueueStatus(taskQueue.getStatus());
     } else {
-      new Notice(`清除失败: ${result.error.message}`);
+      this.showErrorNotice(`清除失败: ${result.error.message}`);
     }
   }
 
@@ -2683,9 +2951,11 @@ export class WorkbenchPanel extends ItemView {
     let clearedCount = 0;
     allTasks.forEach(task => {
       if (task.state === "Failed") {
-        const result = taskQueue.cancel(task.id);
-        if (result.ok) {
+        try {
+          taskQueue.cancel(task.id);
           clearedCount++;
+        } catch (error) {
+          console.warn("[Cognitive Razor] 清除失败任务时取消失败", task.id, error);
         }
       }
     });
@@ -2697,11 +2967,96 @@ export class WorkbenchPanel extends ItemView {
   }
 
   /**
+   * 启动图片生成流程
+   */
+  public async startImageInsert(): Promise<void> {
+    if (!this.plugin) return;
+    const t = this.plugin.getI18n().t();
+    const imgSettings = this.plugin.settings.imageGeneration;
+    if (!imgSettings?.enabled) {
+      new Notice(t.workbench.notifications.featureDisabled || "功能已关闭");
+      return;
+    }
+
+    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (!view || view.getMode() !== "source") {
+      new Notice(this.t("workbench.notifications.openMarkdownFirst"));
+      return;
+    }
+    const file = view.file;
+    if (!file) {
+      new Notice(this.t("workbench.notifications.fileNotFound"));
+      return;
+    }
+
+    const editor = view.editor;
+    const cursor = editor.getCursor();
+    const contextSize = imgSettings.contextWindowSize ?? 500;
+    const { before, after } = this.getContextSegments(editor, cursor, contextSize);
+    const frontmatter = this.buildFrontmatter(file);
+
+    const modal = new ImageInsertModal(this.app, {
+      t,
+      contextBefore: before,
+      contextAfter: after,
+      onConfirm: async (userPrompt) => {
+        const orchestrator = this.plugin?.getComponents().imageInsertOrchestrator;
+        if (!orchestrator) {
+          new Notice(this.t("workbench.notifications.systemNotInitialized"));
+          return;
+        }
+        const result = orchestrator.execute({
+          userPrompt,
+          contextBefore: before,
+          contextAfter: after,
+          frontmatter,
+          filePath: file.path,
+          cursorPosition: cursor
+        });
+        if (result.ok) {
+          new Notice(t.workbench.notifications.imageTaskCreated || "图片生成任务已创建");
+        } else {
+          new Notice(result.error.message || (t.workbench.notifications.imageGenerationFailed || "图片生成任务创建失败"));
+        }
+      }
+    });
+    modal.open();
+  }
+
+  private getContextSegments(editor: Editor, cursor: { line: number; ch: number }, size: number): { before: string; after: string } {
+    const full = editor.getValue();
+    const offset = editor.posToOffset(cursor);
+    const before = full.slice(Math.max(0, offset - size), offset);
+    const after = full.slice(offset, offset + size);
+    return { before, after };
+  }
+
+  private buildFrontmatter(file: TFile): CRFrontmatter {
+    const cache = this.app.metadataCache.getFileCache(file);
+    const fm = cache?.frontmatter || {};
+    return {
+      cruid: typeof fm.cruid === "string" ? fm.cruid : file.basename,
+      type: fm.type as CRFrontmatter["type"] ?? "Entity",
+      name: typeof fm.name === "string" ? fm.name : file.basename,
+      status: (fm.status as CRFrontmatter["status"]) ?? "Draft",
+      created: typeof fm.created === "string" ? fm.created : "",
+      updated: typeof fm.updated === "string" ? fm.updated : "",
+      aliases: Array.isArray(fm.aliases) ? fm.aliases : undefined,
+      tags: Array.isArray(fm.tags) ? fm.tags : undefined,
+      parents: Array.isArray(fm.parents) ? fm.parents : [],
+      parentUid: typeof fm.parentUid === "string" ? fm.parentUid : undefined,
+      parentType: fm.parentType as CRFrontmatter["parentType"] | undefined,
+      sourceUids: Array.isArray(fm.sourceUids) ? fm.sourceUids : undefined,
+      version: typeof fm.version === "string" ? fm.version : undefined
+    };
+  }
+
+  /**
    * 处理撤销操作
    */
   private async handleUndo(operationId: string): Promise<void> {
     if (!this.plugin) {
-      new Notice(this.t("workbench.notifications.pluginNotInitialized"));
+      this.showErrorNotice(this.t("workbench.notifications.pluginNotInitialized"));
       return;
     }
 
@@ -2730,10 +3085,10 @@ export class WorkbenchPanel extends ItemView {
           new Notice(this.t("workbench.notifications.undoSuccessRestored"));
         }
       } catch (error) {
-        new Notice(`${this.t("workbench.notifications.undoFailed")}: ${error instanceof Error ? error.message : String(error)}`);
+        this.showErrorNotice(`${this.t("workbench.notifications.undoFailed")}: ${error instanceof Error ? error.message : String(error)}`);
       }
     } else {
-      new Notice(`${this.t("workbench.notifications.undoFailed")}: ${result.error.message}`);
+      this.showErrorNotice(`${this.t("workbench.notifications.undoFailed")}: ${result.error.message}`);
     }
   }
 }
@@ -2759,6 +3114,8 @@ class DuplicatePreviewModal extends Modal {
   private pair: DuplicatePair;
   private contentA: string;
   private contentB: string;
+  private resolveName: (nodeId: string) => string;
+  private resolvePath: (nodeId: string) => string | null;
   private onMerge: () => void;
   private onDismiss: () => void;
 
@@ -2767,6 +3124,10 @@ class DuplicatePreviewModal extends Modal {
     pair: DuplicatePair,
     contentA: string,
     contentB: string,
+    resolvers: {
+      resolveName: (nodeId: string) => string;
+      resolvePath: (nodeId: string) => string | null;
+    },
     onMerge: () => void,
     onDismiss: () => void
   ) {
@@ -2774,6 +3135,8 @@ class DuplicatePreviewModal extends Modal {
     this.pair = pair;
     this.contentA = contentA;
     this.contentB = contentB;
+    this.resolveName = resolvers.resolveName;
+    this.resolvePath = resolvers.resolvePath;
     this.onMerge = onMerge;
     this.onDismiss = onDismiss;
   }
@@ -2836,12 +3199,17 @@ class DuplicatePreviewModal extends Modal {
     // 并排视图
     const sideBySideView = previewContainer.createDiv({ cls: "cr-side-by-side-view" });
 
+    const nameA = this.resolveName(this.pair.nodeIdA);
+    const nameB = this.resolveName(this.pair.nodeIdB);
+    const pathA = this.resolvePath(this.pair.nodeIdA);
+    const pathB = this.resolvePath(this.pair.nodeIdB);
+
     // 笔记 A 面板
     const panelA = sideBySideView.createDiv({ cls: "cr-preview-panel" });
     const headerA = panelA.createDiv({ cls: "cr-panel-header" });
-    headerA.createEl("h3", { text: this.pair.noteA.name, cls: "cr-panel-title" });
+    headerA.createEl("h3", { text: nameA, cls: "cr-panel-title" });
     headerA.createEl("div", {
-      text: this.pair.noteA.path,
+      text: pathA || "",
       cls: "cr-panel-path"
     });
     const contentAEl = panelA.createEl("pre", { cls: "cr-panel-content" });
@@ -2850,9 +3218,9 @@ class DuplicatePreviewModal extends Modal {
     // 笔记 B 面板
     const panelB = sideBySideView.createDiv({ cls: "cr-preview-panel" });
     const headerB = panelB.createDiv({ cls: "cr-panel-header" });
-    headerB.createEl("h3", { text: this.pair.noteB.name, cls: "cr-panel-title" });
+    headerB.createEl("h3", { text: nameB, cls: "cr-panel-title" });
     headerB.createEl("div", {
-      text: this.pair.noteB.path,
+      text: pathB || "",
       cls: "cr-panel-path"
     });
     const contentBEl = panelB.createEl("pre", { cls: "cr-panel-content" });
@@ -2914,14 +3282,22 @@ class DuplicatePreviewModal extends Modal {
       text: "📄 打开 A"
     });
     openABtn.addEventListener("click", () => {
-      this.openFile(this.pair.noteA.path);
+      if (!pathA) {
+        new Notice(`文件不存在: ${this.pair.nodeIdA}`, ERROR_NOTICE_DURATION);
+        return;
+      }
+      void this.openFile(pathA);
     });
 
     const openBBtn = buttonContainer.createEl("button", {
       text: "📄 打开 B"
     });
     openBBtn.addEventListener("click", () => {
-      this.openFile(this.pair.noteB.path);
+      if (!pathB) {
+        new Notice(`文件不存在: ${this.pair.nodeIdB}`, ERROR_NOTICE_DURATION);
+        return;
+      }
+      void this.openFile(pathB);
     });
 
     const cancelBtn = buttonContainer.createEl("button", {
@@ -2938,7 +3314,7 @@ class DuplicatePreviewModal extends Modal {
       const leaf = this.app.workspace.getLeaf(false);
       await leaf.openFile(file);
     } else {
-      new Notice(`文件不存在: ${path}`);
+      new Notice(`文件不存在: ${path}`, ERROR_NOTICE_DURATION);
     }
   }
 
@@ -3126,8 +3502,10 @@ class MergeHistoryModal extends Modal {
       const item = this.listContainer!.createDiv({ cls: "cr-history-item" });
 
       const info = item.createDiv({ cls: "cr-history-info" });
+      const nameA = this.resolveName(pair.nodeIdA);
+      const nameB = this.resolveName(pair.nodeIdB);
       info.createEl("div", {
-        text: `${pair.noteA.name} ↔ ${pair.noteB.name}`,
+        text: `${nameA} ↔ ${nameB}`,
         cls: "cr-history-names"
       });
 
@@ -3183,7 +3561,7 @@ class MergeHistoryModal extends Modal {
       new Notice(this.t("workbench.notifications.undoDismissSuccess"));
       await this.renderList();
     } else {
-      new Notice(`${this.t("workbench.notifications.undoFailed")}: ${result.error.message}`);
+      new Notice(`${this.t("workbench.notifications.undoFailed")}: ${result.error.message}`, ERROR_NOTICE_DURATION);
     }
   }
 
@@ -3213,13 +3591,18 @@ class MergeHistoryModal extends Modal {
       new Notice(this.t("workbench.notifications.deletePairSuccess"));
       await this.renderList();
     } else {
-      new Notice(`${this.t("common.error")}: ${result.error.message}`);
+      new Notice(`${this.t("common.error")}: ${result.error.message}`, ERROR_NOTICE_DURATION);
     }
   }
 
   onClose(): void {
     const { contentEl } = this;
     contentEl.empty();
+  }
+
+  private resolveName(nodeId: string): string {
+    const cache = this.plugin?.getComponents().cruidCache;
+    return cache?.getName(nodeId) || nodeId;
   }
 }
 

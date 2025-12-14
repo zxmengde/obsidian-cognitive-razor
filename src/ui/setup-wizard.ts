@@ -64,6 +64,7 @@ export class SetupWizard extends Modal {
     contentEl.empty();
     contentEl.addClass("cr-scope");
     contentEl.addClass("cr-setup-wizard");
+    this.plugin.getI18n().setLanguage(this.selectedLanguage);
 
     this.renderConfigure();
   }
@@ -74,8 +75,8 @@ export class SetupWizard extends Modal {
   private renderConfigure(): void {
     const { contentEl } = this;
 
-    const title = this.selectedLanguage === "zh" ? "配置 AI Provider" : "Configure AI Provider";
-    contentEl.createEl("h1", { text: title, cls: "cr-wizard-title" });
+    const wizardTitle = this.plugin.getI18n().t().setupWizard.title;
+    contentEl.createEl("h1", { text: wizardTitle, cls: "cr-wizard-title" });
 
     // 语言选择
     new Setting(contentEl)
@@ -93,6 +94,7 @@ export class SetupWizard extends Modal {
             const settings = this.plugin.getComponents().settings;
             settings.language = lang;
             await this.plugin.settingsStore.updateSettings(settings);
+            this.plugin.getI18n().setLanguage(lang);
             // 重新渲染界面
             this.renderStep();
           });

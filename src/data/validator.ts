@@ -1,14 +1,13 @@
 /** Validator - 验证 AI 输出，包括 JSON 解析和 Schema 校验 */
 
 import {
-  IValidator,
   ValidationResult,
   ValidationError,
   ValidationContext,
 } from "../types";
 
 /** Validator 实现类 */
-export class Validator implements IValidator {
+export class Validator {
   /** 验证输出 */
   async validate(
     output: string,

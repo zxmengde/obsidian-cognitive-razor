@@ -13,8 +13,9 @@ import { Validator } from './src/data/validator';
 import { I18n } from './src/core/i18n';
 
 // 应用层组件
+import { CruidCache } from './src/core/cruid-cache';
 import { VectorIndex } from './src/core/vector-index';
-import { LockManager } from './src/core/lock-manager';
+import { SimpleLockManager } from './src/core/lock-manager';
 import { UndoManager } from './src/core/undo-manager';
 import { ProviderManager } from './src/core/provider-manager';
 import { PromptManager } from './src/core/prompt-manager';
@@ -24,7 +25,7 @@ import { TaskRunner } from './src/core/task-runner';
 
 import { PipelineOrchestrator } from './src/core/pipeline-orchestrator';
 import { DeepenOrchestrator } from './src/core/deepen-orchestrator';
-import { IndexHealer } from './src/core/index-healer';
+import { ImageInsertOrchestrator } from './src/core/image-insert-orchestrator';
 
 // UI 层组件
 import { WorkbenchPanel, WORKBENCH_VIEW_TYPE } from './src/ui/workbench-panel';
@@ -48,8 +49,9 @@ export default class CognitiveRazorPlugin extends Plugin {
 	private validator!: Validator;
 
 	// 应用层组件
+	private cruidCache!: CruidCache;
 	private vectorIndex!: VectorIndex;
-	private lockManager!: LockManager;
+	private lockManager!: SimpleLockManager;
 	private undoManager!: UndoManager;
 	private providerManager!: ProviderManager;
 	private promptManager!: PromptManager;
@@ -58,7 +60,7 @@ export default class CognitiveRazorPlugin extends Plugin {
 	private taskRunner!: TaskRunner;
 	private pipelineOrchestrator!: PipelineOrchestrator;
 	private deepenOrchestrator!: DeepenOrchestrator;
-	private indexHealer!: IndexHealer;
+	private imageInsertOrchestrator!: ImageInsertOrchestrator;
 
 	// UI 组件
 	private statusBadge!: StatusBadge;
@@ -182,8 +184,7 @@ export default class CognitiveRazorPlugin extends Plugin {
 
 			// 2. 停止管线编排器和索引自愈
 			this.pipelineOrchestrator?.dispose();
-			this.indexHealer?.dispose();
-			this.lockManager?.dispose?.();
+			this.cruidCache?.dispose();
 
 			// 3. 保存设置（SettingsStore 使用 Obsidian 的 saveData，在 updateSettings 时自动保存）
 			this.logger?.debug('CognitiveRazorPlugin', '设置已通过 Obsidian 自动保存');
@@ -362,16 +363,11 @@ export default class CognitiveRazorPlugin extends Plugin {
 			});
 		}
 
-		// 5. 同步日志级别和格式到 Logger
+		// 5. 同步日志级别到 Logger
 		if (this.logger && this.settings.logLevel) {
 			this.logger.setLogLevel(this.settings.logLevel);
-			// 同步日志格式设置
-			if (this.settings.logFormat) {
-				this.logger.setFileFormat(this.settings.logFormat);
-			}
 			this.logger.debug('CognitiveRazorPlugin', '日志配置已同步', {
-				logLevel: this.settings.logLevel,
-				logFormat: this.settings.logFormat || 'json'
+				logLevel: this.settings.logLevel
 			});
 		}
 	}
@@ -419,6 +415,11 @@ export default class CognitiveRazorPlugin extends Plugin {
 	private async initializeApplicationLayer(): Promise<void> {
 		this.logger.info('CognitiveRazorPlugin', '应用层组件初始化开始');
 
+		// 0. CruidCache（SSOT：cruid → TFile）
+		this.cruidCache = new CruidCache(this.app, this.logger);
+		this.cruidCache.start({ fallbackToRead: false });
+		this.logger.debug('CognitiveRazorPlugin', 'CruidCache 已启动');
+
 		// 1. VectorIndex (新架构：data/vectors/)
 		// 从设置中读取嵌入维度（支持用户自定义）
 		const embeddingDimension = this.settings.embeddingDimension || 1536;
@@ -426,7 +427,8 @@ export default class CognitiveRazorPlugin extends Plugin {
 			this.fileStorage,
 			'text-embedding-3-small',
 			embeddingDimension,
-			this.logger
+			this.logger,
+			this.cruidCache
 		);
 		const loadResult = await this.vectorIndex.load();
 		if (!loadResult.ok) {
@@ -442,8 +444,8 @@ export default class CognitiveRazorPlugin extends Plugin {
 		this.validator = new Validator();
 		this.logger.debug('CognitiveRazorPlugin', 'Validator 初始化完成');
 
-		// 3. LockManager
-		this.lockManager = new LockManager(this.logger);
+		// 3. SimpleLockManager
+		this.lockManager = new SimpleLockManager();
 		this.logger.debug('CognitiveRazorPlugin', 'LockManager 初始化完成');
 
 		// 4. UndoManager (A-FUNC-07: data/snapshots/, A-FUNC-02: 可配置保留策略)
@@ -531,6 +533,11 @@ export default class CognitiveRazorPlugin extends Plugin {
 			pendingPairs: this.duplicateManager.getPendingPairs().length
 		});
 
+		// 订阅删除事件：清理向量索引与重复对（替代 IndexHealer 的 delete 逻辑）
+		this.cruidCache.onDelete(({ cruid, path }) => {
+			void this.cleanupAfterNoteDeleted(cruid, path);
+		});
+
 		// 8. TaskRunner（依赖注入所有必要组件）
 		this.taskRunner = new TaskRunner({
 			providerManager: this.providerManager,
@@ -540,7 +547,8 @@ export default class CognitiveRazorPlugin extends Plugin {
 			logger: this.logger,
 			vectorIndex: this.vectorIndex,
 			fileStorage: this.fileStorage,
-			settingsStore: this.settingsStore
+			settingsStore: this.settingsStore,
+			app: this.app
 		});
 		this.logger.debug('CognitiveRazorPlugin', 'TaskRunner 初始化完成');
 
@@ -578,6 +586,7 @@ export default class CognitiveRazorPlugin extends Plugin {
 			undoManager: this.undoManager,
 			promptManager: this.promptManager,  // A-FUNC-03: 用于模板前置校验
 			providerManager: this.providerManager,  // A-FUNC-03: 用于 Provider 前置校验
+			cruidCache: this.cruidCache,
 			getSettings: () => this.settings,
 		});
 		this.logger.debug('CognitiveRazorPlugin', 'PipelineOrchestrator 初始化完成');
@@ -593,15 +602,13 @@ export default class CognitiveRazorPlugin extends Plugin {
 		});
 		this.logger.debug('CognitiveRazorPlugin', 'DeepenOrchestrator 初始化完成');
 
-		// 11. IndexHealer（索引自愈，遵循 SSOT 第 7 章）
-		this.indexHealer = new IndexHealer({
-			app: this.app,
-			vectorIndex: this.vectorIndex,
-			duplicateManager: this.duplicateManager,
-			logger: this.logger,
-			fileStorage: this.fileStorage,
-		});
-		this.logger.debug('CognitiveRazorPlugin', 'IndexHealer 初始化完成');
+		// ImageInsertOrchestrator（图片插入编排器）
+		this.imageInsertOrchestrator = new ImageInsertOrchestrator(
+			this.taskQueue,
+			this.settingsStore,
+			this.logger
+		);
+		this.logger.debug('CognitiveRazorPlugin', 'ImageInsertOrchestrator 初始化完成');
 
 		this.logger.info('CognitiveRazorPlugin', '应用层组件初始化完成');
 	}
@@ -758,30 +765,6 @@ export default class CognitiveRazorPlugin extends Plugin {
 		});
 		this.unsubscribers.push(unsubPipeline);
 
-		// 5. 订阅 Vault 文件事件（索引自愈，遵循 SSOT 第 7 章）
-		// 文件删除事件
-		this.registerEvent(
-			this.app.vault.on('delete', (file) => {
-				void this.indexHealer.handleDelete(file);
-			})
-		);
-
-		// 文件重命名/移动事件
-		this.registerEvent(
-			this.app.vault.on('rename', (file, oldPath) => {
-				void this.indexHealer.handleRename(file, oldPath);
-			})
-		);
-
-		// 文件修改事件（带防抖）
-		this.registerEvent(
-			this.app.vault.on('modify', (file) => {
-				this.indexHealer.handleModify(file);
-			})
-		);
-
-		this.logger.debug('CognitiveRazorPlugin', 'Vault 文件事件订阅完成');
-
 		this.logger.info('CognitiveRazorPlugin', '事件订阅完成');
 	}
 
@@ -814,6 +797,42 @@ export default class CognitiveRazorPlugin extends Plugin {
 		}
 	}
 
+	/**
+	 * 清理已删除笔记关联的数据（替代 IndexHealer）
+	 */
+	private async cleanupAfterNoteDeleted(cruid: string, path: string): Promise<void> {
+		try {
+			// 1) 向量索引清理
+			if (this.vectorIndex) {
+				const result = await this.vectorIndex.delete(cruid);
+				if (!result.ok && result.error.code !== 'E004') {
+					this.logger.warn('CognitiveRazorPlugin', '删除笔记后清理向量索引失败', {
+						cruid,
+						path,
+						error: result.error
+					});
+				}
+			}
+
+			// 2) 重复对清理（仅清理 pending/dismissed）
+			if (this.duplicateManager) {
+				const result = await this.duplicateManager.removePairsByNodeId(cruid);
+				if (!result.ok) {
+					this.logger.warn('CognitiveRazorPlugin', '删除笔记后清理重复对失败', {
+						cruid,
+						path,
+						error: result.error
+					});
+				}
+			}
+		} catch (error) {
+			this.logger.error('CognitiveRazorPlugin', '删除笔记后清理关联数据异常', error as Error, {
+				cruid,
+				path
+			});
+		}
+	}
+
 
 
 	/**
@@ -843,6 +862,7 @@ export default class CognitiveRazorPlugin extends Plugin {
 			validator: this.validator,
 			
 			// 应用层
+			cruidCache: this.cruidCache,
 			vectorIndex: this.vectorIndex,
 			lockManager: this.lockManager,
 			undoManager: this.undoManager,
@@ -853,6 +873,7 @@ export default class CognitiveRazorPlugin extends Plugin {
 			taskRunner: this.taskRunner,
 			pipelineOrchestrator: this.pipelineOrchestrator,
 			deepenOrchestrator: this.deepenOrchestrator,
+			imageInsertOrchestrator: this.imageInsertOrchestrator,
 		};
 	}
 }

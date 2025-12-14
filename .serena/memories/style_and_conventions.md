@@ -1,0 +1,5 @@
+- .editorconfig 指定 UTF-8、LF、制表符缩进（宽度 4），文件需以换行结尾。
+- TypeScript 源码倾向模块化，遵循 ESLint 推荐规则并通过 typescript-eslint；允许未使用参数、显式 any（建议逐步减少）、空函数和 ts-ignore，回调中 args 可忽略。
+- 文件多为 ES 模块（package.json 中 type=module），保持中文注释友好说明复杂逻辑。
+- 测试文件（*.test.ts/*.spec.ts）可使用 any，不受部分限制。
+- 代码组织按领域分子目录（core/data/ui/utils），注意与现有结构保持一致。

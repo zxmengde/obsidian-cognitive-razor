@@ -6,8 +6,6 @@ import { ErrorCode, isValidErrorCode, getErrorCodeInfo } from "./error-codes";
 /** 日志级别 */
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
-/** 日志输出格式 */
-export type LogFormat = "json" | "pretty" | "compact";
 
 /** 日志条目接口 */
 export interface LogEntry {
@@ -52,22 +50,6 @@ const DEFAULT_EVENTS: Record<LogLevel, string> = {
   error: "ERROR",
 };
 
-/** 日志级别颜色（用于 pretty 格式） */
-const LEVEL_COLORS: Record<LogLevel, string> = {
-  debug: "🔍",
-  info: "ℹ️",
-  warn: "⚠️",
-  error: "❌",
-};
-
-/** 日志级别标签（用于 compact 格式） */
-const LEVEL_LABELS: Record<LogLevel, string> = {
-  debug: "DBG",
-  info: "INF",
-  warn: "WRN",
-  error: "ERR",
-};
-
 /** 格式化时间戳为简短格式 HH:mm:ss.SSS */
 function formatShortTime(isoString: string): string {
   const date = new Date(isoString);
@@ -107,8 +89,6 @@ export class Logger implements ILogger {
   private minLevel: LogLevel;
   private initialized = false;
   private consoleEnabled = true;
-  private fileFormat: LogFormat = "json";
-  private consoleFormat: LogFormat = "pretty";
   private sessionId: string;
   private currentTraceId: string | null = null;
   private groupStack: string[] = [];
@@ -172,16 +152,6 @@ export class Logger implements ILogger {
     }
   }
 
-  /** 设置文件输出格式 */
-  setFileFormat(format: LogFormat): void {
-    this.fileFormat = format;
-  }
-
-  /** 设置控制台输出格式 */
-  setConsoleFormat(format: LogFormat): void {
-    this.consoleFormat = format;
-  }
-
   /** 初始化 Logger */
   async initialize(): Promise<void> {
     if (this.initialized) return;
@@ -222,7 +192,6 @@ export class Logger implements ILogger {
 
   /** 记录会话开始 */
   private logSessionStart(): void {
-    const separator = "═".repeat(60);
     const timestamp = new Date().toISOString();
     const startEntry: LogEntry = {
       timestamp,
@@ -235,14 +204,8 @@ export class Logger implements ILogger {
         separator: true
       }
     };
-    
-    // 添加分隔符（仅在 pretty/compact 格式时显示）
-    if (this.fileFormat !== "json") {
-      this.logBuffer.push("");
-      this.logBuffer.push(separator);
-    }
-    
-    const logLine = this.formatLogEntry(startEntry, this.fileFormat);
+
+    const logLine = this.formatLogEntry(startEntry);
     this.logBuffer.push(logLine);
     this.currentSize += new TextEncoder().encode(logLine + "\n").length;
     
@@ -453,7 +416,7 @@ export class Logger implements ILogger {
       };
     }
 
-    const logLine = this.formatLogEntry(entry, this.fileFormat);
+    const logLine = this.formatLogEntry(entry);
     const logLineSize = new TextEncoder().encode(logLine + "\n").length;
 
     if (this.currentSize + logLineSize > this.maxLogSize) {
@@ -525,7 +488,7 @@ export class Logger implements ILogger {
       fixSuggestion: codeInfo?.fixSuggestion,
     };
 
-    const logLine = this.formatLogEntry(entry, this.fileFormat);
+    const logLine = this.formatLogEntry(entry);
     const logLineSize = new TextEncoder().encode(logLine + "\n").length;
 
     if (this.currentSize + logLineSize > this.maxLogSize) {
@@ -547,72 +510,9 @@ export class Logger implements ILogger {
     return LOG_LEVEL_PRIORITY[level] >= LOG_LEVEL_PRIORITY[this.minLevel];
   }
 
-  /** 格式化日志 */
-  private formatLogEntry(entry: LogEntry, format: LogFormat): string {
-    switch (format) {
-      case "pretty":
-        return this.formatPretty(entry);
-      case "compact":
-        return this.formatCompact(entry);
-      case "json":
-      default:
-        return JSON.stringify(entry);
-    }
-  }
-
-  /** Pretty 格式 */
-  private formatPretty(entry: LogEntry): string {
-    const time = formatShortTime(entry.timestamp);
-    const icon = LEVEL_COLORS[entry.level];
-    const indent = "  ".repeat(this.groupStack.length);
-    const traceStr = entry.traceId ? ` [${entry.traceId.slice(-8)}]` : "";
-    
-    let line = `${time} ${icon} ${indent}[${entry.module}]${traceStr} ${entry.message}`;
-    
-    if (entry.context && Object.keys(entry.context).length > 0) {
-      const contextStr = this.formatContext(entry.context);
-      if (contextStr) {
-        line += ` ${contextStr}`;
-      }
-    }
-    
-    if (entry.error) {
-      line += `\n${indent}    └─ ${entry.error.code || ""} ${entry.error.message}`;
-      if (entry.error.fixSuggestion) {
-        line += `\n${indent}       💡 ${entry.error.fixSuggestion}`;
-      }
-    }
-    
-    return line;
-  }
-
-  /** Compact 格式 */
-  private formatCompact(entry: LogEntry): string {
-    const time = formatShortTime(entry.timestamp);
-    const level = LEVEL_LABELS[entry.level];
-    const traceStr = entry.traceId ? `[${entry.traceId.slice(-6)}]` : "";
-    
-    let line = `${time} ${level} ${entry.module}${traceStr}: ${entry.message}`;
-    
-    // 只显示关键上下文
-    if (entry.context) {
-      const keyFields = ["taskId", "nodeId", "pipelineId", "providerId", "elapsedTime", "durationMs"];
-      const relevantContext: Record<string, unknown> = {};
-      for (const key of keyFields) {
-        if (entry.context[key] !== undefined) {
-          relevantContext[key] = entry.context[key];
-        }
-      }
-      if (Object.keys(relevantContext).length > 0) {
-        line += ` ${this.formatContext(relevantContext)}`;
-      }
-    }
-    
-    if (entry.error?.code) {
-      line += ` [${entry.error.code}]`;
-    }
-    
-    return line;
+  /** 格式化日志（统一为 JSON Lines） */
+  private formatLogEntry(entry: LogEntry): string {
+    return JSON.stringify(entry);
   }
 
   /** 格式化上下文 */
@@ -858,22 +758,8 @@ export class Logger implements ILogger {
     return summary;
   }
 
-  /** 导出日志为指定格式 */
-  exportAs(format: LogFormat): string {
-    if (format === this.fileFormat) {
-      return this.getLogContent();
-    }
-    
-    const lines: string[] = [];
-    for (const line of this.logBuffer) {
-      const entry = Logger.parseLogEntry(line);
-      if (entry) {
-        lines.push(this.formatLogEntry(entry, format));
-      } else {
-        // 保留非 JSON 行（如分隔符）
-        lines.push(line);
-      }
-    }
-    return lines.join("\n");
+  /** 导出日志（JSON Lines） */
+  exportAsJsonLines(): string {
+    return this.getLogContent();
   }
 }

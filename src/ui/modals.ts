@@ -93,8 +93,8 @@ export class ProviderConfigModal extends Modal {
     contentEl.addClass("cr-scope");
     contentEl.addClass("cr-provider-config-modal");
 
-    const title = this.options.mode === "add" ? "添加 AI Provider" : "编辑 AI Provider";
-    contentEl.createEl("h2", { text: title });
+    const modalTitle = this.options.title ?? (this.options.mode === "add" ? "添加 AI Provider" : "编辑 AI Provider");
+    contentEl.createEl("h2", { text: modalTitle });
 
     // 说明文字
     const descEl = contentEl.createDiv({ cls: "modal-description" });
