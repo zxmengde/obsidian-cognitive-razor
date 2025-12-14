@@ -1,6 +1,6 @@
 /** SettingsStore - 管理插件配置，支持版本兼容性检查和导入导出 */
 
-import { ISettingsStore, PluginSettings, ProviderConfig, Result, ok, err, DirectoryScheme, TaskType, TaskModelConfig } from "../types";
+import { PluginSettings, ProviderConfig, Result, ok, err, DirectoryScheme, TaskType, TaskModelConfig } from "../types";
 import { Plugin } from "obsidian";
 
 /**
@@ -57,12 +57,71 @@ export const REQUIRED_DIRECTORY_SCHEME_FIELDS: (keyof DirectoryScheme)[] = [
  * TaskType 列表
  */
 export const TASK_TYPES: TaskType[] = [
-  "embedding",
-  "standardizeClassify",
-  "enrich",
-  "reason:new",
-  "ground",
+  "define",
+  "tag",
+  "write",
+  "index",
+  "verify",
 ];
+
+/** 任务模型默认配置 */
+export const DEFAULT_TASK_MODEL_CONFIGS: Record<TaskType, TaskModelConfig> = {
+  define: {
+    providerId: "",
+    model: "gpt-4o",
+    temperature: 0.3,
+    topP: 1.0,
+  },
+  tag: {
+    providerId: "",
+    model: "gpt-4o",
+    temperature: 0.5,
+    topP: 1.0,
+  },
+  write: {
+    providerId: "",
+    model: "gpt-4o",
+    temperature: 0.7,
+    topP: 1.0,
+  },
+  index: {
+    providerId: "",
+    model: "text-embedding-3-small",
+    embeddingDimension: 1536,
+  },
+  verify: {
+    providerId: "",
+    model: "gpt-4o",
+    temperature: 0.3,
+    topP: 1.0,
+  },
+};
+
+/** 参数推荐范围 */
+export const PARAM_RECOMMENDATIONS = {
+  temperature: {
+    define: { min: 0.2, max: 0.5, recommended: "0.3-0.5" },
+    tag: { min: 0.3, max: 0.7, recommended: "0.5" },
+    write: { min: 0.5, max: 1.0, recommended: "0.7-0.9" },
+    verify: { min: 0.2, max: 0.5, recommended: "0.3" },
+  },
+  topP: {
+    default: { min: 0.8, max: 1.0, recommended: "0.8-1.0" },
+  },
+  embeddingDimension: {
+    recommended: "1536",
+    options: [256, 512, 1024, 1536, 3072],
+  },
+} as const;
+
+/** 生成新的默认任务模型配置副本 */
+export function createDefaultTaskModels(): Record<TaskType, TaskModelConfig> {
+  const taskModels = {} as Record<TaskType, TaskModelConfig>;
+  for (const taskType of TASK_TYPES) {
+    taskModels[taskType] = { ...DEFAULT_TASK_MODEL_CONFIGS[taskType] };
+  }
+  return taskModels;
+}
 
 /**
  * 验证错误接口
@@ -118,38 +177,10 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   defaultProviderId: "",
   
   // 任务模型配置
-  taskModels: {
-    embedding: {
-      providerId: "",
-      model: "text-embedding-3-small",
-    },
-    standardizeClassify: {
-      providerId: "",
-      model: "gpt-4o",
-      temperature: 0.3,
-    },
-    enrich: {
-      providerId: "",
-      model: "gpt-4o",
-      temperature: 0.5,
-    },
-    "reason:new": {
-      providerId: "",
-      model: "gpt-4o",
-      temperature: 0.7,
-    },
-    ground: {
-      providerId: "",
-      model: "gpt-4o",
-      temperature: 0.3,
-    },
-  },
+  taskModels: createDefaultTaskModels(),
   
   // 日志级别
   logLevel: "info",
-
-  // 日志格式（json: 结构化, pretty: 易读, compact: 紧凑）
-  logFormat: "json",
   
   // 嵌入向量维度（text-embedding-3-small 支持 512-3072，默认 1536）
   embeddingDimension: 1536,
@@ -159,7 +190,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 };
 
 /** SettingsStore 实现类 */
-export class SettingsStore implements ISettingsStore {
+export class SettingsStore {
   private plugin: Plugin;
   private settings: PluginSettings;
   private listeners: Array<(settings: PluginSettings) => void> = [];
@@ -170,7 +201,7 @@ export class SettingsStore implements ISettingsStore {
    */
   constructor(plugin: Plugin) {
     this.plugin = plugin;
-    this.settings = { ...DEFAULT_SETTINGS };
+    this.settings = this.createDefaultSettingsSnapshot();
   }
 
   /** 加载设置 */
@@ -361,6 +392,16 @@ export class SettingsStore implements ISettingsStore {
     for (const listener of this.listeners) {
       listener(settingsCopy);
     }
+  }
+
+  /** 创建默认设置快照，避免引用共享 */
+  private createDefaultSettingsSnapshot(): PluginSettings {
+    return {
+      ...DEFAULT_SETTINGS,
+      directoryScheme: { ...DEFAULT_SETTINGS.directoryScheme },
+      providers: { ...DEFAULT_SETTINGS.providers },
+      taskModels: createDefaultTaskModels()
+    };
   }
 
   /**
