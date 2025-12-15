@@ -1,7 +1,0 @@
-- 安装依赖：`npm install`
-- 开发模式（监听构建）：`npm run dev`
-- 正式构建：`npm run build`（先 tsc 检查再 esbuild production）
-- 版本号同步：`npm run version`（更新 manifest.json 与 versions.json）
-- 测试相关：`npm run test`（一次性运行 Vitest）、`npm run test:watch`、`npm run test:ui`、`npm run test:coverage`
-- 发布前验证：`npm run verify-release`，完整发布准备：`npm run prepare-release`
-- 其他：`npm run dev`/`build` 输出 main.js 供 Obsidian 加载。

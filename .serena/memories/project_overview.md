@@ -1,4 +1,0 @@
-- 项目是 Obsidian 插件 “Cognitive Razor”，用于把模糊概念整理为结构化知识节点，包含语义去重、增量改进和可逆操作等 AI 能力。
-- 技术栈：TypeScript + Obsidian 插件 API，使用 esbuild 打包、tsc 进行类型检查，Vitest（含 happy-dom、@vitest/ui）做单测，依赖 yaml 库。
-- 目录概览：src 下分 core（业务逻辑）、data（配置数据与存储）、ui（界面组件）、utils（通用工具），docs 目录存放设计文档，scripts 包含版本/发布脚本，主入口 main.ts/main.js，样式在 styles.css。
-- 运行环境：Windows PowerShell，包管理器为 npm；manifest.json/versions.json 管理 Obsidian 插件元数据。

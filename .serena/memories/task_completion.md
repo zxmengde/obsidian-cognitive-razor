@@ -1,4 +1,0 @@
-- 完成任务前请至少运行相关测试（`npm run test`）或针对改动的子集运行 Vitest，若涉及构建流程需执行 `npm run build` 确认通过。
-- 检查 esbuild 输出的 main.js 是否已更新并与 manifest.json/versions.json 同步（如涉及版本或接口变更）。
-- 变更文档（docs/*.md）后确认与实现一致，必要时更新版本/改动记录。
-- 依据 Windows PowerShell 环境提交前可用 `git status` 确认仅包含期望文件。
