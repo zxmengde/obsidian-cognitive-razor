@@ -19,14 +19,12 @@ import type {
   StandardizedConcept,
   TaskRecord,
   SnapshotMetadata,
-  PipelineStage,
   CRFrontmatter
 } from "../types";
 import { renderNamingTemplate } from "../core/naming-utils";
 
 import type { TaskQueue } from "../core/task-queue";
 import type { PipelineContext } from "../types";
-import type { PipelineEvent } from "../core/pipeline-orchestrator";
 import type CognitiveRazorPlugin from "../../main";
 import { UndoNotification } from "./undo-notification";
 import { renderSideBySideDiff, SimpleDiffView, buildLineDiff } from "./diff-view";
@@ -77,7 +75,6 @@ export class WorkbenchPanel extends ItemView {
   private duplicatesContainer: HTMLElement | null = null;
   private queueStatusContainer: HTMLElement | null = null;
   private recentOpsContainer: HTMLElement | null = null;
-  private pipelineStatusContainer: HTMLElement | null = null;
   private plugin: CognitiveRazorPlugin | null = null;
   private taskQueue: TaskQueue | null = null;
   private pipelineUnsubscribe: (() => void) | null = null;
@@ -85,11 +82,8 @@ export class WorkbenchPanel extends ItemView {
 
   // 标准化相关
   private standardizeBtn: HTMLButtonElement | null = null;
-  private standardizedResultContainer: HTMLElement | null = null;
   private typeConfidenceTableContainer: HTMLElement | null = null;
   private currentStandardizedData: StandardizedConcept | null = null;
-  private currentPipelineId: string | null = null;
-  private pipelineContexts: Map<string, PipelineContext> = new Map();
   private pendingConceptInput: string | null = null;
   private improveBtn: HTMLButtonElement | null = null;
   private insertImageBtn: HTMLButtonElement | null = null;
@@ -172,55 +166,6 @@ export class WorkbenchPanel extends ItemView {
   private resolveNotePath(nodeId: string): string | null {
     const cache = this.getCruidCache();
     return cache?.getPath(nodeId) || null;
-  }
-
-  private getPipelineStageLabel(stage: PipelineStage): string {
-    const translated = this.t(`workbench.pipeline.stages.${stage}`);
-    return translated || stage;
-  }
-
-  private getPipelineStageMessage(stage: PipelineStage): string {
-    const message = this.t(`workbench.pipeline.stageMessages.${stage}`);
-    if (message && !message.startsWith("workbench.pipeline.stageMessages")) {
-      return message;
-    }
-    return this.t("workbench.pipeline.stageMessages.default");
-  }
-
-  private getPipelineStageSequence(kind: PipelineContext["kind"]): PipelineStage[] {
-    const sequences: Record<PipelineContext["kind"], PipelineStage[]> = {
-      create: [
-        "defining",
-        "tagging",
-        "review_draft",
-        "writing",
-        "indexing",
-        "verifying",
-        "review_changes",
-        "saving",
-        "checking_duplicates",
-        "completed"
-      ],
-      incremental: [
-        "writing",
-        "indexing",
-        "verifying",
-        "review_changes",
-        "saving",
-        "checking_duplicates",
-        "completed"
-      ],
-      merge: [
-        "writing",
-        "indexing",
-        "verifying",
-        "review_changes",
-        "saving",
-        "checking_duplicates",
-        "completed"
-      ]
-    };
-    return sequences[kind] ?? ["completed"];
   }
 
   /**
@@ -510,7 +455,6 @@ export class WorkbenchPanel extends ItemView {
     this.duplicatesContainer = null;
     this.queueStatusContainer = null;
     this.recentOpsContainer = null;
-    this.pipelineStatusContainer = null;
     this.improveBtn = null;
     if (this.pipelineUnsubscribe) {
       this.pipelineUnsubscribe();
@@ -603,14 +547,9 @@ export class WorkbenchPanel extends ItemView {
       void this.startImageInsert();
     });
 
-    // 结果容器
-    this.standardizedResultContainer = container.createDiv({ cls: "cr-standardized-result" });
-    this.standardizedResultContainer.style.display = "none";
-
+    // 类型置信度表容器
     this.typeConfidenceTableContainer = container.createDiv({ cls: "cr-type-confidence-table" });
     this.typeConfidenceTableContainer.style.display = "none";
-
-    this.renderPipelineStatusPanel(container);
   }
 
   private updateImproveButtonState(): void {
@@ -642,25 +581,6 @@ export class WorkbenchPanel extends ItemView {
         !imgEnabled ? this.t("workbench.notifications.featureDisabled") : hasMarkdown ? label : needMarkdownLabel
       );
     }
-  }
-
-  private renderPipelineStatusPanel(container: HTMLElement): void {
-    const panel = container.createDiv({ cls: "cr-pipeline-status" });
-    const header = panel.createDiv({ cls: "cr-pipeline-status-header" });
-    header.createEl("h4", { text: this.t("workbench.pipeline.progressTitle") });
-    header.createSpan({
-      cls: "cr-pipeline-status-hint",
-      text: this.t("workbench.pipeline.progressHint")
-    });
-
-    const list = panel.createDiv({ cls: "cr-pipeline-list" });
-    list.setAttr("role", "list");
-    list.createDiv({
-      cls: "cr-empty-state",
-      text: this.t("workbench.pipeline.empty")
-    });
-
-    this.pipelineStatusContainer = panel;
   }
 
   /**
@@ -1185,10 +1105,6 @@ export class WorkbenchPanel extends ItemView {
     this.typeConfidenceTableContainer.empty();
     this.typeConfidenceTableContainer.style.display = "block";
 
-    if (this.standardizedResultContainer) {
-      this.standardizedResultContainer.style.display = "none";
-    }
-
     // 标题区域
     const header = this.typeConfidenceTableContainer.createDiv({ cls: "cr-table-header" });
     header.createEl("h4", { 
@@ -1288,24 +1204,23 @@ export class WorkbenchPanel extends ItemView {
       const po = components.pipelineOrchestrator;
 
       // 使用标准化数据和选择的类型启动创建管线
-    const result = po.startCreatePipelineWithStandardized(standardizedData, selectedType);
+      const result = po.startCreatePipelineWithStandardized(standardizedData, selectedType);
 
-    if (!result.ok) {
-      this.showErrorNotice(`${this.t("workbench.notifications.createFailed")}: ${result.error.message}`);
-      return;
-    }
+      if (!result.ok) {
+        this.showErrorNotice(`${this.t("workbench.notifications.createFailed")}: ${result.error.message}`);
+        return;
+      }
 
-      this.currentPipelineId = result.value;
       new Notice(`${this.t("workbench.notifications.conceptCreated")} (${result.value})`);
 
       // 隐藏表格并重置输入（任务 10.5）
       this.hideTypeConfidenceTable();
       this.resetConceptInput();
-  } catch (error) {
-    this.logError("创建概念失败", error);
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    this.showErrorNotice(`${this.t("workbench.notifications.createFailed")}: ${errorMessage}`);
-  }
+    } catch (error) {
+      this.logError("创建概念失败", error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.showErrorNotice(`${this.t("workbench.notifications.createFailed")}: ${errorMessage}`);
+    }
 }
 
   /**
@@ -1328,192 +1243,6 @@ export class WorkbenchPanel extends ItemView {
     if (this.conceptInput) {
       this.conceptInput.value = "";
       this.conceptInput.focus();
-    }
-  }
-
-  /**
-   * 渲染当前管线的标准化/确认视图
-   * 覆盖标准化结果展示、类型歧义选择和写入前预览
-   */
-  private renderPipelinePreview(): void {
-    if (!this.standardizedResultContainer) return;
-
-    const ctx = this.currentPipelineId
-      ? this.pipelineContexts.get(this.currentPipelineId)
-      : undefined;
-
-    this.standardizedResultContainer.empty();
-
-    if (!ctx) {
-      this.standardizedResultContainer.style.display = "none";
-      return;
-    }
-
-    this.standardizedResultContainer.style.display = "block";
-
-    // 创建管线的过渡界面不再展示，直接交由管线列表与通知处理
-    if (ctx.kind === "create") {
-      this.standardizedResultContainer.style.display = "none";
-      return;
-    }
-
-    // 非创建管线：直接提供预览/确认入口
-    if (ctx.kind) {
-      const summary = this.standardizedResultContainer.createDiv({ cls: "cr-pipeline-summary" });
-      const kindLabel = this.t(`workbench.pipeline.kind.${ctx.kind}`);
-      summary.createEl("div", {
-        text: `${this.t("workbench.pipeline.type")}: ${kindLabel || ctx.kind}`
-      });
-      const stageInfo = summary.createDiv({ cls: "cr-pipeline-stage" });
-      stageInfo.createSpan({
-        text: `${this.t("workbench.pipeline.stage")}: ${this.getPipelineStageLabel(ctx.stage)}`
-      });
-      stageInfo.createSpan({
-        text: this.getPipelineStageMessage(ctx.stage),
-        cls: "cr-pipeline-stage-desc"
-      });
-      this.renderGroundingResult(summary, ctx);
-
-      const actions = summary.createDiv({ cls: "cr-pipeline-actions" });
-      const previewBtn = actions.createEl("button", {
-        text: "预览并确认写入",
-        cls: "mod-cta",
-        attr: { "aria-label": "预览并确认写入" }
-      });
-      previewBtn.addEventListener("click", () => {
-        this.showWritePreview(ctx);
-      });
-
-      return;
-    }
-
-    this.standardizedResultContainer.createEl("h4", {
-      text: `管线 ${ctx.pipelineId}`
-    });
-    const stageText = this.getPipelineStageLabel(ctx.stage);
-    const stageRow = this.standardizedResultContainer.createDiv({ cls: "cr-pipeline-stage" });
-    stageRow.createSpan({ text: `${this.t("workbench.pipeline.stage")}: ${stageText}` });
-    stageRow.createSpan({
-      text: this.getPipelineStageMessage(ctx.stage),
-      cls: "cr-pipeline-stage-desc"
-    });
-
-    // 标准化结果编辑区
-    if (ctx.standardizedData) {
-      const form = this.standardizedResultContainer.createDiv({ cls: "cr-standardize-preview" });
-
-      const currentName = ctx.standardizedData.standardNames[ctx.type];
-
-      form.createEl("label", { text: this.t("workbench.pipeline.chineseName") });
-      const nameCnInput = form.createEl("input", {
-        type: "text",
-        value: currentName.chinese,
-        cls: "cr-input"
-      });
-
-      form.createEl("label", { text: this.t("workbench.pipeline.englishName") });
-      const nameEnInput = form.createEl("input", {
-        type: "text",
-        value: currentName.english,
-        cls: "cr-input"
-      });
-
-      const typeSelect = form.createEl("select", { cls: "cr-select" });
-      const typeOptions = Object.keys(ctx.standardizedData.typeConfidences || {});
-      const types = typeOptions.length > 0
-        ? typeOptions
-        : ["Domain", "Issue", "Theory", "Entity", "Mechanism"];
-      typeSelect.createEl("option", { text: this.t("workbench.pipeline.autoSelect"), value: "" });
-      types.forEach((type) => {
-        typeSelect.createEl("option", { text: type, value: type });
-      });
-      typeSelect.value = ctx.type || ctx.standardizedData.primaryType || "";
-
-      const saveBtn = form.createEl("button", { text: this.t("workbench.pipeline.saveEdit"), cls: "cr-btn-small" });
-      saveBtn.addEventListener("click", async () => {
-        const updatedNames = { ...ctx.standardizedData!.standardNames };
-        updatedNames[ctx.type] = {
-          chinese: nameCnInput.value.trim() || currentName.chinese,
-          english: nameEnInput.value.trim() || currentName.english
-        };
-
-        await this.applyStandardizationEdits(ctx.pipelineId, {
-          standardNames: updatedNames,
-          primaryType: typeSelect.value ? typeSelect.value as CRType : undefined
-        });
-      });
-
-      // 类型置信度显示
-      const typeRow = form.createDiv({ cls: "cr-type-confidences" });
-      const sortedTypes = Object.entries(ctx.standardizedData.typeConfidences || {})
-        .sort(([, a], [, b]) => b - a);
-      if (sortedTypes.length > 0) {
-        sortedTypes.forEach(([type, score]) => {
-          const pill = typeRow.createDiv({ cls: "cr-type-item" });
-          pill.createSpan({ text: type });
-          pill.createSpan({ text: `${(score * 100).toFixed(1)}%`, cls: "cr-type-confidence" });
-        });
-      }
-    }
-
-    // 内容预览（生成后）
-    if (ctx.generatedContent) {
-      const preview = this.standardizedResultContainer.createDiv({ cls: "cr-generated-preview" });
-      preview.createEl("h5", { text: this.t("workbench.pipeline.generatedContentPreview") });
-      const text = typeof ctx.generatedContent === "string"
-        ? ctx.generatedContent
-        : JSON.stringify(ctx.generatedContent, null, 2);
-      preview.createEl("pre", { text });
-    }
-
-    const actions = this.standardizedResultContainer.createDiv({ cls: "cr-button-container" });
-
-    if (ctx.stage === "review_draft") {
-      const confirmBtn = actions.createEl("button", { text: this.t("workbench.pipeline.confirmCreate"), cls: "mod-cta cr-btn-small" });
-      confirmBtn.addEventListener("click", async () => {
-        const po = this.plugin?.getComponents().pipelineOrchestrator;
-        if (!po) return;
-        const result = await po.confirmCreate(ctx.pipelineId);
-        if (!result.ok) {
-          this.showErrorNotice(`${this.t("workbench.notifications.confirmCreateFailed")}: ${result.error.message}`);
-        } else {
-          new Notice(this.t("workbench.notifications.confirmCreateWaiting"));
-        }
-      });
-    } else if (ctx.stage === "review_changes") {
-      const previewBtn = actions.createEl("button", { text: this.t("workbench.pipeline.previewWrite"), cls: "mod-cta cr-btn-small" });
-      previewBtn.addEventListener("click", () => this.showWritePreview(ctx));
-    } else if (ctx.stage === "failed" && ctx.error) {
-      actions.createEl("div", {
-        text: `${this.t("workbench.queueStatus.failed")}: ${ctx.error.message}`,
-        cls: "cr-error-text"
-      });
-    } else if (ctx.stage === "completed") {
-      if (ctx.snapshotId) {
-        const undoBtn = actions.createEl("button", { text: this.t("workbench.recentOps.undo"), cls: "cr-btn-small" });
-        undoBtn.addEventListener("click", () => this.handleUndo(ctx.snapshotId!));
-        actions.createEl("span", { text: `Snapshot: ${ctx.snapshotId}`, cls: "cr-muted" });
-      } else {
-        actions.createEl("span", { text: this.t("workbench.queueStatus.completed"), cls: "cr-muted" });
-      }
-    }
-  }
-
-  /**
-   * 更新标准化结果（用户编辑）
-   */
-  private async applyStandardizationEdits(
-    pipelineId: string,
-    updates: Partial<PipelineContext["standardizedData"]>
-  ): Promise<void> {
-    if (!this.plugin) return;
-    const po = this.plugin.getComponents().pipelineOrchestrator;
-    const result = po.updateStandardizedData(pipelineId, updates);
-    if (result.ok) {
-      new Notice(this.t("workbench.notifications.standardizeUpdated"));
-      this.renderPipelinePreview();
-    } else {
-      this.showErrorNotice(`${this.t("common.error")}: ${result.error.message}`);
     }
   }
 
@@ -1565,68 +1294,6 @@ export class WorkbenchPanel extends ItemView {
     );
 
     diffView.open();
-  }
-
-  private renderGroundingResult(container: HTMLElement, context: PipelineContext): void {
-    if (!context.groundingResult) return;
-
-    const result = context.groundingResult as Record<string, any>;
-    const wrapper = container.createDiv({ cls: "cr-grounding-result" });
-    wrapper.setAttr("aria-live", "polite");
-
-    wrapper.createEl("h4", { text: this.t("workbench.pipeline.groundingResult") });
-
-    const assessment = wrapper.createDiv({ cls: "cr-assessment" });
-    assessment.createEl("strong", { text: "总体评估: " });
-    assessment.createSpan({
-      text: String(result.overall_assessment ?? "unknown"),
-      cls: this.getAssessmentClass(result.overall_assessment)
-    });
-
-    if (typeof result.confidence_score === "number") {
-      const score = wrapper.createDiv({ cls: "cr-confidence-score" });
-      score.createEl("strong", { text: "置信度: " });
-      score.createSpan({ text: `${(result.confidence_score * 100).toFixed(0)}%` });
-    }
-
-    const issues = Array.isArray(result.issues) ? (result.issues as any[]) : [];
-    if (issues.length > 0) {
-      wrapper.createEl("h5", { text: "发现的问题" });
-      const bySeverity = new Map<string, any[]>();
-      for (const issue of issues) {
-        const severity = String(issue?.severity ?? "unknown");
-        if (!bySeverity.has(severity)) bySeverity.set(severity, []);
-        bySeverity.get(severity)!.push(issue);
-      }
-
-      const list = wrapper.createDiv({ cls: "cr-issues-groups" });
-      for (const [severity, items] of bySeverity.entries()) {
-        const group = list.createDiv({ cls: "cr-issues-group" });
-        group.createEl("div", { text: severity, cls: "cr-issues-severity" });
-        const ul = group.createEl("ul", { cls: "cr-issues-list" });
-        items.forEach((issue) => {
-          const li = ul.createEl("li");
-          li.createSpan({ text: String(issue?.description ?? "") });
-        });
-      }
-    }
-
-    const recommendations = Array.isArray(result.recommendations)
-      ? (result.recommendations as any[])
-      : [];
-    if (recommendations.length > 0) {
-      wrapper.createEl("h5", { text: "改进建议" });
-      const ul = wrapper.createEl("ul", { cls: "cr-recommendations-list" });
-      recommendations.forEach((rec) => ul.createEl("li", { text: String(rec) }));
-    }
-  }
-
-  private getAssessmentClass(assessment: unknown): string {
-    const v = String(assessment ?? "").toLowerCase();
-    if (["pass", "ok", "good", "clean"].includes(v)) return "cr-assessment-ok";
-    if (["warn", "warning", "uncertain"].includes(v)) return "cr-assessment-warn";
-    if (["fail", "error", "bad"].includes(v)) return "cr-assessment-fail";
-    return "cr-assessment-unknown";
   }
 
   /**
@@ -2522,10 +2189,6 @@ export class WorkbenchPanel extends ItemView {
     const po = this.plugin.getComponents().pipelineOrchestrator;
     if (!po) return;
 
-    // 先渲染当前活跃管线
-    this.updatePipelineContexts(po.getActivePipelines());
-
-    // 注册订阅
     this.pipelineUnsubscribe = po.subscribe((event) => {
       // A-UCD-03: 写入完成后显示撤销通知
       if (event.type === "pipeline_completed" && event.context.snapshotId && event.context.filePath) {
@@ -2550,139 +2213,7 @@ export class WorkbenchPanel extends ItemView {
           event.context.stage === "review_changes") {
         void this.showWritePreview(event.context);
       }
-       
-      this.updatePipelineContexts(po.getActivePipelines());
     });
-  }
-
-  /**
-   * 更新管线列表（用于订阅 PipelineOrchestrator 事件）
-   */
-  public updatePipelineContexts(contexts: PipelineContext[]): void {
-    if (!this.pipelineStatusContainer) return;
-    const list = this.pipelineStatusContainer.querySelector(".cr-pipeline-list") as HTMLElement | null;
-    if (!list) return;
-
-    this.pipelineContexts = new Map(contexts.map((c) => [c.pipelineId, c]));
-
-    if (!this.currentPipelineId && contexts.length > 0) {
-      this.currentPipelineId = contexts[0].pipelineId;
-    }
-    if (this.currentPipelineId && !this.pipelineContexts.has(this.currentPipelineId)) {
-      this.currentPipelineId = contexts[0]?.pipelineId ?? null;
-    }
-
-    list.empty();
-
-    if (contexts.length === 0) {
-      list.createDiv({
-        cls: "cr-empty-state",
-        text: this.t("workbench.pipeline.empty")
-      });
-      this.currentPipelineId = null;
-      this.renderPipelinePreview();
-      return;
-    }
-
-    contexts.forEach((ctx) => {
-      const card = list.createDiv({ cls: "cr-pipeline-card", attr: { role: "listitem" } });
-      if (ctx.pipelineId === this.currentPipelineId) {
-        card.addClass("is-active");
-      }
-      card.setAttr("data-kind", ctx.kind);
-
-      const header = card.createDiv({ cls: "cr-pipeline-card-header" });
-      const kindLabel = this.t(`workbench.pipeline.kind.${ctx.kind}`);
-      header.createEl("div", {
-        text: `${kindLabel || ctx.kind} · ${this.t("workbench.pipeline.id")} ${ctx.pipelineId}`,
-        cls: "cr-pipeline-kind"
-      });
-      const stageTag = header.createDiv({ cls: "cr-pipeline-stage-tag" });
-      stageTag.setText(this.getPipelineStageLabel(ctx.stage));
-      if (ctx.stage === "failed") {
-        stageTag.addClass("is-error");
-      } else if (ctx.stage === "completed") {
-        stageTag.addClass("is-success");
-      }
-
-      const stageSequence = this.getPipelineStageSequence(ctx.kind);
-      const totalSteps = stageSequence.length || 1;
-      let currentIndex = stageSequence.indexOf(ctx.stage);
-      if (currentIndex === -1) {
-        currentIndex = stageSequence.indexOf("completed");
-      }
-      if (currentIndex === -1) {
-        currentIndex = 0;
-      }
-      const ratio = ctx.stage === "failed"
-        ? currentIndex / totalSteps
-        : Math.min(totalSteps, currentIndex + 1) / totalSteps;
-      const progress = Math.max(0, Math.min(100, Math.round(ratio * 100)));
-
-      const progressBar = card.createDiv({
-        cls: `cr-pipeline-progress${ctx.stage === "failed" ? " is-error" : ""}`,
-        attr: {
-          role: "progressbar",
-          "aria-valuemin": "0",
-          "aria-valuemax": "100",
-          "aria-valuenow": progress.toString()
-        }
-      });
-      progressBar.createDiv({
-        cls: "cr-pipeline-progress-fill",
-        attr: { style: `width: ${progress}%` }
-      });
-
-      const stepsContainer = card.createDiv({ cls: "cr-pipeline-steps" });
-      stageSequence.forEach((stage, index) => {
-        const step = stepsContainer.createDiv({ cls: "cr-pipeline-step" });
-        if (ctx.stage === "failed") {
-          if (index < currentIndex) {
-            step.addClass("is-complete");
-          } else if (index === currentIndex) {
-            step.addClass("is-error");
-          }
-        } else {
-          if (index < currentIndex) {
-            step.addClass("is-complete");
-          } else if (index === currentIndex) {
-            step.addClass("is-current");
-          }
-        }
-        step.createSpan({ text: this.getPipelineStageLabel(stage) });
-      });
-
-      const message = card.createDiv({ cls: "cr-pipeline-message" });
-      if (ctx.stage === "failed" && ctx.error) {
-        message.textContent = ctx.error.message;
-      } else {
-        message.textContent = this.getPipelineStageMessage(ctx.stage);
-      }
-
-      const actions = card.createDiv({ cls: "cr-pipeline-card-actions" });
-      const viewBtn = actions.createEl("button", { text: this.t("workbench.pipeline.view"), cls: "cr-btn-small" });
-      viewBtn.addEventListener("click", () => {
-        this.currentPipelineId = ctx.pipelineId;
-        this.renderPipelinePreview();
-      });
-
-      if (ctx.stage === "review_draft") {
-        const btn = actions.createEl("button", { text: this.t("workbench.pipeline.confirmCreate"), cls: "mod-cta cr-btn-small" });
-        btn.addEventListener("click", async () => {
-          const po = this.plugin?.getComponents().pipelineOrchestrator;
-          if (!po) return;
-          const result = await po.confirmCreate(ctx.pipelineId);
-          if (!result.ok) {
-            this.showErrorNotice(`${this.t("workbench.notifications.confirmCreateFailed")}: ${result.error.message}`);
-          }
-        });
-      } else if (ctx.stage === "review_changes") {
-        const btn = actions.createEl("button", { text: this.t("workbench.pipeline.previewWrite"), cls: "mod-cta cr-btn-small" });
-        btn.addEventListener("click", () => this.showWritePreview(ctx));
-      }
-    });
-
-    this.renderPipelinePreview();
   }
 
   /**

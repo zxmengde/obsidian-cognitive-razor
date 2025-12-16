@@ -23,6 +23,9 @@ data/
 .agent/
 .claude/
 scripts/output/
+.spec-workflow/
+
+.serena/
 # Exclude macOS Finder (System Explorer) View States
 .DS_Store
 

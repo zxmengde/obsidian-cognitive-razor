@@ -1,175 +1,195 @@
-# Cognitive Razor—技术设计文档
+# Cognitive Razor — 技术设计文档
 
-**版本**: 2.1.0
-**最后更新**: 2025-12-14
+**版本**: 1.0.0
+**最后更新**: 2025-12-16
 **状态**: 单一真理源（SSOT）
 
-## 文档说明
+## 0. 愿景与 SSOT 守则
+- **愿景**：打造个人知识图谱的“认知剃刀”。利用 AI 将模糊的知识、想法转化为结构化、可复用、可演进的知识节点（Structured Nodes），帮助用户构建专属的外部第二大脑。
+- **SSOT (Single Source of Truth) 守则**：
+  - 本文档是项目的最高指导原则。代码实现、测试用例、Prompt 设计均需以此为准。
+  - 任何架构变更、术语调整或数据契约修改，必须先更新本文档，再实施代码。
+- **核心原则**：
+  - **SOLID**：保持模块的高内聚低耦合，特别是 UI、Core、Data 三层分离。
+  - **KISS**：保持系统简单，避免过度设计。
+  - **DRY**：逻辑与定义不重复，Prompt 模板复用基础组件。
+  - **YAGNI**：不开发当前不需要的功能（如移动端支持、实时协作）。
 
-本文档是 Cognitive Razor 项目的唯一权威设计规范。所有实现必须与本文档保持一致。
+## 1. 系统边界与技术栈
+- **边界**：
+  - **仅桌面端** (`isDesktopOnly: true`)。
+  - **本地优先**：所有数据存储在 Obsidian Vault 中，不依赖外部数据库。
+  - **异步处理**：所有 AI 操作均为异步任务，通过队列管理。
+- **技术栈**：
+  - **Core**: TypeScript 5.7+, Node.js 22+ LTS
+  - **Build**: esbuild 0.25.x
+  - **Test**: Vitest 4.x
+  - **AI**: OpenAI Compatible API (Default: `gpt-4o`, `text-embedding-3-small`)
 
-**文档原则**：
-- 直接陈述设计决策，不包含历史遗留说明
-- 清晰定义系统边界和约束
-- 提供可验证的实现标准
+## 2. 统一语言 (Ubiquitous Language)
+本系统采用以下术语作为通用语言，贯穿 UI、代码与文档：
 
-## 目录
-
-1. [项目概述](#1-项目概述)
-2. [系统架构](#2-系统架构)
-3. [核心概念](#3-核心概念)
-4. [数据模型](#4-数据模型)
-5. [核心流程](#5-核心流程)
-6. [Prompt 系统](#6-prompt-系统)
-7. [索引与存储](#7-索引与存储)
-8. [并发与锁](#8-并发与锁)
-9. [错误处理](#9-错误处理)
-10. [UI 规范](#10-ui-规范)
-11. [命令系统](#11-命令系统)
-12. [配置与国际化](#12-配置与国际化)
-
-## 1. 项目概述
-
-### 1.1 项目定位
-
-Cognitive Razor 是一个 Obsidian 桌面插件，提供 AI 驱动的知识管理能力。
-
-**核心价值**：
-- 将模糊概念转化为结构化知识节点
-- 通过语义相似度检测重复概念
-- 提供可逆的危险操作（快照 + 确认）
-
-### 1.2 系统边界
-
-**支持的功能**：
-- 概念创建（Create）
-- 语义去重（Dedup）
-- 概念合并（Merge）
-- 增量改进（Incremental Edit）
-- 层级深化（Deepen）
-**明确不支持**：
-- 移动端（`isDesktopOnly: true`）
-- 外部数据库（仅使用文件系统）
-- 实时协作
-
-### 1.3 技术栈
-
-| 组件 | 版本 | 说明 |
+### 2.1 核心对象 (Objects)
+| 术语 (Term) | 代码 (Code) | 定义 (Definition) |
 |---|---|---|
-| Obsidian API | 1.5.7+ | 最低支持版本 |
-| TypeScript | 5.7.x | strict mode, target ES2022 |
-| Node.js | 22+ LTS | 开发环境 |
-| esbuild | 0.25.x | 构建工具 |
-| ESLint | 9.x | Flat Config |
-| Vitest | 4.x | 测试框架 |
+| **概念节点** | `ConceptNode` | 知识图谱中的原子单元，包含 Frontmatter 和正文。 |
+| **cruid** | `cruid` | 概念的全局唯一标识符 (UUIDv4)，字段小写。 |
+| **Domain** | `Domain` | 知识所属的范畴或学科背景。 |
+| **Issue** | `Issue` | 需要解决的难题、疑问或研究课题。 |
+| **Theory** | `Theory` | 对问题的解释、理论、观点或假设。 |
+| **Entity** | `Entity` | 具体的对象、事物或名词性概念。 |
+| **Mechanism** | `Mechanism` | 事物间的交互机制、流程或动态演变。 |
 
-**AI 模型**：
-- 聊天：`gpt-4o`（默认）、`gpt-4o-mini`（轻量）
-- 嵌入：`text-embedding-3-small`（1536 维）
-
-## 2. 系统架构
-
-### 2.1 三层架构
-
-```
-┌─────────────────────────────────────────┐
-│           UI 层 (src/ui/)               │
-│  WorkbenchPanel, StatusBadge, Modals    │
-└─────────────────┬───────────────────────┘
-                  │ 单向依赖
-┌─────────────────▼───────────────────────┐
-│         应用层 (src/core/)              │
-│  PipelineOrchestrator, TaskQueue,       │
-│  VectorIndex, DuplicateManager,         │
-│  CruidCache, SimpleLockManager          │
-└─────────────────┬───────────────────────┘
-                  │ 单向依赖
-┌─────────────────▼───────────────────────┐
-│         数据层 (src/data/)              │
-│  FileStorage, Logger, SettingsStore     │
-└─────────────────────────────────────────┘
-```
-
-**依赖规则**：
-- UI 层可以调用应用层和数据层
-- 应用层可以调用数据层
-- 数据层不依赖任何上层
-
-### 2.2 核心组件
-
-| 组件 | 职责 | 位置 |
+### 2.2 剃刀操作 (Razor Actions)
+| 术语 (Term) | 代码 (Code) | 定义 (Definition) |
 |---|---|---|
-| PipelineOrchestrator | 管线编排，协调任务链 | `src/core/pipeline-orchestrator.ts` |
-| TaskQueue | 任务调度，并发控制 | `src/core/task-queue.ts` |
-| TaskRunner | 任务执行，调用 Provider API | `src/core/task-runner.ts` |
-| ImageInsertOrchestrator | 图片生成任务编排 | `src/core/image-insert-orchestrator.ts` |
-| VectorIndex | 向量索引，相似度搜索 | `src/core/vector-index.ts` |
-| DuplicateManager | 重复检测和管理 | `src/core/duplicate-manager.ts` |
-| UndoManager | 快照创建和恢复 | `src/core/undo-manager.ts` |
-| CruidCache | cruid → TFile 映射缓存（SSOT） | `src/core/cruid-cache.ts` |
-| SimpleLockManager | 内存互斥锁（无持久化） | `src/core/lock-manager.ts` |
-| WorkbenchPanel | 统一工作台 UI | `src/ui/workbench-panel.ts` |
-| ImageInsertModal | 图片生成输入与上下文预览 | `src/ui/image-insert-modal.ts` |
+| **Define** | `Define` | 识别输入所属的概念类型 (Domain/Issue/Theory/Entity/Mechanism)。 |
+| **Tag** | `Tag` | 为概念生成别名、标签、关键词等元数据。 |
+| **Write** | `Write` | 根据概念类型 Schema 生成结构化正文内容。 |
+| **Merge** | `Merge` | 将两个语义重复的概念合并为一个，清理索引。 |
+| **Amend** | `Amend` | 对现有概念进行增量优化、润色或修正。 |
+| **Expand** | `Expand` | 基于现有概念发现上下位或相关的新概念。 |
+| **Visualize** | `Visualize` | 为概念生成视觉化表达（配图）。 |
 
-### 2.3 架构约束
+### 2.3 系统组件
+- **工作台 (Workbench)**: 用户操作的主界面，展示管线状态。
+- **管线 (Pipeline)**: 处理异步任务的流水线。
+- **快照 (Snapshot)**: 变更前的状态备份，用于回滚。
 
-**必须遵循**：
-1. **Result Monad**：所有可能失败的操作返回 `Result<T>`，不抛异常
-2. **依赖注入**：组件通过构造函数接收依赖
-3. **类型安全**：使用 `unknown` 而非 `any`
-4. **单向数据流**：UI → 应用 → 数据
-**禁止行为**：
-- ❌ 在数据层引用应用层或 UI 层
-- ❌ 使用 `any` 类型
-- ❌ 直接抛出异常（使用 `err()` 返回错误）
-- ❌ 跳过 FileStorage 直接操作文件系统
 
-## 3. 核心概念
+## 3. 架构设计 (Architecture)
+遵循 Clean Architecture 分层原则，确保依赖单向流动，实现高内聚低耦合。
 
-### 3.1 知识类型
-
-系统支持五种知识类型：
-
-```typescript
-type CRType = "Domain" | "Issue" | "Theory" | "Entity" | "Mechanism";
+### 3.1 分层结构
+```mermaid
+graph TD
+    UI[UI Layer<br/>src/ui] -->|依赖| Core[Core Layer<br/>src/core]
+    Core -->|依赖| Data[Data Layer<br/>src/data]
+    
+    subgraph UI["UI 层 (src/ui)"]
+        WB["WorkbenchPanel<br/>工作台主界面"]
+        M["Modals<br/>各类交互弹窗"]
+        SB["StatusBadge<br/>状态徽章"]
+    end
+    
+    subgraph Core["Core 层 (src/core)"]
+        PO["PipelineOrchestrator<br/>任务管线协调"]
+        TR["TaskRunner<br/>原子任务执行"]
+        VI["VectorIndex<br/>向量检索"]
+        CC["CruidCache<br/>CRUID映射源"]
+        DM["DuplicateManager<br/>重复对管理"]
+    end
+    
+    subgraph Data["Data 层 (src/data)"]
+        FS["FileStorage<br/>文件系统操作"]
+        SS["SettingsStore<br/>配置管理"]
+        LOG["Logger<br/>日志记录"]
+        VAL["Validator<br/>数据验证"]
+    end
 ```
 
-| 类型 | 说明 | 示例 |
+### 3.2 分层职责
+- **UI Layer**: 呈现与交互
+  - `WorkbenchPanel`: 核心工作台，展示四区（创建、重复、队列、历史）
+  - `Modals`: 输入、确认、Diff 预览等弹窗
+  - `StatusBadge`: 插件状态徽章
+  
+- **Core Layer**: 业务逻辑与用例
+  - `PipelineOrchestrator`: 协调 Define→Tag→Write→Index→Verify 等任务序列
+  - `TaskRunner`: 执行具体的原子任务（调用 LLM、生成向量等）
+  - `VectorIndex`: 向量化与相似度检索
+  - `CruidCache` **(SSOT)**: 维护 `cruid` ↔ `TFile` 的映射，是数据一致性的根基
+  - `DuplicateManager`: 管理重复对的生成、状态转移
+  - `LockManager`: 节点级与类型级的并发锁
+  
+- **Data Layer**: 持久化与基础设施
+  - `FileStorage`: Obsidian Vault 文件操作（读、写、删除、重命名）
+  - `SettingsStore`: 用户配置持久化
+  - `Logger`: JSONL 日志
+  - `Validator`: frontmatter、数据契约校验
+
+### 3.3 设计约束 (SOLID)
+| 原则 | 规范 | 示例 |
 |---|---|---|
-| Domain | 知识领域 | 认知科学、量子物理 |
-| Issue | 核心议题 | 意识难题、测量问题 |
-| Theory | 理论框架 | 预测加工理论、多世界诠释 |
-| Entity | 实体概念 | 神经元、量子态 |
-| Mechanism | 机制过程 | 突触传递、量子纠缠 |
+| **S** (Single Responsibility) | 每个类只有一个职责 | `VectorIndex` 只负责向量操作，不负责文件 I/O |
+| **O** (Open/Closed) | 对扩展开放，对修改关闭 | 通过接口定义 Provider，支持切换 AI 服务商 |
+| **L** (Liskov Substitution) | 基类与子类可互换 | `TaskRunner` 的各个任务处理器实现通一接口 |
+| **I** (Interface Segregation) | 细粒度接口，避免依赖过多 | 分离 `FileStorage` 的读、写、删除接口 |
+| **D** (Dependency Inversion) | 依赖抽象，不依赖具体 | 通过构造注入 `IFileStorage`，方便测试 |
 
-### 3.2 笔记状态
+### 3.4 关键设计模式
+| 模式 | 应用场景 | 实现 |
+|---|---|---|
+| **Result Monad** | 错误处理 | `Result<T, E>` 替代异常抛出 |
+| **Observer** | 文件变更监听 | Obsidian `metadataCache.changed` 事件 |
+| **Factory** | 任务创建 | `TaskFactory.create(type, payload)` |
+| **Strategy** | 多种操作流程 | Define/Merge/Amend 各有独立的 Strategy |
+| **State Machine** | 任务状态转移 | Pending → Running → Completed/Failed |
 
-```typescript
-type NoteState = "Stub" | "Draft" | "Evergreen";
+### 3.5 插件生命周期 (Plugin Lifecycle)
+管理插件的启动、关闭及资源释放，确保数据安全。
+
+**onload (启动)**:
+1. **配置加载**: `SettingsStore.load()`。
+2. **服务初始化**:
+   - `CruidCache`: 扫描 Vault 建立内存映射。
+   - `VectorIndex`: 加载 `index.json` 元数据。
+   - `DuplicateManager`: 加载 `duplicate-pairs.json`。
+   - `PipelineOrchestrator`: 加载 `queue-state.json`，恢复 Pending 任务（但不自动开始，需用户或配置触发）。
+3. **事件注册**: 监听 `metadataCache.changed`, `vault.rename/delete`。
+4. **UI 渲染**: 注册 View 和 Ribbon Icon。
+
+**onunload (关闭)**:
+1. **管线暂停**: `PipelineOrchestrator.pause()`，停止分发新任务。
+2. **状态持久化**: 强制保存 `queue-state.json` 和所有内存中的数据索引。
+3. **锁释放**: `LockManager.clear()`，防止死锁残留。
+4. **清理**: 销毁定时器和事件监听器。
+
+## 4. 核心概念模型
+### 4.1 知识类型 (Concept Types)
+| 类型 | 示例 | 特征 | 常见父类 |
+|---|---|---|---|
+| **Domain** | 认知科学、机器学习 | 宏观领域或学科，通常是树的根或中间层 | 无或其他 Domain |
+| **Issue** | 意识难题、梯度消失问题 | 具体的待解决问题或研究课题 | Domain（一个领域内的核心议题） |
+| **Theory** | 预测加工理论、反向传播 | 理论模型或解决方案，用于解释或解决 Issue | Issue（回答某个问题）|
+| **Entity** | 神经元、张量、变量 | 基础概念单元，是组成其他知识的原子 | Theory（理论中的对象） |
+| **Mechanism** | 突触传递、梯度下降、权重更新 | 动态的交互过程、流程或演变机制 | Theory（理论中的机制） |
+
+**类型关系**：
+```
+Domain
+  └─ Issue (该领域的核心问题)
+      └─ Theory (问题的解释/解决方案)
+          ├─ Entity (理论涉及的对象)
+          └─ Mechanism (理论中的机制)
 ```
 
-- **Stub**：初始状态，仅包含基本元数据
-- **Draft**：草稿状态，内容正在完善
-- **Evergreen**：成熟状态，内容稳定
+### 4.2 笔记状态 (Note State)
+- **Stub**: 仅有标题、`cruid` 和基本 frontmatter，内容为空占位符（通常由 Expand 生成）
+- **Draft**: 内容生成中或待人工校验，可能不完整
+- **Evergreen**: 经过验证、结构稳定的永久笔记，不再频繁修改
 
-### 3.3 操作风险分级
+**状态转移**:
+```
+Stub → Draft → Evergreen
+```
+*注：Amend 是一个操作，不改变笔记的生命周期状态，但会更新 `updated` 时间戳。*
 
-**安全操作**（自动执行）：
-- **Create**：从无到有地创建新笔记，不修改既有内容
-**危险操作**（需要快照 + 用户确认）：
-- **Merge**：从有到有地合并两篇笔记，删除其中一篇
-- **Incremental Edit**：从有到有地修改既有笔记内容
+### 4.3 操作风险分级
+| 操作 | 风险等级 | 要求 | 是否可撤销 |
+|---|---|---|---|
+| Define/Tag/Write | 🟢 Low | 无 | ✓ (删除文件可恢复) |
+| Merge | 🔴 High | 快照 + Diff 确认 + 双笔记各备份 | ✓ (通过快照恢复) |
+| Amend | 🟠 Medium | 快照 + Diff 确认 | ✓ (通过快照恢复) |
+| Expand | 🟡 Low | 用户勾选候选项 | ✓ (删除新建笔记) |
+| Visualize | 🟢 Low | 无 | ✓ (删除附件) |
 
-## 4. 数据模型
 
-### 4.1 Frontmatter 规范
-
-每个概念笔记必须包含以下 frontmatter 字段：
-
+## 5. 数据契约 (Data Contracts)
+### 5.1 Frontmatter (YAML)
 ```yaml
-
 cruid: "550e8400-e29b-41d4-a716-446655440000"
-type: "Domain"
+type: "Domain"  # 对应 ConceptType
 name: "认知科学"
 status: "Draft"
 created: "2025-12-13 10:30:00"
@@ -178,829 +198,1200 @@ aliases: ["认知研究", "Cognitive Science"]
 tags: ["科学", "心智"]
 parents: ["[[数学 (Mathematics)]]", "[[物理学 (Physics)]]"]
 ```
+字段约束：
+- 时间格式固定 `yyyy-MM-DD HH:mm:ss`（非 ISO）。
+- `aliases` 只存别名，不含 cruid。
+- `parents` 只存笔记标题/链接，便于人读和跳转。
 
-**字段说明**：
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `cruid` | string | ✅ | UUID v4，概念唯一标识符 |
-| `type` | CRType | ✅ | 知识类型 |
-| `name` | string | ✅ | 概念名称 |
-| `status` | NoteState | ✅ | 笔记状态 |
-| `created` | string | ✅ | 创建时间（`yyyy-MM-DD HH:mm:ss`）|
-| `updated` | string | ✅ | 更新时间（`yyyy-MM-DD HH:mm:ss`）|
-| `aliases` | string[] | ❌ | 别名列表（不包含 cruid）|
-| `tags` | string[] | ❌ | 标签列表 |
-| `parents` | string[] | ❌ | 父概念名称列表（存储笔记标题，非 cruid）|
-
-**关键约束**：
-1. 时间格式统一为 `yyyy-MM-DD HH:mm:ss`（非 ISO8601）
-2. `cruid` 字段名必须小写（非驼峰 `crUid`）
-3. `aliases` 不得包含任何 `cruid`
-4. `parents` 存储笔记链接，便于人类阅读
-
-### 4.2 任务模型
-
+### 5.2 任务记录 (Task Record)
 ```typescript
+type TaskType =
+  | "define" | "tag" | "write" | "index" | "verify"  // Clarify/Refine 的子任务
+  | "image-generate";                                // Visualize 任务
+
 interface TaskRecord {
-  id: string;                    // 任务 ID
-  nodeId: string;                // 关联的概念 UID
-  taskType: TaskType;            // 任务类型
-  state: TaskState;              // 任务状态
-  attempt: number;               // 当前尝试次数
-  maxAttempts: number;           // 最大尝试次数
-  payload: Record<string, unknown>;  // 任务载荷
-  result?: Record<string, unknown>;  // 任务结果
-  created: string;               // 创建时间
-  updated: string;               // 更新时间
-  errors?: TaskError[];          // 错误历史
+  id: string;
+  nodeId: string;                // cruid
+  taskType: TaskType;
+  state: TaskState;
+  attempt: number;
+  maxAttempts: number;
+  payload: Record<string, unknown>;
+  result?: Record<string, unknown>;
+  created: string;
+  updated: string;
+  errors?: TaskError[];
 }
 
-type TaskType = 
-  | "define"    // 定义概念
-  | "tag"       // 生成别名与标签
-  | "write"     // 撰写正文
-  | "index"     // 生成向量索引
-  | "verify"    // 校验内容
-  | "image-generate"; // 图片生成（chat completions image preview）
-
-type TaskState = 
-  | "Pending"      // 等待中
-  | "Running"      // 执行中
-  | "Completed"    // 已完成
-  | "Failed"       // 失败
-  | "Cancelled";   // 已取消
+type TaskState =
+  | "Pending" | "Running" | "Completed" | "Failed" | "Cancelled";
 ```
 
-### 4.3 向量索引模型
-
-**元数据索引**（`data/vectors/index.json`）：
-
+### 5.3 向量索引 (Vector Index)
+元数据（`data/vectors/index.json`）：
 ```typescript
 interface VectorIndexMeta {
   version: string;
   lastUpdated: number;
+  stats: { totalConcepts: number; byType: Record<ConceptType, number>; };
+  concepts: Record<string, ConceptMeta>;
+}
+interface ConceptMeta {
+  id: string;          // cruid
+  type: ConceptType;
+  vectorFilePath: string;
+  lastModified: number;
+  hasEmbedding: boolean;
+}
+```
+向量文件（`data/vectors/{type}/{cruid}.json`）：
+```typescript
+interface ConceptVector {
+  id: string;
+  type: ConceptType;
+  embedding: number[]; // 1536 维
+  metadata: { createdAt: number; updatedAt: number; embeddingModel: string; dimensions: number; };
+}
+```
+约束：
+- 索引不存 `name/path`，运行时由 `CruidCache` 解析。
+- `vectorFilePath` 仅内部使用，不对外暴露。
+
+### 5.4 重复对 (Duplicate Pair)
+```typescript
+interface DuplicatePair {
+  id: string;
+  nodeIdA: string;   // cruid
+  nodeIdB: string;   // cruid
+  type: ConceptType;
+  similarity: number;    // 0-1
+  detectedAt: string;
+  status: "pending" | "merging" | "merged" | "dismissed";
+}
+```
+
+### 5.5 快照 (Snapshot)
+```typescript
+interface SnapshotRecord {
+  id: string;
+  nodeId: string;     // cruid
+  taskId: string;
+  path: string;
+  content: string;
+  created: string;
+  fileSize: number;
+  checksum: string;   // MD5
+}
+```
+
+## 6. 核心流程 (Core Workflows)
+每个流程由多个原子任务组成，通过 Pipeline 顺序执行，支持暂停/恢复和错误重试。
+
+### 6.1 Define (识别类型)
+识别用户输入属于哪种概念类型。
+- **入口**: 用户输入文本或上传内容
+- **流程**: 
+  1. 提取关键特征
+  2. 调用 LLM 生成类型候选与置信度
+  3. 呈现给用户选择
+- **输出**: 确定的 `type` (Domain/Issue/Theory/Entity/Mechanism)
+- **可能失败**: LLM 超时、无法识别
+- **约束**: 支持用户手动覆盖系统推荐
+
+### 6.2 Tag (生成元数据)
+为概念生成别名、标签、关键词。
+- **入口**: 输入文本 + 已确定的 `type`
+- **流程**:
+  1. 调用 LLM 分析语义
+  2. 生成别名列表（同义词、缩写）
+  3. 生成标签（分类、属性）
+- **输出**: `aliases`, `tags`
+- **可能失败**: LLM 调用失败、输出格式错误
+- **约束**: 别名中不得包含 `cruid`
+
+### 6.3 Write (生成正文)
+根据概念类型 Schema 生成结构化正文。
+- **入口**: 输入文本 + `type` + 可选的 `sources` (来自 Expand 的上下文)
+- **流程**:
+  1. 加载类型特定的 Prompt 模板（如 `_type/domain-core.md`）
+  2. 注入 `{{BASE_TERMINOLOGY}}` 等全局上下文
+  3. 调用 LLM 生成正文（JSON 格式）
+  4. 解析 JSON 并验证必需字段
+- **输出**: 结构化的正文内容（按类型有不同的 Schema）
+- **可能失败**: JSON 解析失败、字段缺失、不符合规范
+- **约束**: 输出必须是原始 JSON（无 markdown fence）
+
+#### 6.3.1 各类型的 Write Schema 与处理逻辑
+收到 LLM 返回的 JSON 后，系统按以下规则处理各字段：
+
+**通用处理**:
+- `definition`: 写入 Frontmatter 的 `definition` 字段，并在正文顶部以引用块展示。
+- `historical_genesis`, `holistic_understanding`: 作为正文的一级标题 (`# Historical Genesis`, `# Holistic Understanding`) 写入详细内容。
+
+**Domain Schema**:
+```typescript
+interface DomainWriteOutput {
+  definition: string;
+  teleology: string;        // → 正文 # Teleology
+  methodology: string;      // → 正文 # Methodology
+  boundaries: string[];     // → 正文列表
+  historical_genesis: string;
+  holistic_understanding: string;
+  sub_domains: {            // → 正文列表，尝试创建 [[Link]]
+    name: string;
+    description: string;
+  }[];
+  issues: {                 // → 正文列表，尝试创建 [[Link]]
+    name: string;
+    description: string;
+  }[];
+}
+```
+
+**Issue Schema**:
+```typescript
+interface IssueWriteOutput {
+  definition: string;
+  core_tension: string;     // → Frontmatter `core_tension`
+  significance: string;     // → 正文 # Significance
+  epistemic_barrier: string;// → 正文 # Epistemic Barrier
+  counter_intuition: string;// → 正文 # Counter Intuition
+  historical_genesis: string;
+  sub_issues: {             // → 正文列表，尝试创建 [[Link]]
+    name: string;
+    description: string;
+  }[];
+  stakeholder_perspectives: { // → 正文表格
+    stakeholder: string;
+    perspective: string;
+  }[];
+  boundary_conditions: string[]; // → 正文列表
+  theories: {               // → 正文列表，尝试创建 [[Link]]
+    name: string;
+    status: string;
+    brief: string;
+  }[];
+}
+```
+
+**Theory Schema**:
+```typescript
+interface TheoryWriteOutput {
+  definition: string;
+  axioms: {                 // → 正文列表
+    statement: string;
+    justification: string;
+  }[];
+  sub_theories: {           // → 正文列表，尝试创建 [[Link]]
+    name: string;
+    description: string;
+  }[];
+  logical_structure: string;// → 正文 # Logical Structure
+  entities: {               // → 正文列表，尝试创建 [[Link]]
+    name: string;
+    role: string;
+    attributes: string;
+  }[];
+  mechanisms: {             // → 正文列表，尝试创建 [[Link]]
+    name: string;
+    process: string;
+    function: string;
+  }[];
+  core_predictions: string[]; // → 正文列表
+  limitations: string[];      // → 正文列表
+  historical_genesis: string;
+  holistic_understanding: string;
+}
+```
+
+**Entity Schema**:
+```typescript
+interface EntityWriteOutput {
+  definition: string;
+  classification: {         // → Frontmatter 或正文信息栏
+    genus: string;
+    differentia: string;
+  };
+  properties: {             // → 正文表格
+    name: string;
+    type: string;
+    description: string;
+  }[];
+  states: {                 // → 正文列表
+    name: string;
+    description: string;
+  }[];
+  constraints: string[];    // → 正文列表
+  composition: {            // → 正文列表，尝试创建 [[Link]]
+    has_parts: string[];
+    part_of: string;
+  };
+  distinguishing_features: string[]; // → 正文列表
+  examples: string[];       // → 正文列表
+}
+```
+
+**Mechanism Schema**:
+```typescript
+interface MechanismWriteOutput {
+  definition: string;
+  trigger_conditions: string[]; // → 正文列表
+  operates_on: {            // → 正文列表，尝试创建 [[Link]]
+    entity: string;
+    role: string;
+  }[];
+  causal_chain: {           // → 正文有序列表 (1. Step...)
+    step: number;
+    description: string;
+    interaction: string;
+  }[];
+  modulation: {             // → 正文表格
+    factor: string;
+    effect: string;
+    mechanism: string;
+  }[];
+  inputs: string[];         // → 正文列表
+  outputs: string[];        // → 正文列表
+  side_effects: string[];   // → 正文列表
+  termination_conditions: string[]; // → 正文列表
+  holistic_understanding: string;
+}
+```
+
+### 6.4 Index (向量化)
+将概念内容转化为向量表示，用于后续检索与去重。
+- **入口**: 概念的完整 Frontmatter + 正文
+- **流程**:
+  1. 拼接 frontmatter 和正文为单一文本
+  2. 调用 Embedding 模型生成 1536 维向量
+  3. 存储到 `data/vectors/{type}/{cruid}.json`
+  4. 更新索引元数据 (`data/vectors/index.json`)
+- **输出**: 向量文件 + 索引元数据
+- **可能失败**: Embedding 服务超时、网络错误
+- **约束**: 1536 维固定，不支持更换维度
+
+### 6.5 Deduplicate (去重检测)
+在同类型向量桶中检索相似的概念。
+- **入口**: 新概念的向量 + 已索引同类型概念
+- **流程**:
+  1. 加载同类型所有向量
+  2. 计算新向量与各概念向量的余弦相似度
+  3. 筛选相似度 > 阈值（默认 0.85）的概念对
+  4. 生成 `DuplicatePair` 记录
+- **输出**: 重复对列表（存入 `data/duplicate-pairs.json`）
+- **可能失败**: 向量比对失败（维度不匹配、NaN 值）
+- **约束**: 只在同类型内检索；新概念与已有概念比对
+
+### 6.6 Merge (融合)
+合并两个语义重复的概念，保留主概念，删除被删概念。
+- **入口**: 选定的主概念 A 和被删概念 B + 用户确认
+- **流程**:
+  1. **备份**: 为 A 和 B 各创建快照 (`SnapshotRecord`)
+  2. **融合**: 调用 LLM 生成合并后的内容
+  3. **Diff 确认**: 呈现原→新的 Diff，用户确认是否写入
+  4. **写入**: 更新 A 的内容和 `aliases` (追加 B 的标题)
+  5. **删除**: 从 Vault 删除 B 的文件
+  6. **清理**:
+     - `VectorIndex.delete(B.cruid)`
+     - `DuplicateManager.removePairsByNodeId(B.cruid)` (保留 `merging` 状态避免竞态)
+     - 如果 B 是其他笔记的父，自动更新相关笔记的 `parents` 字段
+- **输出**: 融合后的 A + 已删除的 B
+- **可能失败**: LLM 调用失败、Diff 用户拒绝、文件删除失败
+- **约束**:
+  - 必须创建快照
+  - 被删 cruid 必须从所有数据结构彻底清除
+  - 被删标题追加到 A 的 `aliases`（不是 `cruid`）
+
+### 6.7 Amend (修订)
+对现有概念进行增量优化、润色或纠正。
+- **入门**: 选定的概念 + 修订指令 (如"补充实验证据")
+- **流程**:
+  1. **备份**: 创建快照 (`SnapshotRecord`)
+  2. **改进**: 调用 LLM，输入原内容 + 修订指令，生成改进稿
+  3. **Diff 确认**: 呈现原→改进的 Diff，用户确认
+  4. **写入**: 更新文件（保持 `cruid`、`created` 不变，更新 `updated`）
+  5. **索引更新**: 重新生成向量，更新索引
+  6. **重检去重**: 在同类型内重新检测是否产生新的重复对
+- **输出**: 改进后的概念文件 + 可能的新重复对
+- **可能失败**: LLM 调用失败、Diff 用户拒绝、向量生成失败
+- **约束**:
+  - 必须创建快照并得到用户确认
+  - 不改变概念的 `type` 和 `cruid`
+  - 快照在 Diff 显示前就已创建
+
+### 6.8 Expand (拓展)
+基于当前概念发现上下位或相关的新概念。
+- **入门**: 选定的概念 A
+- **流程**:
+  1. **候选生成**: 调用 LLM，根据 A 的内容和类型，生成相关概念的候选列表
+     - 若 A 是 Domain→ 生成可能的 Issue、Entity
+     - 若 A 是 Issue→ 生成可能的 Theory、Entity
+     - 若 A 是 Theory/Entity/Mechanism→ 生成相关的其他 Entity/Mechanism
+  2. **去重过滤**: 检查候选概念是否已存在（通过 `CruidCache` 查询）
+  3. **用户勾选**: 用户选择要创建的候选项（支持批量，上限 200）
+  4. **批量创建**: 对每个勾选项调用 `Define/Tag/Write/Index/Deduplicate`
+     - 新概念的 `parents` 字段填入 A 的标题（可能需要追加 `parentUid`、`parentType` 等元数据）
+- **输出**: 新建的概念列表（状态为 Stub）
+- **可能失败**: LLM 调用失败、用户取消、某个创建任务失败
+- **约束**:
+  - 候选数不超过 200（防止超载）
+  - 新概念只写 `parents`，不修改原概念
+  - 可能出现网络等临时故障导致部分创建失败，需提示用户重试
+
+### 6.9 Visualize (可视化)
+为概念生成配图。
+- **入门**: 当前编辑的概念 + 光标位置 + 用户输入的描述（可选）
+- **流程**:
+  1. **上下文提取**: 获取当前笔记的 Frontmatter 和光标附近的正文
+  2. **Prompt 生成**: 根据描述 + 概念类型 + 上下文生成图像生成的 Prompt
+  3. **调用 Provider**: 发送到 Gemini 或其他图像生成服务
+  4. **保存附件**: 解码返回的图像数据，调用 `vault.getAvailablePathForAttachment()` 计算路径，保存为 Attachment
+  5. **插入链接**: 在光标位置插入 `![alt](path)` 链接
+  6. **支持撤销**: 通过 `UndoManager` 记录此操作
+- **输出**: 保存的图片 Attachment + Markdown 链接
+- **可能失败**: 图像生成失败、网络超时、磁盘空间不足
+- **约束**:
+  - 支持撤销（删除附件、移除链接）
+  - 不创建快照（图片生成失败不影响原笔记）
+  - 图片大小、格式由配置指定
+
+### 6.10 Verify (事实核查)
+利用具有联网能力的模型对笔记内容进行事实核查，减少幻觉。
+- **入口**: 
+  - **自动**: `Write` 任务完成后自动触发（若配置 `enableAutoVerify: true`）。
+  - **手动**: 用户在工作台或命令面板触发。
+- **流程**:
+  1. **提取内容**: 获取当前笔记的全文。
+  2. **调用 Verifier**: 将内容发送给配置的联网模型（如 Perplexity/Gemini）。
+  3. **执行核查**: 模型搜索网络，验证关键事实（数据、日期、引用）。
+  4. **生成报告**: 返回核查结果（通过/存疑/错误）及修正建议。
+  5. **追加结果**: 将报告以 Callout 或特定格式追加到笔记末尾 (`## Verification Report`)。
+- **输出**: 修改后的笔记（追加了报告）。
+- **可能失败**: 网络搜索失败、模型超时。
+- **约束**:
+  - 仅追加内容，不修改原文。
+  - 需配置支持联网的模型 Provider。
+
+## 7. Prompt 系统 (Prompt Management)
+Prompt 是连接用户意图与 AI 输出的桥梁，采用模块化设计以支持复用与多语言。
+
+### 7.1 目录结构与文件组织
+```
+prompts/
+  _base/
+    terminology.md         # 统一语言定义
+    output-format.md       # 输出格式规范
+    writing-style.md       # 写作风格指南
+    anti-patterns.md       # 常见错误模式
+    operations/
+      define.md            # Define 操作的通用指令
+      tag.md               # Tag 操作的通用指令
+      write.md             # Write 通用框架（各类型覆盖）
+      merge.md             # Merge 操作指令
+      amend.md             # Amend 操作指令
+  _type/
+    domain-core.md         # Domain 特定的 Write schema
+    issue-core.md
+    theory-core.md
+    entity-core.md
+    mechanism-core.md
+  visualize.md             # 图像生成 Prompt
+```
+
+### 7.2 模板块结构
+每个操作 Prompt 包含以下块：
+```markdown
+<system_instructions>
+系统级指令，定义 AI 的角色和行为规范。
+</system_instructions>
+
+<task_instruction>
+具体任务的指令，包含输入描述和期望输出。
+</task_instruction>
+
+<output_schema>
+定义输出的结构（通常为 JSON schema）。
+</output_schema>
+
+<examples>
+（可选）具体示例。
+</examples>
+```
+
+### 7.3 模板变量注入
+| 变量 | 值来源 | 使用场景 |
+|---|---|---|
+| `{{BASE_TERMINOLOGY}}` | `_base/terminology.md` | 所有任务（确保术语一致） |
+| `{{BASE_OUTPUT_FORMAT}}` | `_base/output-format.md` | 所有任务（JSON 格式规范） |
+| `{{BASE_WRITING_STYLE}}` | `_base/writing-style.md` | Write/Amend（文章质量） |
+| `{{BASE_ANTI_PATTERNS}}` | `_base/anti-patterns.md` | All tasks（避免常见错误） |
+| `{{OPERATION_BLOCK}}` | 对应操作文件 | 各操作（如 `define.md`） |
+| `{{TYPE}}` | 运行时传入 | Write 族操作（Domain/Issue/...） |
+| `{{TYPE_SCHEMA}}` | `_type/{type}-core.md` | Write 操作（类型特定 schema） |
+| `{{CONTEXT}}` | 运行时提取 | Expand（用户笔记上下文） |
+| `{{INSTRUCTION}}` | 用户输入 | Amend（用户的修订指令） |
+
+### 7.4 构建与校验
+```typescript
+interface PromptBuilder {
+  // 加载基础块
+  loadBase(): Promise<BaseBlocks>;
+  
+  // 注入变量并校验
+  inject(template: string, vars: Record<string, string>): Result<string, ValidationError>;
+  
+  // 检查是否有残留占位符
+  validateNoPlaceholders(text: string): Result<void, string[]>;
+  
+  // 构建完整 Prompt
+  build(operation: TaskType, context?: Record<string, unknown>): Result<string, BuildError>;
+}
+
+interface BuildError {
+  code: string;          // E7xx
+  message: string;
+  unresolvedVars?: string[]; // 未解析的变量
+}
+```
+
+### 7.5 输出校验规则
+- 必须是原始 JSON（无 markdown fence 如 ` ```json ... ``` `）
+- 所有必需字段必须存在
+- 字段值类型必须匹配 schema
+- 嵌套对象递归校验
+
+## 8. 索引、存储与数据一致性 (Storage & SSOT)
+### 8.1 文件系统布局
+```
+vault/
+  ├─ 1-Domains/
+  │   ├─ 认知科学.md
+  │   └─ ...
+  ├─ 2-Issues/
+  ├─ 3-Theories/
+  ├─ 4-Entities/
+  ├─ 5-Mechanisms/
+  └─ .obsidian/plugins/obsidian-cognitive-razor/
+      └─ data/
+          ├─ app.log                    # JSONL 格式的日志
+          ├─ queue-state.json           # 持久化队列状态
+          ├─ duplicate-pairs.json       # 重复对列表
+          ├─ snapshots/
+          │   ├─ index.json             # 快照元数据索引
+          │   ├─ {snapshotId}.md        # 快照内容
+          │   └─ ...
+          └─ vectors/
+              ├─ index.json             # 向量索引元数据
+              ├─ Domain/
+              │   ├─ {cruid}.json       # 单个向量
+              │   └─ ...
+              ├─ Issue/
+              ├─ Theory/
+              ├─ Entity/
+              └─ Mechanism/
+```
+
+### 8.2 单一真理源 (SSOT) 机制
+**CruidCache 是绝对的真理源**，其他所有数据结构应从它推导。
+
+```typescript
+interface CruidCache {
+  // 查询方向1：cruid → TFile
+  getCruidToFileMap(): Map<string, TFile>;
+  getFileByCreuid(cruid: string): TFile | undefined;
+  
+  // 查询方向2：TFile → cruid
+  getCreuidByFile(file: TFile): string | undefined;
+  
+  // 监听文件变化
+  on('created', (cruid: string, file: TFile) => void);
+  on('deleted', (cruid: string) => void);
+  on('renamed', (oldCreuid: string, newCreuid: string, newFile: TFile) => void);
+}
+```
+
+**CruidCache 维护的规则**:
+1. 监听 Obsidian 的 `metadataCache.changed` 事件，提取 frontmatter 中的 `cruid`
+2. 监听 `vault.rename` 和 `vault.delete` 事件，更新映射
+3. 如果文件被删除：
+   - `VectorIndex.delete(cruid)` 清空该 cruid 的向量
+   - `DuplicateManager.removePairsByNodeId(cruid)` 清空相关重复对（但保留 `merging` 状态避免竞态条件）
+4. 如果文件被重命名：不需要更新索引和重复对（因为它们只存储 cruid）
+
+### 8.3 向量索引 (Vector Index)
+**元数据** (`data/vectors/index.json`):
+```typescript
+interface VectorIndexMeta {
+  version: string;               // 版本号（数据契约版本）
+  lastUpdated: number;           // Unix 时间戳
   stats: {
     totalConcepts: number;
-    byType: Record<CRType, number>;
+    byType: Record<ConceptType, number>;
   };
   concepts: Record<string, ConceptMeta>;
 }
 
 interface ConceptMeta {
-  id: string;              // 概念 UID
-  type: CRType;            // 知识类型
-  vectorFilePath: string;  // 向量文件路径（内部使用）
-  lastModified: number;    // 最后修改时间
-  hasEmbedding: boolean;   // 是否有嵌入向量
+  id: string;               // cruid
+  type: ConceptType;
+  vectorFilePath: string;   // 相对路径，如 "Domain/550e8400.json"
+  lastModified: number;     // Unix 时间戳
+  hasEmbedding: boolean;    // 是否成功生成向量
 }
 ```
 
-**向量文件**（`data/vectors/{type}/{uid}.json`）：
-
+**向量文件** (`data/vectors/{type}/{cruid}.json`):
 ```typescript
 interface ConceptVector {
-  id: string;              // 概念 UID
-  type: CRType;            // 知识类型
-  embedding: number[];     // 向量嵌入（1536 维）
+  id: string;                    // cruid
+  type: ConceptType;
+  embedding: number[];           // 1536 维浮点数数组
   metadata: {
-    createdAt: number;
+    createdAt: number;           // Unix 时间戳
     updatedAt: number;
-    embeddingModel: string;
-    dimensions: number;
+    embeddingModel: string;      // 如 "text-embedding-3-small"
+    dimensions: number;          // 1536
   };
 }
 ```
 
-**路径语义约束**：
-- `VectorEntry` 不再存储 `name/path`（避免 SSOT 违规）
-- `SearchResult.name/path` 在运行时通过 `CruidCache` 解析（`cruid → TFile.basename/path`）
-- `vectorFilePath` 仅作为内部字段，不对外暴露
+**索引操作**:
+- 增：调用 Embedding 模型生成向量后，存储新文件并更新元数据
+- 删：`VectorIndex.delete(cruid)` → 删除向量文件 + 更新元数据
+- 改：重新调用 Embedding 模型，覆盖原文件
+- 查：加载类型元数据 → 读取目标向量文件 → 与其他同类向量计算相似度
 
-### 4.4 重复对模型
-
+### 8.4 重复对 (Duplicate Pair)
 ```typescript
 interface DuplicatePair {
-  id: string;
-  nodeIdA: string;         // 仅保存 cruid
-  nodeIdB: string;         // 仅保存 cruid
-  type: CRType;
-  similarity: number;      // 相似度 (0-1)
-  detectedAt: string;      // 检测时间
-  status: DuplicatePairStatus;
+  id: string;                          // UUID
+  nodeIdA: string;                     // cruid
+  nodeIdB: string;                     // cruid
+  type: ConceptType;                   // A 和 B 必须同类型
+  similarity: number;                  // 0-1，余弦相似度
+  detectedAt: string;                  // ISO 8601 时间戳
+  status: "pending" | "merging" | "merged" | "dismissed";
+  // pending: 新检测到，未处理
+  // merging: 用户正在处理，避免竞态
+  // merged: 已融合
+  // dismissed: 用户拒绝了融合
 }
-
-type DuplicatePairStatus = 
-  | "pending"    // 待处理
-  | "merging"    // 合并中
-  | "merged"     // 已合并
-  | "dismissed"; // 已忽略
 ```
 
-### 4.5 快照模型
+**生命周期**:
+1. 去重检测 → 生成 `pending` 状态重复对
+2. 用户选择融合 → 状态转为 `merging`
+3. 融合完成 → 状态转为 `merged` 或 `dismissed`
+
+**清理**:
+- 当被删 cruid 被彻底删除时，删除所有涉及该 cruid 的重复对（保留 `merging` 以避免竞态）
+
+### 8.5 快照 (Snapshot)
+快照用于记录"变更前"的状态，支持回滚。
 
 ```typescript
 interface SnapshotRecord {
-  id: string;              // 快照 ID（UUID）
-  nodeId: string;          // 关联的概念 UID
-  taskId: string;          // 关联的任务 ID
-  path: string;            // 原文件路径
-  content: string;         // 原始 Markdown 内容
-  created: string;         // 创建时间
-  fileSize: number;        // 文件大小（字节）
-  checksum: string;        // 内容校验和（MD5）
+  id: string;               // UUID
+  nodeId: string;           // cruid
+  taskId: string;           // 触发快照的任务 ID
+  path: string;             // 快照时的文件路径（仅用于参考）
+  content: string;          // 完整的 Frontmatter + 正文
+  created: string;          // ISO 8601 时间戳
+  fileSize: number;         // 字节数
+  checksum: string;         // MD5 校验和（便于去重与完整性校验）
 }
 ```
 
-## 5. 核心流程
+**生成策略**:
+- **Merge 操作**: 必须为主与被删笔记各创建快照
+- **Amend 操作**: 必须创建快照（写入前）
+- **Expand 操作**: 不创建快照（新建笔记不需要）
+- **Define/Tag/Write**: 不创建快照（若创建失败可删除文件）
 
-### 5.1 Create（创建流程）
+**保留策略**:
+- 配置 `maxSnapshots` (默认 100) 和 `maxSnapshotAgeDays` (默认 30)
+- 定期清理过期或超额的快照
 
-**流程图**：
+**恢复流程**:
+1. 用户选择恢复某个快照
+2. 系统使用"原子写"（写到临时文件 + 原子重命名）保证一致性
+3. 重新生成向量索引
 
-```
-用户输入 → 定义 → 标记 → 撰写 → 索引 → 查重 → 写入文件
-```
+## 9. 任务队列与管线 (Task Queue & Pipeline)
+### 9.1 任务队列模型
+```typescript
+interface MinimalQueueState {
+  pendingTasks: TaskRecord[];     // 待执行任务列表
+  paused: boolean;                // 管线是否暂停
+  lastUpdated: number;            // Unix 时间戳
+}
 
-**阶段说明**：
-1. **定义**（`define`）
-    - 输入：用户描述
-    - 输出：五种类型的标准名称 + 类型置信度
-    - 用户选择最终类型和名称
-2. **标记**（`tag`）
-    - 输入：标准化元数据
-    - 输出：别名列表、标签列表
-3. **撰写**（`write`）
-    - 输入：类型、名称、元数据
-    - 输出：结构化内容（根据类型 Schema）
-4. **索引**（`index`）
-    - 输入：笔记全文
-    - 输出：1536 维向量
-5. **查重**（`checking_duplicates`）
-    - 在同类型桶内检索相似概念
-    - 相似度超过阈值则生成重复对
-6. **写入**
-    - 生成 frontmatter + 正文
-    - 自动写入文件（无需用户确认）
-    - **不创建快照**（删除文件即可回退）
+interface TaskRecord {
+  id: string;                     // UUID
+  nodeId: string;                 // cruid（任务所属的概念）
+  taskType: TaskType;             // define/tag/write/index/merge/amend/expand/visualize
+  state: TaskState;               // Pending/Running/Completed/Failed/Cancelled
+  attempt: number;                // 当前重试次数
+  maxAttempts: number;            // 最多重试次数
+  payload: Record<string, unknown>; // 任务输入数据
+  result?: Record<string, unknown>; // 任务输出结果（成功时）
+  error?: TaskError;              // 错误信息（失败时）
+  created: string;                // ISO 8601 时间戳
+  updated: string;
+  startedAt?: string;             // 开始执行的时间
+  completedAt?: string;           // 完成的时间
+}
 
-**特殊模式**：
-- **Deepen 预设路径**：支持 `targetPathOverride` 参数，用于批量创建时预设文件路径
-- **抽象深化**：支持 `sources` 参数，传递来源笔记正文用于抽象推理
+type TaskState = "Pending" | "Running" | "Completed" | "Failed" | "Cancelled";
 
-### 5.2 Merge（合并流程）
-
-**流程图**：
-
-```
-选择重复对 → 选择主笔记 → 创建双快照 → 生成合并内容 → DiffView 确认 → 写入 + 删除 → 清理索引
-```
-
-**详细步骤**：
-1. **选择主笔记**
-    - 用户从重复对列表选择 A/B 谁是主笔记
-    - 主笔记保留其 `cruid`
-    - 另一篇笔记将被删除
-2. **创建双快照**
-    - 为主笔记创建快照（快照 ID 存储在管线上下文）
-    - 为被删除笔记创建快照（快照 ID 为 `merge-delete-{pipelineId}`）
-3. **生成合并内容**
-    - 调用 LLM 合并两篇笔记的内容
-    - 将被删除笔记的标题追加到主笔记的 `aliases`
-    - 保留主笔记的 `cruid`
-4. **DiffView 确认**
-    - 显示 Side-by-Side 差异视图
-    - 顶部显示"自动快照已启用"徽章
-    - 用户确认后执行写入
-5. **写入 + 删除**
-    - 写入主笔记内容
-    - 删除被合并笔记文件
-6. **清理索引**
-    - 从向量索引删除被删除笔记的 `cruid`
-    - 从重复对列表删除该 pair
-    - 更新主笔记的向量索引
-**关键约束**：
-- 必须创建双快照（主笔记 + 被删除笔记）
-- 被删除笔记的 `cruid` 必须从所有数据结构中清理
-- `aliases` 不得包含 `cruid`，仅包含笔记标题
-
-### 5.3 Incremental Edit（增量改进流程）
-
-**流程图**：
-
-```
-选择笔记 → 输入指令 → 创建快照 → 生成改进内容 → DiffView 确认 → 写入 → 更新索引
+interface TaskError {
+  code: string;                   // 如 "E201_PROVIDER_TIMEOUT"
+  message: string;
+  details?: unknown;
+}
 ```
 
-**详细步骤**：
-1. **输入指令**
-    - 用户选择目标笔记
-    - 输入改进指令（如"补充更多示例"）
-2. **创建快照**
-    - 为目标笔记创建快照
-    - 快照 ID 存储在管线上下文
-3. **生成改进内容**
-    - 调用 LLM 生成改进后的完整内容
-    - 保留原有 frontmatter
-    - 自然融合改进内容（非追加）
-4. **DiffView 确认**
-    - 显示 Side-by-Side 差异视图
-    - 用户确认后执行写入
-5. **写入 + 更新索引**
-    - 写入改进后的内容
-    - 更新向量索引
-    - 触发去重检测
-**关键约束**：
-- 必须在确认前创建快照
-- 输出必须包含完整的 frontmatter + 正文
-
-### 5.4 Deepen（深化流程）
-
-**两种模式**：
-
-#### 5.4.1 层级深化（Domain/Issue/Theory）
-
-**流程**：
-
-```
-解析父笔记 → 提取候选项 → 过滤已存在 → 用户勾选 → 批量创建
-```
-
-**候选项来源**：
-
-| 父类型 | 候选字段 | 目标类型 |
-|--|-|-|
-| Domain | `sub_domains` | Domain |
-| Domain | `issues` | Issue |
-| Issue | `sub_issues` | Issue |
-| Issue | `theories` | Theory |
-| Theory | `sub_theories` | Theory |
-| Theory | `entities` | Entity |
-| Theory | `mechanisms` | Mechanism |
-
-**路径预测**：
-- 使用父笔记中的 ` [[候选名]] ` 作为文件名
-- 设置 `targetPathOverride` 参数
-- 冲突处理：已存在路径标记为"已存在"，非法文件名标记为"不可创建"
-**关系写入**：
-- 新笔记 `parents` 字段写入父笔记标题
-- 新笔记 `parentUid` 字段写入父笔记 `cruid`
-- 新笔记 `parentType` 字段写入父笔记类型
-**限制**：
-- 单次最多创建 200 个概念
-
-#### 5.4.2 抽象深化（Entity/Mechanism）
-
-**流程**：
-
-```
-读取当前笔记 → 相似检索 → 用户勾选 → 生成抽象概念
-```
-
-**详细步骤**：
-1. **相似检索**
-    - 读取当前笔记的索引向量（embedding）
-    - 在同类型桶内检索相似概念
-    - 返回 topK 候选
-2. **用户勾选**
-    - 显示相似概念列表（名称 + 相似度）
-    - 用户勾选多个概念
-3. **生成抽象概念**
-    - 拼接当前笔记 + 所选相似笔记的完整正文
-    - 作为 `CTX_SOURCES` 传入 `write`
-    - 生成 1 个同类型、更抽象的概念
-4. **关系写入**
-    - 新笔记 `parents` 字段写入来源笔记标题
-    - **不修改来源笔记**
-
-### 5.5 Image Generate（图片生成流程）
-
-1. Workbench/命令触发 → 校验编辑模式与光标位置，读取前后上下文（默认各 500 字符）与 frontmatter。
-2. ImageInsertOrchestrator 入队 `image-generate` 任务，payload 包含用户描述、上下文、光标位置、frontmatter。
-3. TaskRunner 执行：
-   - 调用 ProviderManager.generateImage（chat completions 模型 `gemini-3-pro-image-preview`，带 `extra_body.google.image_config`）。
-   - 解析 Markdown data URL，解码二进制。
-   - 记录快照（UndoManager）。
-   - 使用 `vault.getAvailablePathForAttachment` 生成附件路径并写入图片文件。
-   - 在光标处插入 `![alt](path)` Markdown。
-4. 任务完成后可撤销，队列状态实时刷新。
-
-## 6. Prompt 系统
-
-### 6.1 模块化架构
-
-**目录结构**：
-
-```
-prompts/
-├── _base/                    # 基础组件
-│   ├── terminology.md        # 术语表
-│   ├── output-format.md      # 输出格式规则
-│   ├── writing-style.md      # 写作风格
-│   ├── anti-patterns.md      # 反模式约束
-│   └── operations/           # 操作模块
-│       ├── create.md
-│       ├── merge.md
-│       └── incremental.md
-├── _type/                    # 类型核心模块
-│   ├── domain-core.md
-│   ├── issue-core.md
-│   ├── theory-core.md
-│   ├── entity-core.md
-│   └── mechanism-core.md
-├── generate-image.md         # 图片生成模板（chat completions image preview）
-└── *.md                      # 任务模板（过渡形态）
-```
-
-### 6.2 模板结构
-
-每个可执行 prompt 必须包含以下区块：
-
-```markdown
-<system_instructions>
-  <!-- 系统角色和规则 -->
-</system_instructions>
-
-<context_slots>
-  <!-- 上下文槽位 -->
-</context_slots>
-
-<task_instruction>
-  <!-- 任务指令 -->
-</task_instruction>
-
-<output_schema>
-  <!-- JSON Schema -->
-</output_schema>
-```
-
-**输出规则**：
-- LLM 输出必须是原始 JSON 文本（raw JSON only）
-- 不得使用 Markdown code fence（如 ```json）
-
-### 6.3 槽位契约
-
-**通用槽位**：
-- `CTX_LANGUAGE`：语言（可选，默认 `Chinese`）
-**任务型槽位**：
-
-| 任务类型 | 必需槽位 | 可选槽位 |
-|-|-|-|
-| `define` | `CTX_INPUT` | `CTX_LANGUAGE` |
-| `tag` | `CTX_META` | `CTX_LANGUAGE` |
-| `write` | `CTX_META` | `CTX_SOURCES`, `CTX_LANGUAGE` |
-| `index` | `CTX_INPUT` | `CTX_LANGUAGE` |
-| `verify` | `CTX_META`, `CTX_CURRENT` | `CTX_SOURCES`, `CTX_LANGUAGE` |
-
-**操作模块槽位**：
-
-| 操作类型 | 必需槽位 | 可选槽位 |
-|-|-|-|
-| `create` | `CTX_INPUT` | `CTX_LANGUAGE` |
-| `merge` | `SOURCE_A_NAME`, `CTX_SOURCE_A`, `SOURCE_B_NAME`, `CTX_SOURCE_B` | `USER_INSTRUCTION`, `CTX_LANGUAGE`, `CONCEPT_TYPE` |
-| `incremental` | `CTX_CURRENT`, `USER_INSTRUCTION` | `CTX_LANGUAGE`, `CONCEPT_TYPE` |
-
-**槽位校验**：
-- 使用 `OPERATION_SLOT_MAPPING` 白名单校验
-- 未声明的槽位直接报错
-- 未替换的占位符（如残留 ` {{CTX_*}} `）视为构建失败
-
-### 6.4 变量注入
-
-**基础组件注入**：
-- ` {{BASE_TERMINOLOGY}} `
-- ` {{BASE_OUTPUT_FORMAT}} `
-- ` {{BASE_WRITING_STYLE}} `
-- ` {{BASE_ANTI_PATTERNS}} `
-**操作模块注入**：
-- ` {{OPERATION_BLOCK}} `
-**类型注入**：
-- ` {{TYPE}} `：等于 `type`，取值为 Domain/Issue/Theory/Entity/Mechanism
-
-## 7. 索引与存储
-
-### 7.1 向量索引架构
-
-**分桶存储**：
-
-```
-data/vectors/
-├── index.json              # 元数据索引
-├── Domain/
-│   ├── {uid1}.json
-│   └── {uid2}.json
-├── Issue/
-│   └── {uid3}.json
-├── Theory/
-│   └── {uid4}.json
-├── Entity/
-│   └── {uid5}.json
-└── Mechanism/
-    └── {uid6}.json
-```
-
-**优势**：
-- 延迟加载：仅在搜索时加载对应类型的向量
-- 增量更新：单个概念变更不影响其他文件
-- 可扩展性：支持大规模概念库
-**搜索流程**：
-1. 加载目标类型的所有向量文件
-2. 计算余弦相似度（点积，向量已归一化）
-3. 返回 topK 结果
-
-### 7.2 CruidCache（SSOT）
-
-`CruidCache` 是 `cruid → TFile` 的单一事实来源（SSOT），用于在运行时解析名称/路径，避免在索引中冗余存储。
-
-**监听源**：
-
-| 事件 | 触发时机 | 处理逻辑 |
-|---|-|-|
-| `metadataCache.changed` | frontmatter 解析/变更 | 更新 cruid 映射 |
-| `vault.rename` | 文件重命名/移动 | 更新 path 映射 |
-| `vault.delete` | 文件删除 | 移除映射并触发关联清理 |
-
-**删除清理**（通过订阅 `CruidCache.onDelete` 执行）：
-1. `VectorIndex.delete(cruid)`：删除向量索引条目与向量文件（不存在则忽略）
-2. `DuplicateManager.removePairsByNodeId(cruid)`：清理 `pending/dismissed` 的重复对（保留 `merging`，避免与 Merge 管线竞态）
-
-**关键变化**：
-- `VectorIndex` 与 `DuplicatePair` 不再持久化 `name/path`，因此 `vault.rename/modify` 不需要索引回写
-
-### 7.3 文件存储结构
-
-**数据目录**（`data/`）：
-
-```
-data/
-├── app.log                    # 运行日志
-├── queue-state.json           # 任务队列状态
-├── duplicate-pairs.json       # 重复对列表
-├── snapshots/                 # 快照目录
-│   ├── index.json
-│   └── {snapshotId}.md
-└── vectors/                   # 向量索引
-    ├── index.json
-    └── {type}/{uid}.json
-```
-
-`app.log` 采用 JSON Lines（单行一条结构化日志），不再提供可切换的格式选项，方便脚本分析与问题定位。
-
-**持久化策略**：
-
-| 文件 | 更新时机 | 格式 |
-|---|-|---|
-| `queue-state.json` | 入队 / 暂停状态变更 | MinimalQueueState（pendingTasks + paused） |
-| `duplicate-pairs.json` | 重复对变更 | DuplicatePair[]（仅 nodeIdA/nodeIdB） |
-| `vectors/index.json` | 索引变更 | VectorIndexMeta |
-| `snapshots/index.json` | 快照创建/删除 | SnapshotRecord[] |
-
-**原子写入**：
-- 快照恢复使用原子写入（temp file + rename）
-- 确保数据完整性
-
-**离线迁移**：
-- 提供 `scripts/migrate-phase1-2-data.js` 用于迁移 `data/` 下的旧格式文件（可选，默认会生成备份）
-
-## 8. 并发与锁
-
-### 8.1 锁类型
-
-**节点锁**（按 `cruid`）：
-- 防止同一笔记并发危险写入
-- 例如：同时执行 Merge 和 Incremental Edit
-**类型锁**（按 `type`）：
-- 防止同类型桶扫描/写入冲突
-- 例如：同时执行多个 Domain 类型的去重检测
-
-### 8.2 锁管理
+### 9.2 管线协调器 (PipelineOrchestrator)
+负责任务的调度、执行和状态管理。
 
 ```typescript
-class SimpleLockManager {
-  private processingCruids = new Set<string>();
-  tryAcquire(key: string): boolean;
-  release(key: string): void;
-  isLocked(key: string): boolean;
+interface PipelineOrchestrator {
+  // 入队操作
+  enqueueDefine(input: string): Promise<Result<string, E>>;         // 返回 taskId
+  enqueueTag(cruid: string, text: string): Promise<Result<string, E>>;
+  enqueueWrite(cruid: string, type: ConceptType): Promise<Result<string, E>>;
+  enqueueMerge(cruidA: string, cruidB: string): Promise<Result<string, E>>;
+  enqueueAmend(cruid: string, instruction: string): Promise<Result<string, E>>;
+  enqueueExpand(cruid: string): Promise<Result<string, E>>;
+  enqueueVisualize(cruid: string, description?: string): Promise<Result<string, E>>;
+  
+  // 队列控制
+  pause(): void;
+  resume(): void;
+  cancelTask(taskId: string): void;
+  getQueueState(): MinimalQueueState;
+  
+  // 事件
+  on('taskCompleted', (taskId: string, result: Record<string, unknown>) => void);
+  on('taskFailed', (taskId: string, error: TaskError) => void);
+  on('taskRunning', (taskId: string) => void);
+}
+```
+
+### 9.3 任务执行流程
+```
+[Entry] → Enqueue → State: Pending
+           ↓
+        [Check Paused]
+           ↓
+        [Acquire Lock] (获取并发锁)
+           ↓
+        State: Running, startedAt = now
+           ↓
+        [Execute Task]
+           ├─ 成功 → State: Completed, result = {...}
+           ├─ 失败（可重试）→ attempt++, maxAttempts 检查
+           │   ├─ 未超限 → exponential backoff，重新 Enqueue
+           │   └─ 已超限 → State: Failed, error = {...}
+           └─ 失败（不可重试）→ State: Failed, error = {...}
+           ↓
+        completedAt = now
+           ↓
+        [Release Lock]
+           ↓
+        通知 UI 更新
+```
+
+### 9.4 并发锁 (Locking)
+```typescript
+interface SimpleLockManager {
+  // 按 cruid 加锁（防止同笔记并发写入）
+  tryAcquireNodeLock(cruid: string, timeout?: number): boolean;
+  releaseNodeLock(cruid: string): void;
+  
+  // 按类型加锁（防止去重时竞态）
+  tryAcquireTypeLock(type: ConceptType, timeout?: number): boolean;
+  releaseTypeLock(type: ConceptType): void;
+  
+  // 查询
+  isNodeLocked(cruid: string): boolean;
+  isTypeLocked(type: ConceptType): boolean;
+  
+  // 清空（重启时）
   clear(): void;
 }
 ```
 
-**设计决策**：
-- 锁仅存在于内存：不做超时、不做持久化
-- 节点锁 key = `cruid`
-- 类型锁 key = `type:${CRType}`（用于 `DuplicateManager.detect` 的同类型互斥）
+**锁的语义**:
+- **NodeLock**: 同时只有一个任务可以修改某个笔记的文件内容
+- **TypeLock**: 去重时，同类型的向量扫描互斥，防止并发修改同类向量索引
 
-### 8.3 重启恢复
+**重启行为**: 锁自动清空（内存结构），不持久化。重启后再次运行可能出现竞态，但通过版本号、校验和等机制检测并恢复。
 
-- **锁**：重启后自动清空，不存在僵尸锁
-- **队列状态**：仅持久化 `pendingTasks`（最小字段）与 `paused`，不恢复锁
-- **管线状态**：仅存在于内存，重启后清空（无 `pipeline-state.json`）
-
-## 9. 错误处理
-
-### 9.1 Result Monad
-
-所有可能失败的操作返回 `Result<T>`：
-
+### 9.5 重试策略
 ```typescript
-type Result<T> = Ok<T> | Err;
-
-interface Ok<T> {
-  ok: true;
-  value: T;
+interface RetryStrategy {
+  maxRetryAttempts: number;           // 默认 3
+  canRetry(error: TaskError): boolean;
+  getBackoffDelay(attempt: number): number; // 指数退避
 }
 
-interface Err {
-  ok: false;
-  error: {
-    code: string;
-    message: string;
-    details?: unknown;
+// 可重试的错误码：E2xx (Provider/AI)、部分 E3xx (临时网络错误)
+// 不可重试：E1xx (输入错误)、E002 (配置错误)、权限错误
+```
+
+**指数退避**:
+- attempt 1: 1s
+- attempt 2: 2s
+- attempt 3: 4s
+
+## 10. 错误处理与恢复 (Error Handling & Recovery)
+### 10.1 Result Monad
+所有可能失败的操作都返回 `Result<T, E>` 类型，禁止抛出未捕获异常。
+
+```typescript
+type Result<T, E = AppError> = 
+  | { ok: true; value: T; }
+  | { ok: false; error: E; };
+
+interface AppError {
+  code: string;          // 如 "E101_INVALID_INPUT"
+  message: string;       // 用户友好的错误信息
+  details?: unknown;     // 调试信息
+  timestamp: number;     // Unix 时间戳
+}
+```
+
+**错误码前缀规范**:
+| 前缀 | 范围 | 含义 | 可重试 |
+|---|---|---|---|
+| E1xx | E101-E199 | 输入/验证错误 | ✗ 不可重试 |
+| E2xx | E201-E299 | Provider/AI 错误 | ✓ 可重试 |
+| E3xx | E301-E399 | 系统/IO 错误 | △ 视情况 |
+| E4xx | E401-E499 | 配置错误 | ✗ 不可重试 |
+| E5xx | E501-E599 | 内部错误/BUG | △ 视情况 |
+
+**具体错误码示例**:
+- `E101_INVALID_INPUT`: 输入格式错误或无效
+- `E102_MISSING_FIELD`: 必需字段缺失
+- `E201_PROVIDER_TIMEOUT`: AI 提供商超时
+- `E202_RATE_LIMITED`: 触发速率限制（429）
+- `E203_INVALID_API_KEY`: API 密钥无效
+- `E301_FILE_NOT_FOUND`: 文件不存在
+- `E302_PERMISSION_DENIED`: 没有文件操作权限
+- `E303_DISK_FULL`: 磁盘空间不足
+- `E304_SNAPSHOT_FAILED`: 快照创建失败
+- `E305_VECTOR_MISMATCH`: 向量维度不匹配
+- `E401_PROVIDER_NOT_CONFIGURED`: Provider 未配置
+- `E500_INTERNAL_ERROR`: 内部程序错误
+
+### 10.2 错误通知
+UI 层统一使用 `WorkbenchPanel.showErrorNotice()` 展示错误。
+
+```typescript
+interface ErrorNotification {
+  code: string;
+  message: string;        // 国际化处理
+  level: "error" | "warn" | "info";
+  duration: number;       // 毫秒，error 默认 6000
+  action?: {
+    text: string;
+    callback: () => void;  // 如"重试"、"查看日志"
   };
 }
 ```
 
-**使用示例**：
+**通知规则**:
+- 🔴 **Error** (6000ms): 操作失败，用户需要感知
+- 🟡 **Warning** (4000ms): 可能有问题但不阻塞
+- 🟢 **Info** (2000ms): 正常操作结果
+
+### 10.3 日志记录
+日志采用 JSONL 格式，便于后续分析。
 
 ```typescript
-const result = await vectorIndex.upsert(entry);
-if (!result.ok) {
-  logger.error("VectorIndex", "插入失败", result.error);
-  return result;
+interface LogEntry {
+  timestamp: number;      // Unix 时间戳，精确到毫秒
+  level: "debug" | "info" | "warn" | "error";
+  context: {
+    taskId?: string;
+    nodeId?: string;      // cruid
+    operation?: string;   // define/tag/write/...
+    userId?: string;      // 若支持
+  };
+  message: string;
+  details?: unknown;
+  stackTrace?: string;    // 仅 error 级别
 }
-// 继续处理 result.value
+
+// 示例：
+// {"timestamp":1702701600000,"level":"info","context":{"taskId":"abc123","operation":"define"},"message":"Define task started","details":{"inputLength":256}}
 ```
 
-> **同步 API 约定**  
-> 纯同步逻辑（例如 `TaskQueue.enqueue/cancel`）直接抛出 `CognitiveRazorError`，由异步边界使用 `toErr()` 转换为 `Result`。这样既避免了层层返回 Result，也能确保 UI 在 catch 中立即反馈错误。
+**日志级别配置** (`settings.logLevel`):
+- `debug`: 所有细节（开发环境）
+- `info`: 重要操作（生产环境）
+- `warn`: 异常警告
+- `error`: 错误
 
-### 9.2 错误码分类
+### 10.4 恢复机制
+| 故障场景 | 恢复策略 |
+|---|---|
+| **AI 调用超时** | 重试 3 次（指数退避），若仍失败则标记为 Failed |
+| **文件被外部修改** | 检测 checksum 差异，提示用户冲突解决 |
+| **快照创建失败** | 操作被中止，用户收到通知 |
+| **向量生成失败** | 任务重试，仍失败则概念无 embedding（可手动重试） |
+| **队列状态损坏** | 重启时检测 queue-state.json 完整性，损坏则清空队列 |
+| **Vault 被外部删除** | 监听器检测到 delete 事件，更新 CruidCache 和索引 |
 
-| 前缀 | 类别 | 示例 |
+### 10.5 调试与支持
+```typescript
+interface DebugInfo {
+  pluginVersion: string;
+  vaultPath: string;
+  obsidianVersion: string;
+  config: PluginSettings;
+  queueState: MinimalQueueState;
+  cacheStats: {
+    totalCruids: number;
+    cacheSize: number;
+  };
+  recentErrors: AppError[]; // 最近 10 个错误
+}
+
+// 用户可导出 DebugInfo 用于问题诊断
+exportDebugInfo(): Result<string, E>;
+```
+
+## 11. UI/UX 设计规范 (UI/UX Standards)
+### 11.1 核心设计原则
+- **简洁**: 最少化 UI 元素，避免信息过载
+- **无干扰**: 后台任务不中断用户工作流
+- **键盘友好**: 所有主要操作支持快捷键
+- **可访问**: 遵循 WAI-ARIA 标准，支持屏幕阅读器
+
+### 11.2 Workbench 面板布局
+```
+┌─────────────────────────────────────────────┐
+│ 🔧 Cognitive Razor Workbench                 │ [Settings]
+├─────────────────────────────────────────────┤
+│ 📝 Create New Concept                        │ [+]
+│ Input: [________________]                   │
+│ [Define] [Cancel]                           │
+├─────────────────────────────────────────────┤
+│ 🔗 Duplicate Concepts                        │ [▼]
+│ • "Concept A" vs "Concept B" (0.92 sim)     │
+│ • ...                                        │
+├─────────────────────────────────────────────┤
+│ ⏳ Queue Status                              │ [▼]
+│ Running: Define (Task #1)                   │
+│ Pending: 3 tasks                            │
+│ [⏸ Pause] [🗑 Clear]                        │
+├─────────────────────────────────────────────┤
+│ 📊 Recent Operations                         │ [▼]
+│ • Merge: A + B → A (5 min ago)              │
+│ • Amend: C (10 min ago)                     │
+├─────────────────────────────────────────────┤
+│ 📌 Active Note Actions                       │ [▼]
+│ [Amend] [Expand] [Visualize] [Verify]       │
+└─────────────────────────────────────────────┘
+```
+
+**默认折叠**:
+- 创建区、重复区总是展开（主操作）
+- 队列、历史区默认折叠（辅助信息）
+- 当前笔记操作区：仅当有活跃笔记时显示并展开
+
+### 11.3 Diff View 设计
+展示"原 → 改"的对比，所有破坏性操作前必须确认。
+
+```
+┌──────────────────────────────────────────────┐
+│ 📋 Diff Preview — Amend: "Domain X"          │
+├────────────────────┬─────────────────────────┤
+│      Before        │         After           │
+├────────────────────┼─────────────────────────┤
+│ **Definition**      │ **Definition**          │
+│ The study of...     │ The study of cognition │
+│                     │ and mental processes,  │
+│                     │ including perception,  │
+│ ...                 │ memory, attention...   │
+│                     │                        │
+│ 📌 ✓ Auto-snapshot enabled                  │
+├────────────────────┴─────────────────────────┤
+│ [✓ Confirm]  [✗ Cancel]  [⤴ Show Original] │
+└────────────────────────────────────────────────┘
+```
+
+**特性**:
+- 支持 Side-by-Side（默认）和 Unified 两种模式
+- 顶部徽章提示"自动快照已启用"
+- 支持高亮改动部分（可选）
+
+
+
+### 11.5 Modal 与弹窗
+| Modal | 用途 | 交互 |
 |---|---|---|
-| E001 | 输入验证错误 | 无效的 UUID 格式 |
-| E002 | 配置错误 | Provider 未配置 |
-| E003 | 文件系统错误 | 文件不存在 |
-| E004 | 数据不一致 | 索引条目缺失 |
-| E201 | Provider 错误 | API 调用失败 |
-| E301 | 索引错误 | 向量索引损坏 |
-| E302 | 搜索错误 | 相似度计算失败 |
-| E303 | 快照错误 | 快照恢复失败 |
-| E305 | 任务执行错误 | LLM 输出解析失败 |
-| E306 | 管线错误 | 管线阶段转换失败 |
+| `ExpandModal` | 选择要拓展的概念候选 | 勾选 + 批量操作 |
+| `MergeConfirmModal` | 确认融合操作 | Diff + 确认/取消 |
+| `AmendModal` | 输入修订指令 | 文本 + 建议 |
+| `VisualizationModal` | 生成图片的描述 | 可选文本 + 预览 |
+| `SimpleInputModal` | 快速定义 | 用于快速触发命名标准化 Define，等同于工作台输入框 |
 
-### 9.3 重试策略
+**设计规范**:
+- 使用 `AbstractModal` 基类，统一样式
+- 所有 icon 通过 `setIcon()` 使用 Obsidian 主题
+- 标题 + 内容 + 操作按钮 的标准布局
+- 支持 Escape 快速关闭（非破坏性操作）
 
-**可重试错误**：
-- 网络超时
-- 速率限制（429）
-- 临时服务不可用（503）
-**不可重试错误**：
-- 输入验证错误
-- 配置错误
-- 权限错误（401/403）
-**重试配置**：
-- 最大重试次数：`maxRetryAttempts`（默认 3）
-- 退避策略：指数退避（1s, 2s, 4s）
+### 11.6 样式指南
+- **Scope**: 所有样式限定在 `.cr-scope` 内（防止全局污染）
+- **主题变量**: 仅使用 Obsidian 主题变量
+  - `--text-normal`, `--text-muted`, `--text-error`
+  - `--interactive-normal`, `--interactive-hover`
+  - `--background-primary`, `--background-secondary`
+- **禁止硬编码颜色** 和 `!important`
+- **类名前缀**: 所有类名以 `cr-` 开头
 
-### 9.4 UI 通知策略
+```css
+.cr-scope {
+  --local-accent: var(--interactive-accent);
+}
 
-- UI 层定义 `ERROR_NOTICE_DURATION = 6000`（毫秒），所有错误类 `Notice` 必须使用该常量，确保反馈时长一致且不会因主题差异导致闪烁。
-- `WorkbenchPanel.showErrorNotice()` 统一封装错误提示，其它无权访问视图实例的组件（如 `DuplicatePreviewModal`、`MergeHistoryModal`）直接传入常量参数，维持相同行为。
-- 成功与中性提示继续沿用 Obsidian 默认展示时长，避免与错误提示混淆。
+.cr-button-primary {
+  background-color: var(--interactive-normal);
+  color: var(--text-normal);
+}
 
-## 10. UI 规范
-
-### 10.1 Workbench 四区布局
-
-```
-┌─────────────────────────────────────────┐
-│         创建概念区（可折叠）             │
-│  输入框 + 创建按钮 + 深化按钮            │
-├─────────────────────────────────────────┤
-│         重复概念区（可折叠）             │
-│  重复对列表 + 合并/忽略按钮              │
-├─────────────────────────────────────────┤
-│         队列状态区（可折叠）             │
-│  运行统计 + 暂停/恢复/清空按钮           │
-├─────────────────────────────────────────┤
-│         最近操作区（可折叠）             │
-│  快照列表 + 查看/恢复按钮                │
-└─────────────────────────────────────────┘
+.cr-button-primary:hover {
+  background-color: var(--interactive-hover);
+}
 ```
 
-**区域职责**：
-1. **创建概念区**
-    - 输入框：用户输入概念描述
-    - 创建按钮：启动创建管线
-    - 深化按钮：对当前笔记执行 Deepen
-- AI 进度面板：实时显示所有活跃管线的阶段进度（Define → Tag → Write → Index → Verify → Save），提供进度条、阶段提示、失败状态以及快速操作（查看上下文、确认、预览 Diff）
-2. **重复概念区**
-    - 显示待处理的重复对
-    - 支持排序（相似度/时间/类型）
-    - 支持类型过滤
-    - 合并按钮：启动 Merge 流程
-    - 忽略按钮：标记为非重复
-3. **队列状态区**
-    - 显示任务统计（待处理/运行中/已完成/失败）
-    - 暂停/恢复队列
-    - 清空队列
-4. **最近操作区**
-    - 显示最近的快照记录
-    - 查看快照：显示 Side-by-Side Diff
-    - 恢复快照：恢复到快照状态
+### 11.7 无障碍 (Accessibility)
+- **键盘导航**: Tab 顺序合理，焦点可见
+- **ARIA 标签**: 所有交互元素有 `aria-label` 或 `aria-labelledby`
+- **Modal**: `role="dialog"` + `aria-modal="true"` + `aria-labelledby`
+- **快捷键**: 主要操作支持 Enter/Space 触发
+- **运动敏感**: 尊重 `prefers-reduced-motion` 媒体查询
+  - 加载动画在 reduce 模式下提供静态替代
+  - 进度条用百分比文字替代动画
 
-#### 阶段 3 UI/UX 增强
+### 11.8 国际化 (i18n)
+支持中文 (zh) 和英文 (en)。
 
-- 类型置信度表使用 `.cr-confidence-high/.medium/.low` 三个语义类，全部引用主题变量，`renderTypeConfidenceTable()` 不再写入内联颜色，第三方主题可直接覆盖。
-- 标准化入口按钮使用 `setIcon("corner-down-left")` 渲染 Lucide 图标，加载期间仅切换 `is-loading` 类，由 `styles.css` 的 `::after` spinner 负责动画，`SimpleInputModal` 与之保持一致。
-- `改进当前笔记` 按钮通过 `workspace.on("active-leaf-change")` 动态检测激活的 Markdown 笔记：无笔记时禁用并展示“请先打开一个 Markdown 笔记”提示，避免二次点击才看到报错。
-- 所有 `cr-collapsible-section` 头部都带 `aria-controls`，同时 `collapseState` 默认让重复概念与历史记录折叠，强调主操作区；`toggle` 逻辑保证状态与 `aria-expanded` 同步。
-- Workbench 内部错误提示调用 `showErrorNotice()`，确保 6 秒展示时间，与文档 9.4 的策略一致。
-- 设置页的“任务模型配置”采用手风琴卡片：每个任务展示 Provider/模型/参数，实时显示“默认值/自定义”状态，并提供单个/全部重置。无 Provider 时禁用输入并提示配置。
+```typescript
+interface I18n {
+  get(key: string, context?: Record<string, string>): string;
+  setLanguage(lang: "zh" | "en"): void;
+}
 
-### 10.2 DiffView 规范
+// 使用示例：
+i18n.get("menu.clarify")           // "厘清概念"
+i18n.get("error.E101_INVALID_INPUT") // "输入格式不正确"
+i18n.get("notification.task_completed", { count: "3" }) // "3 个任务已完成"
+```
 
-**显示模式**：
-1. **Side-by-Side**（默认）
-    - 左侧：原始内容
-    - 右侧：新内容
-    - 左右面板同步滚动（使用 `requestAnimationFrame` 防止循环触发）
-2. **Unified**（可切换）
-    - 统一视图
-    - 删除行标记为红色
-    - 新增行标记为绿色
-**确认流程**：
-3. 显示差异视图
-4. 顶部显示"自动快照已启用"徽章
-5. 用户点击"确认"按钮后执行写入
-6. 用户点击"取消"按钮后放弃操作
-**适用场景**：
-- Merge 确认
-- Incremental Edit 确认
-- 快照预览
+## 12. 命令系统 (Command System)
+### 12.1 命令列表
+| 命令 ID | 名称 | 对应操作 | 快捷键建议 | 说明 |
+|---|---|---|---|---|
+| `open-workbench` | 打开工作台 | - | Ctrl+P: workbench | 显示/隐藏 Workbench 面板 |
+| `define-concept` | 定义概念类型 | Define | - | 打开输入框识别类型 |
+| `write-concept` | 撰写概念内容 | Write | - | 根据类型生成正文 |
+| `amend-current-note` | 修订当前笔记 | Amend | Ctrl+Shift+E | 打开修订指令输入框 |
+| `expand-current-note` | 拓展当前笔记 | Expand | Ctrl+Shift+X | 发现相关新概念 |
+| `visualize-concept` | 可视化概念 | Visualize | Ctrl+Shift+V | 为当前笔记生成配图 |
+| `verify-concept` | 核查当前笔记 | Verify | - | 联网核查事实准确性 |
+| `pause-queue` | 暂停任务队列 | - | - | 暂停所有待执行任务 |
+| `resume-queue` | 恢复任务队列 | - | - | 继续执行队列中的任务 |
+| `clear-queue` | 清空任务队列 | - | - | 取消所有 Pending 任务 |
 
-### 10.3 Modal 组件
+### 12.2 命令交互约定
+- **入口**: 命令面板 (Ctrl/Cmd+P)
+- **快捷键**: 用户自配置，插件不预设（避免冲突）
+- **上下文菜单**: 编辑器右键菜单支持 `amend-current-note` 等当前笔记操作
+- **触发条件**: 
+  - `amend-current-note` 仅当编辑器有活跃笔记时可用
+  - 其他命令可全局使用
 
-| Modal | 用途 | 输入 | 输出 |
-|-|---|---|---|
-| `DeepenModal` | 层级深化候选选择 | 候选列表 | 勾选的候选 |
-| `AbstractModal` | 抽象深化相似概念选择 | 相似概念列表 | 勾选的概念 |
-| `MergeNameSelectionModal` | 合并后名称选择 | A/B 名称 | 最终名称 |
-| `SimpleInputModal` | 单行输入 | 提示文本 | 用户输入 |
+### 12.3 命令回调示例
+```typescript
+// 定义命令
+this.addCommand({
+  id: 'amend-current-note',
+  name: 'Amend current note',
+  editorCallback: (editor: Editor, view: MarkdownView) => {
+    const cruid = view.file?.frontmatter?.cruid;
+    if (!cruid) {
+      this.showNotice(i18n.get('error.no_cruid'), 'warn');
+      return;
+    }
+    new AmendModal(this.app, cruid, (instruction: string) => {
+      this.pipelineOrchestrator.enqueueAmend(cruid, instruction);
+    }).open();
+  },
+});
 
-### 10.4 主题与样式
+// 注册快捷键监听（用户自配）
+this.addCommand({
+  id: 'amend-current-note',
+  hotkeys: [
+    {
+      modifiers: ['Ctrl', 'Shift'],
+      key: 'e',
+    },
+  ],
+  ...
+});
+```
 
-- 所有插件样式必须在 `.cr-scope` 下生效，避免污染全局 UI。
-- 颜色必须引用 Obsidian CSS 变量（如 `--text-normal`、`--background-primary`、`--interactive-accent`），禁止硬编码 HEX 与 `rgba(...)`。
-- 半透明/叠加色使用 `color-mix()` 生成（例如成功/失败底色），确保第三方主题兼容。
-- 禁止使用 `!important`，通过提高选择器特异性解决覆盖问题。
-- 插件自定义类名统一使用 `cr-` 前缀。
 
-### 10.5 图标规范
-
-- 所有图标使用 Obsidian 的 `setIcon()` API（Lucide 图标库）渲染，禁止内联 SVG 字符串。
-- icon-only 按钮必须提供 `aria-label`。
-
-### 10.6 无障碍与键盘
-
-- 所有可交互元素必须可通过键盘完成操作：
-  - 具备可聚焦性（原生控件或 `tabindex="0"`）
-  - 使用 `aria-*` 提供语义（例如 `role="dialog"`、`aria-modal="true"`、`aria-label`/`aria-labelledby`、`aria-checked` 等）
-  - 支持 `Enter`/`Space` 触发主要动作
-  - 可选：方向键在列表/卡片项之间移动焦点并切换选择
-- Modal 必须设置 `role="dialog"` 与 `aria-modal="true"`，并提供标题绑定（`aria-labelledby`）。
-
-### 10.7 动画偏好
-
-- 必须尊重 `prefers-reduced-motion`：
-  - 禁用非必要动画（加载指示、进度条等应提供无动画替代）
-  - UndoNotification 的进度条在 reduce 模式下显示静态状态，不做宽度动画
-
-## 11. 命令系统
-
-### 11.1 命令列表
-
-| 命令 ID | 名称 | 功能 |
-|---|---|---|
-| `open-workbench` | 打开工作台 | 打开 Workbench 面板 |
-| `create-concept` | 创建概念 | 启动创建流程 |
-| `improve-current-note` | 增量改进当前笔记 | 对当前笔记执行 Incremental Edit |
-| `deepen-current-note` | 深化当前笔记 | 对当前笔记执行 Deepen |
-| `insert-image` | 插入图片 | 读取上下文并创建图片生成任务 |
-| `merge-duplicates` | 合并重复对 | 启动 Merge 流程 |
-| `view-duplicates` | 查看重复概念 | 打开重复概念列表 |
-| `view-history` | 查看操作历史 | 打开快照列表 |
-| `pause-queue` | 暂停队列 | 暂停任务队列 |
-| `resume-queue` | 恢复队列 | 恢复任务队列 |
-| `clear-queue` | 清空队列 | 清空任务队列 |
-
-### 11.2 快捷键策略
-
-**默认不绑定任何快捷键**：
-- 插件不预置快捷键
-- 用户可在 Obsidian 的快捷键设置中自行绑定
-**原因**：
-- 避免与其他插件冲突
-- 尊重用户的快捷键习惯
-
-## 12. 配置与国际化
-
-### 12.1 插件设置
-
+## 13. 配置与扩展 (Configuration & Extension)
+### 13.1 插件设置接口
 ```typescript
 interface PluginSettings {
-  // 基础设置
-  version: string;
+  // 版本与语言
+  version: string;                           // 数据格式版本
   language: "zh" | "en";
   
-  // 命名设置
-  namingTemplate: string;
-  directoryScheme: DirectoryScheme;
+  // 目录方案
+  directoryScheme: {
+    Domain: string;      // 默认 "1-Domains"
+    Issue: string;       // 默认 "2-Issues"
+    Theory: string;      // 默认 "3-Theories"
+    Entity: string;      // 默认 "4-Entities"
+    Mechanism: string;   // 默认 "5-Mechanisms"
+  };
   
-  // 去重设置
-  similarityThreshold: number;      // 相似度阈值（0-1）
-  topK: number;                     // 返回数量
+  // 向量与搜索
+  embeddingDimension: number;                // 固定 1536
+  similarityThreshold: number;               // 默认 0.85
+  topK: number;                              // 返回最相似的 K 个（默认 10）
   
-  // 队列设置
-  concurrency: number;              // 并发数
-  autoRetry: boolean;               // 自动重试
-  maxRetryAttempts: number;         // 最大重试次数
-  taskTimeoutMs: number;            // 任务超时（毫秒）
-  maxTaskHistory: number;           // 任务历史保留上限
+  // 队列与并发
+  concurrency: number;                       // 默认 2（同时执行任务数）
+  taskTimeoutMs: number;                     // 默认 30000 (30s)
+  maxTaskHistory: number;                    // 默认 1000
   
-  // 快照设置
-  maxSnapshots: number;             // 快照数量上限
-  maxSnapshotAgeDays: number;       // 快照保留天数
+  // 重试策略
+  autoRetry: boolean;                        // 默认 true
+  maxRetryAttempts: number;                  // 默认 3
   
-  // 功能开关
-  enableGrounding: boolean;         // 启用校验
+  // 快照
+  maxSnapshots: number;                      // 默认 100
+  maxSnapshotAgeDays: number;                // 默认 30
   
-  // Provider 配置
+  // AI Provider 配置
   providers: Record<string, ProviderConfig>;
   defaultProviderId: string;
-
+  providerTimeoutMs: number;                 // 默认 30000
+  
   // 任务模型配置
   taskModels: Record<TaskType, TaskModelConfig>;
-
-  // 图片生成配置
+  
+  // 图像生成
   imageGeneration: {
     enabled: boolean;
-    defaultSize: "1024x1024" | "1792x1024" | "1024x1792" | string;
+    defaultSize: "1024x1024" | "1792x1024" | "1024x1792";
     defaultQuality: "standard" | "hd";
     defaultStyle: "vivid" | "natural";
-    defaultAspectRatio?: string;
-    defaultImageSize?: string;
-    contextWindowSize: number;
+    contextWindowSize: number;               // 默认 4000
   };
-
-  // 日志设置
-  logLevel: "debug" | "info" | "warn" | "error";
   
-  // 嵌入设置
-  embeddingDimension: number;       // 向量维度（默认 1536）
-  providerTimeoutMs: number;        // Provider 超时（默认 60000）
+  // 日志与调试
+  logLevel: "debug" | "info" | "warn" | "error";
+  enableAutoVerify: boolean;                 // 是否在 Write 后自动触发 Verify
 }
-```
 
-### 12.2 目录方案
-
-```typescript
-interface DirectoryScheme {
-  Domain: string;      // 默认 "1-领域"
-  Issue: string;       // 默认 "2-议题"
-  Theory: string;      // 默认 "3-理论"
-  Entity: string;      // 默认 "4-实体"
-  Mechanism: string;   // 默认 "5-机制"
-}
-```
-
-### 12.3 Provider 配置
-
-```typescript
 interface ProviderConfig {
+  name: string;                              // 如 "OpenAI"
   apiKey: string;
-  baseUrl?: string;              // 自定义端点（用于兼容其他服务）
-  defaultChatModel: string;
-  defaultEmbedModel: string;
+  baseUrl?: string;                          // 用于兼容 OpenRouter 等
+  defaultChatModel: string;                  // 如 "gpt-4o"
+  defaultEmbedModel: string;                 // 如 "text-embedding-3-small"
   enabled: boolean;
 }
+
+interface TaskModelConfig {
+  provider: string;                          // providerId
+  chatModel: string;
+  embedModel: string;
+  temperature?: number;
+  topP?: number;
+}
 ```
 
-**支持的 Provider**：
-- 系统仅支持 OpenAI 标准格式
-- 可通过 `baseUrl` 兼容其他服务（如 OpenRouter）
+### 13.2 设置面板
+Settings Tab 分为以下部分：
 
-### 12.4 国际化
+**1. 基础配置**
+- 语言选择
+- 目录方案设置
+- 并发数、超时时间
 
-**支持语言**：
-- 中文（`zh`）
-- 英文（`en`）
-**翻译范围**：
-- UI 文案
-- 错误消息
-- 设置说明
-- 命令名称
-**实现方式**：
-- 使用 `I18n` 类管理翻译
-- 翻译文件位于 `src/core/i18n.ts`
+**2. Provider 管理**
+- 添加/删除 Provider
+- API Key 配置
+- 默认 Provider 选择
+- 连接测试
+
+**3. 模型配置**
+- 为各任务选择 Chat 模型和 Embed 模型
+- 支持单项配置或全量重置
+
+**4. 高级选项**
+- 相似度阈值调整
+- 快照保留策略
+- 日志级别
+- 图像生成参数
+
+### 13.3 首次运行向导 (Setup Wizard)
+新用户安装插件后触发：
+
+```
+1️⃣  欢迎 → 简介 Cognitive Razor 的核心功能
+2️⃣  Provider 配置 → 添加至少一个 AI Provider（OpenAI/Azure/etc.)
+3️⃣  目录初始化 → 创建 5 个分类目录
+4️⃣  完成 → 打开 Workbench，已准备好使用
+```
+
+### 13.4 扩展点 (Extension Points)
+不支持第三方插件扩展。
+
+### 13.5 数据迁移
+由于暂时没有发布旧版本，无正式用户和，当前无数据迁移需求。
+
+## 14. 实施检查清单 (Implementation Checklist)
+本 SSOT 最终交付质量保证清单。
+
+### 数据与前端合约
+✓ Frontmatter 字段完整且格式正确
+✓ `aliases` 不含 `cruid`；`parents` 仅存标题
+✓ 时间格式统一为 `yyyy-MM-DD HH:mm:ss`
+
+### 索引、存储与 SSOT
+✓ `CruidCache` 是唯一真理源
+✓ 向量索引仅存储 `cruid`，不存路径
+✓ 文件删除自动清理索引和重复对
+
+### 操作流程与快照
+✓ Define/Tag/Write 不创建快照
+✓ Merge/Amend 必有快照 + Diff 确认
+✓ Expand/Visualize 不创建快照
+
+### 错误处理与日志
+✓ 所有可失败操作返回 Result<T, E>
+✓ 错误码规范（E1xx~E5xx）
+✓ 日志采用 JSONL 格式
+
+### UI/UX 规范
+✓ 键盘友好、样式规范、无障碍
+✓ Modal 设置 ARIA 属性，icon 使用 setIcon()
+✓ 尊重 prefers-reduced-motion 媒体查询
+
+### 并发与配置
+✓ 按 cruid/type 加锁，重启自动清空
+✓ 首次运行触发向导（Provider + 目录）
+✓ 国际化支持中英文（zh/en）

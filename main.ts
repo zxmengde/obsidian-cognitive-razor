@@ -753,18 +753,6 @@ export default class CognitiveRazorPlugin extends Plugin {
 		});
 		this.unsubscribers.push(unsubDuplicates);
 
-		// 4. 订阅管线事件，刷新工作台
-		const unsubPipeline = this.pipelineOrchestrator.subscribe(() => {
-			const pipelines = this.pipelineOrchestrator.getActivePipelines();
-
-			const workbenchLeaves = this.app.workspace.getLeavesOfType(WORKBENCH_VIEW_TYPE);
-			if (workbenchLeaves.length > 0) {
-				const workbench = workbenchLeaves[0].view as WorkbenchPanel;
-				workbench.updatePipelineContexts(pipelines);
-			}
-		});
-		this.unsubscribers.push(unsubPipeline);
-
 		this.logger.info('CognitiveRazorPlugin', '事件订阅完成');
 	}
 
