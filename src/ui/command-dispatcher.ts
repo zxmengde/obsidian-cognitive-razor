@@ -7,11 +7,12 @@
  * - 实现命令分发
  * 
  * 命令 ID 格式：cognitive-razor:<action>-<target>
- * 
- * 核心命令（Requirements 9.1-9.4）：
+ *
+ * 核心命令：
+ * - cognitive-razor:open-workbench
  * - cognitive-razor:create-concept
- * - cognitive-razor:open-queue
- * - cognitive-razor:pause-queue
+ * - cognitive-razor:improve-note（Amend/修订）
+ * - cognitive-razor:merge-duplicates
  */
 
 import { Plugin, Notice, MarkdownView, TFile, Menu } from "obsidian";
@@ -107,7 +108,7 @@ export class CommandDispatcher {
    * 核心命令：
    * - 打开 Workbench
    * - 创建概念
-   * - 对当前笔记启动 Incremental Edit
+   * - 对当前笔记启动 Amend（修订）
    * - 对当前重复对启动 Merge
    */
   public registerAllCommands(): void {
@@ -117,11 +118,11 @@ export class CommandDispatcher {
     // 核心命令：创建概念
     this.registerConceptCommands();
 
-    // 核心命令：增量改进
+    // 核心命令：修订
     this.registerImproveCommands();
 
-    // Deepen（当前笔记深化）
-    this.registerDeepenCommands();
+    // Expand（当前笔记拓展）
+    this.registerExpandCommands();
 
     // 核心命令：合并重复对
     this.registerMergeCommands();
@@ -148,6 +149,36 @@ export class CommandDispatcher {
       handler: async () => {
         const workbench = await this.openWorkbench();
         await workbench?.startImageInsert();
+      }
+    });
+
+    // 事实核查（Verify）
+    this.registerCommand({
+      id: COMMAND_IDS.VERIFY_CURRENT_NOTE,
+      name: this.t("workbench.buttons.verify"),
+      icon: "check",
+      editorRequired: true,
+      handler: async () => {
+        const orchestrator = this.plugin.getComponents().pipelineOrchestrator;
+        if (!orchestrator) {
+          new Notice(this.t("workbench.notifications.orchestratorNotInitialized"));
+          return;
+        }
+
+        const activeFile = this.plugin.app.workspace.getActiveFile();
+        if (!activeFile || activeFile.extension !== "md") {
+          new Notice(this.t("workbench.notifications.openMarkdownFirst"));
+          return;
+        }
+
+        const result = orchestrator.startVerifyPipeline(activeFile.path);
+        if (!result.ok) {
+          new Notice(`启动失败: ${result.error.message}`);
+          return;
+        }
+
+        new Notice(this.t("workbench.notifications.verifyStarted"));
+        await this.openWorkbench();
       }
     });
 
@@ -233,6 +264,16 @@ export class CommandDispatcher {
         workbench?.openOperationHistory();
       }
     });
+
+    // 导出诊断信息（Planned）
+    this.registerCommand({
+      id: COMMAND_IDS.EXPORT_DIAGNOSTICS,
+      name: "导出诊断信息",
+      icon: "info",
+      handler: async () => {
+        new Notice("导出诊断信息：功能尚未实现（Planned）");
+      }
+    });
   }
 
   /**
@@ -291,17 +332,17 @@ export class CommandDispatcher {
   }
 
   /**
-   * 注册深化命令
+   * 注册拓展命令
    */
-  private registerDeepenCommands(): void {
+  private registerExpandCommands(): void {
     this.registerCommand({
-      id: COMMAND_IDS.DEEPEN_CURRENT_NOTE,
-      name: "深化当前笔记",
+      id: COMMAND_IDS.EXPAND_CURRENT_NOTE,
+      name: "拓展当前笔记",
       icon: "git-branch",
       handler: async () => {
         const activeFile = this.plugin.app.workspace.getActiveFile();
         if (activeFile && activeFile.extension === "md") {
-          await this.runDeepen(activeFile);
+          await this.runExpand(activeFile);
         }
       },
       checkCallback: (checking) => {
@@ -310,7 +351,7 @@ export class CommandDispatcher {
           return false;
         }
         if (!checking) {
-          void this.runDeepen(activeFile);
+          void this.runExpand(activeFile);
         }
         return true;
       }
@@ -334,15 +375,15 @@ export class CommandDispatcher {
   }
 
   /**
-   * 从工作台启动深化
+   * 从工作台启动拓展
    */
-  private async runDeepen(file: TFile): Promise<void> {
+  private async runExpand(file: TFile): Promise<void> {
     const workbench = await this.openWorkbench();
     if (!workbench) {
       new Notice("工作台未初始化，请稍后重试");
       return;
     }
-    await workbench.handleStartDeepen(file);
+    await workbench.handleStartExpand(file);
   }
 
   /**
@@ -585,9 +626,9 @@ export class CommandDispatcher {
   }
 
   /**
-   * 改进笔记
+   * 修订笔记
    * 
-   * 遵循 SSOT 6.4：Incremental Edit 流程
+   * 遵循 SSOT 6.7：Amend（修订）流程
    * - 创建快照
    * - 生成候选改写
    * - DiffView 确认后落盘
@@ -603,19 +644,19 @@ export class CommandDispatcher {
 
     // 显示输入框获取改进指令
     const modal = new SimpleInputModal(this.plugin.app, {
-      title: "改进笔记",
-      placeholder: "输入改进指令，例如：补充更多例子、深化定义、添加引用...",
+      title: "修订笔记",
+      placeholder: "输入修订指令，例如：补充更多例子、深化定义、添加引用...",
       onSubmit: async (instruction) => {
         if (!instruction.trim()) {
-          new Notice("请输入改进指令");
+          new Notice("请输入修订指令");
           return;
         }
 
-        // 启动改进管线
-        const result = orchestrator.startIncrementalPipeline(filePath, instruction);
+        // 启动修订管线
+        const result = orchestrator.startAmendPipeline(filePath, instruction);
         
         if (!result.ok) {
-          new Notice(`启动改进失败: ${result.error.message}`);
+          new Notice(`启动修订失败: ${result.error.message}`);
           return;
         }
 

@@ -15,7 +15,7 @@ import { PipelineOrchestrator } from "./pipeline-orchestrator";
 import type { VectorIndex } from "./vector-index";
 import type { FileStorage } from "../data/file-storage";
 
-export type DeepenMode = "hierarchical" | "abstract";
+export type ExpandMode = "hierarchical" | "abstract";
 
 export interface HierarchicalCandidate {
   name: string;
@@ -29,8 +29,6 @@ export interface HierarchicalCandidate {
 export interface HierarchicalPlan {
   mode: "hierarchical";
   parentTitle: string;
-  parentUid?: string;
-  parentType: CRType;
   currentPath: string;
   currentType: CRType;
   candidates: HierarchicalCandidate[];
@@ -53,9 +51,9 @@ export interface AbstractPlan {
   candidates: AbstractCandidate[];
 }
 
-export type DeepenPlan = HierarchicalPlan | AbstractPlan;
+export type ExpandPlan = HierarchicalPlan | AbstractPlan;
 
-interface DeepenDependencies {
+interface ExpandDependencies {
   app: App;
   logger: ILogger;
   vectorIndex: VectorIndex;
@@ -84,7 +82,7 @@ const HIERARCHICAL_FIELD_MAP: Record<CRType, Array<{ field: string; target: CRTy
 
 const MAX_CREATABLE = 200;
 
-export class DeepenOrchestrator {
+export class ExpandOrchestrator {
   private app: App;
   private logger: ILogger;
   private vectorIndex: VectorIndex;
@@ -92,7 +90,7 @@ export class DeepenOrchestrator {
   private pipelineOrchestrator: PipelineOrchestrator;
   private getSettings: () => PluginSettings;
 
-  constructor(deps: DeepenDependencies) {
+  constructor(deps: ExpandDependencies) {
     this.app = deps.app;
     this.logger = deps.logger;
     this.vectorIndex = deps.vectorIndex;
@@ -102,14 +100,14 @@ export class DeepenOrchestrator {
   }
 
   /**
-   * 准备深化计划：根据当前笔记类型选择层级或抽象模式
+   * 准备拓展计划：根据当前笔记类型选择层级或抽象模式
    */
-  async prepare(file: TFile): Promise<Result<DeepenPlan>> {
+  async prepare(file: TFile): Promise<Result<ExpandPlan>> {
     try {
       const content = await this.app.vault.read(file);
       const extracted = extractFrontmatter(content);
       if (!extracted) {
-        return err("E306", "当前笔记缺少 frontmatter，无法执行深化");
+        return err("E310_INVALID_STATE", "当前笔记缺少 frontmatter，无法执行拓展");
       }
 
       const { frontmatter, body } = extracted;
@@ -117,25 +115,23 @@ export class DeepenOrchestrator {
       const parentTitle = frontmatter.name || file.basename;
 
       if (!noteType || !HIERARCHICAL_FIELD_MAP[noteType]) {
-        return err("E306", "当前笔记类型不支持深化");
+        return err("E310_INVALID_STATE", "当前笔记类型不支持拓展");
       }
 
       if (noteType === "Domain" || noteType === "Issue" || noteType === "Theory") {
         const plan = this.buildHierarchicalPlan({
           parentTitle,
-          parentUid: frontmatter.cruid,
-          parentType: noteType,
           currentPath: file.path,
           currentType: noteType,
           body
         });
         if (plan.candidates.length === 0) {
-          return err("E306", "未找到可创建的候选项，请检查正文结构");
+          return err("E310_INVALID_STATE", "未找到可创建的候选项，请检查正文结构");
         }
         return ok(plan);
       }
 
-      // 抽象深化（Entity / Mechanism）
+      // 抽象拓展（Entity / Mechanism）
       if (noteType === "Entity" || noteType === "Mechanism") {
         const planResult = await this.buildAbstractPlan({
           currentTitle: parentTitle,
@@ -146,15 +142,15 @@ export class DeepenOrchestrator {
         return planResult;
       }
 
-      return err("E306", "当前笔记类型不支持深化");
+      return err("E310_INVALID_STATE", "当前笔记类型不支持拓展");
     } catch (error) {
-      this.logger.error("DeepenOrchestrator", "准备深化计划失败", error as Error);
-      return err("E305", "准备深化计划失败", error);
+      this.logger.error("ExpandOrchestrator", "准备拓展计划失败", error as Error);
+      return err("E500_INTERNAL_ERROR", "准备拓展计划失败", error);
     }
   }
 
   /**
-   * 批量启动层级深化的创建管线
+   * 批量启动层级拓展的创建管线
    */
   async createFromHierarchical(
     plan: HierarchicalPlan,
@@ -169,8 +165,6 @@ export class DeepenOrchestrator {
       const parentLink = this.wrapAsWikilink(plan.parentTitle);
       const options = {
         parents: [parentLink],
-        parentUid: plan.parentUid,
-        parentType: plan.parentType,
         targetPathOverride: candidate.targetPath
       };
       const result = this.pipelineOrchestrator.startCreatePipelineWithPreset(
@@ -186,21 +180,21 @@ export class DeepenOrchestrator {
     }
 
     if (started === 0) {
-      return err("E306", "未能启动任何创建任务", { failures });
+      return err("E310_INVALID_STATE", "未能启动任何创建任务", { failures });
     }
 
     return ok({ started, failed: failures });
   }
 
   /**
-   * 启动抽象深化（生成 1 个同类型更抽象概念）
+   * 启动抽象拓展（生成 1 个同类型更抽象概念）
    */
   async createFromAbstract(
     plan: AbstractPlan,
     selected: AbstractCandidate[]
   ): Promise<Result<string>> {
     if (selected.length === 0) {
-      return err("E001", "请至少选择一个相似概念");
+      return err("E101_INVALID_INPUT", "请至少选择一个相似概念");
     }
 
     try {
@@ -210,7 +204,7 @@ export class DeepenOrchestrator {
 
       const currentFile = this.app.vault.getAbstractFileByPath(plan.currentPath);
       if (!(currentFile instanceof TFile)) {
-        return err("E306", "当前笔记不存在或已被移动");
+        return err("E311_NOT_FOUND", "当前笔记不存在或已被移动");
       }
       const currentContent = await this.app.vault.read(currentFile);
       sourceTitles.push(plan.currentTitle);
@@ -219,7 +213,7 @@ export class DeepenOrchestrator {
       for (const item of selected) {
         const file = this.app.vault.getAbstractFileByPath(item.path);
         if (!(file instanceof TFile)) {
-          this.logger.warn("DeepenOrchestrator", "相似概念文件未找到，已跳过", { path: item.path });
+          this.logger.warn("ExpandOrchestrator", "相似概念文件未找到，已跳过", { path: item.path });
           continue;
         }
         const content = await this.app.vault.read(file);
@@ -231,7 +225,7 @@ export class DeepenOrchestrator {
 
       const sources = sourceSections.join("\n\n---\n\n");
       const abstractInput = `抽象以下${plan.currentType}：${sourceTitles.join("、")}，生成一个更高层的 ${plan.currentType} 概念。`;
-      const standardizeResult = await this.pipelineOrchestrator.standardizeDirect(abstractInput);
+      const standardizeResult = await this.pipelineOrchestrator.defineDirect(abstractInput);
       if (!standardizeResult.ok) {
         return err(standardizeResult.error.code, standardizeResult.error.message);
       }
@@ -248,7 +242,7 @@ export class DeepenOrchestrator {
 
       const targetName = standardized.standardNames[plan.currentType]?.chinese;
       if (!targetName) {
-        return err("E306", "标准化结果缺少目标名称");
+        return err("E310_INVALID_STATE", "标准化结果缺少目标名称");
       }
 
       const settings = this.getSettings();
@@ -264,8 +258,6 @@ export class DeepenOrchestrator {
         plan.currentType,
         {
           parents: parentLinks,
-          parentUid: plan.currentUid,
-          parentType: plan.currentType,
           targetPathOverride: targetPath,
           sources
         }
@@ -283,15 +275,13 @@ export class DeepenOrchestrator {
 
       return ok(startResult.value);
     } catch (error) {
-      this.logger.error("DeepenOrchestrator", "抽象深化启动失败", error as Error);
-      return err("E305", "抽象深化启动失败", error);
+      this.logger.error("ExpandOrchestrator", "抽象拓展启动失败", error as Error);
+      return err("E500_INTERNAL_ERROR", "抽象拓展启动失败", error);
     }
   }
 
   private buildHierarchicalPlan(input: {
     parentTitle: string;
-    parentUid?: string;
-    parentType: CRType;
     currentPath: string;
     currentType: CRType;
     body: string;
@@ -399,8 +389,6 @@ export class DeepenOrchestrator {
     return {
       mode: "hierarchical",
       parentTitle: input.parentTitle,
-      parentUid: input.parentUid,
-      parentType: input.parentType,
       currentPath: input.currentPath,
       currentType: input.currentType,
       candidates,
@@ -415,16 +403,16 @@ export class DeepenOrchestrator {
     currentType: CRType;
   }): Promise<Result<AbstractPlan>> {
     if (!input.currentUid) {
-      return err("E306", "当前笔记缺少 cruid，无法检索相似概念");
+      return err("E310_INVALID_STATE", "当前笔记缺少 cruid，无法检索相似概念");
     }
     try {
       const vectorResult = await this.fileStorage.readVectorFile(input.currentType, input.currentUid);
       if (!vectorResult.ok) {
-        return err("E306", "当前笔记尚未生成向量嵌入，请先完成创建或重建索引");
+        return err("E310_INVALID_STATE", "当前笔记尚未生成向量嵌入，请先完成创建或重建索引");
       }
       const vector = vectorResult.value;
       if (!vector.embedding || vector.embedding.length === 0) {
-        return err("E306", "当前笔记嵌入为空，无法执行相似检索");
+        return err("E310_INVALID_STATE", "当前笔记嵌入为空，无法执行相似检索");
       }
 
       const searchResult = await this.vectorIndex.search(
@@ -446,7 +434,7 @@ export class DeepenOrchestrator {
         }));
 
       if (candidates.length === 0) {
-        return err("E306", "未找到可用的相似概念，无法执行抽象深化");
+        return err("E310_INVALID_STATE", "未找到可用的相似概念，无法执行抽象拓展");
       }
 
       return ok({
@@ -458,8 +446,8 @@ export class DeepenOrchestrator {
         candidates
       });
     } catch (error) {
-      this.logger.error("DeepenOrchestrator", "构建抽象深化计划失败", error as Error);
-      return err("E305", "构建抽象深化计划失败", error);
+      this.logger.error("ExpandOrchestrator", "构建抽象拓展计划失败", error as Error);
+      return err("E500_INTERNAL_ERROR", "构建抽象拓展计划失败", error);
     }
   }
 

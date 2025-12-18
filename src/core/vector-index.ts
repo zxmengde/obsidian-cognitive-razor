@@ -72,6 +72,11 @@ export class VectorIndex {
       if (!metaResult.ok) {
         // 索引不存在，创建新索引
         this.indexMeta = { ...DEFAULT_VECTOR_INDEX_META };
+
+        // 记录当前嵌入配置到元数据（避免模型/维度漂移）
+        this.indexMeta.embeddingModel = this.model;
+        this.indexMeta.dimensions = this.dimension;
+
         const saveResult = await this.saveIndexMeta();
         if (!saveResult.ok) {
           return saveResult;
@@ -80,6 +85,12 @@ export class VectorIndex {
       }
 
       this.indexMeta = metaResult.value;
+
+      // 校验并对齐嵌入配置（索引元数据是 Runtime SSOT）
+      const configResult = await this.ensureEmbeddingConfigConsistency();
+      if (!configResult.ok) {
+        return configResult;
+      }
       
       // 迁移旧格式数据：移除冗余字段（name/notePath 等）
       const migrationResult = await this.migrateMetaSchema();
@@ -93,11 +104,66 @@ export class VectorIndex {
       return ok(undefined);
     } catch (error) {
       return err(
-        "E300",
+        "E500_INTERNAL_ERROR",
         "Failed to load vector index",
         error
       );
     }
+  }
+
+  /**
+   * 索引元数据中记录的嵌入配置是 Runtime SSOT：
+   * - 维度必须全量一致（否则相似度计算无意义）
+   * - 模型必须一致（不同模型的向量空间不可比较）
+   */
+  private async ensureEmbeddingConfigConsistency(): Promise<Result<void>> {
+    if (!this.indexMeta) {
+      return ok(undefined);
+    }
+
+    let needsSave = false;
+
+    const metaDimensions =
+      typeof this.indexMeta.dimensions === "number" && Number.isFinite(this.indexMeta.dimensions) && this.indexMeta.dimensions > 0
+        ? Math.floor(this.indexMeta.dimensions)
+        : undefined;
+
+    const metaModel =
+      typeof this.indexMeta.embeddingModel === "string" && this.indexMeta.embeddingModel.trim().length > 0
+        ? this.indexMeta.embeddingModel.trim()
+        : undefined;
+
+    if (metaDimensions !== undefined) {
+      if (metaDimensions !== this.dimension) {
+        this.logger?.warn("VectorIndex", "检测到 embedding 维度配置不一致，已使用索引元数据中的维度", {
+          configured: this.dimension,
+          meta: metaDimensions,
+        });
+        this.dimension = metaDimensions;
+      }
+    } else {
+      this.indexMeta.dimensions = this.dimension;
+      needsSave = true;
+    }
+
+    if (metaModel) {
+      if (metaModel !== this.model) {
+        this.logger?.warn("VectorIndex", "检测到 embedding 模型配置不一致，已使用索引元数据中的模型", {
+          configured: this.model,
+          meta: metaModel,
+        });
+        this.model = metaModel;
+      }
+    } else {
+      this.indexMeta.embeddingModel = this.model;
+      needsSave = true;
+    }
+
+    if (needsSave) {
+      return this.saveIndexMeta();
+    }
+
+    return ok(undefined);
   }
   
   /**
@@ -171,13 +237,13 @@ export class VectorIndex {
   async upsert(entry: VectorEntry): Promise<Result<void>> {
     try {
       if (!this.indexMeta) {
-        return err("E300", "Vector index not loaded");
+        return err("E310_INVALID_STATE", "向量索引未加载");
       }
 
       // 验证向量维度
       if (entry.embedding.length !== this.dimension) {
         return err(
-          "E001",
+          "E305_VECTOR_MISMATCH",
           `Invalid embedding dimension: expected ${this.dimension}, got ${entry.embedding.length}`,
           { expected: this.dimension, actual: entry.embedding.length }
         );
@@ -251,7 +317,7 @@ export class VectorIndex {
       return ok(undefined);
     } catch (error) {
       return err(
-        "E301",
+        "E500_INTERNAL_ERROR",
         "Failed to upsert vector entry",
         error
       );
@@ -262,13 +328,13 @@ export class VectorIndex {
   async delete(uid: string): Promise<Result<void>> {
     try {
       if (!this.indexMeta) {
-        return err("E300", "Vector index not loaded");
+        return err("E310_INVALID_STATE", "向量索引未加载");
       }
 
       const meta = this.indexMeta.concepts[uid];
       if (!meta) {
         return err(
-          "E004",
+          "E311_NOT_FOUND",
           `Vector entry not found: ${uid}`,
           { uid }
         );
@@ -298,7 +364,7 @@ export class VectorIndex {
       return ok(undefined);
     } catch (error) {
       return err(
-        "E301",
+        "E500_INTERNAL_ERROR",
         "Failed to delete vector entry",
         error
       );
@@ -313,13 +379,13 @@ export class VectorIndex {
   ): Promise<Result<SearchResult[]>> {
     try {
       if (!this.indexMeta) {
-        return err("E300", "Vector index not loaded");
+        return err("E310_INVALID_STATE", "向量索引未加载");
       }
 
       // 验证向量维度
       if (embedding.length !== this.dimension) {
         return err(
-          "E001",
+          "E305_VECTOR_MISMATCH",
           `Invalid embedding dimension: expected ${this.dimension}, got ${embedding.length}`,
           { expected: this.dimension, actual: embedding.length }
         );
@@ -363,7 +429,70 @@ export class VectorIndex {
       return ok(searchResults);
     } catch (error) {
       return err(
-        "E302",
+        "E500_INTERNAL_ERROR",
+        "Failed to search vector index",
+        error
+      );
+    }
+  }
+
+  /** 搜索相似概念（同类型桶内检索，按阈值全量过滤） */
+  async searchAboveThreshold(
+    type: CRType,
+    embedding: number[],
+    threshold: number
+  ): Promise<Result<SearchResult[]>> {
+    try {
+      if (!this.indexMeta) {
+        return err("E310_INVALID_STATE", "向量索引未加载");
+      }
+
+      if (Number.isNaN(threshold) || threshold < 0 || threshold > 1) {
+        return err("E101_INVALID_INPUT", `无效的相似度阈值: ${threshold}`, { threshold });
+      }
+
+      // 验证向量维度
+      if (embedding.length !== this.dimension) {
+        return err(
+          "E305_VECTOR_MISMATCH",
+          `Invalid embedding dimension: expected ${this.dimension}, got ${embedding.length}`,
+          { expected: this.dimension, actual: embedding.length }
+        );
+      }
+
+      // 归一化查询向量
+      const normalizedQuery = this.normalize(embedding);
+
+      // 加载该类型的所有向量
+      const vectorsResult = await this.loadVectorsByType(type);
+      if (!vectorsResult.ok) {
+        return vectorsResult as Result<SearchResult[]>;
+      }
+
+      const vectors = vectorsResult.value;
+
+      const matched: Array<{ vector: ConceptVector; similarity: number }> = [];
+      for (const vector of vectors) {
+        const similarity = this.dotProduct(normalizedQuery, vector.embedding);
+        if (similarity > threshold) {
+          matched.push({ vector, similarity });
+        }
+      }
+
+      matched.sort((a, b) => b.similarity - a.similarity);
+
+      // 转换为 SearchResult 格式（name/path 运行时通过 CruidCache 解析）
+      const searchResults: SearchResult[] = matched.map((r) => ({
+        uid: r.vector.id,
+        similarity: r.similarity,
+        name: this.cruidCache?.getName(r.vector.id) || r.vector.id,
+        path: this.cruidCache?.getPath(r.vector.id) || "",
+      }));
+
+      return ok(searchResults);
+    } catch (error) {
+      return err(
+        "E500_INTERNAL_ERROR",
         "Failed to search vector index",
         error
       );
@@ -391,6 +520,16 @@ export class VectorIndex {
       byType: { ...this.indexMeta.stats.byType },
       lastUpdated: formatCRTimestamp(new Date(this.indexMeta.lastUpdated)),
     };
+  }
+
+  /** 当前索引使用的 embedding 模型（Runtime SSOT） */
+  getEmbeddingModel(): string {
+    return this.model;
+  }
+
+  /** 当前索引使用的 embedding 维度（Runtime SSOT） */
+  getEmbeddingDimension(): number {
+    return this.dimension;
   }
 
   /** 根据 UID 获取条目（用于复用已有向量） */
@@ -423,7 +562,7 @@ export class VectorIndex {
   private async loadVectorsByType(type: CRType): Promise<Result<ConceptVector[]>> {
     try {
       if (!this.indexMeta) {
-        return err("E300", "Vector index not loaded");
+        return err("E310_INVALID_STATE", "向量索引未加载");
       }
 
       const vectors: ConceptVector[] = [];
@@ -461,7 +600,7 @@ export class VectorIndex {
       return ok(vectors);
     } catch (error) {
       return err(
-        "E300",
+        "E500_INTERNAL_ERROR",
         `Failed to load vectors for type: ${type}`,
         error
       );
@@ -473,7 +612,7 @@ export class VectorIndex {
    */
   private async saveIndexMeta(): Promise<Result<void>> {
     if (!this.indexMeta) {
-      return err("E300", "Index meta not initialized");
+      return err("E310_INVALID_STATE", "Index meta not initialized");
     }
 
     const writeResult = await this.fileStorage.writeVectorIndexMeta(this.indexMeta);

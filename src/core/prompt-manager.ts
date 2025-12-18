@@ -35,7 +35,7 @@ const TASK_BLOCKS = [
  * 
  * 遵循 SSOT 5.4.4 槽位契约：
  * - 通用槽位：CTX_LANGUAGE（可选；默认 Chinese）
- * - 操作模块槽位：用于 create/merge/incremental
+ * - 操作模块槽位：用于 create/merge/amend
  * - 任务型模板槽位：用于现有 TaskType
  */
 const TASK_SLOT_MAPPING: Record<TaskType, { required: string[]; optional: string[] }> = {
@@ -66,25 +66,21 @@ const TASK_SLOT_MAPPING: Record<TaskType, { required: string[]; optional: string
 };
 
 /**
- * 操作模块槽位映射（用于 Merge/Incremental 等操作）
+ * 操作模块槽位映射（用于 Merge/Amend 等操作）
  * 
  * 遵循 SSOT 5.4.4：
  * - Merge：必需 SOURCE_A_NAME, CTX_SOURCE_A, SOURCE_B_NAME, CTX_SOURCE_B
- * - Incremental：必需 CTX_CURRENT, USER_INSTRUCTION
+ * - Amend：必需 CTX_CURRENT, USER_INSTRUCTION
  */
 export const OPERATION_SLOT_MAPPING: Record<string, { required: string[]; optional: string[] }> = {
   "merge": {
     required: ["SOURCE_A_NAME", "CTX_SOURCE_A", "SOURCE_B_NAME", "CTX_SOURCE_B"],
     optional: ["USER_INSTRUCTION", "CTX_LANGUAGE", "CONCEPT_TYPE"]
   },
-  "incremental": {
+  "amend": {
     required: ["CTX_CURRENT", "USER_INSTRUCTION"],
     optional: ["CTX_LANGUAGE", "CONCEPT_TYPE"]
   },
-  "create": {
-    required: ["CTX_INPUT"],
-    optional: ["CTX_LANGUAGE"]
-  }
 };
 
 
@@ -256,7 +252,7 @@ export class PromptManager {
             taskType,
             missingRequired: slotValidation.missingRequired
           });
-          throw new CognitiveRazorError("E002", `缺少必需槽位: ${slotValidation.missingRequired.join(", ")}`, {
+          throw new CognitiveRazorError("E102_MISSING_FIELD", `缺少必需槽位: ${slotValidation.missingRequired.join(", ")}`, {
             taskType,
             missingRequired: slotValidation.missingRequired
           });
@@ -266,7 +262,7 @@ export class PromptManager {
             taskType,
             extraSlots: slotValidation.extraSlots
           });
-          throw new CognitiveRazorError("E002", `任务 ${taskType} 不允许使用槽位: ${slotValidation.extraSlots.join(", ")}`, {
+          throw new CognitiveRazorError("E101_INVALID_INPUT", `任务 ${taskType} 不允许使用槽位: ${slotValidation.extraSlots.join(", ")}`, {
             taskType,
             extraSlots: slotValidation.extraSlots
           });
@@ -281,6 +277,16 @@ export class PromptManager {
         prompt = replaceVariable(prompt, key, value);
       }
 
+      // 可选槽位未提供时按空字符串处理（避免模板中出现可选占位符导致构建失败）
+      const slotMapping = TASK_SLOT_MAPPING[taskType];
+      if (slotMapping) {
+        for (const optionalKey of slotMapping.optional) {
+          if (!(optionalKey in slots)) {
+            prompt = replaceVariable(prompt, optionalKey, "");
+          }
+        }
+      }
+
       // A-PDD-02: 验证是否还有未替换的变量
       const unreplacedVars = findUnreplacedVariables(prompt);
       if (unreplacedVars.length > 0) {
@@ -288,7 +294,7 @@ export class PromptManager {
           taskType,
           unreplacedVars
         });
-        throw new CognitiveRazorError("E002", `存在未替换的变量: ${unreplacedVars.join(", ")}`, {
+        throw new CognitiveRazorError("E405_TEMPLATE_INVALID", `存在未替换的变量: ${unreplacedVars.join(", ")}`, {
           taskType,
           unreplacedVars
         });
@@ -306,7 +312,7 @@ export class PromptManager {
         throw error;
       }
       this.logger.error("PromptManager", "构建 prompt 失败", error as Error, { taskType });
-      throw new CognitiveRazorError("E002", "构建 prompt 失败", error);
+      throw new CognitiveRazorError("E500_INTERNAL_ERROR", "构建 prompt 失败", error);
     }
   }
 
@@ -323,7 +329,7 @@ export class PromptManager {
           error: blockValidation.error,
           missingBlocks: blockValidation.missingBlocks
         });
-        throw new CognitiveRazorError("E002", blockValidation.error || "模板区块验证失败", {
+        throw new CognitiveRazorError("E405_TEMPLATE_INVALID", blockValidation.error || "模板区块验证失败", {
           templateId,
           missingBlocks: blockValidation.missingBlocks
         });
@@ -339,7 +345,7 @@ export class PromptManager {
         throw error;
       }
       this.logger.error("PromptManager", "验证模板失败", error as Error, { templateId });
-      throw new CognitiveRazorError("E002", "验证模板失败", error);
+      throw new CognitiveRazorError("E500_INTERNAL_ERROR", "验证模板失败", error);
     }
   }
 
@@ -359,22 +365,22 @@ export class PromptManager {
   resolveTemplateId(taskType: TaskType, conceptType?: string): string {
     // 将任务类型映射到模板文件名
     const mapping: Record<TaskType, string> = {
-      "define": "define",
-      "tag": "tag",
+      "define": "_base/operations/define",
+      "tag": "_base/operations/tag",
       "index": "index",
-      "write": "write-domain", // 默认值，会被 conceptType 覆盖
-      "verify": "verify",
-      "image-generate": "generate-image"
+      "write": "_type/entity-core", // 默认值，会被 conceptType 覆盖
+      "verify": "_base/operations/verify",
+      "image-generate": "visualize"
     };
 
     // 对于 write 任务，根据知识类型选择模板
     if (taskType === "write" && conceptType) {
       const typeMapping: Record<string, string> = {
-        "Domain": "write-domain",
-        "Issue": "write-issue",
-        "Theory": "write-theory",
-        "Entity": "write-entity",
-        "Mechanism": "write-mechanism"
+        "Domain": "_type/domain-core",
+        "Issue": "_type/issue-core",
+        "Theory": "_type/theory-core",
+        "Entity": "_type/entity-core",
+        "Mechanism": "_type/mechanism-core"
       };
       return typeMapping[conceptType] || mapping[taskType];
     }
@@ -388,11 +394,11 @@ export class PromptManager {
   }
 
   /**
-   * 构建操作 prompt（用于 Merge/Incremental 等操作）
+   * 构建操作 prompt（用于 Merge/Amend 等操作）
    * 
    * 遵循 SSOT 5.4.4：使用操作模块槽位映射
    * 
-   * @param operation 操作类型：merge | incremental | create
+   * @param operation 操作类型：merge | amend
    * @param slots 槽位值
    * @returns 构建的 prompt
    */
@@ -400,7 +406,7 @@ export class PromptManager {
     try {
       const slotMapping = OPERATION_SLOT_MAPPING[operation];
       if (!slotMapping) {
-        throw new CognitiveRazorError("E002", `不支持的操作类型: ${operation}`);
+        throw new CognitiveRazorError("E101_INVALID_INPUT", `不支持的操作类型: ${operation}`);
       }
 
       // 加载操作模板（遵循路线图：prompts/_base/operations/<operation>.md）
@@ -411,30 +417,32 @@ export class PromptManager {
       const allowedSlots = new Set([...slotMapping.required, ...slotMapping.optional]);
       const missingRequired = slotMapping.required.filter((slot) => !(slot in slots));
       if (missingRequired.length > 0) {
-        throw new CognitiveRazorError("E001", `缺少必需槽位: ${missingRequired.join(", ")}`);
+        throw new CognitiveRazorError("E102_MISSING_FIELD", `缺少必需槽位: ${missingRequired.join(", ")}`);
       }
 
       const extraProvided = Object.keys(slots).filter((slot) => !allowedSlots.has(slot));
       if (extraProvided.length > 0) {
-        throw new CognitiveRazorError("E002", `操作 ${operation} 不支持槽位: ${extraProvided.join(", ")}`);
+        throw new CognitiveRazorError("E101_INVALID_INPUT", `操作 ${operation} 不支持槽位: ${extraProvided.join(", ")}`);
       }
 
       // 2) 模板自身的占位符也必须全部被填充，且不允许未知占位符
       const templateSlots = extractPlaceholderNames(template.content);
       const unknownTemplateSlots = templateSlots.filter((slot) => !allowedSlots.has(slot));
       if (unknownTemplateSlots.length > 0) {
-        throw new CognitiveRazorError("E002", `模板存在未声明的槽位: ${unknownTemplateSlots.join(", ")}`);
-      }
-
-      const missingTemplateSlots = templateSlots.filter((slot) => !(slot in slots));
-      if (missingTemplateSlots.length > 0) {
-        throw new CognitiveRazorError("E001", `缺少必需槽位: ${missingTemplateSlots.join(", ")}`);
+        throw new CognitiveRazorError("E405_TEMPLATE_INVALID", `模板存在未声明的槽位: ${unknownTemplateSlots.join(", ")}`);
       }
 
       // 替换变量
       let prompt = template.content;
       for (const [key, value] of Object.entries(slots)) {
         prompt = replaceVariable(prompt, key, value);
+      }
+
+      // 可选槽位未提供时按空字符串处理
+      for (const optionalKey of slotMapping.optional) {
+        if (!(optionalKey in slots)) {
+          prompt = replaceVariable(prompt, optionalKey, "");
+        }
       }
 
       // 验证是否还有未替换的变量
@@ -444,7 +452,7 @@ export class PromptManager {
           operation,
           unreplacedVars
         });
-        throw new CognitiveRazorError("E002", `存在未替换的占位符: ${unreplacedVars[0]}`, {
+        throw new CognitiveRazorError("E405_TEMPLATE_INVALID", `存在未替换的占位符: ${unreplacedVars[0]}`, {
           operation,
           unreplacedVars
         });
@@ -461,7 +469,7 @@ export class PromptManager {
         throw error;
       }
       this.logger.error("PromptManager", "构建操作 prompt 失败", error as Error, { operation });
-      throw new CognitiveRazorError("E002", "构建操作 prompt 失败", error);
+      throw new CognitiveRazorError("E500_INTERNAL_ERROR", "构建操作 prompt 失败", error);
     }
   }
 
@@ -477,7 +485,7 @@ export class PromptManager {
     });
     
     throw new CognitiveRazorError(
-      "E002",
+      "E404_TEMPLATE_NOT_FOUND",
       `模板未加载: ${templateId}，请先调用 preloadTemplate 或 preloadAllTemplates`,
       { templateId }
     );
@@ -510,7 +518,7 @@ export class PromptManager {
       this.logger.error("PromptManager", "加载基础组件失败", error as Error, {
         componentName
       });
-      return err("E002", "加载基础组件失败", error);
+      return err("E500_INTERNAL_ERROR", "加载基础组件失败", error);
     }
   }
 
@@ -543,6 +551,33 @@ export class PromptManager {
     return ok(processedContent);
   }
 
+  /** 注入操作区块（用于 _type/*-core.md 的 {{OPERATION_BLOCK}}） */
+  private async injectOperationBlockIfPresent(templateId: string, content: string): Promise<Result<string>> {
+    if (!content.includes("{{OPERATION_BLOCK}}")) {
+      return ok(content);
+    }
+
+    // 当前约定：_type/*-core 仅用于 write 任务，统一注入 write 操作区块
+    if (!templateId.startsWith("_type/")) {
+      return err("E405_TEMPLATE_INVALID", `模板 ${templateId} 包含 OPERATION_BLOCK，但未定义注入规则`);
+    }
+
+    const operationBlockId = "_base/operations/write";
+    const operationBlockPath = `${this.promptsDir}/${operationBlockId}.md`;
+    const readResult = await this.fileStorage.read(operationBlockPath);
+    if (!readResult.ok) {
+      return readResult;
+    }
+
+    const injected = await this.injectBaseComponents(readResult.value);
+    if (!injected.ok) {
+      return injected;
+    }
+
+    const next = content.split("{{OPERATION_BLOCK}}").join(injected.value);
+    return ok(next);
+  }
+
   /** 预加载模板（应在初始化时调用） */
   async preloadTemplate(templateId: string): Promise<Result<void>> {
     try {
@@ -567,6 +602,13 @@ export class PromptManager {
       }
       content = injectionResult.value;
 
+      // 注入操作区块（如 _type/*-core.md 的 {{OPERATION_BLOCK}}）
+      const operationInjection = await this.injectOperationBlockIfPresent(templateId, content);
+      if (!operationInjection.ok) {
+        return operationInjection as Result<void>;
+      }
+      content = operationInjection.value;
+
       // A-PDD-01: 验证模板结构
       const blockValidation = validateBlockOrder(content);
       if (!blockValidation.valid) {
@@ -574,7 +616,7 @@ export class PromptManager {
           templateId,
           error: blockValidation.error
         });
-        return err("E002", blockValidation.error || "模板结构验证失败");
+        return err("E405_TEMPLATE_INVALID", blockValidation.error || "模板结构验证失败");
       }
 
       // 提取槽位
@@ -601,25 +643,24 @@ export class PromptManager {
       this.logger.error("PromptManager", "预加载模板失败", error as Error, {
         templateId
       });
-      return err("E002", "预加载模板失败", error);
+      return err("E500_INTERNAL_ERROR", "预加载模板失败", error);
     }
   }
 
   /** 预加载所有模板 */
   async preloadAllTemplates(): Promise<Result<void>> {
     const templateIds = [
-      "define",
-      "tag",
-      "write-domain",
-      "write-issue",
-      "write-theory",
-      "write-entity",
-      "write-mechanism",
-      "verify",
-      "merge",
-      "_base/operations/create",
+      "_base/operations/define",
+      "_base/operations/tag",
+      "_base/operations/verify",
+      "_type/domain-core",
+      "_type/issue-core",
+      "_type/theory-core",
+      "_type/entity-core",
+      "_type/mechanism-core",
       "_base/operations/merge",
-      "_base/operations/incremental"
+      "_base/operations/amend",
+      "visualize"
     ];
 
     const errors: string[] = [];
@@ -644,7 +685,7 @@ export class PromptManager {
 
     // 如果有任何模板加载失败，返回错误
     if (errors.length > 0) {
-      return err("E002", `${errors.length} 个模板加载失败: ${errors.join("; ")}`);
+      return err("E405_TEMPLATE_INVALID", `${errors.length} 个模板加载失败: ${errors.join("; ")}`);
     }
 
     return ok(undefined);

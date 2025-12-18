@@ -21,7 +21,7 @@ const COMMAND_PREFIX = "cognitive-razor";
  * 至少需要：
  * - 打开 Workbench
  * - 创建概念
- * - 对当前笔记启动 Incremental Edit
+ * - 对当前笔记启动 Amend（修订）
  * - 对当前重复对启动 Merge
  */
 export const COMMAND_IDS = {
@@ -30,8 +30,10 @@ export const COMMAND_IDS = {
   OPEN_WORKBENCH: `${COMMAND_PREFIX}:open-workbench`,
   IMPROVE_NOTE: `${COMMAND_PREFIX}:improve-note`,
   MERGE_DUPLICATES: `${COMMAND_PREFIX}:merge-duplicates`,
-  DEEPEN_CURRENT_NOTE: `${COMMAND_PREFIX}:deepen-current-note`,
+  EXPAND_CURRENT_NOTE: `${COMMAND_PREFIX}:expand-current-note`,
   INSERT_IMAGE: `${COMMAND_PREFIX}:insert-image`,
+  VERIFY_CURRENT_NOTE: `${COMMAND_PREFIX}:verify-current-note`,
+  EXPORT_DIAGNOSTICS: `${COMMAND_PREFIX}:export-diagnostics`,
 
   // 重要功能（阶段 2）
   VIEW_DUPLICATES: `${COMMAND_PREFIX}:view-duplicates`,
@@ -40,19 +42,7 @@ export const COMMAND_IDS = {
   VIEW_OPERATION_HISTORY: `${COMMAND_PREFIX}:view-operation-history`,
   
   // 队列管理（已整合到工作台）
-  OPEN_QUEUE: `${COMMAND_PREFIX}:open-queue`,
   PAUSE_QUEUE: `${COMMAND_PREFIX}:pause-queue`,
-  
-  // 其他命令（保留以兼容）
-  CREATE_CONCEPT_FROM_SELECTION: `${COMMAND_PREFIX}:create-concept-from-selection`,
-  CLEAR_COMPLETED_TASKS: `${COMMAND_PREFIX}:clear-completed-tasks`,
-  RETRY_FAILED_TASKS: `${COMMAND_PREFIX}:retry-failed-tasks`,
-  ENRICH_NOTE: `${COMMAND_PREFIX}:enrich-note`,
-  CHECK_DUPLICATES: `${COMMAND_PREFIX}:check-duplicates`,
-  UNDO_LAST_OPERATION: `${COMMAND_PREFIX}:undo-last-operation`,
-  TOGGLE_WORKBENCH: `${COMMAND_PREFIX}:toggle-workbench`,
-  TOGGLE_QUEUE_VIEW: `${COMMAND_PREFIX}:toggle-queue-view`,
-  OPEN_UNDO_HISTORY: `${COMMAND_PREFIX}:open-undo-history`,
 } as const;
 
 /**
@@ -66,7 +56,7 @@ export function getCoreCommandIds(): string[] {
     COMMAND_IDS.CREATE_CONCEPT,
     COMMAND_IDS.IMPROVE_NOTE,
     COMMAND_IDS.MERGE_DUPLICATES,
-    COMMAND_IDS.DEEPEN_CURRENT_NOTE,
+    COMMAND_IDS.EXPAND_CURRENT_NOTE,
   ];
 }
 

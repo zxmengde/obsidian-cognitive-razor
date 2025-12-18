@@ -30,6 +30,8 @@ export interface CRFrontmatter {
   type: CRType;
   /** 笔记名称 */
   name: string;
+  /** 概念核心定义（用于快速索引与预览） */
+  definition?: string;
   /** 笔记状态 */
   status: NoteState;
   /** 创建时间 (yyyy-MM-DD HH:mm:ss) */
@@ -40,12 +42,8 @@ export interface CRFrontmatter {
   aliases?: string[];
   /** 标签列表 */
   tags?: string[];
-  /** 父概念名称（笔记标题）列表 */
+  /** 父概念链接列表（规范形态：[[Title]]） */
   parents: string[];
-  /** 父概念 UID */
-  parentUid?: string;
-  /** 父概念类型 */
-  parentType?: CRType;
   /** 来源概念 UIDs */
   sourceUids?: string[];
   /** 版本号 */
@@ -227,6 +225,8 @@ export interface ProviderCapabilities {
   chat: boolean;
   /** 支持嵌入 */
   embedding: boolean;
+  /** 支持图片生成 */
+  image: boolean;
   /** 最大上下文长度 */
   maxContextLength: number;
   /** 支持的模型列表 */
@@ -292,31 +292,21 @@ export interface ChatResponse {
 }
 
 /**
- * 图片预览消息
- */
-export interface ImagePreviewMessage {
-  /** 角色 */
-  role: "system" | "user" | "assistant";
-  /** 内容（Markdown 或纯文本） */
-  content: string;
-}
-
-/**
  * 图片生成请求
  */
 export interface ImageGenerateRequest {
   /** Provider ID */
   providerId: string;
-  /** 模型名称（默认 gemini-3-pro-image-preview） */
+  /** 模型名称（默认 gpt-image-1） */
   model: string;
-  /** 消息列表（映射到 chat completions） */
-  messages: ImagePreviewMessage[];
-  /** 宽高比，如 16:9、1:1 */
-  aspectRatio?: string;
-  /** 图片尺寸，如 2K/1K/1024x1024 */
-  imageSize?: string;
-  /** 是否流式（图片生成要求 false） */
-  stream?: false;
+  /** 图片提示词（映射到 images/generations.prompt） */
+  prompt: string;
+  /** 图片尺寸（如 1024x1024 / 1792x1024 / 1024x1792） */
+  size?: string;
+  /** 图片质量（如 standard / hd；取决于 provider 支持情况） */
+  quality?: "standard" | "hd";
+  /** 图片风格（如 vivid / natural；取决于 provider 支持情况） */
+  style?: "vivid" | "natural";
 }
 
 /**
@@ -463,7 +453,6 @@ export interface PluginSettings {
   
   /** 去重设置 */
   similarityThreshold: number;
-  topK: number;
   
   /** 队列设置 */
   concurrency: number;
@@ -480,7 +469,7 @@ export interface PluginSettings {
   maxSnapshotAgeDays: number;
   
   /** 功能开关 */
-  enableGrounding: boolean;
+  enableAutoVerify: boolean;
   
   /** Provider 配置 */
   providers: Record<string, ProviderConfig>;
@@ -534,6 +523,10 @@ export interface VectorIndexMeta {
   version: string;
   /** 最后更新时间 */
   lastUpdated: number;
+  /** 生成 embedding 的模型（用于诊断与一致性检查） */
+  embeddingModel?: string;
+  /** embedding 向量维度（用于一致性检查） */
+  dimensions?: number;
   /** 统计信息 */
   stats: {
     totalConcepts: number;
@@ -640,14 +633,20 @@ export interface DuplicatePairsStore {
  */
 export interface QueueStateFile {
   /** 队列状态版本 */
-  version: "1.0.0";
-  /** 待执行任务列表（仅保留恢复所需的最小字段） */
+  version: "1.0.0" | "2.0.0";
+  /** 待执行任务列表（v1: 最小字段；v2: 允许携带恢复所需字段） */
   pendingTasks: Array<{
     id: string;
     nodeId: string;
     taskType: TaskType;
     attempt: number;
     maxAttempts: number;
+    providerRef?: string;
+    promptRef?: string;
+    payload?: Record<string, unknown>;
+    created?: string;
+    updated?: string;
+    errors?: TaskError[];
   }>;
   /** 是否暂停 */
   paused: boolean;
@@ -702,8 +701,8 @@ export type PipelineStage =
  * 管线上下文
  */
 export interface PipelineContext {
-  /** 管线类型：创建 / 增量改进 / 合并 */
-  kind: "create" | "incremental" | "merge";
+  /** 管线类型：创建 / 修订（Amend） / 合并 / 校验 */
+  kind: "create" | "amend" | "merge" | "verify";
   /** 管线 ID */
   pipelineId: string;
   /** 节点 ID */
@@ -725,25 +724,21 @@ export interface PipelineContext {
   embedding?: number[];
   /** 生成的内容 */
   generatedContent?: unknown;
-  /** 父级标题（用于 Deepen/抽象来源写入） */
+  /** 父级标题（用于 Expand/抽象来源写入） */
   parents?: string[];
-  /** 父级 UID（可选） */
-  parentUid?: string;
-  /** 父级类型（可选） */
-  parentType?: CRType;
   /** 供 write 使用的来源上下文（抽象深化） */
   sources?: string;
-  /** 目标路径覆盖（Deepen 预设路径） */
+  /** 目标路径覆盖（Expand 预设路径） */
   targetPathOverride?: string;
-  /** 写入前的原始内容（增量/合并预览使用） */
+  /** 写入前的原始内容（修订/合并预览使用） */
   previousContent?: string;
-  /** 待写入的新内容（增量/合并预览使用） */
+  /** 待写入的新内容（修订/合并预览使用） */
   newContent?: string;
   /** 文件路径 */
   filePath?: string;
-  /** Ground 结果 */
-  groundingResult?: Record<string, unknown>;
-  /** 增量/合并特有字段 */
+  /** Verify 结果（用于 UI 展示；落盘的报告由 PipelineOrchestrator 追加到笔记末尾） */
+  verificationResult?: Record<string, unknown>;
+  /** 修订/合并特有字段 */
   mergePairId?: string;
   deleteFilePath?: string;
   deleteNoteName?: string;
@@ -1018,7 +1013,7 @@ export function isErrResult(value: unknown): value is Err {
  */
 export function toErr(
   error: unknown,
-  fallbackCode: string = "E000",
+  fallbackCode: string = "E500_INTERNAL_ERROR",
   fallbackMessage: string = "发生未知错误"
 ): Err {
   if (isErrResult(error)) {

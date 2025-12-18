@@ -14,6 +14,23 @@ import {
 } from "../types";
 import { Vault } from "obsidian";
 
+function mapFsErrorToErrorCode(error: unknown): "E301_FILE_NOT_FOUND" | "E302_PERMISSION_DENIED" | "E303_DISK_FULL" | "E500_INTERNAL_ERROR" {
+  const candidate = error as { code?: unknown } | null;
+  const code = typeof candidate?.code === "string" ? candidate.code : "";
+
+  if (code === "ENOENT") {
+    return "E301_FILE_NOT_FOUND";
+  }
+  if (code === "EACCES" || code === "EPERM") {
+    return "E302_PERMISSION_DENIED";
+  }
+  if (code === "ENOSPC") {
+    return "E303_DISK_FULL";
+  }
+
+  return "E500_INTERNAL_ERROR";
+}
+
 /** 数据目录路径常量 */
 export const DATA_DIR = "data";
 export const SNAPSHOTS_DIR = `${DATA_DIR}/snapshots`;
@@ -28,7 +45,7 @@ export const APP_LOG_FILE = `${DATA_DIR}/app.log`;
 
 /** 默认队列状态 */
 export const DEFAULT_QUEUE_STATE: QueueStateFile = {
-  version: "1.0.0",
+  version: "2.0.0",
   pendingTasks: [],
   paused: false,
 };
@@ -142,8 +159,8 @@ export class FileStorage {
       return ok(undefined);
     } catch (error) {
       return err(
-        "E301",
-        "Failed to initialize directory structure",
+        mapFsErrorToErrorCode(error),
+        "初始化目录结构失败",
         error
       );
     }
@@ -181,7 +198,7 @@ export class FileStorage {
       return ok(content);
     } catch (error) {
       return err(
-        "E300",
+        mapFsErrorToErrorCode(error),
         `Failed to read file: ${path}`,
         error
       );
@@ -208,7 +225,7 @@ export class FileStorage {
       return ok(undefined);
     } catch (error) {
       return err(
-        "E301",
+        mapFsErrorToErrorCode(error),
         `Failed to write file: ${path}`,
         error
       );
@@ -267,7 +284,7 @@ export class FileStorage {
           // 其他错误，清理临时文件并返回错误
           await this.cleanupTempFile(tempPath);
           return err(
-            "E300",
+            mapFsErrorToErrorCode(backupError),
             `Failed to backup/remove original file: ${path}`,
             backupError
           );
@@ -311,7 +328,7 @@ export class FileStorage {
       await this.cleanupTempFile(tempPath);
       
       return err(
-        "E300",
+        mapFsErrorToErrorCode(error),
         `Atomic write failed for file: ${path}`,
         error
       );
@@ -328,7 +345,7 @@ export class FileStorage {
       
       if (actualContent !== expectedContent) {
         return err(
-          "E300",
+          "E500_INTERNAL_ERROR",
           "Write integrity check failed: content mismatch",
           { expected: expectedContent.length, actual: actualContent.length }
         );
@@ -337,7 +354,7 @@ export class FileStorage {
       return ok(undefined);
     } catch (error) {
       return err(
-        "E301",
+        mapFsErrorToErrorCode(error),
         "Failed to verify write integrity",
         error
       );
@@ -368,7 +385,7 @@ export class FileStorage {
       return ok(undefined);
     } catch (error) {
       return err(
-        "E300",
+        mapFsErrorToErrorCode(error),
         `Failed to delete file: ${path}`,
         error
       );
@@ -415,7 +432,7 @@ export class FileStorage {
           // 如果路径存在但不是目录，报错
           if (stat && stat.type !== "folder") {
             return err(
-              "E301",
+              "E500_INTERNAL_ERROR",
               `Path exists but is not a directory: ${currentPath}`
             );
           }
@@ -435,7 +452,7 @@ export class FileStorage {
             } catch {
               // 确实创建失败
               return err(
-                "E301",
+                mapFsErrorToErrorCode(mkdirError),
                 `Failed to create directory: ${currentPath}`,
                 mkdirError
               );
@@ -449,13 +466,13 @@ export class FileStorage {
         const finalStat = await this.vault.adapter.stat(fullPath);
         if (!finalStat || finalStat.type !== "folder") {
           return err(
-            "E301",
+            "E500_INTERNAL_ERROR",
             `Directory was not created successfully: ${path}`
           );
         }
       } catch (verifyError) {
         return err(
-          "E301",
+          mapFsErrorToErrorCode(verifyError),
           `Failed to verify directory creation: ${path}`,
           verifyError
         );
@@ -464,7 +481,7 @@ export class FileStorage {
       return ok(undefined);
     } catch (error) {
       return err(
-        "E301",
+        mapFsErrorToErrorCode(error),
         `Failed to create directory: ${path}`,
         error
       );
@@ -503,7 +520,7 @@ export class FileStorage {
       return ok(data);
     } catch (error) {
       return err(
-        "E300",
+        "E500_INTERNAL_ERROR",
         `Failed to parse vector file: ${path}`,
         error
       );
@@ -538,7 +555,7 @@ export class FileStorage {
       return ok(meta);
     } catch (error) {
       return err(
-        "E300",
+        "E500_INTERNAL_ERROR",
         `Failed to parse vector index meta`,
         error
       );
@@ -566,7 +583,7 @@ export class FileStorage {
       return ok(undefined);
     } catch (error) {
       return err(
-        "E300",
+        mapFsErrorToErrorCode(error),
         `Failed to rename file: ${oldPath} -> ${newPath}`,
         error
       );

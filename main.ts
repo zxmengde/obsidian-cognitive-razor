@@ -24,7 +24,8 @@ import { TaskQueue } from './src/core/task-queue';
 import { TaskRunner } from './src/core/task-runner';
 
 import { PipelineOrchestrator } from './src/core/pipeline-orchestrator';
-import { DeepenOrchestrator } from './src/core/deepen-orchestrator';
+import { PipelineStateStore } from './src/core/pipeline-state-store';
+import { ExpandOrchestrator } from './src/core/expand-orchestrator';
 import { ImageInsertOrchestrator } from './src/core/image-insert-orchestrator';
 
 // UI 层组件
@@ -59,7 +60,7 @@ export default class CognitiveRazorPlugin extends Plugin {
 	private taskQueue!: TaskQueue;
 	private taskRunner!: TaskRunner;
 	private pipelineOrchestrator!: PipelineOrchestrator;
-	private deepenOrchestrator!: DeepenOrchestrator;
+	private expandOrchestrator!: ExpandOrchestrator;
 	private imageInsertOrchestrator!: ImageInsertOrchestrator;
 
 	// UI 组件
@@ -421,11 +422,12 @@ export default class CognitiveRazorPlugin extends Plugin {
 		this.logger.debug('CognitiveRazorPlugin', 'CruidCache 已启动');
 
 		// 1. VectorIndex (新架构：data/vectors/)
-		// 从设置中读取嵌入维度（支持用户自定义）
+		// 从设置中读取嵌入模型与维度（支持用户自定义；VectorIndex 会在 load 时与索引元数据对齐）
+		const embeddingModel = this.settings.taskModels?.index?.model || 'text-embedding-3-small';
 		const embeddingDimension = this.settings.embeddingDimension || 1536;
 		this.vectorIndex = new VectorIndex(
 			this.fileStorage,
-			'text-embedding-3-small',
+			embeddingModel,
 			embeddingDimension,
 			this.logger,
 			this.cruidCache
@@ -546,7 +548,6 @@ export default class CognitiveRazorPlugin extends Plugin {
 			undoManager: this.undoManager,
 			logger: this.logger,
 			vectorIndex: this.vectorIndex,
-			fileStorage: this.fileStorage,
 			settingsStore: this.settingsStore,
 			app: this.app
 		});
@@ -574,6 +575,8 @@ export default class CognitiveRazorPlugin extends Plugin {
 			status: this.taskQueue.getStatus()
 		});
 
+		const pipelineStateStore = new PipelineStateStore(this.fileStorage, this.logger);
+
 		// 10. PipelineOrchestrator（任务管线编排器，遵循 A-FUNC-05, A-FUNC-03）
 		this.pipelineOrchestrator = new PipelineOrchestrator({
 			app: this.app,
@@ -582,17 +585,20 @@ export default class CognitiveRazorPlugin extends Plugin {
 			duplicateManager: this.duplicateManager,
 			logger: this.logger,
 			fileStorage: this.fileStorage,
+			validator: this.validator,
 			vectorIndex: this.vectorIndex,
 			undoManager: this.undoManager,
 			promptManager: this.promptManager,  // A-FUNC-03: 用于模板前置校验
 			providerManager: this.providerManager,  // A-FUNC-03: 用于 Provider 前置校验
 			cruidCache: this.cruidCache,
+			pipelineStateStore,
 			getSettings: () => this.settings,
 		});
+		await this.pipelineOrchestrator.initialize();
 		this.logger.debug('CognitiveRazorPlugin', 'PipelineOrchestrator 初始化完成');
 
-		// DeepenOrchestrator（深化编排器）
-		this.deepenOrchestrator = new DeepenOrchestrator({
+		// ExpandOrchestrator（拓展编排器）
+		this.expandOrchestrator = new ExpandOrchestrator({
 			app: this.app,
 			logger: this.logger,
 			vectorIndex: this.vectorIndex,
@@ -600,7 +606,7 @@ export default class CognitiveRazorPlugin extends Plugin {
 			pipelineOrchestrator: this.pipelineOrchestrator,
 			getSettings: () => this.settings
 		});
-		this.logger.debug('CognitiveRazorPlugin', 'DeepenOrchestrator 初始化完成');
+		this.logger.debug('CognitiveRazorPlugin', 'ExpandOrchestrator 初始化完成');
 
 		// ImageInsertOrchestrator（图片插入编排器）
 		this.imageInsertOrchestrator = new ImageInsertOrchestrator(
@@ -860,7 +866,7 @@ export default class CognitiveRazorPlugin extends Plugin {
 			taskQueue: this.taskQueue,
 			taskRunner: this.taskRunner,
 			pipelineOrchestrator: this.pipelineOrchestrator,
-			deepenOrchestrator: this.deepenOrchestrator,
+			expandOrchestrator: this.expandOrchestrator,
 			imageInsertOrchestrator: this.imageInsertOrchestrator,
 		};
 	}

@@ -3,7 +3,7 @@
  * 
  * 遵循设计文档 5.1 Frontmatter 约束：
  * - 必填字段：cruid, type, name, status, parents, created, updated
- * - 可选字段：aliases, tags, parentUid, parentType, sourceUids, version
+ * - 可选字段：definition, aliases, tags, sourceUids, version
  */
 
 import { CRFrontmatter, CRType, NoteState } from "../types";
@@ -20,6 +20,62 @@ const REQUIRED_FIELDS: Array<keyof CRFrontmatter> = [
 ];
 const ARRAY_FIELDS: Array<keyof CRFrontmatter> = ["aliases", "tags", "sourceUids", "parents"];
 
+function formatYamlString(value: string): string {
+  const escaped = value
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\r/g, "\\r")
+    .replace(/\n/g, "\\n")
+    .replace(/\t/g, "\\t");
+  return `"${escaped}"`;
+}
+
+const WIKILINK_REGEX = /^\[\[(.*?)\]\]$/;
+
+function normalizeParentLink(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const match = trimmed.match(WIKILINK_REGEX);
+  const inner = (match ? match[1] : trimmed).trim();
+  if (!inner) {
+    return null;
+  }
+
+  // parents 字段只存储 [[Title]]：去掉 alias（|...）与 heading（#...）
+  const withoutAlias = inner.split("|", 1)[0] ?? inner;
+  const withoutHeading = withoutAlias.split("#", 1)[0] ?? withoutAlias;
+  const withoutExt = withoutHeading.endsWith(".md")
+    ? withoutHeading.slice(0, -".md".length)
+    : withoutHeading;
+
+  const title = withoutExt.trim();
+  if (!title) {
+    return null;
+  }
+
+  return `[[${title}]]`;
+}
+
+function normalizeParents(parents: string[]): string[] {
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const item of parents) {
+    const link = normalizeParentLink(String(item));
+    if (!link) {
+      continue;
+    }
+    if (seen.has(link)) {
+      continue;
+    }
+    seen.add(link);
+    normalized.push(link);
+  }
+  return normalized;
+}
+
 /**
  * 生成 frontmatter
  * 
@@ -30,12 +86,11 @@ export function generateFrontmatter(options: {
   cruid: string;
   type: CRType;
   name: string;
+  definition?: string;
   status?: NoteState;
   parents?: string[];
   aliases?: string[];
   tags?: string[];
-  parentUid?: string;
-  parentType?: CRType;
   sourceUids?: string[];
   version?: string;
 }): CRFrontmatter {
@@ -45,14 +100,13 @@ export function generateFrontmatter(options: {
     cruid: options.cruid,
     type: options.type,
     name: options.name,
+    definition: options.definition,
     status: options.status || "Stub",
     created: now,
     updated: now,
-    parents: options.parents || [],
+    parents: normalizeParents(options.parents || []),
     aliases: options.aliases,
     tags: options.tags,
-    parentUid: options.parentUid,
-    parentType: options.parentType,
     sourceUids: options.sourceUids,
     version: options.version
   };
@@ -65,7 +119,15 @@ function formatArrayInline(arr: string[]): string {
   if (arr.length === 0) return '[]';
   const formatted = arr.map(item => {
     // 如果包含特殊字符，需要加引号
-    if (item.includes(' ') || item.includes(',') || item.includes(':') || item.includes('#')) {
+    if (
+      item.includes(" ") ||
+      item.includes(",") ||
+      item.includes(":") ||
+      item.includes("#") ||
+      item.includes("[") ||
+      item.includes("]") ||
+      item.includes("|")
+    ) {
       return `"${item.replace(/"/g, '\\"')}"`;
     }
     return item;
@@ -84,7 +146,10 @@ function frontmatterToYaml(frontmatter: CRFrontmatter): string {
   // 必填字段按固定顺序
   lines.push(`cruid: ${frontmatter.cruid}`);
   lines.push(`type: ${frontmatter.type}`);
-  lines.push(`name: ${frontmatter.name}`);
+  lines.push(`name: ${formatYamlString(frontmatter.name)}`);
+  if (frontmatter.definition) {
+    lines.push(`definition: ${formatYamlString(frontmatter.definition)}`);
+  }
   lines.push(`status: ${frontmatter.status}`);
   lines.push(`created: ${frontmatter.created}`);
   lines.push(`updated: ${frontmatter.updated}`);
@@ -104,14 +169,6 @@ function frontmatterToYaml(frontmatter: CRFrontmatter): string {
   }
   
   // 其他可选字段
-  if (frontmatter.parentUid) {
-    lines.push(`parentUid: ${frontmatter.parentUid}`);
-  }
-  
-  if (frontmatter.parentType) {
-    lines.push(`parentType: ${frontmatter.parentType}`);
-  }
-  
   if (frontmatter.sourceUids && frontmatter.sourceUids.length > 0) {
     lines.push(`sourceUids: ${formatArrayInline(frontmatter.sourceUids)}`);
   }
@@ -157,9 +214,10 @@ function parseFrontmatter(yaml: string): CRFrontmatter | null {
     const aliases = normalizeStringArray(normalized.aliases);
     const tags = normalizeStringArray(normalized.tags);
     const sourceUids = normalizeStringArray(normalized.sourceUids);
-    const parents = normalizeStringArray(normalized.parents) || [];
+    const parents = normalizeParents(normalizeStringArray(normalized.parents) || []);
     const version = normalizeOptionalString(normalized.version);
     const name = typeof normalized.name === "string" ? normalized.name : "";
+    const definition = normalizeOptionalString(normalized.definition);
 
     const rawCruid = typeof normalized.cruid === "string"
       ? normalized.cruid
@@ -175,14 +233,13 @@ function parseFrontmatter(yaml: string): CRFrontmatter | null {
       cruid: rawCruid,
       type: normalized.type as CRType,
       name,
+      definition,
       status: normalized.status as NoteState,
       created: normalized.created as string,
       updated: normalized.updated as string,
       aliases,
       tags,
       parents,
-      parentUid: normalizeOptionalString(normalized.parentUid),
-      parentType: normalizeOptionalString(normalized.parentType) as CRType | undefined,
       sourceUids,
       version
     };
@@ -244,12 +301,11 @@ function updateFrontmatter(
       cruid: updates.cruid || "",
       type: updates.type || "Entity",
       name: updates.name || "Unnamed Concept",
+      definition: updates.definition,
       parents: updates.parents || [],
       status: updates.status,
       aliases: updates.aliases,
       tags: updates.tags,
-      parentUid: updates.parentUid,
-      parentType: updates.parentType,
       sourceUids: updates.sourceUids,
       version: updates.version
     });
@@ -261,7 +317,7 @@ function updateFrontmatter(
   const merged: CRFrontmatter = {
     ...extracted.frontmatter,
     ...updates,
-    parents: updates.parents ?? extracted.frontmatter.parents ?? [],
+    parents: normalizeParents(updates.parents ?? extracted.frontmatter.parents ?? []),
     updated: now // 总是更新时间戳
   };
 

@@ -131,7 +131,7 @@ export class UndoManager {
       return ok(undefined);
     } catch (error) {
       this.logger.error("UndoManager", "初始化失败", error as Error);
-      return err("E303", "初始化撤销管理器失败", error);
+      return err("E304_SNAPSHOT_FAILED", "初始化撤销管理器失败", error);
     }
   }
 
@@ -144,18 +144,18 @@ export class UndoManager {
   ): Promise<Result<string>> {
     try {
       if (!this.index) {
-        return err("E303", "撤销管理器未初始化");
+        return err("E310_INVALID_STATE", "撤销管理器未初始化");
       }
 
       // 验证必需参数
       if (!filePath || typeof filePath !== 'string') {
-        return err("E303", "文件路径不能为空");
+        return err("E102_MISSING_FIELD", "文件路径不能为空");
       }
       if (content === undefined || content === null) {
-        return err("E303", "文件内容不能为空");
+        return err("E102_MISSING_FIELD", "文件内容不能为空");
       }
       if (!taskId || typeof taskId !== 'string') {
-        return err("E303", "任务 ID 不能为空");
+        return err("E102_MISSING_FIELD", "任务 ID 不能为空");
       }
 
       // 路径合法性校验（防止路径遍历 / 绝对路径）
@@ -164,7 +164,7 @@ export class UndoManager {
       // 内容大小校验
       const fileSize = Buffer.byteLength(content, 'utf8');
       if (fileSize > this.MAX_SNAPSHOT_SIZE) {
-        return err("E303", `快照内容过大: ${fileSize} bytes (最大 ${this.MAX_SNAPSHOT_SIZE} bytes)`);
+        return err("E101_INVALID_INPUT", `快照内容过大: ${fileSize} bytes (最大 ${this.MAX_SNAPSHOT_SIZE} bytes)`);
       }
 
       // 生成快照 ID
@@ -235,7 +235,7 @@ export class UndoManager {
         filePath,
         taskId
       });
-      return toErr(error, "E303", "创建快照失败");
+      return toErr(error, "E304_SNAPSHOT_FAILED", "创建快照失败");
     }
   }
 
@@ -243,14 +243,14 @@ export class UndoManager {
   async restoreSnapshot(snapshotId: string): Promise<Result<Snapshot>> {
     try {
       if (!this.index) {
-        return err("E303", "撤销管理器未初始化");
+        return err("E310_INVALID_STATE", "撤销管理器未初始化");
       }
 
       // 查找快照记录
       const snapshotRecord = this.index.snapshots.find(s => s.id === snapshotId);
       if (!snapshotRecord) {
         this.logger.warn("UndoManager", `快照不存在: ${snapshotId}`);
-        return err("E303", `快照不存在: ${snapshotId}`);
+        return err("E311_NOT_FOUND", `快照不存在: ${snapshotId}`);
       }
 
       // 读取快照文件
@@ -276,7 +276,7 @@ export class UndoManager {
             expected: snapshot.checksum,
             actual: calculatedChecksum
           });
-          return err("E303", "快照文件已损坏（校验和不匹配）");
+          return err("E500_INTERNAL_ERROR", "快照文件已损坏（校验和不匹配）");
         }
 
         this.logger.info("UndoManager", `快照已读取: ${snapshotId}`, {
@@ -289,13 +289,13 @@ export class UndoManager {
         this.logger.error("UndoManager", "解析快照文件失败", parseError as Error, {
           snapshotId
         });
-        return err("E303", "解析快照文件失败", parseError);
+        return err("E500_INTERNAL_ERROR", "解析快照文件失败", parseError);
       }
     } catch (error) {
       this.logger.error("UndoManager", "恢复快照失败", error as Error, {
         snapshotId
       });
-      return err("E303", "恢复快照失败", error);
+      return err("E304_SNAPSHOT_FAILED", "恢复快照失败", error);
     }
   }
 
@@ -323,7 +323,7 @@ export class UndoManager {
           path: snapshot.path,
           error: atomicWriteResult.error
         });
-        return err("E303", `快照恢复失败: ${atomicWriteResult.error.message}`, atomicWriteResult.error);
+        return err("E304_SNAPSHOT_FAILED", `快照恢复失败: ${atomicWriteResult.error.message}`, atomicWriteResult.error);
       }
 
       this.logger.info("UndoManager", `快照已恢复到文件: ${snapshotId}`, {
@@ -337,7 +337,7 @@ export class UndoManager {
       this.logger.error("UndoManager", "恢复快照到文件失败", error as Error, {
         snapshotId
       });
-      return err("E303", "恢复快照到文件失败", error);
+      return err("E304_SNAPSHOT_FAILED", "恢复快照到文件失败", error);
     }
   }
 
@@ -345,14 +345,14 @@ export class UndoManager {
   async deleteSnapshot(snapshotId: string): Promise<Result<void>> {
     try {
       if (!this.index) {
-        return err("E303", "撤销管理器未初始化");
+        return err("E310_INVALID_STATE", "撤销管理器未初始化");
       }
 
       // 查找快照索引
       const snapshotIndex = this.index.snapshots.findIndex(s => s.id === snapshotId);
       if (snapshotIndex === -1) {
         this.logger.warn("UndoManager", `快照不存在: ${snapshotId}`);
-        return err("E303", `快照不存在: ${snapshotId}`);
+        return err("E311_NOT_FOUND", `快照不存在: ${snapshotId}`);
       }
 
       // 删除快照文件
@@ -383,7 +383,7 @@ export class UndoManager {
       this.logger.error("UndoManager", "删除快照失败", error as Error, {
         snapshotId
       });
-      return err("E303", "删除快照失败", error);
+      return err("E304_SNAPSHOT_FAILED", "删除快照失败", error);
     }
   }
 
@@ -391,7 +391,7 @@ export class UndoManager {
   async listSnapshots(): Promise<Result<SnapshotMetadata[]>> {
     try {
       if (!this.index) {
-        return err("E303", "撤销管理器未初始化");
+        return err("E310_INVALID_STATE", "撤销管理器未初始化");
       }
 
       const metadata: SnapshotMetadata[] = this.index.snapshots.map(s => ({
@@ -406,7 +406,7 @@ export class UndoManager {
       return ok(metadata);
     } catch (error) {
       this.logger.error("UndoManager", "列出快照失败", error as Error);
-      return err("E303", "列出快照失败", error);
+      return err("E304_SNAPSHOT_FAILED", "列出快照失败", error);
     }
   }
 
@@ -414,7 +414,7 @@ export class UndoManager {
   async cleanupExpiredSnapshots(maxAgeMs: number): Promise<Result<number>> {
     try {
       if (!this.index) {
-        return err("E303", "撤销管理器未初始化");
+        return err("E310_INVALID_STATE", "撤销管理器未初始化");
       }
 
       const now = Date.now();
@@ -444,7 +444,7 @@ export class UndoManager {
       return ok(expiredSnapshots.length);
     } catch (error) {
       this.logger.error("UndoManager", "清理过期快照失败", error as Error);
-      return err("E303", "清理过期快照失败", error);
+      return err("E304_SNAPSHOT_FAILED", "清理过期快照失败", error);
     }
   }
 
@@ -467,7 +467,7 @@ export class UndoManager {
    */
   private async saveIndex(): Promise<Result<void>> {
     if (!this.index) {
-      return err("E303", "索引未初始化");
+      return err("E310_INVALID_STATE", "索引未初始化");
     }
 
     const writeResult = await this.fileStorage.write(
@@ -503,13 +503,13 @@ export class UndoManager {
    */
   private validateFilePath(filePath: string): void {
     if (filePath.includes("..")) {
-      throw new CognitiveRazorError("E303", "文件路径不能包含 '..'");
+      throw new CognitiveRazorError("E101_INVALID_INPUT", "文件路径不能包含 '..'");
     }
     if (/^([A-Za-z]:|\\\\|\/)/.test(filePath)) {
-      throw new CognitiveRazorError("E303", "文件路径必须是相对路径");
+      throw new CognitiveRazorError("E101_INVALID_INPUT", "文件路径必须是相对路径");
     }
     if (!filePath.endsWith(".md")) {
-      throw new CognitiveRazorError("E303", "仅支持 Markdown 文件快照 (.md)");
+      throw new CognitiveRazorError("E101_INVALID_INPUT", "仅支持 Markdown 文件快照 (.md)");
     }
   }
 
@@ -535,40 +535,40 @@ export class UndoManager {
     
     for (const field of requiredFields) {
       if (snapshot[field] === undefined || snapshot[field] === null) {
-        throw new CognitiveRazorError("E303", `快照记录缺少必需字段: ${field}`);
+        throw new CognitiveRazorError("E500_INTERNAL_ERROR", `快照记录缺少必需字段: ${field}`);
       }
     }
     
     // 验证字段类型
     if (typeof snapshot.id !== 'string' || snapshot.id.length === 0) {
-      throw new CognitiveRazorError("E303", "快照 ID 必须是非空字符串");
+      throw new CognitiveRazorError("E500_INTERNAL_ERROR", "快照 ID 必须是非空字符串");
     }
     if (typeof snapshot.nodeId !== 'string' || snapshot.nodeId.length === 0) {
-      throw new CognitiveRazorError("E303", "节点 ID 必须是非空字符串");
+      throw new CognitiveRazorError("E500_INTERNAL_ERROR", "节点 ID 必须是非空字符串");
     }
     if (typeof snapshot.taskId !== 'string' || snapshot.taskId.length === 0) {
-      throw new CognitiveRazorError("E303", "任务 ID 必须是非空字符串");
+      throw new CognitiveRazorError("E500_INTERNAL_ERROR", "任务 ID 必须是非空字符串");
     }
     if (typeof snapshot.path !== 'string' || snapshot.path.length === 0) {
-      throw new CognitiveRazorError("E303", "文件路径必须是非空字符串");
+      throw new CognitiveRazorError("E500_INTERNAL_ERROR", "文件路径必须是非空字符串");
     }
     if (typeof snapshot.content !== 'string') {
-      throw new CognitiveRazorError("E303", "文件内容必须是字符串");
+      throw new CognitiveRazorError("E500_INTERNAL_ERROR", "文件内容必须是字符串");
     }
     if (typeof snapshot.created !== 'string' || snapshot.created.length === 0) {
-      throw new CognitiveRazorError("E303", "创建时间必须是非空字符串");
+      throw new CognitiveRazorError("E500_INTERNAL_ERROR", "创建时间必须是非空字符串");
     }
     if (typeof snapshot.fileSize !== 'number' || snapshot.fileSize < 0) {
-      throw new CognitiveRazorError("E303", "文件大小必须是非负数");
+      throw new CognitiveRazorError("E500_INTERNAL_ERROR", "文件大小必须是非负数");
     }
     if (typeof snapshot.checksum !== 'string' || snapshot.checksum.length === 0) {
-      throw new CognitiveRazorError("E303", "校验和必须是非空字符串");
+      throw new CognitiveRazorError("E500_INTERNAL_ERROR", "校验和必须是非空字符串");
     }
     
     // 验证 ISO 8601 时间格式
     const dateRegex = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
     if (!dateRegex.test(snapshot.created)) {
-      throw new CognitiveRazorError("E303", "创建时间必须是 yyyy-MM-DD HH:mm:ss 格式");
+      throw new CognitiveRazorError("E500_INTERNAL_ERROR", "创建时间必须是 yyyy-MM-DD HH:mm:ss 格式");
     }
   }
 
@@ -599,7 +599,7 @@ export class UndoManager {
   async clearAllSnapshots(): Promise<Result<number>> {
     try {
       if (!this.index) {
-        return err("E303", "撤销管理器未初始化");
+        return err("E310_INVALID_STATE", "撤销管理器未初始化");
       }
 
       const count = this.index.snapshots.length;
@@ -615,7 +615,7 @@ export class UndoManager {
       return ok(count);
     } catch (error) {
       this.logger.error("UndoManager", "清理所有快照失败", error as Error);
-      return err("E303", "清理所有快照失败", error);
+      return err("E304_SNAPSHOT_FAILED", "清理所有快照失败", error);
     }
   }
 }

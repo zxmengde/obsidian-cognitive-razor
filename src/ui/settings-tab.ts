@@ -147,22 +147,21 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
               });
           });
         }
-      },
+      }
+    ]);
+
+    // 功能开关
+    this.renderSettingGroup(container, t.settings.advanced.features.title, [
       {
-        name: t.settings.advanced.deduplication.topK,
-        desc: t.settings.advanced.deduplication.topKDesc,
+        name: t.settings.advanced.features.enableAutoVerify,
+        desc: t.settings.advanced.features.enableAutoVerifyDesc,
         control: (setting) => {
-          setting.addText(text => {
-            text
-              .setValue(this.plugin.settings.topK.toString())
-              .setPlaceholder("10")
+          setting.addToggle(toggle => {
+            toggle
+              .setValue(this.plugin.settings.enableAutoVerify)
               .onChange(async (val) => {
-                const num = parseInt(val);
-                if (!isNaN(num) && num > 0) {
-                  await this.plugin.settingsStore.update({ topK: num });
-                }
+                await this.plugin.settingsStore.update({ enableAutoVerify: val });
               });
-            text.inputEl.style.width = "80px";
           });
         }
       }
@@ -857,36 +856,6 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
           .onChange(async (val) => {
             await this.plugin.settingsStore.update({
               imageGeneration: { ...this.plugin.settings.imageGeneration, defaultStyle: val as "vivid" | "natural" }
-            });
-          });
-      });
-
-    new Setting(group)
-      .setName(t.imageGeneration?.defaultAspectRatio?.name || "宽高比")
-      .setDesc(t.imageGeneration?.defaultAspectRatio?.desc || "Gemini 图像预览使用的宽高比")
-      .addDropdown((dropdown) => {
-        ["1:1", "16:9", "9:16", "4:3", "3:4"].forEach((ratio) => dropdown.addOption(ratio, ratio));
-        dropdown
-          .setValue(this.plugin.settings.imageGeneration.defaultAspectRatio || "1:1")
-          .onChange(async (val) => {
-            await this.plugin.settingsStore.update({
-              imageGeneration: { ...this.plugin.settings.imageGeneration, defaultAspectRatio: val }
-            });
-          });
-      });
-
-    new Setting(group)
-      .setName(t.imageGeneration?.defaultImageSize?.name || "输出分辨率")
-      .setDesc(t.imageGeneration?.defaultImageSize?.desc || "Google image_config.image_size，如 2K/1K")
-      .addDropdown((dropdown) => {
-        dropdown
-          .addOption("2K", "2K")
-          .addOption("1K", "1K")
-          .addOption("1024x1024", "1024x1024")
-          .setValue(this.plugin.settings.imageGeneration.defaultImageSize || "2K")
-          .onChange(async (val) => {
-            await this.plugin.settingsStore.update({
-              imageGeneration: { ...this.plugin.settings.imageGeneration, defaultImageSize: val }
             });
           });
       });

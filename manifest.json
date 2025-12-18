@@ -1,9 +1,9 @@
 {
 	"id": "obsidian-cognitive-razor",
 	"name": "Cognitive Razor",
-	"version": "0.9.3",
+	"version": "1.0.0",
 	"minAppVersion": "1.5.7",
-	"description": "AI-powered knowledge management plugin that transforms vague concepts into structured knowledge nodes with semantic deduplication, incremental improvement, and reversible operations.",
+	"description": "AI-powered knowledge management plugin that transforms vague concepts into structured knowledge nodes with semantic deduplication, amend workflows, and reversible operations.",
 	"author": "Cognitive Razor Team",
 	"authorUrl": "https://github.com/your-username/obsidian-cognitive-razor",
 	"fundingUrl": "https://github.com/sponsors/your-username",

@@ -33,8 +33,9 @@ interface Translations {
     title: string;
     buttons: {
       improveNote: string;
-      deepen: string;
+      expand: string;
       insertImage: string;
+      verify: string;
     };
     createConcept: {
       title: string;
@@ -115,7 +116,7 @@ interface Translations {
       view: string;
       confirmCreate: string;
       previewWrite: string;
-      groundingResult: string;
+      verificationResult: string;
       chineseName: string;
       englishName: string;
       autoSelect: string;
@@ -126,7 +127,7 @@ interface Translations {
       empty: string;
       kind: {
         create: string;
-        incremental: string;
+        amend: string;
         merge: string;
       };
       stages: {
@@ -215,12 +216,13 @@ interface Translations {
       mergeCancelled: string;
       mergeStarted: string;
       improveStarted: string;
+      verifyStarted: string;
       imageTaskCreated: string;
       imageGenerationFailed: string;
       featureDisabled: string;
     };
   };
-  deepen: {
+  expand: {
     titlePrefix: string;
     stats: {
       total: string;
@@ -349,11 +351,6 @@ interface Translations {
         name: string;
         desc: string;
       };
-      deduplication: {
-        title: string;
-        topK: string;
-        topKDesc: string;
-      };
       embedding: {
         title: string;
         dimension: string;
@@ -362,8 +359,8 @@ interface Translations {
       };
       features: {
         title: string;
-        enableGrounding: string;
-        enableGroundingDesc: string;
+        enableAutoVerify: string;
+        enableAutoVerifyDesc: string;
       };
       queue: {
         title: string;
@@ -593,13 +590,14 @@ export class I18n {
         error: "错误",
         warning: "警告",
       },
-      workbench: {
-        title: "工作台",
-      buttons: {
-        improveNote: "改进当前笔记",
-        deepen: "深化当前笔记",
-        insertImage: "插入图片",
-      },
+       workbench: {
+         title: "工作台",
+       buttons: {
+         improveNote: "改进当前笔记",
+         expand: "拓展当前笔记",
+         insertImage: "插入图片",
+         verify: "事实核查",
+       },
         createConcept: {
           title: "创建概念",
           placeholder: "输入概念描述...",
@@ -672,14 +670,14 @@ export class I18n {
           timeHoursAgo: "{hours} 小时前",
           timeDaysAgo: "{days} 天前",
         },
-        pipeline: {
+      pipeline: {
           id: "ID",
           type: "类型",
           stage: "阶段",
           view: "查看",
           confirmCreate: "确认创建",
         previewWrite: "预览写入",
-        groundingResult: "校验结果：",
+        verificationResult: "校验结果：",
         chineseName: "中文名称：",
         englishName: "英文名称：",
         autoSelect: "自动选择",
@@ -690,7 +688,7 @@ export class I18n {
         empty: "当前没有进行中的管线",
         kind: {
           create: "创建",
-          incremental: "增量改进",
+          amend: "修订",
           merge: "合并",
         },
         stages: {
@@ -779,13 +777,14 @@ export class I18n {
           mergeCancelled: "已取消合并",
           mergeStarted: "合并任务已启动，请等待 AI 生成合并内容...",
           improveStarted: "改进任务已启动，请等待 AI 生成改进内容...",
+          verifyStarted: "核查任务已启动，请等待 AI 生成核查报告...",
           imageTaskCreated: "图片生成任务已创建",
           imageGenerationFailed: "图片生成任务创建失败",
           featureDisabled: "功能已关闭",
         },
       },
-      deepen: {
-        titlePrefix: "深化：",
+      expand: {
+        titlePrefix: "拓展：",
         stats: {
           total: "候选总数",
           creatable: "可创建",
@@ -805,7 +804,7 @@ export class I18n {
         abstractInstruction: "选择至少 1 个相似概念，与当前笔记一起生成更高层概念。",
         abstractConfirm: "生成",
         similarity: "相似度",
-        notInitialized: "Deepen 功能未初始化",
+        notInitialized: "拓展功能未初始化",
         started: "已启动 {count} 个创建任务",
         startedWithFailures: "已启动 {started} 个任务，{failed} 个未能启动",
       },
@@ -911,11 +910,6 @@ export class I18n {
             name: "Reasoning Effort",
             desc: "推理强度（用于支持推理的模型，如 o1, o3）",
           },
-          deduplication: {
-            title: "去重参数",
-            topK: "检索数量 (TopK)",
-            topKDesc: "去重检测时检索的候选数量",
-          },
           embedding: {
             title: "嵌入参数",
             dimension: "向量维度",
@@ -924,8 +918,8 @@ export class I18n {
           },
           features: {
             title: "功能开关",
-            enableGrounding: "启用校验",
-            enableGroundingDesc: "在撰写完成后执行校验验证（会增加一次 LLM 调用）",
+            enableAutoVerify: "启用自动校验（Verify）",
+            enableAutoVerifyDesc: "在写入落盘后自动执行 Verify，并将报告追加到笔记末尾（会增加一次 LLM 调用）",
           },
           queue: {
             title: "队列参数",
@@ -1101,11 +1095,11 @@ export class I18n {
         },
         defaultAspectRatio: {
           name: "宽高比",
-          desc: "Gemini 预览 API 使用的宽高比，例如 1:1 或 16:9"
+          desc: "（已废弃）旧字段，不再用于图片生成；请使用「默认图片尺寸」"
         },
         defaultImageSize: {
           name: "输出分辨率",
-          desc: "传给 image_config.image_size 的值（如 2K/1K 或 1024x1024）"
+          desc: "（已废弃）旧字段，不再用于图片生成；请使用「默认图片尺寸」"
         },
         contextWindowSize: {
           name: "上下文窗口大小",
@@ -1137,8 +1131,9 @@ export class I18n {
         title: "Workbench",
       buttons: {
         improveNote: "Improve Current Note",
-        deepen: "Deepen Current Note",
+        expand: "Expand Current Note",
         insertImage: "Insert Image",
+        verify: "Verify",
       },
         createConcept: {
           title: "Create Concept",
@@ -1212,14 +1207,14 @@ export class I18n {
           timeHoursAgo: "{hours} hours ago",
           timeDaysAgo: "{days} days ago",
         },
-        pipeline: {
+      pipeline: {
           id: "ID",
           type: "Type",
           stage: "Stage",
           view: "View",
           confirmCreate: "Confirm Create",
         previewWrite: "Preview Write",
-        groundingResult: "Verification Result:",
+        verificationResult: "Verification Result:",
         chineseName: "Chinese Name:",
         englishName: "English Name:",
         autoSelect: "Auto Select",
@@ -1230,7 +1225,7 @@ export class I18n {
         empty: "No pipelines are currently running",
         kind: {
           create: "Create",
-          incremental: "Incremental Edit",
+          amend: "Amend",
           merge: "Merge",
         },
         stages: {
@@ -1319,13 +1314,14 @@ export class I18n {
           mergeCancelled: "Merge cancelled",
           mergeStarted: "Merge task started. Please wait for AI to finish.",
           improveStarted: "Improvement task started. Please wait for AI to finish.",
+          verifyStarted: "Verification started. Please wait for AI to finish.",
           imageTaskCreated: "Image generation task queued",
           imageGenerationFailed: "Failed to start image generation",
           featureDisabled: "Feature is disabled",
         },
       },
-      deepen: {
-        titlePrefix: "Deepen: ",
+      expand: {
+        titlePrefix: "Expand: ",
         stats: {
           total: "Total",
           creatable: "Creatable",
@@ -1345,7 +1341,7 @@ export class I18n {
         abstractInstruction: "Pick at least one similar concept to generate a more abstract one with the current note.",
         abstractConfirm: "Generate",
         similarity: "Similarity",
-        notInitialized: "Deepen is not initialized",
+        notInitialized: "Expand is not initialized",
         started: "Started {count} create tasks",
         startedWithFailures: "Started {started} tasks, {failed} failed to start",
       },
@@ -1451,11 +1447,6 @@ export class I18n {
             name: "Reasoning Effort",
             desc: "Reasoning intensity (for models that support reasoning, such as o1, o3)",
           },
-          deduplication: {
-            title: "Deduplication Parameters",
-            topK: "Top K",
-            topKDesc: "Number of candidates to retrieve during deduplication detection",
-          },
           embedding: {
             title: "Embedding Parameters",
             dimension: "Vector Dimension",
@@ -1464,8 +1455,8 @@ export class I18n {
           },
           features: {
             title: "Feature Toggles",
-            enableGrounding: "Enable Verification",
-            enableGroundingDesc: "Run verification after writing (adds one LLM call)",
+            enableAutoVerify: "Enable Auto Verify",
+            enableAutoVerifyDesc: "Run Verify after writing and append a report to the end of the note (adds one LLM call)",
           },
           queue: {
             title: "Queue Parameters",
@@ -1641,11 +1632,11 @@ export class I18n {
         },
         defaultAspectRatio: {
           name: "Aspect ratio",
-          desc: "Aspect ratio for Gemini image preview API, e.g., 1:1 or 16:9"
+          desc: "Deprecated. No longer used for image generation; use \"Default image size\" instead."
         },
         defaultImageSize: {
           name: "Output resolution",
-          desc: "Value passed to image_config.image_size (e.g., 2K/1K or 1024x1024)"
+          desc: "Deprecated. No longer used for image generation; use \"Default image size\" instead."
         },
         contextWindowSize: {
           name: "Context window size",

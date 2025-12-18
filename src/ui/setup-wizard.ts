@@ -254,7 +254,10 @@ export class SetupWizard extends Modal {
       try {
         const checkResult = await this.plugin.getComponents().providerManager.checkAvailability(this.providerId, true);
         if (!checkResult.ok) {
-          if (checkResult.error.code === "E102") {
+          const offline = checkResult.error.code === "E204_PROVIDER_ERROR" &&
+            typeof checkResult.error.details === "object" &&
+            (checkResult.error.details as { kind?: unknown } | null)?.kind === "network";
+          if (offline) {
             this.validation = {
               status: "offline",
               message: isZh ? "网络不可用，配置已保存，可稍后重试连接" : "Network unavailable, configuration saved, can retry later",

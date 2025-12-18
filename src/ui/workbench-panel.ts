@@ -11,7 +11,7 @@
  * Requirements: 5.1
  */
 
-import { ItemView, WorkspaceLeaf, Notice, TFile, App, Modal, setIcon, MarkdownView, Editor } from "obsidian";
+import { ItemView, WorkspaceLeaf, Notice, TFile, App, Modal, setIcon, Editor } from "obsidian";
 import type {
   DuplicatePair,
   QueueStatus,
@@ -26,15 +26,15 @@ import { renderNamingTemplate } from "../core/naming-utils";
 import type { TaskQueue } from "../core/task-queue";
 import type { PipelineContext } from "../types";
 import type CognitiveRazorPlugin from "../../main";
-import { UndoNotification } from "./undo-notification";
 import { renderSideBySideDiff, SimpleDiffView, buildLineDiff } from "./diff-view";
 import { MergeNameSelectionModal } from "./merge-modals";
 import { SimpleInputModal } from "./simple-input-modal";
-import { DeepenModal } from "./deepen-modal";
-import { AbstractModal } from "./abstract-modal";
-import type { DeepenPlan, HierarchicalPlan, AbstractPlan } from "../core/deepen-orchestrator";
-import { formatMessage } from "../core/i18n";
-import { ImageInsertModal } from "./image-insert-modal";
+
+import type { WorkbenchSectionDeps } from "./workbench/workbench-section-deps";
+import { CreateSection } from "./workbench/create-section";
+import { QueueSection } from "./workbench/queue-section";
+import { DuplicatesSection } from "./workbench/duplicates-section";
+import { RecentOpsSection } from "./workbench/recent-ops-section";
 
 export const WORKBENCH_VIEW_TYPE = "cognitive-razor-workbench";
 const ERROR_NOTICE_DURATION = 6000;
@@ -71,28 +71,32 @@ type DuplicateSortOrder =
  * Requirements: 5.1
  */
 export class WorkbenchPanel extends ItemView {
+  private plugin: CognitiveRazorPlugin | null = null;
+  private pipelineUnsubscribe: (() => void) | null = null;
+  private queueUnsubscribe: (() => void) | null = null;
+
+  private createSection: CreateSection;
+  private queueSection: QueueSection;
+  private duplicatesSection: DuplicatesSection;
+  private recentOpsSection: RecentOpsSection;
+
+  // legacy: 拆分后待移除（避免一次性大改造成回归）
   private conceptInput: HTMLInputElement | null = null;
   private duplicatesContainer: HTMLElement | null = null;
   private queueStatusContainer: HTMLElement | null = null;
   private recentOpsContainer: HTMLElement | null = null;
-  private plugin: CognitiveRazorPlugin | null = null;
   private taskQueue: TaskQueue | null = null;
-  private pipelineUnsubscribe: (() => void) | null = null;
-  private queueUnsubscribe: (() => void) | null = null;
-
-  // 标准化相关
   private standardizeBtn: HTMLButtonElement | null = null;
   private typeConfidenceTableContainer: HTMLElement | null = null;
   private currentStandardizedData: StandardizedConcept | null = null;
   private pendingConceptInput: string | null = null;
   private improveBtn: HTMLButtonElement | null = null;
   private insertImageBtn: HTMLButtonElement | null = null;
-
-  // 重复对管理相关
   private selectedDuplicates: Set<string> = new Set();
   private currentSortOrder: DuplicateSortOrder = "similarity-desc";
   private currentTypeFilter: CRType | "all" = "all";
   private allDuplicates: DuplicatePair[] = [];
+  private sectionContents: Map<keyof SectionCollapseState, HTMLElement> = new Map();
 
   // 区域折叠状态（默认全部展开）
   private collapseState: SectionCollapseState = {
@@ -102,11 +106,26 @@ export class WorkbenchPanel extends ItemView {
     recentOps: true,
   };
 
-  // 区域内容容器引用（用于折叠/展开）
-  private sectionContents: Map<keyof SectionCollapseState, HTMLElement> = new Map();
-
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
+
+    const deps: WorkbenchSectionDeps = {
+      app: this.app,
+      getPlugin: () => this.plugin,
+      t: (path) => this.t(path),
+      showErrorNotice: (message) => this.showErrorNotice(message),
+      logError: (context, error, extra) => this.logError(context, error, extra),
+      logWarn: (context, extra) => this.logWarn(context, extra),
+      resolveNoteName: (nodeId) => this.resolveNoteName(nodeId),
+      resolveNotePath: (nodeId) => this.resolveNotePath(nodeId),
+      registerEvent: (eventRef) => this.registerEvent(eventRef),
+      getContainerEl: () => this.containerEl
+    };
+
+    this.createSection = new CreateSection(deps);
+    this.queueSection = new QueueSection(deps);
+    this.duplicatesSection = new DuplicatesSection(deps);
+    this.recentOpsSection = new RecentOpsSection(deps);
   }
 
   /**
@@ -173,8 +192,6 @@ export class WorkbenchPanel extends ItemView {
    */
   public setPlugin(plugin: CognitiveRazorPlugin): void {
     this.plugin = plugin;
-    const components = plugin.getComponents();
-    this.taskQueue = components.taskQueue;
   }
 
   getViewType(): string {
@@ -196,10 +213,10 @@ export class WorkbenchPanel extends ItemView {
     container.addClass("cr-scope");
 
     // 主要操作区：创建概念
-    this.renderCreateConceptSection(container);
+    this.createSection.render(container);
 
     // 状态概览卡片（紧凑版）
-    this.renderStatusOverview(container);
+    this.queueSection.render(container);
 
     // 可展开区域：重复概念和历史
     this.renderExpandableSections(container);
@@ -210,15 +227,7 @@ export class WorkbenchPanel extends ItemView {
     // 订阅队列事件（实时更新任务列表）
     this.subscribeQueueEvents();
 
-    // 处理待处理输入
-    if (this.pendingConceptInput) {
-      const value = this.pendingConceptInput;
-      this.pendingConceptInput = null;
-      if (this.conceptInput) {
-        this.conceptInput.value = value;
-      }
-      void this.handleStandardize(value);
-    }
+    await this.createSection.consumePendingInput();
   }
 
   /**
@@ -352,10 +361,7 @@ export class WorkbenchPanel extends ItemView {
    * 刷新队列详情（如果已展开）
    */
   private refreshQueueDetailsIfVisible(): void {
-    const detailsContainer = this.getQueueDetailsContainer();
-    if (detailsContainer && detailsContainer.style.display !== "none") {
-      this.renderQueueDetails(detailsContainer);
-    }
+    this.queueSection.refreshDetailsIfVisible();
   }
 
   /**
@@ -369,10 +375,7 @@ export class WorkbenchPanel extends ItemView {
       sections,
       this.t("workbench.duplicates.title"),
       "duplicates",
-      (content) => {
-        this.duplicatesContainer = content;
-        this.renderEmptyDuplicates();
-      }
+      (options) => this.duplicatesSection.mount(options)
     );
 
     // 操作历史（默认折叠）
@@ -380,10 +383,7 @@ export class WorkbenchPanel extends ItemView {
       sections,
       this.t("workbench.recentOps.title"),
       "recentOps",
-      (content) => {
-        this.recentOpsContainer = content;
-        this.refreshRecentOps();
-      }
+      (options) => this.recentOpsSection.mount(options)
     );
   }
 
@@ -394,7 +394,7 @@ export class WorkbenchPanel extends ItemView {
     container: HTMLElement,
     title: string,
     sectionKey: keyof SectionCollapseState,
-    renderContent: (content: HTMLElement) => void
+    renderContent: (options: { section: HTMLElement; badge: HTMLElement; content: HTMLElement }) => void
   ): void {
     const section = container.createDiv({ cls: "cr-collapsible-section" });
     
@@ -446,16 +446,14 @@ export class WorkbenchPanel extends ItemView {
       }
     });
 
-    renderContent(content);
+    renderContent({ section, badge, content });
   }
 
   async onClose(): Promise<void> {
-    // 清理资源
-    this.conceptInput = null;
-    this.duplicatesContainer = null;
-    this.queueStatusContainer = null;
-    this.recentOpsContainer = null;
-    this.improveBtn = null;
+    this.createSection.onClose();
+    this.queueSection.onClose();
+    this.duplicatesSection.onClose();
+    this.recentOpsSection.onClose();
     if (this.pipelineUnsubscribe) {
       this.pipelineUnsubscribe();
       this.pipelineUnsubscribe = null;
@@ -464,7 +462,6 @@ export class WorkbenchPanel extends ItemView {
       this.queueUnsubscribe();
       this.queueUnsubscribe = null;
     }
-    this.pendingConceptInput = null;
   }
   /**
    * 渲染创建概念区域 - 简化版搜索框
@@ -510,10 +507,10 @@ export class WorkbenchPanel extends ItemView {
       }
     });
 
-    // 增量改进入口（改进当前笔记）
+    // 修订入口（改进当前笔记）
     const improveSection = container.createDiv({ cls: "cr-improve-section" });
     const improveLabel = this.t("workbench.buttons.improveNote");
-    const deepenLabel = this.t("workbench.buttons.deepen");
+    const expandLabel = this.t("workbench.buttons.expand");
     const insertImageLabel = this.t("workbench.buttons.insertImage");
     this.improveBtn = improveSection.createEl("button", {
       text: improveLabel,
@@ -521,20 +518,20 @@ export class WorkbenchPanel extends ItemView {
       attr: { "aria-label": improveLabel }
     });
     this.improveBtn.addEventListener("click", () => {
-      void this.handleStartIncremental();
+      void this.handleStartAmend();
     });
     this.updateImproveButtonState();
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => {
       this.updateImproveButtonState();
     }));
 
-    const deepenBtn = improveSection.createEl("button", {
-      text: deepenLabel,
+    const expandBtn = improveSection.createEl("button", {
+      text: expandLabel,
       cls: "cr-btn-secondary",
-      attr: { "aria-label": deepenLabel }
+      attr: { "aria-label": expandLabel }
     });
-    deepenBtn.addEventListener("click", () => {
-      void this.handleStartDeepen();
+    expandBtn.addEventListener("click", () => {
+      void this.handleStartExpand();
     });
 
     // 插入图片
@@ -860,7 +857,7 @@ export class WorkbenchPanel extends ItemView {
       const po = components.pipelineOrchestrator;
 
       // 直接调用标准化 API（不入队）
-      const result = await po.standardizeDirect(description);
+      const result = await po.defineDirect(description);
 
       if (!result.ok) {
         this.showErrorNotice(`${this.t("workbench.notifications.standardizeFailed")}: ${result.error.message}`);
@@ -887,203 +884,35 @@ export class WorkbenchPanel extends ItemView {
    * 从命令入口快速创建概念：复用标准化 → 选择类型流程
    */
   public async startQuickCreate(description: string): Promise<void> {
-    const value = description.trim();
-    if (!value) {
-      this.showErrorNotice(this.t("workbench.notifications.enterDescription"));
-      return;
-    }
-
-    this.pendingConceptInput = value;
-
-    // 视图已渲染时直接触发标准化，否则等待 onOpen 消费 pendingConceptInput
-    if (this.conceptInput) {
-      this.conceptInput.value = value;
-      await this.handleStandardize(value);
-      this.pendingConceptInput = null;
-    }
+    await this.createSection.startQuickCreate(description);
   }
 
   /**
-   * 启动增量改进（针对当前激活笔记）
+   * 启动修订（Amend）（针对当前激活笔记）
    */
-  public async handleStartIncremental(): Promise<void> {
-    if (!this.plugin) {
-      this.showErrorNotice(this.t("workbench.notifications.pluginNotInitialized"));
-      return;
-    }
-
-    const activeFile = this.app.workspace.getActiveFile();
-    if (!activeFile || activeFile.extension !== "md") {
-      this.showErrorNotice(this.t("workbench.notifications.openMarkdownFirst"));
-      return;
-    }
-
-    const orchestrator = this.plugin.getComponents().pipelineOrchestrator;
-    if (!orchestrator) {
-      this.showErrorNotice(this.t("workbench.notifications.orchestratorNotInitialized"));
-      return;
-    }
-
-    const modal = new SimpleInputModal(this.app, {
-      title: "改进笔记",
-      placeholder: "请输入改进指令（例如：补充更多示例、优化定义、添加相关理论）",
-      onSubmit: async (instruction) => {
-        const result = orchestrator.startIncrementalPipeline(activeFile.path, instruction);
-        if (result.ok) {
-          new Notice(this.t("workbench.notifications.improveStarted"));
-        } else {
-          this.showErrorNotice(`启动失败: ${result.error.message}`);
-        }
-      }
-    });
-
-    modal.open();
+  public async handleStartAmend(): Promise<void> {
+    await this.createSection.handleStartAmend();
   }
 
   /**
-   * 启动深化（层级/抽象）
+   * 启动拓展（层级/抽象）
    */
-  public async handleStartDeepen(file?: TFile): Promise<void> {
-    if (!this.plugin) {
-      this.showErrorNotice(this.t("workbench.notifications.pluginNotInitialized"));
-      return;
-    }
-
-    const targetFile = file ?? this.app.workspace.getActiveFile();
-    if (!targetFile || targetFile.extension !== "md") {
-      this.showErrorNotice(this.t("workbench.notifications.openMarkdownFirst"));
-      return;
-    }
-
-    const components = this.plugin.getComponents();
-    const orchestrator = components.deepenOrchestrator;
-    if (!orchestrator) {
-      this.showErrorNotice(this.t("deepen.notInitialized"));
-      return;
-    }
-
-    const prepareResult = await orchestrator.prepare(targetFile);
-    if (!prepareResult.ok) {
-      this.showErrorNotice(prepareResult.error.message);
-      return;
-    }
-
-    const plan = prepareResult.value as DeepenPlan;
-    if (plan.mode === "hierarchical") {
-      this.openHierarchicalDeepen(plan as HierarchicalPlan);
-    } else if (plan.mode === "abstract") {
-      this.openAbstractDeepen(plan as AbstractPlan);
-    }
-  }
-
-  private openHierarchicalDeepen(plan: HierarchicalPlan): void {
-    if (!this.plugin) return;
-    const orchestrator = this.plugin.getComponents().deepenOrchestrator;
-    if (!orchestrator) {
-      this.showErrorNotice(this.t("deepen.notInitialized"));
-      return;
-    }
-
-    const labels = {
-      titlePrefix: this.t("deepen.titlePrefix"),
-      stats: {
-        total: this.t("deepen.stats.total"),
-        creatable: this.t("deepen.stats.creatable"),
-        existing: this.t("deepen.stats.existing"),
-        invalid: this.t("deepen.stats.invalid")
-      },
-      selectAll: this.t("deepen.selectAll"),
-      deselectAll: this.t("deepen.deselectAll"),
-      confirm: this.t("deepen.confirm"),
-      cancel: this.t("common.cancel"),
-      existing: this.t("deepen.status.existing"),
-      invalid: this.t("deepen.status.invalid"),
-      looseStructureHint: this.t("deepen.looseStructureHint"),
-      empty: this.t("deepen.empty")
-    };
-
-    const modal = new DeepenModal(this.app, {
-      parentTitle: plan.parentTitle,
-      parentType: plan.parentType,
-      currentType: plan.currentType,
-      candidates: plan.candidates,
-      looseStructure: plan.looseStructure,
-      labels,
-      onConfirm: async (selected) => {
-        const result = await orchestrator.createFromHierarchical(plan, selected);
-        if (result.ok) {
-          const failed = result.value.failed.length;
-          const started = result.value.started;
-          const msg = failed > 0
-            ? formatMessage(this.t("deepen.startedWithFailures"), { started, failed })
-            : formatMessage(this.t("deepen.started"), { count: started });
-          new Notice(msg);
-        } else {
-          this.showErrorNotice(result.error.message);
-        }
-      },
-      onCancel: () => {
-        // no-op
-      }
-    });
-
-    modal.open();
-  }
-
-  private openAbstractDeepen(plan: AbstractPlan): void {
-    if (!this.plugin) return;
-    const orchestrator = this.plugin.getComponents().deepenOrchestrator;
-    if (!orchestrator) {
-      this.showErrorNotice(this.t("deepen.notInitialized"));
-      return;
-    }
-
-    const labels = {
-      titlePrefix: this.t("deepen.abstractTitlePrefix"),
-      instruction: this.t("deepen.abstractInstruction"),
-      similarity: this.t("deepen.similarity"),
-      confirm: this.t("deepen.abstractConfirm"),
-      cancel: this.t("common.cancel"),
-      empty: this.t("deepen.empty")
-    };
-
-    const modal = new AbstractModal(this.app, {
-      currentTitle: plan.currentTitle,
-      currentType: plan.currentType,
-      candidates: plan.candidates,
-      labels,
-      onConfirm: async (selected) => {
-        const result = await orchestrator.createFromAbstract(plan, selected);
-        if (result.ok) {
-          new Notice(formatMessage(this.t("deepen.started"), { count: 1 }));
-        } else {
-          this.showErrorNotice(result.error.message);
-        }
-      },
-      onCancel: () => {
-        // no-op
-      }
-    });
-
-    modal.open();
+  public async handleStartExpand(file?: TFile): Promise<void> {
+    await this.createSection.handleStartExpand(file);
   }
 
   /**
    * 聚焦到“重复概念”区域
    */
   public revealDuplicates(): void {
-    this.refreshDuplicates();
-    const section = this.containerEl.querySelector(".cr-duplicates-section") as HTMLElement | null;
-    section?.scrollIntoView({ block: "start", behavior: "smooth" });
+    this.duplicatesSection.reveal();
   }
 
   /**
    * 打开操作历史（当前实现：合并历史）
    */
   public openOperationHistory(): void {
-    if (!this.plugin) return;
-    const modal = new MergeHistoryModal(this.app, this.plugin);
-    modal.open();
+    this.duplicatesSection.openOperationHistory();
   }
 
   /**
@@ -1261,16 +1090,16 @@ export class WorkbenchPanel extends ItemView {
     const { previousContent, newContent, targetPath } = preview.value;
     const titlePrefix = ctx.kind === "merge"
       ? "合并预览"
-      : ctx.kind === "incremental"
-        ? "改进预览"
+      : ctx.kind === "amend"
+        ? "修订预览"
         : this.t("workbench.pipeline.previewWrite");
-    const cancelNotice = ctx.kind === "incremental"
-      ? "已取消改进"
+    const cancelNotice = ctx.kind === "amend"
+      ? "已取消修订"
       : ctx.kind === "merge"
         ? this.t("workbench.notifications.mergeCancelled")
         : "已取消写入";
-    const successNotice = ctx.kind === "incremental"
-      ? "改进完成"
+    const successNotice = ctx.kind === "amend"
+      ? "修订完成"
       : ctx.kind === "merge"
         ? "合并完成"
         : this.t("workbench.notifications.writeSuccess");
@@ -1619,7 +1448,7 @@ export class WorkbenchPanel extends ItemView {
    * 更新队列状态
    */
   public updateQueueStatus(status: QueueStatus): void {
-    this.renderQueueStatus(status);
+    this.queueSection.update(status);
   }
 
   /**
@@ -1708,7 +1537,7 @@ export class WorkbenchPanel extends ItemView {
     const operationNames: Record<string, string> = {
       enrich: "标记",
       merge: "合并",
-      "incremental-improve": "改进",
+      amend: "修订",
       "manual-edit": "手动编辑",
       standardize: "定义",
       create: "创建笔记",
@@ -1898,23 +1727,8 @@ export class WorkbenchPanel extends ItemView {
     snapshotId: string,
     filePath: string
   ): void {
-    if (!this.plugin) {
-      return;
-    }
-
-    const undoManager = this.plugin.getComponents().undoManager;
-
-    const notification = new UndoNotification({
-      message,
-      snapshotId,
-      filePath,
-      onUndo: async (id: string) => {
-        await this.handleUndoFromToast(id);
-      },
-      timeout: 5000, // 5 秒超时
-    });
-
-    notification.show();
+    this.recentOpsSection.showUndoToast(message, snapshotId, filePath);
+    void this.recentOpsSection.refresh();
   }
 
   /**
@@ -2193,8 +2007,10 @@ export class WorkbenchPanel extends ItemView {
       // A-UCD-03: 写入完成后显示撤销通知
       if (event.type === "pipeline_completed" && event.context.snapshotId && event.context.filePath) {
         const kindLabel = event.context.kind === "create" ? "创建"
-          : event.context.kind === "incremental" ? "改进"
-            : "合并";
+          : event.context.kind === "amend" ? "修订"
+            : event.context.kind === "merge" ? "合并"
+              : event.context.kind === "verify" ? "事实核查"
+                : "操作";
         this.showUndoToast(
           `${kindLabel}完成: ${event.context.filePath.split("/").pop()}`,
           event.context.snapshotId,
@@ -2207,9 +2023,9 @@ export class WorkbenchPanel extends ItemView {
         this.showErrorNotice(event.context.error.message);
       }
 
-      // merge / incremental 进入待写入确认阶段时：自动弹出 Diff 预览
+      // merge / amend 进入待写入确认阶段时：自动弹出 Diff 预览
       if (event.type === "confirmation_required" &&
-          (event.context.kind === "merge" || event.context.kind === "incremental") &&
+          (event.context.kind === "merge" || event.context.kind === "amend") &&
           event.context.stage === "review_changes") {
         void this.showWritePreview(event.context);
       }
@@ -2223,12 +2039,18 @@ export class WorkbenchPanel extends ItemView {
     if (!this.plugin) return;
 
     const taskQueue = this.plugin.getComponents().taskQueue;
-    this.queueUnsubscribe = taskQueue.subscribe(() => {
+
+    const update = (): void => {
       // 更新状态栏
       this.updateQueueStatus(taskQueue.getStatus());
       // 刷新详情（如果已展开）
       this.refreshQueueDetailsIfVisible();
-    });
+    };
+
+    this.queueUnsubscribe = taskQueue.subscribe(update);
+
+    // subscribe 不会立即触发，需手动刷新一次保证 UI 与队列一致
+    update();
   }
 
   /**
@@ -2501,57 +2323,7 @@ export class WorkbenchPanel extends ItemView {
    * 启动图片生成流程
    */
   public async startImageInsert(): Promise<void> {
-    if (!this.plugin) return;
-    const t = this.plugin.getI18n().t();
-    const imgSettings = this.plugin.settings.imageGeneration;
-    if (!imgSettings?.enabled) {
-      new Notice(t.workbench.notifications.featureDisabled || "功能已关闭");
-      return;
-    }
-
-    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-    if (!view || view.getMode() !== "source") {
-      new Notice(this.t("workbench.notifications.openMarkdownFirst"));
-      return;
-    }
-    const file = view.file;
-    if (!file) {
-      new Notice(this.t("workbench.notifications.fileNotFound"));
-      return;
-    }
-
-    const editor = view.editor;
-    const cursor = editor.getCursor();
-    const contextSize = imgSettings.contextWindowSize ?? 500;
-    const { before, after } = this.getContextSegments(editor, cursor, contextSize);
-    const frontmatter = this.buildFrontmatter(file);
-
-    const modal = new ImageInsertModal(this.app, {
-      t,
-      contextBefore: before,
-      contextAfter: after,
-      onConfirm: async (userPrompt) => {
-        const orchestrator = this.plugin?.getComponents().imageInsertOrchestrator;
-        if (!orchestrator) {
-          new Notice(this.t("workbench.notifications.systemNotInitialized"));
-          return;
-        }
-        const result = orchestrator.execute({
-          userPrompt,
-          contextBefore: before,
-          contextAfter: after,
-          frontmatter,
-          filePath: file.path,
-          cursorPosition: cursor
-        });
-        if (result.ok) {
-          new Notice(t.workbench.notifications.imageTaskCreated || "图片生成任务已创建");
-        } else {
-          new Notice(result.error.message || (t.workbench.notifications.imageGenerationFailed || "图片生成任务创建失败"));
-        }
-      }
-    });
-    modal.open();
+    await this.createSection.startImageInsert();
   }
 
   private getContextSegments(editor: Editor, cursor: { line: number; ch: number }, size: number): { before: string; after: string } {
@@ -2575,8 +2347,6 @@ export class WorkbenchPanel extends ItemView {
       aliases: Array.isArray(fm.aliases) ? fm.aliases : undefined,
       tags: Array.isArray(fm.tags) ? fm.tags : undefined,
       parents: Array.isArray(fm.parents) ? fm.parents : [],
-      parentUid: typeof fm.parentUid === "string" ? fm.parentUid : undefined,
-      parentType: fm.parentType as CRFrontmatter["parentType"] | undefined,
       sourceUids: Array.isArray(fm.sourceUids) ? fm.sourceUids : undefined,
       version: typeof fm.version === "string" ? fm.version : undefined
     };

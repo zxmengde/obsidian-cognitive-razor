@@ -119,14 +119,6 @@ export function validateCRFrontmatter(data: unknown): Result<CRFrontmatter> {
     return err("INVALID_FIELD", "tags 必须是数组");
   }
 
-  if (fm.parentUid !== undefined && !isValidUUID(fm.parentUid)) {
-    return err("INVALID_UUID", `无效的父概念 UUID: ${fm.parentUid}`);
-  }
-
-  if (fm.parentType !== undefined && !isValidCRType(fm.parentType)) {
-    return err("INVALID_TYPE", `无效的父概念类型: ${fm.parentType}`);
-  }
-
   if (fm.sourceUids !== undefined) {
     if (!Array.isArray(fm.sourceUids)) {
       return err("INVALID_FIELD", "sourceUids 必须是数组");

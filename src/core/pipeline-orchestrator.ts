@@ -17,11 +17,13 @@ import {
   toErr
 } from "../types";
 import { App, TFile } from "obsidian";
-import YAML from "yaml";
 import { extractFrontmatter, generateFrontmatter, generateMarkdownContent } from "./frontmatter-utils";
-import { createConceptSignature, generateFilePath } from "./naming-utils";
-import { FieldDescription, schemaRegistry } from "./schema-registry";
+import { ContentRenderer } from "./content-renderer";
+import { NoteRepository } from "./note-repository";
+import { createConceptSignature, generateFilePath, sanitizeFileName } from "./naming-utils";
+import { schemaRegistry } from "./schema-registry";
 import { mapStandardizeOutput } from "./standardize-mapper";
+import { TaskFactory } from "./task-factory";
 import { generateUUID } from "../data/validators";
 import { formatCRTimestamp } from "../utils/date-utils";
 import type { CruidCache } from "./cruid-cache";
@@ -29,10 +31,12 @@ import type { TaskQueue } from "./task-queue";
 import type { TaskRunner } from "./task-runner";
 import type { DuplicateManager } from "./duplicate-manager";
 import type { FileStorage } from "../data/file-storage";
+import type { Validator } from "../data/validator";
 import type { VectorIndex } from "./vector-index";
 import type { UndoManager } from "./undo-manager";
 import type { PromptManager } from "./prompt-manager";
 import type { ProviderManager } from "./provider-manager";
+import type { PipelineStateStore } from "./pipeline-state-store";
 
 /**
  * 管线事件类型
@@ -71,35 +75,41 @@ interface PipelineOrchestratorDependencies {
   duplicateManager: DuplicateManager;
   logger: ILogger;
   fileStorage: FileStorage;
+  validator: Validator;
   vectorIndex: VectorIndex;
   undoManager: UndoManager;
+  noteRepository?: NoteRepository;
+  contentRenderer?: ContentRenderer;
   promptManager?: PromptManager;
   providerManager?: ProviderManager;
   cruidCache?: CruidCache;
+  pipelineStateStore?: PipelineStateStore;
   getSettings: () => PluginSettings;
 }
 
-/** 创建管线预设选项（用于 Deepen） */
+/** 创建管线预设选项（用于 Expand） */
 interface CreatePresetOptions {
   parents?: string[];
-  parentUid?: string;
-  parentType?: CRType;
   targetPathOverride?: string;
   sources?: string;
 }
 
 export class PipelineOrchestrator {
   private app: App;
+  private noteRepository: NoteRepository;
   private taskQueue: TaskQueue;
   private taskRunner: TaskRunner;
   private duplicateManager: DuplicateManager;
   private logger: ILogger;
   private fileStorage: FileStorage;
+  private validator: Validator;
   private vectorIndex: VectorIndex;
   private undoManager: UndoManager;
+  private contentRenderer: ContentRenderer;
   private promptManager?: PromptManager;
   private providerManager?: ProviderManager;
   private cruidCache?: CruidCache;
+  private pipelineStateStore?: PipelineStateStore;
   private getSettings: () => PluginSettings;
   
   private pipelines: Map<string, PipelineContext>;
@@ -109,16 +119,20 @@ export class PipelineOrchestrator {
 
   constructor(deps: PipelineOrchestratorDependencies) {
     this.app = deps.app;
+    this.noteRepository = deps.noteRepository ?? new NoteRepository(deps.app, deps.logger);
     this.taskQueue = deps.taskQueue;
     this.taskRunner = deps.taskRunner;
     this.duplicateManager = deps.duplicateManager;
     this.logger = deps.logger;
     this.fileStorage = deps.fileStorage;
+    this.validator = deps.validator;
     this.vectorIndex = deps.vectorIndex;
     this.undoManager = deps.undoManager;
+    this.contentRenderer = deps.contentRenderer ?? new ContentRenderer();
     this.promptManager = deps.promptManager;
     this.providerManager = deps.providerManager;
     this.cruidCache = deps.cruidCache;
+    this.pipelineStateStore = deps.pipelineStateStore;
     this.getSettings = deps.getSettings;
     
     this.pipelines = new Map();
@@ -129,6 +143,77 @@ export class PipelineOrchestrator {
     this.subscribeToTaskQueue();
 
     this.logger.debug("PipelineOrchestrator", "管线编排器初始化完成");
+  }
+
+  async initialize(): Promise<void> {
+    if (!this.pipelineStateStore) {
+      return;
+    }
+
+    const loadResult = await this.pipelineStateStore.load();
+    if (!loadResult.ok) {
+      this.logger.warn("PipelineOrchestrator", "加载持久化管线状态失败，跳过恢复", {
+        error: loadResult.error,
+      });
+      return;
+    }
+
+    const state = loadResult.value;
+    if (!state) {
+      return;
+    }
+
+    let restoredPipelines = 0;
+    for (const ctx of Object.values(state.pipelines)) {
+      if (!ctx || typeof ctx !== "object") continue;
+      if (!ctx.pipelineId || typeof ctx.pipelineId !== "string") continue;
+      if (ctx.stage === "completed" || ctx.stage === "failed") continue;
+      this.pipelines.set(ctx.pipelineId, ctx);
+      restoredPipelines++;
+    }
+
+    let restoredMappings = 0;
+    for (const [taskId, pipelineId] of Object.entries(state.taskToPipeline)) {
+      if (typeof taskId !== "string" || typeof pipelineId !== "string") continue;
+      if (!this.pipelines.has(pipelineId)) continue;
+      this.taskToPipeline.set(taskId, pipelineId);
+      restoredMappings++;
+    }
+
+    if (restoredPipelines > 0 || restoredMappings > 0) {
+      this.logger.info("PipelineOrchestrator", "管线状态已从磁盘恢复", {
+        pipelines: restoredPipelines,
+        mappings: restoredMappings,
+      });
+      this.schedulePersist();
+    }
+  }
+
+  private schedulePersist(): void {
+    void this.persistActiveState();
+  }
+
+  private async persistActiveState(): Promise<void> {
+    if (!this.pipelineStateStore) {
+      return;
+    }
+
+    const activePipelines = Array.from(this.pipelines.values()).filter(
+      (ctx) => ctx.stage !== "completed" && ctx.stage !== "failed"
+    );
+
+    const pipelines = Object.fromEntries(activePipelines.map((ctx) => [ctx.pipelineId, ctx]));
+    const taskToPipeline = Object.fromEntries(
+      Array.from(this.taskToPipeline.entries()).filter(([, pipelineId]) =>
+        Object.prototype.hasOwnProperty.call(pipelines, pipelineId)
+      )
+    );
+
+    await this.pipelineStateStore.save({
+      version: "1.0.0",
+      pipelines,
+      taskToPipeline,
+    });
   }
 
   /**
@@ -159,17 +244,17 @@ export class PipelineOrchestrator {
       settings.namingTemplate
     );
 
-    // 生成目标文件路径（Deepen 允许传入预设路径，以保证与父笔记链接一致）
+    // 生成目标文件路径（Expand 允许传入预设路径，以保证与父笔记链接一致）
     const targetPath = normalizedOverride
       ? normalizedOverride
       : generateFilePath(
         signature.standardName,
         settings.directoryScheme,
         type
-      );
+    );
 
     // 检查文件是否已存在
-    const file = this.app.vault.getAbstractFileByPath(targetPath);
+    const file = this.noteRepository.getFileByPath(targetPath);
     if (file) {
       this.logger.warn("PipelineOrchestrator", "检测到同类型同名笔记", {
         type,
@@ -179,7 +264,7 @@ export class PipelineOrchestrator {
       });
 
       return err(
-        "E400",
+        "E320_TASK_CONFLICT",
         `已存在同类型同名的笔记：${signature.standardName}\n路径：${targetPath}\n\n请修改概念名称或检查是否为重复创建。`,
         {
           type,
@@ -210,7 +295,7 @@ export class PipelineOrchestrator {
         taskType,
         event: "PREREQUISITE_CHECK_FAILED"
       });
-      return err("E304", `任务 ${taskType} 未配置 Provider，请在设置中配置 Provider`);
+      return err("E401_PROVIDER_NOT_CONFIGURED", `任务 ${taskType} 未配置 Provider，请在设置中配置 Provider`);
     }
 
     // 检查 Provider 是否存在且启用
@@ -221,7 +306,7 @@ export class PipelineOrchestrator {
         providerId,
         event: "PREREQUISITE_CHECK_FAILED"
       });
-      return err("E304", `Provider "${providerId}" 不存在，请在设置中重新配置`);
+      return err("E401_PROVIDER_NOT_CONFIGURED", `Provider "${providerId}" 不存在，请在设置中重新配置`);
     }
 
     if (!providerConfig.enabled) {
@@ -230,7 +315,7 @@ export class PipelineOrchestrator {
         providerId,
         event: "PREREQUISITE_CHECK_FAILED"
       });
-      return err("E304", `Provider "${providerId}" 已禁用，请在设置中启用`);
+      return err("E401_PROVIDER_NOT_CONFIGURED", `Provider "${providerId}" 已禁用，请在设置中启用`);
     }
 
     if (!providerConfig.apiKey) {
@@ -239,7 +324,7 @@ export class PipelineOrchestrator {
         providerId,
         event: "PREREQUISITE_CHECK_FAILED"
       });
-      return err("E103", `Provider "${providerId}" 的 API Key 未配置`);
+      return err("E401_PROVIDER_NOT_CONFIGURED", `Provider "${providerId}" 的 API Key 未配置`);
     }
 
     // 2. 检查模板是否已加载（如果有 PromptManager）
@@ -251,7 +336,7 @@ export class PipelineOrchestrator {
           templateId,
           event: "PREREQUISITE_CHECK_FAILED"
         });
-        return err("E002", `模板 "${templateId}" 未加载，请检查 prompts 目录`);
+        return err("E404_TEMPLATE_NOT_FOUND", `模板 "${templateId}" 未加载，请检查 prompts 目录`);
       }
     }
 
@@ -265,29 +350,16 @@ export class PipelineOrchestrator {
   }
 
   /**
-   * 启动新概念创建管线
-   * 
-   * 修改：define 不进入队列，使用 standardizeDirect 直接执行
-   * 此方法已废弃，保留以兼容旧代码
-   */
-  startCreatePipeline(userInput: string, type?: CRType): Result<string> {
-    this.logger.warn("PipelineOrchestrator", "startCreatePipeline 已废弃，请使用 standardizeDirect + startCreatePipelineWithStandardized");
-    
-    // 返回错误，强制使用新流程
-    return err("E306", "请使用 standardizeDirect 方法进行标准化，然后使用 startCreatePipelineWithStandardized 创建管线");
-  }
-
-  /**
-   * 直接标准化（不入队）
+   * 直接 Define（不入队）
    * 
    * 遵循 Requirements 4.1, 4.2：
    * - 直接调用 ProviderManager.chat，不进入任务队列
    * - 立即返回结果给 UI 用于用户确认
    * 
    * @param userInput 用户输入的概念
-   * @returns 标准化结果
+   * @returns Define 结果（包含类型置信度与标准命名）
    */
-  async standardizeDirect(userInput: string): Promise<Result<StandardizedConcept>> {
+  async defineDirect(userInput: string): Promise<Result<StandardizedConcept>> {
     try {
       // 前置校验
       const prerequisiteCheck = this.validatePrerequisites("define");
@@ -298,24 +370,24 @@ export class PipelineOrchestrator {
       // 基础输入校验与清理，防止超长或恶意指令
       const suspicious = [/ignore\s+previous\s+instructions/i, /system\s*:/i, /\[INST\]/i, /<\|im_start\|>/i];
       if (typeof userInput !== "string" || userInput.trim().length === 0) {
-        return err("E001", "输入不能为空");
+        return err("E101_INVALID_INPUT", "输入不能为空");
       }
       if (userInput.length > 10000) {
-        return err("E001", "输入过长，请缩短后重试（最大 10000 字符）");
+        return err("E101_INVALID_INPUT", "输入过长，请缩短后重试（最大 10000 字符）");
       }
       for (const pattern of suspicious) {
         if (pattern.test(userInput)) {
-          return err("E001", "输入包含可疑指令，请检查后重试");
+          return err("E101_INVALID_INPUT", "输入包含可疑指令，请检查后重试");
         }
       }
       const sanitizedInput = userInput.replace(/[\x00-\x1F\x7F]/g, "").replace(/\s+/g, " ").trim();
 
       if (!this.providerManager) {
-        return err("E306", "ProviderManager 未初始化");
+        return err("E310_INVALID_STATE", "ProviderManager 未初始化");
       }
 
       if (!this.promptManager) {
-        return err("E306", "PromptManager 未初始化");
+        return err("E310_INVALID_STATE", "PromptManager 未初始化");
       }
 
       this.logger.info("PipelineOrchestrator", "开始直接标准化", {
@@ -336,7 +408,7 @@ export class PipelineOrchestrator {
         this.logger.error("PipelineOrchestrator", "构建标准化提示词失败", error as Error, {
           event: "STANDARDIZE_DIRECT_ERROR"
         });
-        return toErr(error, "E002", "构建标准化提示词失败");
+        return toErr(error, "E500_INTERNAL_ERROR", "构建标准化提示词失败");
       }
 
       // 直接调用 API
@@ -383,12 +455,21 @@ export class PipelineOrchestrator {
           response: chatResult.value.content.substring(0, 200),
           event: "STANDARDIZE_DIRECT_PARSE_ERROR"
         });
-        return err("E100", "解析标准化结果失败", parseError);
+        return err("E210_MODEL_OUTPUT_PARSE_FAILED", "解析标准化结果失败", parseError);
       }
     } catch (error) {
       this.logger.error("PipelineOrchestrator", "直接标准化失败", error as Error);
-      return err("E305", "直接标准化失败", error);
+      return err("E500_INTERNAL_ERROR", "直接标准化失败", error);
     }
+  }
+
+  /**
+   * 直接标准化（历史兼容：等同于 defineDirect）
+   *
+   * @deprecated 请改用 defineDirect（与 SSOT 的 Define 语义对齐）
+   */
+  async standardizeDirect(userInput: string): Promise<Result<StandardizedConcept>> {
+    return this.defineDirect(userInput);
   }
 
   /**
@@ -410,7 +491,7 @@ export class PipelineOrchestrator {
   }
 
   /**
-   * 使用预设名称/路径/父级信息启动创建管线（Deepen）
+   * 使用预设名称/路径/父级信息启动创建管线（Expand）
    * 
    * 复用 Create 管线，但允许外部指定目标路径与父子关系，确保与父笔记中的 [[链接]] 保持一致。
    */
@@ -460,8 +541,6 @@ export class PipelineOrchestrator {
           coreDefinition: standardizedData.coreDefinition
         },
         parents: options?.parents,
-        parentUid: options?.parentUid,
-        parentType: options?.parentType,
         targetPathOverride: options?.targetPathOverride,
         sources: options?.sources,
         filePath: options?.targetPathOverride,
@@ -483,11 +562,9 @@ export class PipelineOrchestrator {
       const settings = this.getSettings();
       let taskId: string;
       try {
-        taskId = this.taskQueue.enqueue({
+        taskId = this.taskQueue.enqueue(TaskFactory.create({
           nodeId,
           taskType: "tag",
-          state: "Pending",
-          attempt: 0,
           maxAttempts: settings.maxRetryAttempts,
           providerRef: this.getProviderIdForTask("tag"),
           payload: {
@@ -496,10 +573,10 @@ export class PipelineOrchestrator {
             conceptType: selectedType,
             userInput: context.userInput
           }
-        });
+        }));
       } catch (error) {
         this.pipelines.delete(pipelineId);
-        return toErr(error, "E305", "创建任务失败") as Result<string>;
+        return toErr(error, "E500_INTERNAL_ERROR", "创建任务失败") as Result<string>;
       }
 
       // 记录任务到管线的映射
@@ -517,7 +594,7 @@ export class PipelineOrchestrator {
       return ok(pipelineId);
     } catch (error) {
       this.logger.error("PipelineOrchestrator", "启动管线失败", error as Error);
-      return err("E305", "启动管线失败", error);
+      return err("E500_INTERNAL_ERROR", "启动管线失败", error);
     }
   }
 
@@ -532,9 +609,9 @@ export class PipelineOrchestrator {
     const { targetPath, previousContent, newContent } = composed.value;
     context.filePath = targetPath;
 
-    // 创建流程不保存快照（仅增量改进和合并时保存）
+    // 创建流程不保存快照（仅修订和合并时保存）
 
-    await this.atomicWriteVault(targetPath, newContent);
+    await this.noteRepository.writeAtomic(targetPath, newContent);
 
     this.logger.info("PipelineOrchestrator", `文件已写入 (Stub → Draft): ${targetPath}`, {
       pipelineId: context.pipelineId,
@@ -562,20 +639,11 @@ export class PipelineOrchestrator {
       );
     }
 
-    context.stage = "completed";
-    context.updatedAt = formatCRTimestamp();
-    this.publishEvent({
-      type: "pipeline_completed",
-      pipelineId: context.pipelineId,
-      stage: "completed",
-      context,
-      timestamp: context.updatedAt
-    });
-
+    await this.maybeStartAutoVerifyOrComplete(context);
     return ok(undefined);
   }
 
-  private async confirmIncrementalWrite(context: PipelineContext): Promise<Result<void>> {
+  private async confirmAmendWrite(context: PipelineContext): Promise<Result<void>> {
     const composed = await this.composeWriteContent(context);
     if (!composed.ok) {
       context.stage = "failed";
@@ -586,37 +654,40 @@ export class PipelineOrchestrator {
     const { targetPath, previousContent, newContent } = composed.value;
     context.filePath = targetPath;
 
-    // 增量改进：保存快照
-    const snapshotResult = await this.undoManager.createSnapshot(
-      targetPath,
-      previousContent,
-      context.pipelineId,
-      context.nodeId
-    );
-    if (snapshotResult.ok) {
-      context.snapshotId = snapshotResult.value;
+    // 冲突检测：若 Diff 预览后文件被外部修改，避免覆盖用户改动
+    const currentContent = await this.noteRepository.readByPathIfExists(targetPath);
+    if (currentContent !== null && currentContent !== previousContent) {
+      const message = `检测到文件在确认写入前已被修改：${targetPath}\n请重新生成预览（Diff）后再确认写入，以避免覆盖改动。`;
+      context.stage = "failed";
+      context.error = { code: "E320_TASK_CONFLICT", message };
+      return err(
+        "E320_TASK_CONFLICT",
+        message,
+        { targetPath }
+      );
     }
 
-    await this.atomicWriteVault(targetPath, newContent);
+    // 快照应在 Diff 展示前创建；若缺失则补齐（兼容旧流程）
+    if (!context.snapshotId) {
+      const snapshotResult = await this.undoManager.createSnapshot(
+        targetPath,
+        previousContent,
+        context.pipelineId,
+        context.nodeId
+      );
+      if (snapshotResult.ok) {
+        context.snapshotId = snapshotResult.value;
+      }
+    }
 
-     // 更新向量索引并去重（复用已有向量）
-     const entry = this.vectorIndex.getEntry(context.nodeId);
-     if (entry) {
-       const updatedEntry = { ...entry, updated: formatCRTimestamp() };
-       await this.vectorIndex.upsert(updatedEntry);
-       await this.duplicateManager.detect(context.nodeId, entry.type, entry.embedding);
-     }
+    await this.noteRepository.writeAtomic(targetPath, newContent);
 
-    context.stage = "completed";
+    // 语义变更后必须重算 embedding 并触发去重（避免陈旧向量）
+    context.stage = "indexing";
     context.updatedAt = formatCRTimestamp();
-    this.publishEvent({
-      type: "pipeline_completed",
-      pipelineId: context.pipelineId,
-      stage: "completed",
-      context,
-      timestamp: context.updatedAt
-    });
+    await this.refreshEmbeddingAndDuplicates(context, newContent);
 
+    await this.maybeStartAutoVerifyOrComplete(context);
     return ok(undefined);
   }
 
@@ -630,6 +701,34 @@ export class PipelineOrchestrator {
 
     const { targetPath, previousContent, newContent } = composed.value;
     context.filePath = targetPath;
+
+    // 冲突检测：若 Diff 预览后主笔记被外部修改，避免覆盖用户改动
+    const currentKeep = await this.noteRepository.readByPathIfExists(targetPath);
+    if (currentKeep !== null && currentKeep !== previousContent) {
+      const message = `检测到主笔记在确认写入前已被修改：${targetPath}\n请重新生成预览（Diff）后再确认写入，以避免覆盖改动。`;
+      context.stage = "failed";
+      context.error = { code: "E320_TASK_CONFLICT", message };
+      return err(
+        "E320_TASK_CONFLICT",
+        message,
+        { targetPath }
+      );
+    }
+
+    // 冲突检测：若被删笔记在确认写入前被外部修改，避免误删用户改动
+    if (context.deleteFilePath && context.deleteContent) {
+      const currentDelete = await this.noteRepository.readByPathIfExists(context.deleteFilePath);
+      if (currentDelete !== null && currentDelete !== context.deleteContent) {
+        const message = `检测到被合并笔记在确认写入前已被修改：${context.deleteFilePath}\n请重新生成预览（Diff）后再确认写入，以避免误删改动。`;
+        context.stage = "failed";
+        context.error = { code: "E320_TASK_CONFLICT", message };
+        return err(
+          "E320_TASK_CONFLICT",
+          message,
+          { deleteFilePath: context.deleteFilePath }
+        );
+      }
+    }
 
     // 注意：快照已在 executeMergePipeline 中创建，此处不再重复创建
     // 如果快照尚未创建（兼容旧流程），则创建快照
@@ -655,198 +754,187 @@ export class PipelineOrchestrator {
       }
     }
 
-    await this.atomicWriteVault(targetPath, newContent);
+    await this.noteRepository.writeAtomic(targetPath, newContent);
+
+    // Merge 会删除被合并笔记：在删除前先将其他笔记的 parents 引用从 B 重写到 A
+    const keepTitle = this.getNoteTitleFromPath(targetPath);
+    const deleteTitle = context.deleteFilePath
+      ? this.getNoteTitleFromPath(context.deleteFilePath)
+      : (context.deleteNoteName?.trim() || "");
+
+    if (deleteTitle && keepTitle && deleteTitle !== keepTitle) {
+      const updateParentsResult = await this.rewriteParentsAcrossVault({
+        pipelineId: context.pipelineId,
+        fromTitle: deleteTitle,
+        toTitle: keepTitle,
+        skipPaths: [targetPath, context.deleteFilePath]
+      });
+      if (!updateParentsResult.ok) {
+        // 回退 duplicate pair 的 merging 状态，避免卡死
+        if (context.mergePairId) {
+          await this.duplicateManager.abortMerge(context.mergePairId);
+        }
+        context.stage = "failed";
+        context.error = { code: updateParentsResult.error.code, message: updateParentsResult.error.message };
+        return updateParentsResult as Result<void>;
+      }
+    }
 
     // 删除被合并的笔记
     if (context.deleteFilePath) {
-      const fileB = this.app.vault.getAbstractFileByPath(context.deleteFilePath);
-      if (fileB && fileB instanceof TFile) {
-        await this.app.vault.delete(fileB);
-      }
+      await this.noteRepository.deleteByPathIfExists(context.deleteFilePath);
     }
 
     // 向量索引同步
     if (context.deleteNodeId) {
       await this.vectorIndex.delete(context.deleteNodeId);
     }
-     const entry = this.vectorIndex.getEntry(context.nodeId);
-     if (entry) {
-       const updatedEntry = { ...entry, updated: formatCRTimestamp() };
-       await this.vectorIndex.upsert(updatedEntry);
-       await this.duplicateManager.detect(context.nodeId, entry.type, entry.embedding);
-     }
+
+    // 语义变更后必须重算 embedding 并触发去重（避免陈旧向量）
+    context.stage = "indexing";
+    context.updatedAt = formatCRTimestamp();
+    await this.refreshEmbeddingAndDuplicates(context, newContent);
 
     // 去重记录清理
     if (context.mergePairId) {
       await this.duplicateManager.completeMerge(context.mergePairId, context.nodeId);
     }
 
-    context.stage = "completed";
-    context.updatedAt = formatCRTimestamp();
-    this.publishEvent({
-      type: "pipeline_completed",
-      pipelineId: context.pipelineId,
-      stage: "completed",
-      context,
-      timestamp: context.updatedAt
-    });
-
+    await this.maybeStartAutoVerifyOrComplete(context);
     return ok(undefined);
   }
 
-  /**
-   * 处理增量改进完成
-   */
-  private async handleReasonIncrementalCompleted(
-    context: PipelineContext,
-    task: TaskRecord
-  ): Promise<void> {
-    const result = (task.result || task.payload?.result) as Record<string, unknown> | undefined;
-    const improved = result?.newContent || result?.improved_content;
-
-    if (!improved) {
-      context.stage = "failed";
-      context.error = { code: "E306", message: "增量改进结果缺失" };
-      this.publishEvent({
-        type: "pipeline_failed",
-        pipelineId: context.pipelineId,
-        stage: "failed",
-        context,
-        timestamp: formatCRTimestamp()
-      });
-      return;
-    }
-
-    context.newContent = improved as string;
-    context.generatedContent = result;
-    context.updatedAt = formatCRTimestamp();
-
-    const settings = this.getSettings();
-    if (settings.enableGrounding) {
-      context.stage = "verifying";
-      let verifyTaskId: string;
-      try {
-        verifyTaskId = this.taskQueue.enqueue({
-          nodeId: context.nodeId,
-          taskType: "verify",
-          state: "Pending",
-          attempt: 0,
-          maxAttempts: settings.maxRetryAttempts,
-          providerRef: this.getProviderIdForTask("verify"),
-          payload: {
-            pipelineId: context.pipelineId,
-            currentContent: improved,
-            conceptType: context.type
-          }
-        });
-      } catch (error) {
-        const converted = toErr(error, "E305", "Verify 任务创建失败");
-        context.stage = "failed";
-        context.error = { code: converted.error.code, message: converted.error.message };
-        this.publishEvent({
-          type: "pipeline_failed",
-          pipelineId: context.pipelineId,
-          stage: "failed",
-          context,
-          timestamp: formatCRTimestamp()
-        });
-        return;
-      }
-
-      this.taskToPipeline.set(verifyTaskId, context.pipelineId);
-      this.publishEvent({
-        type: "stage_changed",
-        pipelineId: context.pipelineId,
-        stage: "verifying",
-        context,
-        timestamp: context.updatedAt
-      });
-    } else {
-      this.transitionToAwaitingWriteConfirm(context);
-    }
+  private getNoteTitleFromPath(path: string): string {
+    const fileName = path.split("/").pop() || path;
+    return fileName.endsWith(".md") ? fileName.slice(0, -".md".length) : fileName;
   }
 
-  /**
-   * 处理合并完成
-   */
-  private async handleReasonMergeCompleted(
-    context: PipelineContext,
-    task: TaskRecord
-  ): Promise<void> {
-    const mergeResult = (task.result || task.payload?.result) as Record<string, unknown> | undefined;
-    if (!mergeResult) {
-      context.stage = "failed";
-      context.error = { code: "E306", message: "合并结果缺失" };
-      this.publishEvent({
-        type: "pipeline_failed",
-        pipelineId: context.pipelineId,
-        stage: "failed",
-        context,
-        timestamp: formatCRTimestamp()
-      });
-      return;
-    }
+  private async rewriteParentsAcrossVault(params: {
+    pipelineId: string;
+    fromTitle: string;
+    toTitle: string;
+    skipPaths: Array<string | undefined>;
+  }): Promise<Result<{ updatedCount: number }>> {
+    const fromLink = `[[${params.fromTitle}]]`;
+    const toLink = `[[${params.toTitle}]]`;
+    const skip = new Set(params.skipPaths.filter((p): p is string => typeof p === "string" && p.length > 0));
 
-    const mergedContent = this.buildMergedContent(
-      mergeResult,
-      context.previousContent || "",
-      context.type,
-      context.deleteNoteName || ""
-    );
+    const candidates: Array<{
+      file: TFile;
+      nodeId: string;
+      previousContent: string;
+      nextContent: string;
+    }> = [];
 
-    if (!mergedContent.ok) {
-      context.stage = "failed";
-      context.error = { code: mergedContent.error.code, message: mergedContent.error.message };
-      return;
-    }
-
-    context.newContent = mergedContent.value;
-    context.generatedContent = mergeResult;
-    context.updatedAt = formatCRTimestamp();
-
-    const settings = this.getSettings();
-    if (settings.enableGrounding) {
-      context.stage = "verifying";
-      let verifyTaskId: string;
-      try {
-        verifyTaskId = this.taskQueue.enqueue({
-          nodeId: context.nodeId,
-          taskType: "verify",
-          state: "Pending",
-          attempt: 0,
-          maxAttempts: settings.maxRetryAttempts,
-          providerRef: this.getProviderIdForTask("verify"),
-          payload: {
-            pipelineId: context.pipelineId,
-            currentContent: mergedContent.value,
-            conceptType: context.type
-          }
-        });
-      } catch (error) {
-        const converted = toErr(error, "E305", "Verify 任务创建失败");
-        context.stage = "failed";
-        context.error = { code: converted.error.code, message: converted.error.message };
-        this.publishEvent({
-          type: "pipeline_failed",
-          pipelineId: context.pipelineId,
-          stage: "failed",
-          context,
-          timestamp: formatCRTimestamp()
-        });
-        return;
+    const files = this.noteRepository.listMarkdownFiles();
+    for (const file of files) {
+      if (skip.has(file.path)) {
+        continue;
       }
 
-      this.taskToPipeline.set(verifyTaskId, context.pipelineId);
-      this.publishEvent({
-        type: "stage_changed",
-        pipelineId: context.pipelineId,
-        stage: "verifying",
-        context,
-        timestamp: context.updatedAt
+      let content: string;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        content = await this.noteRepository.read(file);
+      } catch (error) {
+        this.logger.warn("PipelineOrchestrator", "扫描 parents 引用时读取文件失败", {
+          path: file.path,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        continue;
+      }
+
+      const extracted = extractFrontmatter(content);
+      if (!extracted) {
+        continue;
+      }
+
+      const parents = extracted.frontmatter.parents ?? [];
+      if (!parents.includes(fromLink)) {
+        continue;
+      }
+
+      const nextParents: string[] = [];
+      const seen = new Set<string>();
+      for (const p of parents) {
+        const next = p === fromLink ? toLink : p;
+        if (!next) {
+          continue;
+        }
+        if (seen.has(next)) {
+          continue;
+        }
+        seen.add(next);
+        nextParents.push(next);
+      }
+
+      const unchanged =
+        nextParents.length === parents.length &&
+        nextParents.every((value, index) => value === parents[index]);
+      if (unchanged) {
+        continue;
+      }
+
+      const nextFrontmatter: CRFrontmatter = {
+        ...extracted.frontmatter,
+        parents: nextParents,
+        updated: formatCRTimestamp()
+      };
+      const nextContent = generateMarkdownContent(nextFrontmatter, extracted.body);
+
+      candidates.push({
+        file,
+        nodeId: extracted.frontmatter.cruid,
+        previousContent: content,
+        nextContent
       });
-    } else {
-      this.transitionToAwaitingWriteConfirm(context);
     }
+
+    if (candidates.length === 0) {
+      return ok({ updatedCount: 0 });
+    }
+
+    // 先为所有受影响的笔记创建快照，再执行批量写入（尽量降低“无快照变更”的风险）
+    for (const item of candidates) {
+      // eslint-disable-next-line no-await-in-loop
+      const snapshotResult = await this.undoManager.createSnapshot(
+        item.file.path,
+        item.previousContent,
+        `merge-parents-${params.pipelineId}`,
+        item.nodeId
+      );
+      if (!snapshotResult.ok) {
+        return err(
+          snapshotResult.error.code,
+          `更新 parents 引用前创建快照失败: ${item.file.path}`,
+          snapshotResult.error
+        );
+      }
+    }
+
+    let updatedCount = 0;
+    for (const item of candidates) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await this.noteRepository.writeAtomic(item.file.path, item.nextContent);
+        updatedCount += 1;
+      } catch (error) {
+        this.logger.error("PipelineOrchestrator", "更新 parents 引用失败", error as Error, {
+          path: item.file.path,
+          pipelineId: params.pipelineId
+        });
+        return err("E302_PERMISSION_DENIED", `更新 parents 引用失败: ${item.file.path}`, error);
+      }
+    }
+
+    this.logger.info("PipelineOrchestrator", "已完成 Merge 的 parents 引用重写", {
+      pipelineId: params.pipelineId,
+      from: fromLink,
+      to: toLink,
+      updatedCount
+    });
+
+    return ok({ updatedCount });
   }
 
   /**
@@ -879,7 +967,7 @@ export class PipelineOrchestrator {
     const keepPath = this.cruidCache?.getPath(keepId);
     const deletePath = this.cruidCache?.getPath(deleteId);
     if (!keepPath || !deletePath) {
-      return err("E306", "无法定位合并笔记文件（可能已被移动或删除）", {
+      return err("E301_FILE_NOT_FOUND", "无法定位合并笔记文件（可能已被移动或删除）", {
         keepNodeId: keepId,
         deleteNodeId: deleteId,
         keepPath: keepPath || null,
@@ -915,6 +1003,7 @@ export class PipelineOrchestrator {
     };
 
     this.pipelines.set(pipelineId, context);
+    this.schedulePersist();
 
     this.logger.info("PipelineOrchestrator", `启动合并管线: ${pipelineId}`, {
       keepNodeId,
@@ -941,12 +1030,12 @@ export class PipelineOrchestrator {
   ): Promise<void> {
     try {
       // 1. 读取两篇笔记内容
-      const keepFile = this.app.vault.getAbstractFileByPath(keepNote.path);
-      const deleteFile = this.app.vault.getAbstractFileByPath(deleteNote.path);
+      const keepFile = this.noteRepository.getFileByPath(keepNote.path);
+      const deleteFile = this.noteRepository.getFileByPath(deleteNote.path);
 
-      if (!keepFile || !(keepFile instanceof TFile)) {
+      if (!keepFile) {
         context.stage = "failed";
-        context.error = { code: "E306", message: `主笔记不存在: ${keepNote.path}` };
+        context.error = { code: "E301_FILE_NOT_FOUND", message: `主笔记不存在: ${keepNote.path}` };
         this.publishEvent({
           type: "pipeline_failed",
           pipelineId: context.pipelineId,
@@ -957,9 +1046,9 @@ export class PipelineOrchestrator {
         return;
       }
 
-      if (!deleteFile || !(deleteFile instanceof TFile)) {
+      if (!deleteFile) {
         context.stage = "failed";
-        context.error = { code: "E306", message: `被合并笔记不存在: ${deleteNote.path}` };
+        context.error = { code: "E301_FILE_NOT_FOUND", message: `被合并笔记不存在: ${deleteNote.path}` };
         this.publishEvent({
           type: "pipeline_failed",
           pipelineId: context.pipelineId,
@@ -970,8 +1059,8 @@ export class PipelineOrchestrator {
         return;
       }
 
-      const keepContent = await this.app.vault.read(keepFile);
-      const deleteContent = await this.app.vault.read(deleteFile);
+      const keepContent = await this.noteRepository.readByPath(keepNote.path);
+      const deleteContent = await this.noteRepository.readByPath(deleteNote.path);
 
       context.previousContent = keepContent;
       context.deleteContent = deleteContent;
@@ -1039,7 +1128,7 @@ export class PipelineOrchestrator {
         return;
       }
 
-      context.generatedContent = mergeResult.value;
+      context.generatedContent = mergeResult.value.content;
       context.newContent = mergeResult.value.finalContent;
 
       // 4. 进入等待确认阶段
@@ -1059,7 +1148,7 @@ export class PipelineOrchestrator {
         pipelineId: context.pipelineId
       });
       context.stage = "failed";
-      context.error = { code: "E305", message: String(error) };
+      context.error = { code: "E500_INTERNAL_ERROR", message: String(error) };
       this.publishEvent({
         type: "pipeline_failed",
         pipelineId: context.pipelineId,
@@ -1083,9 +1172,9 @@ export class PipelineOrchestrator {
     deleteContent: string,
     type: CRType,
     finalFileName: string
-  ): Promise<Result<{ mergeResult: Record<string, unknown>; finalContent: string }>> {
+  ): Promise<Result<{ content: Record<string, unknown>; finalContent: string }>> {
     if (!this.promptManager || !this.providerManager) {
-      return err("E306", "PromptManager 或 ProviderManager 未初始化");
+      return err("E310_INVALID_STATE", "PromptManager 或 ProviderManager 未初始化");
     }
 
     const settings = this.getSettings();
@@ -1138,26 +1227,66 @@ export class PipelineOrchestrator {
     });
 
     if (!chatResult.ok) {
-      return chatResult as Result<{ mergeResult: Record<string, unknown>; finalContent: string }>;
+      return chatResult as Result<{ content: Record<string, unknown>; finalContent: string }>;
     }
 
-    // 解析 LLM 输出
-    let mergeResult: Record<string, unknown>;
-    try {
-      // 尝试提取 JSON（处理可能的 markdown code fence）
-      let jsonStr = chatResult.value.content.trim();
-      const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-      if (jsonMatch) {
-        jsonStr = jsonMatch[1].trim();
-      }
-      mergeResult = JSON.parse(jsonStr);
-    } catch (parseError) {
-      this.logger.error("PipelineOrchestrator", "解析合并结果失败", parseError as Error, {
+    const mergeOutputSchema = {
+      type: "object",
+      properties: {
+        merged_name: { type: "object" },
+        merge_rationale: { type: "string" },
+        content: { type: "object" },
+        preserved_from_a: { type: "array" },
+        preserved_from_b: { type: "array" }
+      },
+      required: ["content"]
+    };
+
+    // JSON → 校验（外层）
+    const validationResult = await this.validator.validate(
+      chatResult.value.content,
+      mergeOutputSchema,
+      []
+    );
+
+    if (!validationResult.valid) {
+      this.logger.warn("PipelineOrchestrator", "合并结果校验失败", {
         pipelineId: context.pipelineId,
-        rawContent: chatResult.value.content.substring(0, 500)
+        errors: validationResult.errors
       });
-      return err("E306", "解析合并结果失败，LLM 输出格式不正确");
+      return err("E211_MODEL_SCHEMA_VIOLATION", "合并结果校验失败", { errors: validationResult.errors });
     }
+
+    const parsed = (validationResult.data || {}) as Record<string, unknown>;
+    const rawContent = parsed.content;
+
+    if (!rawContent || typeof rawContent !== "object" || Array.isArray(rawContent)) {
+      return err("E211_MODEL_SCHEMA_VIOLATION", "合并结果缺少有效的 content 对象");
+    }
+
+    // JSON → 校验（内容 Schema）
+    const schema = schemaRegistry.getSchema(type);
+    const rules = schemaRegistry.getValidationRules(type);
+    const contentValidation = await this.validator.validate(
+      JSON.stringify(rawContent),
+      schema,
+      rules,
+      { type }
+    );
+
+    if (!contentValidation.valid) {
+      this.logger.warn("PipelineOrchestrator", "合并内容不符合 Schema", {
+        pipelineId: context.pipelineId,
+        type,
+        errors: contentValidation.errors
+      });
+      return err("E211_MODEL_SCHEMA_VIOLATION", "合并内容不符合 Schema", { errors: contentValidation.errors });
+    }
+
+    const mergeResult = {
+      ...parsed,
+      content: (contentValidation.data || {}) as Record<string, unknown>
+    } satisfies Record<string, unknown>;
 
     // 构建最终内容
     const buildResult = this.buildMergedContent(
@@ -1168,12 +1297,12 @@ export class PipelineOrchestrator {
     );
 
     if (!buildResult.ok) {
-      return buildResult as Result<{ mergeResult: Record<string, unknown>; finalContent: string }>;
+      return buildResult as Result<{ content: Record<string, unknown>; finalContent: string }>;
     }
 
     return ok({
-      mergeResult,
-      finalContent: buildResult.value
+      content: (mergeResult.content || {}) as Record<string, unknown>,
+      finalContent: buildResult.value,
     });
   }
 
@@ -1217,19 +1346,18 @@ ${deleteContent}
   }
 
   /**
-   * 启动增量改进管线
-   * 
-   * 遵循 SSOT 6.4：Incremental Edit 流程
-   * - 用户从 Workbench 选择目标笔记与改写指令
+   * 启动修订（Amend）管线
+   *
+   * - 用户从 Workbench 选择目标笔记与修订指令
    * - 创建快照（目标笔记）
-   * - 生成候选改写（正文 + frontmatter）
+   * - 生成候选修订（正文 + frontmatter）
    * - 进入确认阶段：DiffView 确认后落盘
-   * 
+   *
    * @param filePath 目标笔记路径
-   * @param instruction 改写指令
+   * @param instruction 修订指令
    * @returns 管线 ID
    */
-  startIncrementalPipeline(
+  startAmendPipeline(
     filePath: string,
     instruction: string
   ): Result<string> {
@@ -1240,9 +1368,9 @@ ${deleteContent}
     }
 
     // 获取文件
-    const file = this.app.vault.getAbstractFileByPath(filePath);
-    if (!file || !(file instanceof TFile)) {
-      return err("E306", `文件不存在: ${filePath}`);
+    const file = this.noteRepository.getFileByPath(filePath);
+    if (!file) {
+      return err("E301_FILE_NOT_FOUND", `文件不存在: ${filePath}`);
     }
 
     const pipelineId = generateUUID();
@@ -1252,7 +1380,7 @@ ${deleteContent}
     const nodeId = generateUUID(); // 临时 ID，后续从 frontmatter 读取
 
     const context: PipelineContext = {
-      kind: "incremental",
+      kind: "amend",
       pipelineId,
       nodeId,
       type: "Entity", // 临时类型，后续从 frontmatter 读取
@@ -1264,40 +1392,171 @@ ${deleteContent}
     };
 
     this.pipelines.set(pipelineId, context);
+    this.schedulePersist();
 
-    this.logger.info("PipelineOrchestrator", `启动增量改进管线: ${pipelineId}`, {
+    this.logger.info("PipelineOrchestrator", `启动修订管线: ${pipelineId}`, {
       filePath,
       instruction: instruction.substring(0, 100)
     });
 
-    // 异步执行增量改进流程
-    void this.executeIncrementalPipeline(context, file, instruction);
+    // 异步执行修订流程
+    void this.executeAmendPipeline(context, file, instruction);
 
     return ok(pipelineId);
   }
 
   /**
-   * 执行增量改进管线
+   * 启动 Verify 管线（手动触发）
+   *
+   * 遵循 SSOT 6.10：
+   * - 读取当前笔记（frontmatter + 正文）
+   * - 执行 Verify（入队）
+   * - 将报告追加到笔记末尾（仅追加，不修改原文）
    */
-  private async executeIncrementalPipeline(
+  startVerifyPipeline(filePath: string): Result<string> {
+    // 预校验模板与 Provider（类型在读取 frontmatter 后补全）
+    const prereqResult = this.validatePrerequisites("verify");
+    if (!prereqResult.ok) {
+      return prereqResult as Result<string>;
+    }
+
+    const file = this.noteRepository.getFileByPath(filePath);
+    if (!file) {
+      return err("E301_FILE_NOT_FOUND", `文件不存在: ${filePath}`);
+    }
+
+    const pipelineId = generateUUID();
+    const now = formatCRTimestamp();
+
+    const context: PipelineContext = {
+      kind: "verify",
+      pipelineId,
+      nodeId: generateUUID(), // 临时 ID，后续从 frontmatter 读取
+      type: "Entity", // 临时类型，后续从 frontmatter 读取
+      stage: "idle",
+      userInput: file.basename,
+      filePath,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    this.pipelines.set(pipelineId, context);
+    this.schedulePersist();
+
+    this.logger.info("PipelineOrchestrator", `启动 Verify 管线: ${pipelineId}`, { filePath });
+
+    void this.executeVerifyPipeline(context, file);
+
+    return ok(pipelineId);
+  }
+
+  private async executeVerifyPipeline(context: PipelineContext, file: TFile): Promise<void> {
+    try {
+      const content = await this.noteRepository.readByPath(file.path);
+
+      const extracted = extractFrontmatter(content);
+      if (!extracted) {
+        context.stage = "failed";
+        context.error = { code: "E500_INTERNAL_ERROR", message: "无法解析目标笔记的 frontmatter" };
+        this.publishEvent({
+          type: "pipeline_failed",
+          pipelineId: context.pipelineId,
+          stage: "failed",
+          context,
+          timestamp: formatCRTimestamp()
+        });
+        return;
+      }
+
+      context.nodeId = extracted.frontmatter.cruid;
+      context.type = extracted.frontmatter.type;
+
+      // Verify 会追加报告到笔记末尾：先创建快照，保证可撤销
+      const snapshotResult = await this.undoManager.createSnapshot(
+        context.filePath!,
+        content,
+        context.pipelineId,
+        context.nodeId
+      );
+      if (snapshotResult.ok) {
+        context.snapshotId = snapshotResult.value;
+      }
+
+      const prereqResult = this.validatePrerequisites("verify", context.type);
+      if (!prereqResult.ok) {
+        context.stage = "failed";
+        context.error = { code: prereqResult.error.code, message: prereqResult.error.message };
+        this.publishEvent({
+          type: "pipeline_failed",
+          pipelineId: context.pipelineId,
+          stage: "failed",
+          context,
+          timestamp: formatCRTimestamp()
+        });
+        return;
+      }
+
+      const startResult = await this.startVerifyTask(context);
+      if (!startResult.ok) {
+        context.stage = "failed";
+        context.error = { code: startResult.error.code, message: startResult.error.message };
+        this.publishEvent({
+          type: "pipeline_failed",
+          pipelineId: context.pipelineId,
+          stage: "failed",
+          context,
+          timestamp: formatCRTimestamp()
+        });
+        return;
+      }
+
+      this.schedulePersist();
+    } catch (error) {
+      this.logger.error("PipelineOrchestrator", "Verify 管线执行失败", error as Error, {
+        pipelineId: context.pipelineId
+      });
+      context.stage = "failed";
+      context.error = { code: "E500_INTERNAL_ERROR", message: String(error) };
+      this.publishEvent({
+        type: "pipeline_failed",
+        pipelineId: context.pipelineId,
+        stage: "failed",
+        context,
+        timestamp: formatCRTimestamp()
+      });
+    }
+  }
+
+  /**
+   * 执行修订（Amend）管线
+   */
+  private async executeAmendPipeline(
     context: PipelineContext,
     file: TFile,
     instruction: string
   ): Promise<void> {
     try {
       // 1. 读取笔记内容
-      const content = await this.app.vault.read(file);
+      const content = await this.noteRepository.readByPath(file.path);
       context.previousContent = content;
 
       // 2. 解析 frontmatter 获取 nodeId 和 type
-      const frontmatter = this.parseSimpleFrontmatter(content);
-      const extractedUid = (frontmatter.cruid ?? frontmatter.crUid) as string | undefined;
-      if (extractedUid) {
-        context.nodeId = extractedUid;
+      const extracted = extractFrontmatter(content);
+      if (!extracted) {
+        context.stage = "failed";
+        context.error = { code: "E500_INTERNAL_ERROR", message: "无法解析目标笔记的 frontmatter" };
+        this.publishEvent({
+          type: "pipeline_failed",
+          pipelineId: context.pipelineId,
+          stage: "failed",
+          context,
+          timestamp: formatCRTimestamp()
+        });
+        return;
       }
-      if (frontmatter.type) {
-        context.type = frontmatter.type as CRType;
-      }
+
+      context.nodeId = extracted.frontmatter.cruid;
+      context.type = extracted.frontmatter.type;
 
       // 3. 创建快照（SSOT 要求）
       const snapshotResult = await this.undoManager.createSnapshot(
@@ -1310,7 +1569,7 @@ ${deleteContent}
         context.snapshotId = snapshotResult.value;
       }
 
-      this.logger.info("PipelineOrchestrator", "增量改进快照已创建", {
+      this.logger.info("PipelineOrchestrator", "修订快照已创建", {
         pipelineId: context.pipelineId,
         snapshotId: context.snapshotId
       });
@@ -1327,7 +1586,7 @@ ${deleteContent}
         timestamp: context.updatedAt
       });
 
-      const improveResult = await this.generateIncrementalContent(
+      const improveResult = await this.generateAmendContent(
         context,
         content,
         instruction
@@ -1347,7 +1606,25 @@ ${deleteContent}
       }
 
       context.generatedContent = improveResult.value;
-      context.newContent = improveResult.value.finalContent;
+
+      // 生成预览内容：JSON → 渲染 → 写入（写入前仅预览）
+      const updatedFrontmatter: CRFrontmatter = {
+        ...extracted.frontmatter,
+        name: extracted.frontmatter.name?.trim() || file.basename,
+        parents: extracted.frontmatter.parents ?? [],
+        updated: formatCRTimestamp()
+      };
+      const nextDefinition = typeof improveResult.value.definition === "string"
+        ? improveResult.value.definition.trim()
+        : undefined;
+      if (nextDefinition) {
+        updatedFrontmatter.definition = nextDefinition;
+      }
+
+      context.newContent = generateMarkdownContent(
+        updatedFrontmatter,
+        this.renderContentToMarkdown(context, updatedFrontmatter.name)
+      );
 
       // 5. 进入等待确认阶段
       context.stage = "review_changes";
@@ -1362,11 +1639,11 @@ ${deleteContent}
       });
 
     } catch (error) {
-      this.logger.error("PipelineOrchestrator", "增量改进管线执行失败", error as Error, {
+      this.logger.error("PipelineOrchestrator", "修订管线执行失败", error as Error, {
         pipelineId: context.pipelineId
       });
       context.stage = "failed";
-      context.error = { code: "E305", message: String(error) };
+      context.error = { code: "E500_INTERNAL_ERROR", message: String(error) };
       this.publishEvent({
         type: "pipeline_failed",
         pipelineId: context.pipelineId,
@@ -1378,22 +1655,22 @@ ${deleteContent}
   }
 
   /**
-   * 生成增量改进内容
+   * 生成修订（Amend）内容
    */
-  private async generateIncrementalContent(
+  private async generateAmendContent(
     context: PipelineContext,
     currentContent: string,
     instruction: string
-  ): Promise<Result<{ improveResult: Record<string, unknown>; finalContent: string }>> {
+  ): Promise<Result<Record<string, unknown>>> {
     if (!this.providerManager) {
-      return err("E306", "ProviderManager 未初始化");
+      return err("E310_INVALID_STATE", "ProviderManager 未初始化");
     }
 
     const settings = this.getSettings();
     const language = settings.language === "en" ? "English" : "Chinese";
 
-    // 构建增量改进 prompt（优先使用操作模板，失败则回退到简化 prompt）
-    let promptContent = this.buildIncrementalPrompt(
+    // 构建修订 prompt（优先使用操作模板，失败则回退到简化 prompt）
+    let promptContent = this.buildAmendPrompt(
       currentContent,
       instruction,
       context.type,
@@ -1409,9 +1686,9 @@ ${deleteContent}
       };
 
       try {
-        promptContent = this.promptManager.buildOperation("incremental", slots);
+        promptContent = this.promptManager.buildOperation("amend", slots);
       } catch (error) {
-        this.logger.warn("PipelineOrchestrator", "incremental 模板不可用，使用简化 prompt", {
+        this.logger.warn("PipelineOrchestrator", "amend 模板不可用，使用简化 prompt", {
           pipelineId: context.pipelineId,
           error
         });
@@ -1433,47 +1710,68 @@ ${deleteContent}
     });
 
     if (!chatResult.ok) {
-      return chatResult as Result<{ improveResult: Record<string, unknown>; finalContent: string }>;
+      return chatResult as Result<Record<string, unknown>>;
     }
 
-    // 解析 LLM 输出
-    let improveResult: Record<string, unknown>;
-    try {
-      let jsonStr = chatResult.value.content.trim();
-      const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-      if (jsonMatch) {
-        jsonStr = jsonMatch[1].trim();
-      }
-      improveResult = JSON.parse(jsonStr);
-    } catch (parseError) {
-      // 如果无法解析为 JSON，直接使用原始内容作为改进后的内容
-      this.logger.warn("PipelineOrchestrator", "无法解析增量改进结果为 JSON，使用原始输出", {
-        pipelineId: context.pipelineId
+    const amendOutputSchema = {
+      type: "object",
+      properties: {
+        content: { type: "object" },
+        changes_summary: { type: "string" },
+        preserved_sections: { type: "array" },
+        enhanced_sections: { type: "array" }
+      },
+      required: ["content"]
+    };
+
+    // JSON → 校验（外层）
+    const validationResult = await this.validator.validate(
+      chatResult.value.content,
+      amendOutputSchema,
+      []
+    );
+
+    if (!validationResult.valid) {
+      this.logger.warn("PipelineOrchestrator", "修订结果校验失败", {
+        pipelineId: context.pipelineId,
+        errors: validationResult.errors
       });
-      
-      // 尝试提取 markdown 内容
-      const content = chatResult.value.content.trim();
-      return ok({
-        improveResult: { improved_content: content },
-        finalContent: content
-      });
+      return err("E211_MODEL_SCHEMA_VIOLATION", "修订结果校验失败", { errors: validationResult.errors });
     }
 
-    // 构建最终内容
-    const finalContent = (improveResult.improved_content as string) || 
-                         (improveResult.newContent as string) ||
-                         chatResult.value.content;
+    const parsed = (validationResult.data || {}) as Record<string, unknown>;
+    const rawContent = parsed.content;
 
-    return ok({
-      improveResult,
-      finalContent
-    });
+    if (!rawContent || typeof rawContent !== "object" || Array.isArray(rawContent)) {
+      return err("E211_MODEL_SCHEMA_VIOLATION", "修订结果缺少有效的 content 对象");
+    }
+
+    // JSON → 校验（内容 Schema）
+    const schema = schemaRegistry.getSchema(context.type);
+    const rules = schemaRegistry.getValidationRules(context.type);
+    const contentValidation = await this.validator.validate(
+      JSON.stringify(rawContent),
+      schema,
+      rules,
+      { type: context.type }
+    );
+
+    if (!contentValidation.valid) {
+      this.logger.warn("PipelineOrchestrator", "修订内容不符合 Schema", {
+        pipelineId: context.pipelineId,
+        type: context.type,
+        errors: contentValidation.errors
+      });
+      return err("E211_MODEL_SCHEMA_VIOLATION", "修订内容不符合 Schema", { errors: contentValidation.errors });
+    }
+
+    return ok((contentValidation.data || {}) as Record<string, unknown>);
   }
 
   /**
-   * 构建增量改进 prompt
+   * 构建修订（Amend）prompt
    */
-  private buildIncrementalPrompt(
+  private buildAmendPrompt(
     currentContent: string,
     instruction: string,
     type: CRType,
@@ -1492,48 +1790,16 @@ ${currentContent}
 1. 保留原笔记中所有有效内容
 2. 根据用户指令进行针对性改进
 3. 使用 ${language} 作为主要语言
-4. 保持原有的 frontmatter 格式和字段
-5. 改进后的内容必须是原内容的超集
+4. 改进后的内容必须是原内容的语义超集（保留有效信息）
+5. 输出为结构化 JSON（由系统渲染 Markdown），不要输出 Markdown
 
 **输出格式**：纯 JSON，不使用 markdown 代码块
 {
-  "improved_content": "完整的改进后笔记内容（包含 frontmatter）",
+  "content": { "... 按照 ${type} 类型的结构组织内容 ..." },
   "changes_summary": "改进内容摘要",
   "preserved_sections": ["保留的章节列表"],
   "enhanced_sections": ["增强的章节列表"]
 }`;
-  }
-
-  /**
-   * 简单解析 frontmatter（用于增量改进）
-   */
-  private parseSimpleFrontmatter(content: string): Record<string, unknown> {
-    const match = content.match(/^---\n([\s\S]*?)\n---/);
-    if (!match) {
-      return {};
-    }
-
-    const frontmatterStr = match[1];
-    const result: Record<string, unknown> = {};
-
-    // 简单解析 YAML
-    const lines = frontmatterStr.split("\n");
-    for (const line of lines) {
-      const colonIndex = line.indexOf(":");
-      if (colonIndex > 0) {
-        const key = line.substring(0, colonIndex).trim();
-        let value: unknown = line.substring(colonIndex + 1).trim();
-        
-        // 处理引号
-        if (typeof value === "string" && value.startsWith('"') && value.endsWith('"')) {
-          value = value.slice(1, -1);
-        }
-        
-        result[key] = value;
-      }
-    }
-
-    return result;
   }
 
   /**
@@ -1546,11 +1812,11 @@ ${currentContent}
   async confirmCreate(pipelineId: string): Promise<Result<void>> {
     const context = this.pipelines.get(pipelineId);
     if (!context) {
-      return err("E307", `管线不存在: ${pipelineId}`);
+      return err("E311_NOT_FOUND", `管线不存在: ${pipelineId}`);
     }
 
     if (context.stage !== "review_draft") {
-      return err("E306", `管线状态不正确: ${context.stage}，期望: review_draft`);
+      return err("E310_INVALID_STATE", `管线状态不正确: ${context.stage}，期望: review_draft`);
     }
 
     try {
@@ -1572,11 +1838,9 @@ ${currentContent}
       const settings = this.getSettings();
       let taskId: string;
       try {
-        taskId = this.taskQueue.enqueue({
+        taskId = this.taskQueue.enqueue(TaskFactory.create({
           nodeId: context.nodeId,
           taskType: "write",
-          state: "Pending",
-          attempt: 0,
           maxAttempts: settings.maxRetryAttempts,
           providerRef: this.getProviderIdForTask("write"),
           payload: {
@@ -1591,10 +1855,10 @@ ${currentContent}
             userInput: context.userInput,
             sources: context.sources
           }
-        });
+        }));
       } catch (error) {
         context.stage = "failed";
-        const converted = toErr(error, "E305", "创建任务失败");
+        const converted = toErr(error, "E500_INTERNAL_ERROR", "创建任务失败");
         context.error = { code: converted.error.code, message: converted.error.message };
         return converted as Result<void>;
       }
@@ -1613,12 +1877,12 @@ ${currentContent}
       return ok(undefined);
     } catch (error) {
       this.logger.error("PipelineOrchestrator", "确认创建失败", error as Error);
-      return err("E305", "确认创建失败", error);
+      return err("E500_INTERNAL_ERROR", "确认创建失败", error);
     }
   }
 
   /**
-   * 解析创建目标路径与名称（支持 Deepen 预设路径）
+   * 解析创建目标路径与名称（支持 Expand 预设路径）
    */
   private resolveCreateTarget(
     context: PipelineContext,
@@ -1653,7 +1917,7 @@ ${currentContent}
   private async createStubFile(context: PipelineContext): Promise<Result<string>> {
     try {
       if (!context.standardizedData) {
-        return err("E306", "缺少标准化数据，无法创建 Stub");
+        return err("E310_INVALID_STATE", "缺少标准化数据，无法创建 Stub");
       }
 
       const settings = this.getSettings();
@@ -1667,14 +1931,14 @@ ${currentContent}
         settings.namingTemplate
       );
 
-      // 生成目标路径（Deepen 支持传入覆盖路径）
+      // 生成目标路径（Expand 支持传入覆盖路径）
       const { targetPath, targetName } = this.resolveCreateTarget(context, signature.standardName);
       context.filePath = targetPath;
 
       // 确保目录存在
-      await this.ensureVaultDir(targetPath);
+      await this.noteRepository.ensureDirForPath(targetPath);
 
-      // 创建流程不保存快照（仅增量改进和合并时保存）
+      // 创建流程不保存快照（仅修订和合并时保存）
 
       // 生成仅含 frontmatter 的 Stub 内容
       const frontmatter = generateFrontmatter({
@@ -1685,13 +1949,11 @@ ${currentContent}
         status: "Stub", // Stub 状态
         aliases: context.enrichedData?.aliases,
         tags: context.enrichedData?.tags,
-        parentUid: context.parentUid,
-        parentType: context.parentType
       });
       const stubContent = generateMarkdownContent(frontmatter, ""); // 无正文
 
       // 原子写入 Stub 文件
-      await this.atomicWriteVault(targetPath, stubContent);
+      await this.noteRepository.writeAtomic(targetPath, stubContent);
 
       this.logger.info("PipelineOrchestrator", `Stub 文件已创建: ${targetPath}`, {
         pipelineId: context.pipelineId,
@@ -1702,7 +1964,7 @@ ${currentContent}
       return ok(targetPath);
     } catch (error) {
       this.logger.error("PipelineOrchestrator", "创建 Stub 文件失败", error as Error);
-      return err("E300", "创建 Stub 文件失败", error);
+      return err("E302_PERMISSION_DENIED", "创建 Stub 文件失败", error);
     }
   }
 
@@ -1717,11 +1979,11 @@ ${currentContent}
     const edits = updates || {};
     const context = this.pipelines.get(pipelineId);
     if (!context) {
-      return err("E307", `管线不存在: ${pipelineId}`);
+      return err("E311_NOT_FOUND", `管线不存在: ${pipelineId}`);
     }
 
     if (!context.standardizedData) {
-      return err("E306", "标准化结果尚未生成，无法更新");
+      return err("E310_INVALID_STATE", "标准化结果尚未生成，无法更新");
     }
 
     // 合并名称、别名、类型
@@ -1773,11 +2035,11 @@ ${currentContent}
   async confirmWrite(pipelineId: string): Promise<Result<void>> {
     const context = this.pipelines.get(pipelineId);
     if (!context) {
-      return err("E307", `管线不存在: ${pipelineId}`);
+      return err("E311_NOT_FOUND", `管线不存在: ${pipelineId}`);
     }
 
     if (context.stage !== "review_changes") {
-      return err("E306", `管线状态不正确: ${context.stage}，期望: review_changes`);
+      return err("E310_INVALID_STATE", `管线状态不正确: ${context.stage}，期望: review_changes`);
     }
 
     try {
@@ -1789,19 +2051,19 @@ ${currentContent}
       if (context.kind === "create") {
         return await this.confirmCreateWrite(context);
       }
-      if (context.kind === "incremental") {
-        return await this.confirmIncrementalWrite(context);
+      if (context.kind === "amend") {
+        return await this.confirmAmendWrite(context);
       }
       if (context.kind === "merge") {
         return await this.confirmMergeWrite(context);
       }
 
-      return err("E306", "未知的管线类型");
+      return err("E310_INVALID_STATE", "未知的管线类型");
     } catch (error) {
       this.logger.error("PipelineOrchestrator", "确认写入失败", error as Error);
       context.stage = "failed";
-      context.error = { code: "E305", message: String(error) };
-      return err("E305", "确认写入失败", error);
+      context.error = { code: "E500_INTERNAL_ERROR", message: String(error) };
+      return err("E500_INTERNAL_ERROR", "确认写入失败", error);
     }
   }
 
@@ -1815,11 +2077,11 @@ ${currentContent}
   }>> {
     const context = this.pipelines.get(pipelineId);
     if (!context) {
-      return err("E307", `管线不存在: ${pipelineId}`);
+      return err("E311_NOT_FOUND", `管线不存在: ${pipelineId}`);
     }
 
     if (!["review_changes", "saving", "checking_duplicates"].includes(context.stage)) {
-      return err("E306", `当前阶段不支持预览: ${context.stage}`);
+      return err("E310_INVALID_STATE", `当前阶段不支持预览: ${context.stage}`);
     }
 
     return this.composeWriteContent(context);
@@ -1831,7 +2093,7 @@ ${currentContent}
   cancelPipeline(pipelineId: string): Result<void> {
     const context = this.pipelines.get(pipelineId);
     if (!context) {
-      return err("E307", `管线不存在: ${pipelineId}`);
+      return err("E311_NOT_FOUND", `管线不存在: ${pipelineId}`);
     }
 
     // 取消所有关联的任务
@@ -1851,7 +2113,7 @@ ${currentContent}
 
     // 更新状态
     context.stage = "failed";
-    context.error = { code: "E306", message: "用户取消" };
+    context.error = { code: "E310_INVALID_STATE", message: "用户取消" };
     context.updatedAt = formatCRTimestamp();
 
     this.logger.info("PipelineOrchestrator", `管线已取消: ${pipelineId}`);
@@ -1965,37 +2227,57 @@ ${currentContent}
   /**
    * 处理 Verify 任务完成
    * 
-   * Verify 完成后进入等待写入确认阶段（需要用户确认）
-   * 如果 Verify 发现严重问题，记录到上下文中供用户参考
+   * 遵循 SSOT 6.10：
+   * - 将 Verify 结果写入 context.verificationResult 供 UI 展示
+   * - 将报告追加到笔记末尾（仅追加，不修改原文）
+   * - 追加成功后结束管线
    */
   private async handleVerifyCompleted(
     context: PipelineContext,
     task: TaskRecord
   ): Promise<void> {
     const result = (task.result || task.payload?.result) as Record<string, unknown> | undefined;
-    
-    if (result) {
-      context.groundingResult = result;
-      // 记录 Verify 结果到上下文（供 UI 展示）
-      // 使用 generatedContent 的扩展字段存储 grounding 结果
-      if (context.generatedContent && typeof context.generatedContent === "object") {
-        (context.generatedContent as Record<string, unknown>)._groundingResult = {
-          overall_assessment: result.overall_assessment,
-          confidence_score: result.confidence_score,
-          issues: result.issues,
-          recommendations: result.recommendations,
-          requires_human_review: result.requires_human_review
-        };
-      }
 
-      this.logger.info("PipelineOrchestrator", `Verify 完成: ${context.pipelineId}`, {
-        overall_assessment: result.overall_assessment,
-        issueCount: Array.isArray(result.issues) ? result.issues.length : 0
+    if (!result) {
+      context.stage = "failed";
+      context.error = { code: "E310_INVALID_STATE", message: "Verify 结果缺失" };
+      context.updatedAt = formatCRTimestamp();
+      this.publishEvent({
+        type: "pipeline_failed",
+        pipelineId: context.pipelineId,
+        stage: "failed",
+        context,
+        timestamp: context.updatedAt
       });
+      return;
     }
 
-    // Verify 完成后进入等待写入确认阶段（需要用户确认）
-    this.transitionToAwaitingWriteConfirm(context);
+    context.verificationResult = result;
+
+    this.logger.info("PipelineOrchestrator", `Verify 完成: ${context.pipelineId}`, {
+      overall_assessment: result.overall_assessment,
+      issueCount: Array.isArray(result.issues) ? result.issues.length : 0
+    });
+
+    const filePath = context.filePath;
+    if (filePath) {
+      const appendResult = await this.appendVerificationReportToNote(filePath, result, task.id, context.nodeId);
+      if (!appendResult.ok) {
+        context.stage = "failed";
+        context.error = { code: appendResult.error.code, message: appendResult.error.message };
+        context.updatedAt = formatCRTimestamp();
+        this.publishEvent({
+          type: "pipeline_failed",
+          pipelineId: context.pipelineId,
+          stage: "failed",
+          context,
+          timestamp: context.updatedAt
+        });
+        return;
+      }
+    }
+
+    this.completePipeline(context);
   }
 
   /**
@@ -2008,7 +2290,7 @@ ${currentContent}
     const result = (task.result || task.payload?.result) as PipelineContext["standardizedData"];
     if (!result) {
       context.stage = "failed";
-      context.error = { code: "E306", message: "标准化结果缺失" };
+      context.error = { code: "E310_INVALID_STATE", message: "标准化结果缺失" };
       this.publishEvent({
         type: "pipeline_failed",
         pipelineId: context.pipelineId,
@@ -2038,11 +2320,9 @@ ${currentContent}
     const settings = this.getSettings();
     let tagTaskId: string;
     try {
-      tagTaskId = this.taskQueue.enqueue({
+      tagTaskId = this.taskQueue.enqueue(TaskFactory.create({
         nodeId: context.nodeId,
         taskType: "tag",
-        state: "Pending",
-        attempt: 0,
         maxAttempts: settings.maxRetryAttempts,
         providerRef: this.getProviderIdForTask("tag"),
         payload: {
@@ -2051,9 +2331,9 @@ ${currentContent}
           conceptType: context.type,
           userInput: context.userInput
         }
-      });
+      }));
     } catch (error) {
-      const converted = toErr(error, "E305", "创建 tag 任务失败");
+      const converted = toErr(error, "E500_INTERNAL_ERROR", "创建 tag 任务失败");
       context.stage = "failed";
       context.error = { code: converted.error.code, message: converted.error.message };
       this.publishEvent({
@@ -2090,7 +2370,7 @@ ${currentContent}
     const result = (task.result || task.payload?.result) as PipelineContext["enrichedData"];
     if (!result) {
       context.stage = "failed";
-      context.error = { code: "E306", message: "丰富结果缺失" };
+      context.error = { code: "E310_INVALID_STATE", message: "丰富结果缺失" };
       this.publishEvent({
         type: "pipeline_failed",
         pipelineId: context.pipelineId,
@@ -2145,7 +2425,7 @@ ${currentContent}
       context.embedding = result.embedding as number[];
     } else {
       context.stage = "failed";
-      context.error = { code: "E306", message: "嵌入结果缺失" };
+      context.error = { code: "E310_INVALID_STATE", message: "嵌入结果缺失" };
       this.publishEvent({
         type: "pipeline_failed",
         pipelineId: context.pipelineId,
@@ -2197,7 +2477,7 @@ ${currentContent}
 
     // 生成文件路径（如果 Stub 阶段未生成）
     if (!context.filePath && context.standardizedData) {
-      const fileName = this.sanitizeFileName(context.standardizedData.standardNames[context.type].chinese);
+      const fileName = sanitizeFileName(context.standardizedData.standardNames[context.type].chinese);
       context.filePath = `${fileName}.md`;
     }
 
@@ -2220,42 +2500,53 @@ ${currentContent}
   /**
    * 启动 Verify 任务
    * 
-   * 遵循 A-FUNC-05：可选 verify 阶段，在 write 与写入之间
+   * 遵循 SSOT 6.10：写入落盘后执行 Verify，并将报告追加到笔记末尾
    */
-  private async startVerifyTask(context: PipelineContext): Promise<void> {
-    context.stage = "verifying"; // Verify 执行中
+  private async startVerifyTask(context: PipelineContext): Promise<Result<void>> {
+    const filePath = context.filePath;
+    if (!filePath) {
+      return err("E310_INVALID_STATE", "缺少文件路径，无法执行 Verify");
+    }
+
+    const currentContent = await this.noteRepository.readByPathIfExists(filePath);
+    if (currentContent === null) {
+      return err("E301_FILE_NOT_FOUND", `文件不存在: ${filePath}`, { filePath });
+    }
+
+    context.stage = "verifying";
     context.updatedAt = formatCRTimestamp();
 
-    this.logger.info("PipelineOrchestrator", `启动 Verify 任务: ${context.pipelineId}`);
+    this.publishEvent({
+      type: "stage_changed",
+      pipelineId: context.pipelineId,
+      stage: "verifying",
+      context,
+      timestamp: context.updatedAt
+    });
 
-    // 将生成的内容转换为字符串用于验证
-    const contentToVerify = typeof context.generatedContent === "string"
-      ? context.generatedContent
-      : JSON.stringify(context.generatedContent, null, 2);
+    this.logger.info("PipelineOrchestrator", `启动 Verify 任务: ${context.pipelineId}`, {
+      filePath
+    });
 
     const settings = this.getSettings();
     try {
-      const taskId = this.taskQueue.enqueue({
+      const taskId = this.taskQueue.enqueue(TaskFactory.create({
         nodeId: context.nodeId,
         taskType: "verify",
-        state: "Pending",
-        attempt: 0,
         maxAttempts: settings.maxRetryAttempts,
         providerRef: this.getProviderIdForTask("verify"),
         payload: {
           pipelineId: context.pipelineId,
-          currentContent: contentToVerify,
+          filePath,
+          currentContent,
           conceptType: context.type,
           standardizedData: context.standardizedData
         }
-      });
+      }));
       this.taskToPipeline.set(taskId, context.pipelineId);
+      return ok(undefined);
     } catch (error) {
-      const converted = toErr(error, "E305", "Verify 任务创建失败");
-      this.logger.warn("PipelineOrchestrator", `Verify 任务创建失败，跳过: ${context.pipelineId}`, {
-        error: converted.error
-      });
-      this.transitionToAwaitingWriteConfirm(context);
+      return toErr(error, "E500_INTERNAL_ERROR", "Verify 任务创建失败");
     }
   }
 
@@ -2305,6 +2596,105 @@ ${currentContent}
     }
   }
 
+  private completePipeline(context: PipelineContext): void {
+    context.stage = "completed";
+    context.updatedAt = formatCRTimestamp();
+    this.publishEvent({
+      type: "pipeline_completed",
+      pipelineId: context.pipelineId,
+      stage: "completed",
+      context,
+      timestamp: context.updatedAt
+    });
+  }
+
+  private async maybeStartAutoVerifyOrComplete(context: PipelineContext): Promise<void> {
+    const settings = this.getSettings();
+    if (!settings.enableAutoVerify) {
+      this.completePipeline(context);
+      return;
+    }
+
+    const prereqResult = this.validatePrerequisites("verify", context.type);
+    if (!prereqResult.ok) {
+      this.logger.warn("PipelineOrchestrator", "Verify 前置校验失败，跳过自动校验并结束管线", {
+        pipelineId: context.pipelineId,
+        error: prereqResult.error,
+      });
+      this.completePipeline(context);
+      return;
+    }
+
+    const startResult = await this.startVerifyTask(context);
+    if (!startResult.ok) {
+      this.logger.warn("PipelineOrchestrator", "启动 Verify 失败，跳过自动校验并结束管线", {
+        pipelineId: context.pipelineId,
+        error: startResult.error,
+      });
+      this.completePipeline(context);
+    }
+  }
+
+  private buildVerificationReportMarkdown(result: Record<string, unknown>): string {
+    const now = formatCRTimestamp();
+    const overallAssessment = typeof result.overall_assessment === "string" ? result.overall_assessment : "";
+    const confidenceScore = typeof result.confidence_score === "number" ? result.confidence_score : undefined;
+    const requiresHumanReview = typeof result.requires_human_review === "boolean" ? result.requires_human_review : undefined;
+
+    const lines: string[] = [];
+    lines.push("## Verification Report");
+    lines.push("");
+    lines.push(`- Generated at: ${now}`);
+    if (overallAssessment) {
+      lines.push(`- Overall assessment: ${overallAssessment}`);
+    }
+    if (confidenceScore !== undefined) {
+      lines.push(`- Confidence: ${confidenceScore}`);
+    }
+    if (requiresHumanReview !== undefined) {
+      lines.push(`- Requires human review: ${requiresHumanReview}`);
+    }
+    lines.push("");
+    lines.push("```json");
+    lines.push(JSON.stringify(result, null, 2));
+    lines.push("```");
+
+    return lines.join("\n");
+  }
+
+  private async appendVerificationReportToNote(
+    filePath: string,
+    result: Record<string, unknown>,
+    snapshotTaskId: string,
+    nodeId?: string
+  ): Promise<Result<void>> {
+    try {
+      const existing = await this.noteRepository.readByPathIfExists(filePath);
+      if (existing === null) {
+        return err("E301_FILE_NOT_FOUND", `文件不存在: ${filePath}`, { filePath });
+      }
+
+      const snapshotResult = await this.undoManager.createSnapshot(
+        filePath,
+        existing,
+        snapshotTaskId,
+        nodeId
+      );
+      if (!snapshotResult.ok) {
+        return err(snapshotResult.error.code, snapshotResult.error.message, snapshotResult.error.details);
+      }
+
+      const report = this.buildVerificationReportMarkdown(result);
+      const separator = existing.endsWith("\n") ? "\n" : "\n\n";
+      const next = `${existing}${separator}${report}\n`;
+
+      await this.noteRepository.writeAtomic(filePath, next);
+      return ok(undefined);
+    } catch (error) {
+      return toErr(error, "E302_PERMISSION_DENIED", "追加 Verify 报告失败");
+    }
+  }
+
   /**
    * 处理任务失败
    */
@@ -2326,7 +2716,7 @@ ${currentContent}
 
     context.stage = "failed";
     context.error = {
-      code: task?.errors?.[0]?.code || "E305",
+      code: task?.errors?.[0]?.code || "E500_INTERNAL_ERROR",
       message: task?.errors?.[0]?.message || "任务执行失败"
     };
     context.updatedAt = formatCRTimestamp();
@@ -2371,76 +2761,28 @@ ${currentContent}
     return parts.join("\n");
   }
 
-  /**
-   * 清理文件名
-   */
-  private sanitizeFileName(name: string): string {
-    return name.replace(/[\\/:*?"<>|]/g, "-");
-  }
+  private buildEmbeddingTextFromFrontmatter(frontmatter: CRFrontmatter): string {
+    const parts: string[] = [];
 
-  /**
-   * Vault 原子写入
-   * 
-   * 静默更新策略（State Preservation）：
-   * - 对于已存在的文件，使用 vault.modify 进行原地更新，避免触发文件删除事件
-   * - 这确保用户当前打开的标签页不会因为文件被删除而跳转到其他文件
-   * - 对于新文件，使用临时文件 + rename 的原子写入方式
-   */
-  private async atomicWriteVault(path: string, content: string): Promise<void> {
-    const adapter = this.app.vault.adapter;
-    
-    // 检查文件是否已存在
-    const existingFile = this.app.vault.getAbstractFileByPath(path);
-    
-    if (existingFile && existingFile instanceof TFile) {
-      // 文件已存在：使用 vault.modify 进行静默更新
-      // 这不会触发文件删除事件，保持用户当前的编辑器焦点
-      await this.app.vault.modify(existingFile, content);
-      this.logger.debug("PipelineOrchestrator", "静默更新已存在文件", { path });
-      return;
+    if (frontmatter.name) {
+      parts.push(frontmatter.name);
     }
-    
-    // 文件不存在：使用临时文件 + rename 的原子写入方式
-    const temp = `${path}.tmp`;
-    try {
-      await this.ensureVaultDir(path);
-      await adapter.write(temp, content);
-      const verify = await adapter.read(temp);
-      if (verify !== content) {
-        throw new Error("写入校验失败");
-      }
-      await adapter.rename(temp, path);
-      this.logger.debug("PipelineOrchestrator", "原子写入新文件", { path });
-    } catch (error) {
-      try {
-        if (await adapter.exists(temp)) {
-          await adapter.remove(temp);
-        }
-      } catch (cleanupError) {
-        this.logger.warn("PipelineOrchestrator", "清理临时文件失败", {
-          temp,
-          error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
-        });
-      }
-      throw error;
-    }
-  }
 
-  /**
-   * 确保 Vault 目录存在
-   */
-  private async ensureVaultDir(targetPath: string): Promise<void> {
-    const adapter = this.app.vault.adapter;
-    const parts = targetPath.split("/").slice(0, -1);
-    if (parts.length === 0) return;
-    let current = "";
-    for (const part of parts) {
-      current = current ? `${current}/${part}` : part;
-      const exists = await adapter.exists(current);
-      if (!exists) {
-        await adapter.mkdir(current);
-      }
+    if (frontmatter.aliases && frontmatter.aliases.length > 0) {
+      parts.push(...frontmatter.aliases);
     }
+
+    if (frontmatter.definition) {
+      parts.push(frontmatter.definition);
+    }
+
+    parts.push(`类型: ${frontmatter.type}`);
+
+    if (frontmatter.tags && frontmatter.tags.length > 0) {
+      parts.push(`标签: ${frontmatter.tags.join(", ")}`);
+    }
+
+    return parts.join("\n");
   }
 
   /**
@@ -2449,450 +2791,23 @@ ${currentContent}
    * 注意：文件名已包含中英文，无需在内容中重复
    */
   private renderContentToMarkdown(context: PipelineContext, standardName: string): string {
-    const lines: string[] = [];
     const settings = this.getSettings();
     const language = settings.language || "zh";
-    
-    // 根据语言设置选择标题（文件名已包含中英文，无需重复）
-    if (language === "zh") {
-      // 中文环境：使用中文标题
-      lines.push(`# ${standardName}`);
-    } else {
-      // 英文环境：使用英文标题
-      const english = context.standardizedData?.standardNames[context.type].english;
-      lines.push(`# ${english || standardName}`);
-    }
-    lines.push("");
 
-    let content: unknown = context.generatedContent;
-    if (typeof content === "string") {
-      try {
-        content = JSON.parse(content);
-      } catch {
-        // 保留原始字符串
-      }
-    }
+    const title = language === "en"
+      ? (context.standardizedData?.standardNames[context.type].english || standardName)
+      : standardName;
 
-    if (content && typeof content === "object") {
-      const descriptors: FieldDescription[] = schemaRegistry.getFieldDescriptions(context.type);
-      for (const desc of descriptors) {
-        const value = (content as Record<string, unknown>)[desc.name];
-        if (value === undefined) continue;
-        lines.push(`## ${this.getFieldHeading(desc, language)}`);
-        lines.push(this.renderValue(value));
-        lines.push("");
-      }
-    } else if (typeof content === "string") {
-      lines.push(content);
-    }
-
-    return lines.join("\n");
+    return this.contentRenderer.renderNoteMarkdown({
+      title,
+      type: context.type,
+      content: context.generatedContent,
+      language
+    });
   }
 
-  private getFieldHeading(desc: FieldDescription, language: string): string {
-    if (language === "zh") {
-      return desc.description || desc.name;
-    }
-    return desc.name;
-  }
-
-  private renderValue(value: unknown, fieldName?: string): string {
-    if (Array.isArray(value)) {
-      // 检查是否是对象数组
-      if (value.length > 0 && typeof value[0] === "object" && value[0] !== null) {
-        const firstItem = value[0] as Record<string, unknown>;
-        
-        // 根据字段名和对象结构选择渲染方式
-        return this.renderObjectArray(value as Record<string, unknown>[], fieldName);
-      }
-      
-      // 普通数组，每项一行
-      return value.map(v => `- ${String(v)}`).join("\n");
-    }
-    
-    if (typeof value === "object" && value !== null) {
-      return this.renderObject(value as Record<string, unknown>, fieldName);
-    }
-    
-    return String(value);
-  }
-
-  /**
-   * 渲染对象数组
-   * 
-   * 使用 fieldName 参数精确区分不同字段类型，避免仅依赖对象结构导致的误判。
-   * 字段名唯一性约束：每种字段类型有独立的渲染逻辑。
-   */
-  private renderObjectArray(items: Record<string, unknown>[], fieldName?: string): string {
-    if (items.length === 0) return "";
-
-    // 优先使用 fieldName 精确匹配，避免结构相似导致的误判
-    switch (fieldName) {
-      // ========== Domain 类型字段 ==========
-      case "sub_domains":
-        return this.renderNameDescriptionArray(items, true);
-      case "issues":
-        // Domain 中的 issues 字段（name + description）
-        return this.renderNameDescriptionArray(items, true);
-
-      // ========== Issue 类型字段 ==========
-      case "sub_issues":
-        return this.renderNameDescriptionArray(items, true);
-      case "stakeholder_perspectives":
-        return this.renderStakeholderPerspectives(items);
-      case "theories":
-        return this.renderTheories(items);
-
-      // ========== Theory 类型字段 ==========
-      case "axioms":
-        return this.renderAxioms(items);
-      case "sub_theories":
-        return this.renderNameDescriptionArray(items, true);
-      case "entities":
-        // Theory 中的 entities（name + role + attributes）
-        return this.renderTheoryEntities(items);
-      case "mechanisms":
-        // Theory 中的 mechanisms（name + process + function）
-        return this.renderTheoryMechanisms(items);
-
-      // ========== Entity 类型字段 ==========
-      case "properties":
-        // Entity 中的 properties（name + type + description）
-        return this.renderEntityProperties(items);
-      case "states":
-        // Entity 中的 states（name + description，无链接）
-        return this.renderNameDescriptionArray(items, false);
-
-      // ========== Mechanism 类型字段 ==========
-      case "operates_on":
-        return this.renderOperatesOn(items);
-      case "causal_chain":
-        return this.renderCausalChain(items);
-      case "modulation":
-        return this.renderModulation(items);
-    }
-
-    // 回退：基于对象结构推断（兼容旧逻辑）
-    return this.renderObjectArrayByStructure(items);
-  }
-
-  /** 渲染 name + description 数组，withLink 控制是否添加 [[]] 链接 */
-  private renderNameDescriptionArray(items: Record<string, unknown>[], withLink: boolean): string {
-    return items.map(item => {
-      const name = String(item.name || "");
-      const description = String(item.description || "");
-      return withLink
-        ? `- [[${name}]]：${description}`
-        : `- **${name}**：${description}`;
-    }).join("\n");
-  }
-
-  /** 渲染 stakeholder_perspectives（stakeholder + perspective） */
-  private renderStakeholderPerspectives(items: Record<string, unknown>[]): string {
-    return items.map(item => {
-      const stakeholder = String(item.stakeholder || "");
-      const perspective = String(item.perspective || "");
-      return `- **${stakeholder}**：${perspective}`;
-    }).join("\n");
-  }
-
-  /** 渲染 theories（name + status + brief） */
-  private renderTheories(items: Record<string, unknown>[]): string {
-    return items.map(item => {
-      const name = String(item.name || "");
-      const status = String(item.status || "");
-      const brief = String(item.brief || "");
-      const statusLabel = this.getTheoryStatusLabel(status);
-      return `- [[${name}]] (${statusLabel})：${brief}`;
-    }).join("\n");
-  }
-
-  /** 渲染 axioms（statement + justification） */
-  private renderAxioms(items: Record<string, unknown>[]): string {
-    return items.map((item, index) => {
-      const statement = String(item.statement || "");
-      const justification = String(item.justification || "");
-      return `### 公理 ${index + 1}：${statement}\n- **理由**：${justification}`;
-    }).join("\n\n");
-  }
-
-  /** 渲染 Theory 中的 entities（name + role + attributes） */
-  private renderTheoryEntities(items: Record<string, unknown>[]): string {
-    return items.map(item => {
-      const name = String(item.name || "");
-      const role = String(item.role || "");
-      const attributes = String(item.attributes || "");
-      return `- [[${name}]]\n  - **角色**：${role}\n  - **属性**：${attributes}`;
-    }).join("\n");
-  }
-
-  /** 渲染 Theory 中的 mechanisms（name + process + function） */
-  private renderTheoryMechanisms(items: Record<string, unknown>[]): string {
-    return items.map(item => {
-      const name = String(item.name || "");
-      const process = String(item.process || "");
-      const func = String(item.function || "");
-      return `- [[${name}]]\n  - **过程**：${process}\n  - **功能**：${func}`;
-    }).join("\n");
-  }
-
-  /** 渲染 Entity 中的 properties（name + type + description） */
-  private renderEntityProperties(items: Record<string, unknown>[]): string {
-    return items.map(item => {
-      const name = String(item.name || "");
-      const type = String(item.type || "");
-      const description = String(item.description || "");
-      return `- **${name}** (${type})：${description}`;
-    }).join("\n");
-  }
-
-  /** 渲染 operates_on（entity + role） */
-  private renderOperatesOn(items: Record<string, unknown>[]): string {
-    return items.map(item => {
-      const entity = String(item.entity || "");
-      const role = String(item.role || "");
-      return `- ${role}：${entity}`;
-    }).join("\n");
-  }
-
-  /** 渲染 causal_chain（step + description + interaction） */
-  private renderCausalChain(items: Record<string, unknown>[]): string {
-    return items.map(item => {
-      const step = item.step;
-      const description = String(item.description || "");
-      const interaction = String(item.interaction || "");
-      return `### 步骤 ${step}：${interaction}\n- ${description}`;
-    }).join("\n\n");
-  }
-
-  /** 渲染 modulation（factor + effect + mechanism） */
-  private renderModulation(items: Record<string, unknown>[]): string {
-    return items.map(item => {
-      const factor = String(item.factor || "");
-      const effect = String(item.effect || "");
-      const mechanism = String(item.mechanism || "");
-      const effectLabel = this.getModulationEffectLabel(effect);
-      return `- **${factor}** (${effectLabel})：${mechanism}`;
-    }).join("\n");
-  }
-
-  /** 基于对象结构推断渲染方式（回退逻辑） */
-  private renderObjectArrayByStructure(items: Record<string, unknown>[]): string {
-    const firstItem = items[0];
-
-    // properties: name + type + description
-    if ("name" in firstItem && "type" in firstItem && "description" in firstItem) {
-      return this.renderEntityProperties(items);
-    }
-
-    // axioms: statement + justification
-    if ("statement" in firstItem && "justification" in firstItem) {
-      return this.renderAxioms(items);
-    }
-
-    // entities (Theory): name + role + attributes
-    if ("name" in firstItem && "role" in firstItem && "attributes" in firstItem) {
-      return this.renderTheoryEntities(items);
-    }
-
-    // mechanisms (Theory): name + process + function
-    if ("name" in firstItem && "process" in firstItem && "function" in firstItem) {
-      return this.renderTheoryMechanisms(items);
-    }
-
-    // theories: name + status + brief
-    if ("name" in firstItem && "status" in firstItem && "brief" in firstItem) {
-      return this.renderTheories(items);
-    }
-
-    // stakeholder_perspectives: stakeholder + perspective
-    if ("stakeholder" in firstItem && "perspective" in firstItem) {
-      return this.renderStakeholderPerspectives(items);
-    }
-
-    // operates_on: entity + role
-    if ("entity" in firstItem && "role" in firstItem) {
-      return this.renderOperatesOn(items);
-    }
-
-    // causal_chain: step + description + interaction
-    if ("step" in firstItem && "description" in firstItem && "interaction" in firstItem) {
-      return this.renderCausalChain(items);
-    }
-
-    // modulation: factor + effect + mechanism
-    if ("factor" in firstItem && "effect" in firstItem && "mechanism" in firstItem) {
-      return this.renderModulation(items);
-    }
-
-    // name + description（通用，带链接）
-    if ("name" in firstItem && "description" in firstItem) {
-      return this.renderNameDescriptionArray(items, true);
-    }
-
-    // 默认：渲染为键值对列表
-    return items.map((item, index) => {
-      const entries = Object.entries(item)
-        .map(([k, v]) => `  - **${k}**：${String(v)}`)
-        .join("\n");
-      return `- 项目 ${index + 1}\n${entries}`;
-    }).join("\n");
-  }
-
-  /**
-   * 渲染单个对象
-   */
-  private renderObject(obj: Record<string, unknown>, fieldName?: string): string {
-    // composition (in Entity): has_parts + part_of
-    // 注意：组成结构字段不添加 [[]] 链接，因为这些是描述性内容而非引用
-    if ("has_parts" in obj && "part_of" in obj) {
-      const hasParts = obj.has_parts as string[];
-      const partOf = String(obj.part_of || "");
-      const partsStr = Array.isArray(hasParts) && hasParts.length > 0
-        ? hasParts.join("、")
-        : "无";
-      return `- **组成部分**：${partsStr}\n- **所属系统**：${partOf || "无"}`;
-    }
-
-    // classification (in Entity): genus + differentia
-    if ("genus" in obj && "differentia" in obj) {
-      const genus = String(obj.genus || "");
-      const differentia = String(obj.differentia || "");
-      return `- **属**：${genus}\n- **种差**：${differentia}`;
-    }
-
-    // 默认：渲染为键值对
-    return Object.entries(obj)
-      .map(([k, v]) => `- **${k}**：${String(v)}`)
-      .join("\n");
-  }
-
-  /**
-   * 获取理论状态的中文标签
-   */
-  private getTheoryStatusLabel(status: string): string {
-    const labels: Record<string, string> = {
-      "mainstream": "主流",
-      "marginal": "边缘",
-      "falsified": "已证伪"
-    };
-    return labels[status] || status;
-  }
-
-  /**
-   * 获取调节效果的中文标签
-   */
-  private getModulationEffectLabel(effect: string): string {
-    const labels: Record<string, string> = {
-      "promotes": "促进",
-      "inhibits": "抑制",
-      "regulates": "调节"
-    };
-    return labels[effect] || effect;
-  }
-
-  /**
-   * 解析 frontmatter
-   */
-  private parseFrontmatter(content: string): CRFrontmatter | null {
-    const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
-    if (!match) return null;
-
-    try {
-      const doc = YAML.parse(match[1]) as Record<string, unknown> | null;
-      if (!doc || typeof doc !== "object") return null;
-
-      const cruid = typeof doc.cruid === "string"
-        ? doc.cruid
-        : typeof doc.crUid === "string"
-          ? doc.crUid
-          : undefined;
-      const type = typeof doc.type === "string" ? (doc.type as CRType) : undefined;
-      const status = typeof doc.status === "string" ? (doc.status as NoteState) : undefined;
-      const created = typeof doc.created === "string" ? doc.created : undefined;
-      const updated = typeof doc.updated === "string" ? doc.updated : undefined;
-      const name = typeof doc.name === "string" ? doc.name : "";
-
-      if (!cruid || !type || !status || !created || !updated) {
-        return null;
-      }
-
-      const normalizeArray = (value: unknown): string[] | undefined => {
-        if (!Array.isArray(value)) return undefined;
-        const arr = value.map((v) => String(v)).filter((s) => s.trim().length > 0);
-        return arr.length > 0 ? arr : undefined;
-      };
-
-      const parents = normalizeArray(doc.parents) || [];
-
-      return {
-        cruid,
-        type,
-        name,
-        status,
-        created,
-        updated,
-        aliases: normalizeArray(doc.aliases),
-        tags: normalizeArray(doc.tags),
-        parents,
-        parentUid: typeof doc.parentUid === "string" ? doc.parentUid : undefined,
-        parentType: typeof doc.parentType === "string" ? (doc.parentType as CRType) : undefined,
-        sourceUids: normalizeArray(doc.sourceUids),
-        version: typeof doc.version === "string" ? doc.version : undefined
-      };
-    } catch {
-      return null;
-    }
-  }
-
-  private buildFrontmatterString(frontmatter: CRFrontmatter): string {
-    const lines = [
-      "---",
-      `cruid: ${frontmatter.cruid}`,
-      `type: ${frontmatter.type}`,
-      `name: ${frontmatter.name}`,
-      `status: ${frontmatter.status}`,
-      `created: ${frontmatter.created}`,
-      `updated: ${frontmatter.updated}`,
-    ];
-
-    if (frontmatter.aliases && frontmatter.aliases.length > 0) {
-      lines.push("aliases:");
-      frontmatter.aliases.forEach(alias => lines.push(`  - ${alias}`));
-    }
-
-    const parents = Array.isArray(frontmatter.parents) ? frontmatter.parents : [];
-    if (parents.length > 0) {
-      lines.push("parents:");
-      parents.forEach(parent => lines.push(`  - ${parent}`));
-    } else {
-      lines.push("parents: []");
-    }
-
-    if (frontmatter.tags && frontmatter.tags.length > 0) {
-      lines.push("tags:");
-      frontmatter.tags.forEach(tag => lines.push(`  - ${tag}`));
-    }
-
-    if (frontmatter.parentUid) {
-      lines.push(`parentUid: ${frontmatter.parentUid}`);
-    }
-
-    if (frontmatter.parentType) {
-      lines.push(`parentType: ${frontmatter.parentType}`);
-    }
-
-    if (frontmatter.sourceUids && frontmatter.sourceUids.length > 0) {
-      lines.push("sourceUids:");
-      frontmatter.sourceUids.forEach(uid => lines.push(`  - ${uid}`));
-    }
-
-    if (frontmatter.version) {
-      lines.push(`version: ${frontmatter.version}`);
-    }
-
-    lines.push("---");
-    return lines.join("\n");
+  private renderStructuredContentToMarkdown(type: CRType, content: unknown, language: string): string {
+    return this.contentRenderer.renderStructuredContentMarkdown({ type, content, language });
   }
 
   private buildMergeBody(
@@ -2924,13 +2839,11 @@ ${currentContent}
       sections.push("");
     }
 
-    if (content.core_definition) {
-      sections.push("## 核心定义");
-      sections.push(String(content.core_definition));
+    const structured = this.renderStructuredContentToMarkdown(type, content, language);
+    if (structured) {
+      sections.push(structured);
       sections.push("");
     }
-
-    sections.push(this.buildTypeSpecificContent(content, type));
 
     const preservedA = mergeResult.preserved_from_a as string[] | undefined;
     const preservedB = mergeResult.preserved_from_b as string[] | undefined;
@@ -2950,69 +2863,34 @@ ${currentContent}
     return sections.join("\n");
   }
 
-  private buildTypeSpecificContent(content: Record<string, unknown>, type: CRType): string {
-    const sections: string[] = [];
-    switch (type) {
-      case "Theory":
-        if (content.axioms) {
-          sections.push("## 公理");
-          (content.axioms as string[]).forEach(a => sections.push(`- ${a}`));
-          sections.push("");
-        }
-        break;
-      case "Issue":
-        if (content.core_tension) {
-          sections.push("## 核心张力");
-          sections.push(String(content.core_tension));
-          sections.push("");
-        }
-        break;
-      case "Mechanism":
-        if (content.causal_chain) {
-          sections.push("## 因果链");
-          (content.causal_chain as string[]).forEach(c => sections.push(`- ${c}`));
-          sections.push("");
-        }
-        break;
-      case "Entity":
-        if (content.definition) {
-          sections.push("## 定义");
-          sections.push(String(content.definition));
-          sections.push("");
-        }
-        break;
-      case "Domain":
-        if (content.boundaries) {
-          sections.push("## 边界");
-          (content.boundaries as string[]).forEach(b => sections.push(`- ${b}`));
-          sections.push("");
-        }
-        break;
-    }
-    return sections.join("\n");
-  }
-
   private buildMergedContent(
     mergeResult: Record<string, unknown>,
     previousContent: string,
     type: CRType,
     deleteNoteName: string
   ): Result<string> {
-    const frontmatter = this.parseFrontmatter(previousContent);
-    if (!frontmatter) {
-      return err("E306", "无法解析原始笔记的 frontmatter");
+    const extracted = extractFrontmatter(previousContent);
+    if (!extracted) {
+      return err("E500_INTERNAL_ERROR", "无法解析原始笔记的 frontmatter");
     }
+
+    const frontmatter = extracted.frontmatter;
 
     const mergedName = (mergeResult.merged_name as { chinese?: string; english?: string }) || {};
     const content = mergeResult.content as Record<string, unknown> | undefined;
     if (!content) {
-      return err("E306", "合并结果缺少内容信息");
+      return err("E211_MODEL_SCHEMA_VIOLATION", "合并结果缺少内容信息");
     }
 
     const updatedFrontmatter: CRFrontmatter = {
       ...frontmatter,
       updated: formatCRTimestamp()
     };
+
+    const nextDefinition = typeof content.definition === "string" ? content.definition.trim() : undefined;
+    if (nextDefinition) {
+      updatedFrontmatter.definition = nextDefinition;
+    }
 
     // 合并后：将被合并笔记标题加入 aliases，便于链接重定向
     if (deleteNoteName && deleteNoteName.trim()) {
@@ -3037,7 +2915,7 @@ ${currentContent}
   }>> {
     if (context.kind === "create") {
       if (!context.standardizedData || !context.generatedContent) {
-        return err("E306", "缺少生成内容或标准化数据");
+        return err("E310_INVALID_STATE", "缺少生成内容或标准化数据");
       }
 
       const settings = this.getSettings();
@@ -3054,28 +2932,29 @@ ${currentContent}
       const { targetPath, targetName } = this.resolveCreateTarget(context, signature.standardName);
       context.filePath = targetPath;
 
-      await this.ensureVaultDir(targetPath);
+      await this.noteRepository.ensureDirForPath(targetPath);
 
-      const adapter = this.app.vault.adapter;
-      const previousContent = (await adapter.exists(targetPath))
-        ? await adapter.read(targetPath)
-        : "";
+      const previousContent = (await this.noteRepository.readByPathIfExists(targetPath)) ?? "";
 
       const markdownBody = this.renderContentToMarkdown(
         context,
         targetName
       );
 
+      const definition = context.generatedContent && typeof context.generatedContent === "object"
+        ? (typeof (context.generatedContent as Record<string, unknown>).definition === "string"
+          ? ((context.generatedContent as Record<string, unknown>).definition as string)
+          : undefined)
+        : undefined;
       const frontmatter = generateFrontmatter({
         cruid: context.nodeId,
         type: context.type,
         name: targetName,
+        definition,
         parents: context.parents ?? [],
         status: "Draft",
         aliases: context.enrichedData?.aliases,
-        tags: context.enrichedData?.tags,
-        parentUid: context.parentUid,
-        parentType: context.parentType
+        tags: context.enrichedData?.tags
       });
 
       const fullContent = generateMarkdownContent(frontmatter, markdownBody);
@@ -3087,19 +2966,19 @@ ${currentContent}
       });
     }
 
-    if (context.kind === "incremental" || context.kind === "merge") {
+    if (context.kind === "amend" || context.kind === "merge") {
       if (!context.filePath) {
-        return err("E306", "缺少文件路径");
+        return err("E310_INVALID_STATE", "缺少文件路径");
       }
       if (context.previousContent === undefined || context.newContent === undefined) {
-        return err("E306", "缺少预览内容");
+        return err("E310_INVALID_STATE", "缺少预览内容");
       }
 
-      await this.ensureVaultDir(context.filePath);
+      await this.noteRepository.ensureDirForPath(context.filePath);
 
       const normalized = extractFrontmatter(context.newContent);
       if (!normalized) {
-        return err("E306", "无法解析生成的 frontmatter");
+        return err("E500_INTERNAL_ERROR", "无法解析生成的 frontmatter");
       }
 
       const normalizedFrontmatter: CRFrontmatter = {
@@ -3117,7 +2996,7 @@ ${currentContent}
       });
     }
 
-    return err("E306", "未知的管线类型");
+    return err("E310_INVALID_STATE", "未知的管线类型");
   }
 
   /**
@@ -3162,6 +3041,98 @@ ${currentContent}
     return "";
   }
 
+  private async refreshEmbeddingAndDuplicates(context: PipelineContext, newContent: string): Promise<void> {
+    if (!this.providerManager) {
+      this.logger.warn("PipelineOrchestrator", "ProviderManager 未初始化，跳过 embedding/去重更新", {
+        pipelineId: context.pipelineId,
+        nodeId: context.nodeId
+      });
+      return;
+    }
+
+    const extracted = extractFrontmatter(newContent);
+    const embeddingText = extracted
+      ? this.buildEmbeddingTextFromFrontmatter(extracted.frontmatter)
+      : newContent;
+
+    const settings = this.getSettings();
+    const taskConfig = settings.taskModels["index"];
+    const providerId = taskConfig?.providerId || this.getProviderIdForTask("index");
+    const embeddingModel = this.vectorIndex.getEmbeddingModel();
+    const embeddingDimension = this.vectorIndex.getEmbeddingDimension();
+
+    const embedResult = await this.providerManager.embed({
+      providerId,
+      model: embeddingModel,
+      input: embeddingText,
+      dimensions: embeddingDimension
+    });
+
+    if (!embedResult.ok) {
+      this.logger.warn("PipelineOrchestrator", "Embedding 重算失败，已移除旧向量避免陈旧结果", {
+        pipelineId: context.pipelineId,
+        nodeId: context.nodeId,
+        error: embedResult.error
+      });
+
+      const deleteResult = await this.vectorIndex.delete(context.nodeId);
+      if (!deleteResult.ok && deleteResult.error.code !== "E311_NOT_FOUND") {
+        this.logger.warn("PipelineOrchestrator", "移除旧向量失败", {
+          pipelineId: context.pipelineId,
+          nodeId: context.nodeId,
+          error: deleteResult.error
+        });
+      }
+
+      const clearResult = await this.duplicateManager.clearPendingPairsByNodeId(context.nodeId);
+      if (!clearResult.ok) {
+        this.logger.warn("PipelineOrchestrator", "清理旧重复对失败", {
+          pipelineId: context.pipelineId,
+          nodeId: context.nodeId,
+          error: clearResult.error
+        });
+      }
+
+      context.embedding = undefined;
+      return;
+    }
+
+    context.embedding = embedResult.value.embedding;
+    context.updatedAt = formatCRTimestamp();
+
+    const clearResult = await this.duplicateManager.clearPendingPairsByNodeId(context.nodeId);
+    if (!clearResult.ok) {
+      this.logger.warn("PipelineOrchestrator", "清理旧重复对失败", {
+        pipelineId: context.pipelineId,
+        nodeId: context.nodeId,
+        error: clearResult.error
+      });
+    }
+
+    const upsertResult = await this.vectorIndex.upsert({
+      uid: context.nodeId,
+      type: context.type,
+      embedding: context.embedding,
+      updated: context.updatedAt
+    });
+    if (!upsertResult.ok) {
+      this.logger.warn("PipelineOrchestrator", "更新向量索引失败", {
+        pipelineId: context.pipelineId,
+        nodeId: context.nodeId,
+        error: upsertResult.error
+      });
+    }
+
+    const detectResult = await this.duplicateManager.detect(context.nodeId, context.type, context.embedding);
+    if (!detectResult.ok) {
+      this.logger.warn("PipelineOrchestrator", "去重检测失败", {
+        pipelineId: context.pipelineId,
+        nodeId: context.nodeId,
+        error: detectResult.error
+      });
+    }
+  }
+
   /**
    * 直接执行 embedding（不进入队列）
    * 
@@ -3182,8 +3153,8 @@ ${currentContent}
       const settings = this.getSettings();
       const taskConfig = settings.taskModels["index"];
       const providerId = taskConfig?.providerId || this.getProviderIdForTask("index");
-      const embeddingModel = taskConfig?.model || "text-embedding-3-small";
-      const embeddingDimension = settings.embeddingDimension || 1536;
+      const embeddingModel = this.vectorIndex.getEmbeddingModel();
+      const embeddingDimension = this.vectorIndex.getEmbeddingDimension();
 
       // 直接调用 embedding API（使用用户配置的模型）
       const embedResult = await this.providerManager.embed({
@@ -3205,20 +3176,17 @@ ${currentContent}
         tokensUsed: embedResult.value.tokensUsed
       });
 
-      // embedding 完成后，检查是否启用 Ground 阶段
-      const settings2 = this.getSettings();
-      if (settings2.enableGrounding) {
-        // 启用 Verify：创建 verify 任务（完成后需要用户确认）
-        await this.startVerifyTask(context);
-      } else {
-        // 未启用 Ground：直接写入，无需用户确认
+      // embedding 完成后，Create 自动写入；Amend/Merge 进入确认阶段
+      if (context.kind === "create") {
         await this.autoConfirmWrite(context);
+      } else {
+        this.transitionToAwaitingWriteConfirm(context);
       }
     } catch (error) {
       this.logger.error("PipelineOrchestrator", "直接执行 embedding 失败", error as Error);
       context.stage = "failed";
       context.error = { 
-        code: "E305", 
+        code: "E500_INTERNAL_ERROR", 
         message: error instanceof Error ? error.message : String(error) 
       };
       this.publishEvent({
@@ -3256,6 +3224,6 @@ ${currentContent}
         this.logger.error("PipelineOrchestrator", "事件监听器执行失败", error as Error);
       }
     }
-
+    this.schedulePersist();
   }
 }

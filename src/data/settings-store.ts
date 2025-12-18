@@ -24,13 +24,12 @@ export const REQUIRED_SETTINGS_FIELDS: (keyof PluginSettings)[] = [
   "namingTemplate",
   "directoryScheme",
   "similarityThreshold",
-  "topK",
   "concurrency",
   "autoRetry",
   "maxRetryAttempts",
   "maxSnapshots",
   "maxSnapshotAgeDays",
-  "enableGrounding",
+  "enableAutoVerify",
   "providers",
   "defaultProviderId",
   "taskModels",
@@ -42,6 +41,56 @@ export const REQUIRED_SETTINGS_FIELDS: (keyof PluginSettings)[] = [
 
 const DEFAULT_TASK_TIMEOUT_MS = 3 * 60 * 1000;
 const DEFAULT_TASK_HISTORY = 300;
+
+type ScalarSettingsKey = keyof Pick<
+  PluginSettings,
+  | "version"
+  | "language"
+  | "namingTemplate"
+  | "similarityThreshold"
+  | "concurrency"
+  | "autoRetry"
+  | "maxRetryAttempts"
+  | "maxSnapshots"
+  | "maxSnapshotAgeDays"
+  | "enableAutoVerify"
+  | "defaultProviderId"
+  | "logLevel"
+  | "embeddingDimension"
+  | "providerTimeoutMs"
+  | "taskTimeoutMs"
+  | "maxTaskHistory"
+>;
+
+interface ScalarSettingsSpec {
+  key: ScalarSettingsKey;
+  type: "string" | "number" | "boolean";
+  required: boolean;
+  allowed?: readonly string[];
+  integer?: boolean;
+  min?: number;
+  max?: number;
+}
+
+const SCALAR_SETTINGS_SPECS: ScalarSettingsSpec[] = [
+  { key: "version", type: "string", required: true },
+  { key: "language", type: "string", required: true, allowed: ["zh", "en"] },
+  { key: "namingTemplate", type: "string", required: true },
+  { key: "similarityThreshold", type: "number", required: true, min: 0, max: 1 },
+  { key: "concurrency", type: "number", required: true, integer: true, min: 1 },
+  { key: "autoRetry", type: "boolean", required: true },
+  { key: "maxRetryAttempts", type: "number", required: true, integer: true, min: 0 },
+  { key: "maxSnapshots", type: "number", required: true, integer: true, min: 1 },
+  { key: "maxSnapshotAgeDays", type: "number", required: true, integer: true, min: 1 },
+  { key: "enableAutoVerify", type: "boolean", required: true },
+  { key: "defaultProviderId", type: "string", required: true },
+  { key: "logLevel", type: "string", required: true, allowed: ["debug", "info", "warn", "error"] },
+  { key: "embeddingDimension", type: "number", required: true, integer: true, min: 1 },
+  { key: "providerTimeoutMs", type: "number", required: true, integer: true, min: 1000 },
+  // 历史版本兼容：这些字段允许缺失，由 mergeSettings/ensureBackwardCompatibility 补齐默认值
+  { key: "taskTimeoutMs", type: "number", required: false, integer: true, min: 1000 },
+  { key: "maxTaskHistory", type: "number", required: false, integer: true, min: 50 },
+];
 
 /**
  * DirectoryScheme 必填字段列表
@@ -99,9 +148,7 @@ export const DEFAULT_TASK_MODEL_CONFIGS: Record<TaskType, TaskModelConfig> = {
   },
   "image-generate": {
     providerId: "",
-    model: "gemini-3-pro-image-preview",
-    temperature: 0.2,
-    topP: 1.0,
+    model: "gpt-image-1",
   },
 };
 
@@ -162,7 +209,7 @@ export interface SettingsValidationResult {
 
 /** 默认设置 */
 export const DEFAULT_SETTINGS: PluginSettings = {
-  version: "0.9.3",
+  version: "1.0.0",
   
   // 基础设置
   language: "zh",
@@ -174,8 +221,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   directoryScheme: DEFAULT_DIRECTORY_SCHEME,
   
   // 去重设置 (G-02: 语义唯一性公理, A-FUNC-04: 语义去重检测)
-  similarityThreshold: 0.9,
-  topK: 10,
+  similarityThreshold: 0.85,
   
   // 队列设置
   concurrency: 1,
@@ -189,7 +235,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   maxSnapshotAgeDays: 30, // A-FUNC-02: 可配置的快照保留天数
   
   // 功能开关
-  enableGrounding: false,
+  enableAutoVerify: false,
   
   // Provider 配置
   providers: {},
@@ -229,14 +275,16 @@ export class SettingsStore {
   /** 加载设置 */
   async loadSettings(): Promise<Result<void>> {
     try {
-      const data = await this.plugin.loadData();
+      const raw = await this.plugin.loadData();
       
-      if (!data) {
+      if (!raw) {
         // 首次使用，使用默认设置
         this.settings = { ...DEFAULT_SETTINGS };
         await this.saveSettings();
         return ok(undefined);
       }
+
+      const data = this.normalizeLegacySettings(raw as unknown);
 
       // 检查版本兼容性
       const compatibilityResult = this.checkVersionCompatibility(data.version);
@@ -263,7 +311,7 @@ export class SettingsStore {
       return ok(undefined);
     } catch (error) {
       return err(
-        "E300",
+        "E500_INTERNAL_ERROR",
         "Failed to load settings",
         error
       );
@@ -290,7 +338,7 @@ export class SettingsStore {
       const validation = this.validateSettingsDetailed(mergeResult.value);
       if (!validation.valid) {
         return err(
-          "E001",
+          "E101_INVALID_INPUT",
           "设置校验失败",
           { errors: validation.errors }
         );
@@ -307,7 +355,7 @@ export class SettingsStore {
       return ok(undefined);
     } catch (error) {
       return err(
-        "E301",
+        "E500_INTERNAL_ERROR",
         "Failed to update settings",
         error
       );
@@ -326,12 +374,13 @@ export class SettingsStore {
    */
   async importSettings(json: string): Promise<Result<void>> {
     try {
-      const data = JSON.parse(json);
+      const raw = JSON.parse(json) as unknown;
+      const data = this.normalizeLegacySettings(raw);
 
       // 验证设置结构
       if (!this.validateSettings(data)) {
         return err(
-          "E001",
+          "E101_INVALID_INPUT",
           "Invalid settings format",
           { json }
         );
@@ -355,7 +404,7 @@ export class SettingsStore {
       return ok(undefined);
     } catch (error) {
       return err(
-        "E001",
+        "E101_INVALID_INPUT",
         "Failed to parse settings JSON",
         error
       );
@@ -378,7 +427,7 @@ export class SettingsStore {
       return ok(undefined);
     } catch (error) {
       return err(
-        "E301",
+        "E500_INTERNAL_ERROR",
         "Failed to reset settings",
         error
       );
@@ -456,7 +505,7 @@ export class SettingsStore {
 
     if (currentMajor !== loadedMajor) {
       return err(
-        "E302",
+        "E101_INVALID_INPUT",
         `Incompatible settings version: ${version} (current: ${DEFAULT_SETTINGS.version})`,
         { version, currentVersion: DEFAULT_SETTINGS.version }
       );
@@ -492,167 +541,10 @@ export class SettingsStore {
 
     const settings = data as Record<string, unknown>;
 
-    // 验证 version 字段
-    if (typeof settings.version !== "string") {
-      errors.push({
-        field: "version",
-        message: "version must be a string",
-        expectedType: "string",
-        actualType: typeof settings.version,
-      });
-    }
-
-    // 验证 language 字段
-    if (typeof settings.language !== "string") {
-      errors.push({
-        field: "language",
-        message: "language must be a string",
-        expectedType: "string",
-        actualType: typeof settings.language,
-      });
-    } else if (settings.language !== "zh" && settings.language !== "en") {
-      errors.push({
-        field: "language",
-        message: "language must be 'zh' or 'en'",
-        expectedType: "'zh' | 'en'",
-        actualType: `'${settings.language}'`,
-      });
-    }
-
-    // 验证 namingTemplate 字段
-    if (typeof settings.namingTemplate !== "string") {
-      errors.push({
-        field: "namingTemplate",
-        message: "namingTemplate must be a string",
-        expectedType: "string",
-        actualType: typeof settings.namingTemplate,
-      });
-    }
+    this.validateScalarSettings(settings, errors);
 
     // 验证 directoryScheme 字段
     this.validateDirectoryScheme(settings.directoryScheme, errors);
-
-    // 验证 similarityThreshold 字段
-    if (typeof settings.similarityThreshold !== "number") {
-      errors.push({
-        field: "similarityThreshold",
-        message: "similarityThreshold must be a number",
-        expectedType: "number",
-        actualType: typeof settings.similarityThreshold,
-      });
-    } else if (settings.similarityThreshold < 0 || settings.similarityThreshold > 1) {
-      errors.push({
-        field: "similarityThreshold",
-        message: "similarityThreshold must be between 0 and 1",
-        expectedType: "number (0-1)",
-        actualType: String(settings.similarityThreshold),
-      });
-    }
-
-    // 验证 topK 字段
-    if (typeof settings.topK !== "number") {
-      errors.push({
-        field: "topK",
-        message: "topK must be a number",
-        expectedType: "number",
-        actualType: typeof settings.topK,
-      });
-    } else if (!Number.isInteger(settings.topK) || settings.topK < 1) {
-      errors.push({
-        field: "topK",
-        message: "topK must be a positive integer",
-        expectedType: "positive integer",
-        actualType: String(settings.topK),
-      });
-    }
-
-    // 验证 concurrency 字段
-    if (typeof settings.concurrency !== "number") {
-      errors.push({
-        field: "concurrency",
-        message: "concurrency must be a number",
-        expectedType: "number",
-        actualType: typeof settings.concurrency,
-      });
-    } else if (!Number.isInteger(settings.concurrency) || settings.concurrency < 1) {
-      errors.push({
-        field: "concurrency",
-        message: "concurrency must be a positive integer",
-        expectedType: "positive integer",
-        actualType: String(settings.concurrency),
-      });
-    }
-
-    // 验证 autoRetry 字段
-    if (typeof settings.autoRetry !== "boolean") {
-      errors.push({
-        field: "autoRetry",
-        message: "autoRetry must be a boolean",
-        expectedType: "boolean",
-        actualType: typeof settings.autoRetry,
-      });
-    }
-
-    // 验证 maxRetryAttempts 字段
-    if (typeof settings.maxRetryAttempts !== "number") {
-      errors.push({
-        field: "maxRetryAttempts",
-        message: "maxRetryAttempts must be a number",
-        expectedType: "number",
-        actualType: typeof settings.maxRetryAttempts,
-      });
-    } else if (!Number.isInteger(settings.maxRetryAttempts) || settings.maxRetryAttempts < 0) {
-      errors.push({
-        field: "maxRetryAttempts",
-        message: "maxRetryAttempts must be a non-negative integer",
-        expectedType: "non-negative integer",
-        actualType: String(settings.maxRetryAttempts),
-      });
-    }
-
-    // 验证 maxSnapshots 字段
-    if (typeof settings.maxSnapshots !== "number") {
-      errors.push({
-        field: "maxSnapshots",
-        message: "maxSnapshots must be a number",
-        expectedType: "number",
-        actualType: typeof settings.maxSnapshots,
-      });
-    } else if (!Number.isInteger(settings.maxSnapshots) || settings.maxSnapshots < 1) {
-      errors.push({
-        field: "maxSnapshots",
-        message: "maxSnapshots must be a positive integer",
-        expectedType: "positive integer",
-        actualType: String(settings.maxSnapshots),
-      });
-    }
-
-    // 验证 maxSnapshotAgeDays 字段 (A-FUNC-02)
-    if (typeof settings.maxSnapshotAgeDays !== "number") {
-      errors.push({
-        field: "maxSnapshotAgeDays",
-        message: "maxSnapshotAgeDays must be a number",
-        expectedType: "number",
-        actualType: typeof settings.maxSnapshotAgeDays,
-      });
-    } else if (!Number.isInteger(settings.maxSnapshotAgeDays) || settings.maxSnapshotAgeDays < 1) {
-      errors.push({
-        field: "maxSnapshotAgeDays",
-        message: "maxSnapshotAgeDays must be a positive integer",
-        expectedType: "positive integer",
-        actualType: String(settings.maxSnapshotAgeDays),
-      });
-    }
-
-    // 验证 enableGrounding 字段
-    if (typeof settings.enableGrounding !== "boolean") {
-      errors.push({
-        field: "enableGrounding",
-        message: "enableGrounding must be a boolean",
-        expectedType: "boolean",
-        actualType: typeof settings.enableGrounding,
-      });
-    }
 
     // 验证 providers 字段
     if (typeof settings.providers !== "object" || settings.providers === null) {
@@ -718,69 +610,8 @@ export class SettingsStore {
       }
     }
 
-    // 验证 defaultProviderId 字段
-    if (typeof settings.defaultProviderId !== "string") {
-      errors.push({
-        field: "defaultProviderId",
-        message: "defaultProviderId must be a string",
-        expectedType: "string",
-        actualType: typeof settings.defaultProviderId,
-      });
-    }
-
     // 验证 taskModels 字段
     this.validateTaskModels(settings.taskModels, errors);
-
-    // 验证 logLevel 字段
-    if (typeof settings.logLevel !== "string") {
-      errors.push({
-        field: "logLevel",
-        message: "logLevel must be a string",
-        expectedType: "string",
-        actualType: typeof settings.logLevel,
-      });
-    } else if (!["debug", "info", "warn", "error"].includes(settings.logLevel)) {
-      errors.push({
-        field: "logLevel",
-        message: "logLevel must be 'debug', 'info', 'warn', or 'error'",
-        expectedType: "'debug' | 'info' | 'warn' | 'error'",
-        actualType: `'${settings.logLevel}'`,
-      });
-    }
-
-    // 验证 embeddingDimension 字段
-    if (typeof settings.embeddingDimension !== "number") {
-      errors.push({
-        field: "embeddingDimension",
-        message: "embeddingDimension must be a number",
-        expectedType: "number",
-        actualType: typeof settings.embeddingDimension,
-      });
-    } else if (!Number.isInteger(settings.embeddingDimension) || settings.embeddingDimension < 1) {
-      errors.push({
-        field: "embeddingDimension",
-        message: "embeddingDimension must be a positive integer",
-        expectedType: "positive integer",
-        actualType: String(settings.embeddingDimension),
-      });
-    }
-
-    // 验证 providerTimeoutMs 字段
-    if (typeof settings.providerTimeoutMs !== "number") {
-      errors.push({
-        field: "providerTimeoutMs",
-        message: "providerTimeoutMs must be a number",
-        expectedType: "number",
-        actualType: typeof settings.providerTimeoutMs,
-      });
-    } else if (!Number.isInteger(settings.providerTimeoutMs) || settings.providerTimeoutMs < 1000) {
-      errors.push({
-        field: "providerTimeoutMs",
-        message: "providerTimeoutMs must be an integer >= 1000",
-        expectedType: "integer (>=1000)",
-        actualType: String(settings.providerTimeoutMs),
-      });
-    }
 
     // 图片生成配置
     if (settings.imageGeneration !== undefined) {
@@ -852,44 +683,145 @@ export class SettingsStore {
       }
     }
 
-    // 任务超时
-    if (settings.taskTimeoutMs !== undefined) {
-      if (typeof settings.taskTimeoutMs !== "number") {
-        errors.push({
-          field: "taskTimeoutMs",
-          message: "taskTimeoutMs must be a number",
-          expectedType: "number",
-          actualType: typeof settings.taskTimeoutMs
-        });
-      } else if (!Number.isInteger(settings.taskTimeoutMs) || settings.taskTimeoutMs < 1000) {
-        errors.push({
-          field: "taskTimeoutMs",
-          message: "taskTimeoutMs must be an integer greater than 1000",
-          expectedType: "integer (>=1000)",
-          actualType: String(settings.taskTimeoutMs)
-        });
-      }
-    }
-
-    if (settings.maxTaskHistory !== undefined) {
-      if (typeof settings.maxTaskHistory !== "number") {
-        errors.push({
-          field: "maxTaskHistory",
-          message: "maxTaskHistory must be a number",
-          expectedType: "number",
-          actualType: typeof settings.maxTaskHistory
-        });
-      } else if (!Number.isInteger(settings.maxTaskHistory) || settings.maxTaskHistory < 50) {
-        errors.push({
-          field: "maxTaskHistory",
-          message: "maxTaskHistory must be an integer greater than 50",
-          expectedType: "integer (>=50)",
-          actualType: String(settings.maxTaskHistory)
-        });
-      }
-    }
-
     return { valid: errors.length === 0, errors };
+  }
+
+  private validateScalarSettings(settings: Record<string, unknown>, errors: SettingsValidationError[]): void {
+    for (const spec of SCALAR_SETTINGS_SPECS) {
+      const value = settings[spec.key];
+
+      if (value === undefined) {
+        if (spec.required) {
+          errors.push({
+            field: spec.key,
+            message: `${spec.key} is required`,
+            expectedType: spec.type,
+            actualType: "undefined",
+          });
+        }
+        continue;
+      }
+
+      if (spec.type === "string") {
+        if (typeof value !== "string") {
+          errors.push({
+            field: spec.key,
+            message: `${spec.key} must be a string`,
+            expectedType: "string",
+            actualType: value === null ? "null" : typeof value,
+          });
+          continue;
+        }
+
+        if (spec.allowed && !spec.allowed.includes(value)) {
+          errors.push({
+            field: spec.key,
+            message: `${spec.key} must be one of: ${spec.allowed.join(", ")}`,
+            expectedType: spec.allowed.join(" | "),
+            actualType: `'${value}'`,
+          });
+        }
+        continue;
+      }
+
+      if (spec.type === "boolean") {
+        if (typeof value !== "boolean") {
+          errors.push({
+            field: spec.key,
+            message: `${spec.key} must be a boolean`,
+            expectedType: "boolean",
+            actualType: value === null ? "null" : typeof value,
+          });
+        }
+        continue;
+      }
+
+      if (typeof value !== "number" || Number.isNaN(value)) {
+        errors.push({
+          field: spec.key,
+          message: `${spec.key} must be a number`,
+          expectedType: "number",
+          actualType: value === null ? "null" : typeof value,
+        });
+        continue;
+      }
+
+      if (spec.integer && !Number.isInteger(value)) {
+        errors.push({
+          field: spec.key,
+          message: `${spec.key} must be an integer`,
+          expectedType: "integer",
+          actualType: String(value),
+        });
+        continue;
+      }
+
+      if (spec.min !== undefined && value < spec.min) {
+        errors.push({
+          field: spec.key,
+          message: `${spec.key} must be >= ${spec.min}`,
+          expectedType: `number (>=${spec.min})`,
+          actualType: String(value),
+        });
+      }
+
+      if (spec.max !== undefined && value > spec.max) {
+        errors.push({
+          field: spec.key,
+          message: `${spec.key} must be <= ${spec.max}`,
+          expectedType: `number (<=${spec.max})`,
+          actualType: String(value),
+        });
+      }
+    }
+  }
+
+  private applyScalarUpdates(partial: Partial<PluginSettings>, target: PluginSettings): Result<void> {
+    for (const spec of SCALAR_SETTINGS_SPECS) {
+      const value = partial[spec.key] as unknown;
+      if (value === undefined) {
+        continue;
+      }
+
+      if (spec.type === "string") {
+        if (typeof value !== "string") {
+          return err("E101_INVALID_INPUT", `${spec.key} 必须是字符串`);
+        }
+        if (spec.allowed && !spec.allowed.includes(value)) {
+          return err("E101_INVALID_INPUT", `${spec.key} 不合法`);
+        }
+        Reflect.set(target, spec.key, value);
+        continue;
+      }
+
+      if (spec.type === "boolean") {
+        if (typeof value !== "boolean") {
+          return err("E101_INVALID_INPUT", `${spec.key} 必须是布尔值`);
+        }
+        Reflect.set(target, spec.key, value);
+        continue;
+      }
+
+      if (typeof value !== "number" || Number.isNaN(value)) {
+        return err("E101_INVALID_INPUT", `${spec.key} 必须是数字`);
+      }
+
+      if (spec.integer && !Number.isInteger(value)) {
+        return err("E101_INVALID_INPUT", `${spec.key} 必须是整数`);
+      }
+
+      if (spec.min !== undefined && value < spec.min) {
+        return err("E101_INVALID_INPUT", `${spec.key} 必须 >= ${spec.min}`);
+      }
+
+      if (spec.max !== undefined && value > spec.max) {
+        return err("E101_INVALID_INPUT", `${spec.key} 必须 <= ${spec.max}`);
+      }
+
+      Reflect.set(target, spec.key, value);
+    }
+
+    return ok(undefined);
   }
 
   /** 验证 DirectoryScheme 结构 */
@@ -1014,25 +946,15 @@ export class SettingsStore {
       imageGeneration: { ...this.settings.imageGeneration }
     };
 
-    // 基础字段
-    if (partial.language !== undefined) {
-      if (partial.language !== "zh" && partial.language !== "en") {
-        return err("E001", "language 必须是 zh 或 en");
-      }
-      next.language = partial.language;
-    }
-
-    if (partial.namingTemplate !== undefined) {
-      if (typeof partial.namingTemplate !== "string") {
-        return err("E001", "namingTemplate 必须是字符串");
-      }
-      next.namingTemplate = partial.namingTemplate;
+    const scalarResult = this.applyScalarUpdates(partial, next);
+    if (!scalarResult.ok) {
+      return scalarResult;
     }
 
     // 目录方案
     if (partial.directoryScheme !== undefined) {
       if (!this.isPlainObject(partial.directoryScheme)) {
-        return err("E001", "directoryScheme 必须是对象");
+        return err("E101_INVALID_INPUT", "directoryScheme 必须是对象");
       }
       next.directoryScheme = {
         ...next.directoryScheme,
@@ -1040,45 +962,10 @@ export class SettingsStore {
       };
     }
 
-    // 数值字段
-    for (const key of [
-      "similarityThreshold",
-      "topK",
-      "concurrency",
-      "maxRetryAttempts",
-      "maxSnapshots",
-      "maxSnapshotAgeDays",
-      "embeddingDimension",
-      "taskTimeoutMs",
-      "maxTaskHistory",
-      "providerTimeoutMs"
-    ] as const) {
-      const result = this.applyNumberUpdate(partial, key, next);
-      if (!result.ok) {
-        return err(result.error.code, result.error.message, result.error.details);
-      }
-    }
-
-    // 布尔字段
-    for (const key of ["autoRetry", "enableGrounding"] as const) {
-      const result = this.applyBooleanUpdate(partial, key, next);
-      if (!result.ok) {
-        return err(result.error.code, result.error.message, result.error.details);
-      }
-    }
-
-    // 日志级别
-    if (partial.logLevel !== undefined) {
-      if (!["debug", "info", "warn", "error"].includes(partial.logLevel)) {
-        return err("E001", "logLevel 不合法");
-      }
-      next.logLevel = partial.logLevel as PluginSettings["logLevel"];
-    }
-
     // Provider 配置
     if (partial.providers !== undefined) {
       if (!this.isPlainObject(partial.providers)) {
-        return err("E001", "providers 必须是对象");
+        return err("E101_INVALID_INPUT", "providers 必须是对象");
       }
       const mergedProviders: Record<string, ProviderConfig> = { ...next.providers };
       for (const [providerId, providerConfig] of Object.entries(partial.providers)) {
@@ -1092,17 +979,10 @@ export class SettingsStore {
       next.providers = mergedProviders;
     }
 
-    if (partial.defaultProviderId !== undefined) {
-      if (typeof partial.defaultProviderId !== "string") {
-        return err("E001", "defaultProviderId 必须是字符串");
-      }
-      next.defaultProviderId = partial.defaultProviderId;
-    }
-
     // 任务模型
     if (partial.taskModels !== undefined) {
       if (!this.isPlainObject(partial.taskModels)) {
-        return err("E001", "taskModels 必须是对象");
+        return err("E101_INVALID_INPUT", "taskModels 必须是对象");
       }
       const mergedTaskModels: Record<TaskType, TaskModelConfig> = { ...next.taskModels };
       for (const [taskType, config] of Object.entries(partial.taskModels)) {
@@ -1111,7 +991,7 @@ export class SettingsStore {
           continue;
         }
         if (!this.isPlainObject(config)) {
-          return err("E001", `taskModels.${taskType} 必须是对象`);
+          return err("E101_INVALID_INPUT", `taskModels.${taskType} 必须是对象`);
         }
         mergedTaskModels[taskType as TaskType] = {
           ...existing,
@@ -1123,20 +1003,12 @@ export class SettingsStore {
 
     if (partial.imageGeneration !== undefined) {
       if (!this.isPlainObject(partial.imageGeneration)) {
-        return err("E001", "imageGeneration 必须是对象");
+        return err("E101_INVALID_INPUT", "imageGeneration 必须是对象");
       }
       next.imageGeneration = {
         ...next.imageGeneration,
         ...(partial.imageGeneration as PluginSettings["imageGeneration"])
       };
-    }
-
-    // 版本号
-    if (partial.version !== undefined) {
-      if (typeof partial.version !== "string") {
-        return err("E001", "version 必须是字符串");
-      }
-      next.version = partial.version;
     }
 
     return ok(next);
@@ -1174,6 +1046,37 @@ export class SettingsStore {
     return merged;
   }
 
+  /**
+   * 兼容旧版设置字段：enableGrounding → enableAutoVerify
+   *
+   * 说明：
+   * - 文档 SSOT 以 enableAutoVerify 为准
+   * - 旧字段仍可能存在于用户的 data.json / 导入文件中
+   */
+  private normalizeLegacySettings(raw: unknown): Record<string, any> {
+    if (!this.isPlainObject(raw)) {
+      return raw as Record<string, any>;
+    }
+
+    const normalized: Record<string, any> = { ...raw };
+
+    if (!Object.prototype.hasOwnProperty.call(normalized, "enableAutoVerify") &&
+        typeof normalized.enableGrounding === "boolean") {
+      normalized.enableAutoVerify = normalized.enableGrounding;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(normalized, "enableGrounding")) {
+      delete normalized.enableGrounding;
+    }
+
+    // 兼容旧版去重参数：topK 已从设置中移除（按阈值全量过滤）
+    if (Object.prototype.hasOwnProperty.call(normalized, "topK")) {
+      delete normalized.topK;
+    }
+
+    return normalized;
+  }
+
   /** 向后兼容：填充新字段缺省值，修复缺失的任务模型配置 */
   private ensureBackwardCompatibility(): void {
     // 填充图片生成配置
@@ -1209,7 +1112,7 @@ export class SettingsStore {
     incoming: unknown
   ): Result<ProviderConfig> {
     if (!this.isPlainObject(incoming)) {
-      return err("E001", "provider 配置必须是对象");
+      return err("E101_INVALID_INPUT", "provider 配置必须是对象");
     }
     const incomingConfig = incoming as Partial<ProviderConfig>;
     const base: ProviderConfig = existing
@@ -1224,70 +1127,40 @@ export class SettingsStore {
 
     if (incomingConfig.apiKey !== undefined) {
       if (typeof incomingConfig.apiKey !== "string") {
-        return err("E001", "provider.apiKey 必须是字符串");
+        return err("E101_INVALID_INPUT", "provider.apiKey 必须是字符串");
       }
       base.apiKey = incomingConfig.apiKey.trim();
     }
 
     if (incomingConfig.baseUrl !== undefined) {
       if (incomingConfig.baseUrl !== null && typeof incomingConfig.baseUrl !== "string") {
-        return err("E001", "provider.baseUrl 必须是字符串");
+        return err("E101_INVALID_INPUT", "provider.baseUrl 必须是字符串");
       }
       base.baseUrl = incomingConfig.baseUrl?.trim() || undefined;
     }
 
     if (incomingConfig.defaultChatModel !== undefined) {
       if (typeof incomingConfig.defaultChatModel !== "string") {
-        return err("E001", "provider.defaultChatModel 必须是字符串");
+        return err("E101_INVALID_INPUT", "provider.defaultChatModel 必须是字符串");
       }
       base.defaultChatModel = incomingConfig.defaultChatModel.trim();
     }
 
     if (incomingConfig.defaultEmbedModel !== undefined) {
       if (typeof incomingConfig.defaultEmbedModel !== "string") {
-        return err("E001", "provider.defaultEmbedModel 必须是字符串");
+        return err("E101_INVALID_INPUT", "provider.defaultEmbedModel 必须是字符串");
       }
       base.defaultEmbedModel = incomingConfig.defaultEmbedModel.trim();
     }
 
     if (incomingConfig.enabled !== undefined) {
       if (typeof incomingConfig.enabled !== "boolean") {
-        return err("E001", "provider.enabled 必须是布尔值");
+        return err("E101_INVALID_INPUT", "provider.enabled 必须是布尔值");
       }
       base.enabled = incomingConfig.enabled;
     }
 
     return ok(base);
-  }
-
-  private applyNumberUpdate(
-    partial: Partial<PluginSettings>,
-    key: keyof Pick<PluginSettings, "similarityThreshold" | "topK" | "concurrency" | "maxRetryAttempts" | "maxSnapshots" | "maxSnapshotAgeDays" | "embeddingDimension" | "taskTimeoutMs" | "maxTaskHistory" | "providerTimeoutMs">,
-    target: PluginSettings
-  ): Result<void> {
-    const value = partial[key];
-    if (value !== undefined) {
-      if (typeof value !== "number" || Number.isNaN(value)) {
-        return err("E001", `${String(key)} 必须是数字`);
-      }
-      Reflect.set(target, key, value);
-    }
-    return ok(undefined);
-  }
-
-  private applyBooleanUpdate(
-    partial: Partial<PluginSettings>,
-    key: keyof Pick<PluginSettings, "autoRetry" | "enableGrounding">,
-    target: PluginSettings
-  ): Result<void> {
-    const value = partial[key];
-    if (value !== undefined) {
-      if (typeof value !== "boolean") {
-        return err("E001", `${String(key)} 必须是布尔值`);
-      }
-      Reflect.set(target, key, value);
-    }
-    return ok(undefined);
   }
 
   private isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -1306,7 +1179,7 @@ export class SettingsStore {
    */
   async resetTaskModel(taskType: TaskType): Promise<Result<void>> {
     if (!DEFAULT_TASK_MODEL_CONFIGS[taskType]) {
-      return err("E001", `未知的任务类型: ${taskType}`);
+      return err("E101_INVALID_INPUT", `未知的任务类型: ${taskType}`);
     }
     const taskModels = {
       ...this.settings.taskModels,
@@ -1382,7 +1255,7 @@ export class SettingsStore {
   async updateProvider(id: string, updates: Partial<ProviderConfig>): Promise<Result<void>> {
     const currentConfig = this.settings.providers[id];
     if (!currentConfig) {
-      return err("E304", `Provider 不存在: ${id}`);
+      return err("E401_PROVIDER_NOT_CONFIGURED", `Provider 不存在: ${id}`);
     }
     
     const providers = {
@@ -1418,7 +1291,7 @@ export class SettingsStore {
     try {
       return ok(this.exportSettings());
     } catch (error) {
-      return err("E301", "导出设置失败", error);
+      return err("E500_INTERNAL_ERROR", "导出设置失败", error);
     }
   }
 

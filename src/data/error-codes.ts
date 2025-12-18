@@ -1,399 +1,241 @@
 /**
- * 错误码定义
- * E001-E010: 内容错误（可重试）
- * E100-E102: 网络错误（可重试）
- * E103: 认证错误（终止）
- * E200-E201, E304-E307, E400: 能力/状态/内部错误（终止）
- * E300-E303: 文件系统错误（终止）
+ * 错误码定义（SSOT）
+ *
+ * 约定（与 docs/TECHNICAL_DESIGN_DOCUMENT.md 对齐）：
+ * - E1xx: 输入/校验错误（不可重试）
+ * - E2xx: Provider/AI 错误（通常可重试）
+ * - E3xx: 系统/IO/运行时状态错误（视情况）
+ * - E4xx: 配置错误（不可重试）
+ * - E5xx: 内部错误/BUG（不可重试）
+ *
+ * 形式：统一使用 “E###_NAME” 作为错误码字符串，便于日志检索与排障沟通。
  */
 
-// 错误码枚举
+export type ErrorCategory =
+  | "INPUT_VALIDATION"
+  | "PROVIDER_AI"
+  | "SYSTEM_IO"
+  | "CONFIG"
+  | "INTERNAL";
 
-/** 内容错误码 (E001-E010) - 可重试 */
-export const ContentErrorCodes = {
-  /** 输出非 JSON 或解析失败 */
-  E001: "E001",
-  /** 不符合输出 Schema */
-  E002: "E002",
-  /** 必填字段缺失 */
-  E003: "E003",
-  /** 违反业务规则 C001-C016 */
-  E004: "E004",
-  /** 相似度超阈值（语义重复） */
-  E005: "E005",
-  /** wikilink 格式错误 */
-  E006: "E006",
-  /** 输出类型与预期不符 */
-  E007: "E007",
-  /** 内容长度不足 */
-  E008: "E008",
-  /** type_confidences 求和 ≠ 1 */
-  E009: "E009",
-  /** 字段不匹配正则 */
-  E010: "E010",
-} as const;
-
-/** 网络错误码 (E100-E102) - 可重试 */
-export const NetworkErrorCodes = {
-  /** Provider 返回 5xx/4xx */
-  E100: "E100",
-  /** 请求超时 */
-  E101: "E101",
-  /** 触发速率限制 (429) */
-  E102: "E102",
-} as const;
-
-/** 认证错误码 (E103) - 终止错误 */
-export const AuthErrorCodes = {
-  /** 认证失败 (401/403) */
-  E103: "E103",
-} as const;
-
-/** 能力/状态/内部错误码 (E200-E201, E304-E307, E400) - 终止错误 */
-export const CapabilityErrorCodes = {
-  /** 触发安全边界 */
-  E200: "E200",
-  /** Provider 能力不足或不可用 */
-  E201: "E201",
-  /** Provider 不存在或未配置 */
-  E304: "E304",
-  /** 内部错误/未预期异常 */
-  E305: "E305",
-  /** 状态/前置条件不满足或操作不允许 */
-  E306: "E306",
-  /** 资源/对象不存在 */
-  E307: "E307",
-  /** 任务/锁冲突或并发限制 */
-  E400: "E400",
-} as const;
-
-/** 文件系统错误码 (E300-E303) - 终止错误 */
-export const FileSystemErrorCodes = {
-  /** 文件写入失败 */
-  E300: "E300",
-  /** 文件读取失败 */
-  E301: "E301",
-  /** 向量索引损坏 */
-  E302: "E302",
-  /** 快照恢复失败 */
-  E303: "E303",
-} as const;
-
-// 错误码类型
-
-export type ContentErrorCode = typeof ContentErrorCodes[keyof typeof ContentErrorCodes];
-export type NetworkErrorCode = typeof NetworkErrorCodes[keyof typeof NetworkErrorCodes];
-export type AuthErrorCode = typeof AuthErrorCodes[keyof typeof AuthErrorCodes];
-export type CapabilityErrorCode = typeof CapabilityErrorCodes[keyof typeof CapabilityErrorCodes];
-export type FileSystemErrorCode = typeof FileSystemErrorCodes[keyof typeof FileSystemErrorCodes];
-
-/** 所有错误码类型 */
-export type ErrorCode = 
-  | ContentErrorCode 
-  | NetworkErrorCode 
-  | AuthErrorCode 
-  | CapabilityErrorCode 
-  | FileSystemErrorCode;
-
-// 错误码信息
-
-/** 错误码详细信息 */
 export interface ErrorCodeInfo {
-  /** 错误码 */
-  code: ErrorCode;
-  /** 错误名称 */
+  code: string;
   name: string;
-  /** 错误描述 */
   description: string;
-  /** 错误类别 */
-  category: "CONTENT" | "NETWORK" | "AUTH" | "CAPABILITY" | "FILE_SYSTEM";
-  /** 是否可重试 */
+  category: ErrorCategory;
   retryable: boolean;
-  /** 修复建议 */
   fixSuggestion?: string;
 }
 
-/** 错误码信息映射表 */
-export const ERROR_CODE_INFO: Record<ErrorCode, ErrorCodeInfo> = {
-  // 内容错误 (E001-E010)
-  E001: {
-    code: "E001",
-    name: "PARSE_ERROR",
-    description: "输出非 JSON 或解析失败",
-    category: "CONTENT",
-    retryable: true,
-    fixSuggestion: "AI 输出格式不正确，系统将自动重试并提供更明确的指示。",
+export const ERROR_CODE_INFO = {
+  // E1xx 输入/校验（不可重试）
+  E101_INVALID_INPUT: {
+    code: "E101_INVALID_INPUT",
+    name: "INVALID_INPUT",
+    description: "输入格式错误或无效",
+    category: "INPUT_VALIDATION",
+    retryable: false,
+    fixSuggestion: "请检查输入内容或必要参数后重试。",
   },
-  E002: {
-    code: "E002",
-    name: "SCHEMA_VIOLATION",
-    description: "不符合输出 Schema",
-    category: "CONTENT",
-    retryable: true,
-    fixSuggestion: "AI 输出不符合预期格式，系统将自动重试。",
-  },
-  E003: {
-    code: "E003",
-    name: "MISSING_REQUIRED",
-    description: "必填字段缺失",
-    category: "CONTENT",
-    retryable: true,
-    fixSuggestion: "AI 输出缺少必填字段，系统将自动重试。",
-  },
-  E004: {
-    code: "E004",
-    name: "CONSTRAINT_VIOLATION",
-    description: "违反业务规则 C001-C016",
-    category: "CONTENT",
-    retryable: true,
-    fixSuggestion: "AI 输出违反业务规则，系统将自动重试。",
-  },
-  E005: {
-    code: "E005",
-    name: "SEMANTIC_DUPLICATE",
-    description: "相似度超阈值（语义重复）",
-    category: "CONTENT",
-    retryable: true,
-    fixSuggestion: "检测到语义重复，请检查重复面板。",
-  },
-  E006: {
-    code: "E006",
-    name: "INVALID_WIKILINK",
-    description: "wikilink 格式错误",
-    category: "CONTENT",
-    retryable: true,
-    fixSuggestion: "AI 输出的 wikilink 格式不正确，系统将自动重试。",
-  },
-  E007: {
-    code: "E007",
-    name: "TYPE_MISMATCH",
-    description: "输出类型与预期不符",
-    category: "CONTENT",
-    retryable: true,
-    fixSuggestion: "AI 输出类型不匹配，系统将自动重试。",
-  },
-  E008: {
-    code: "E008",
-    name: "CONTENT_TOO_SHORT",
-    description: "内容长度不足",
-    category: "CONTENT",
-    retryable: true,
-    fixSuggestion: "AI 输出内容过短，系统将自动重试。",
-  },
-  E009: {
-    code: "E009",
-    name: "SUM_NOT_ONE",
-    description: "type_confidences 求和 ≠ 1",
-    category: "CONTENT",
-    retryable: true,
-    fixSuggestion: "AI 输出的置信度求和不为 1，系统将自动重试。",
-  },
-  E010: {
-    code: "E010",
-    name: "INVALID_PATTERN",
-    description: "字段不匹配正则",
-    category: "CONTENT",
-    retryable: true,
-    fixSuggestion: "AI 输出字段格式不正确，系统将自动重试。",
+  E102_MISSING_FIELD: {
+    code: "E102_MISSING_FIELD",
+    name: "MISSING_FIELD",
+    description: "必需字段缺失",
+    category: "INPUT_VALIDATION",
+    retryable: false,
+    fixSuggestion: "请补全必要字段后重试。",
   },
 
-  // 网络错误 (E100-E102)
-  E100: {
-    code: "E100",
-    name: "API_ERROR",
-    description: "Provider 返回 5xx/4xx",
-    category: "NETWORK",
+  // E2xx Provider/AI（通常可重试）
+  E201_PROVIDER_TIMEOUT: {
+    code: "E201_PROVIDER_TIMEOUT",
+    name: "PROVIDER_TIMEOUT",
+    description: "Provider 请求超时",
+    category: "PROVIDER_AI",
     retryable: true,
-    fixSuggestion: "API 调用失败，系统将自动重试。",
+    fixSuggestion: "可稍后重试，或在设置中提高超时时间/切换模型。",
   },
-  E101: {
-    code: "E101",
-    name: "TIMEOUT",
-    description: "请求超时",
-    category: "NETWORK",
-    retryable: true,
-    fixSuggestion: "请求超时，系统将自动重试。",
-  },
-  E102: {
-    code: "E102",
-    name: "RATE_LIMIT",
+  E202_RATE_LIMITED: {
+    code: "E202_RATE_LIMITED",
+    name: "RATE_LIMITED",
     description: "触发速率限制 (429)",
-    category: "NETWORK",
+    category: "PROVIDER_AI",
     retryable: true,
-    fixSuggestion: "请稍后再试，或考虑升级 API 套餐以获得更高的速率限制。",
+    fixSuggestion: "请稍后重试，或降低并发/升级套餐。",
   },
-
-  // 认证错误 (E103)
-  E103: {
-    code: "E103",
-    name: "AUTH_ERROR",
-    description: "认证失败 (401/403)",
-    category: "AUTH",
+  E203_INVALID_API_KEY: {
+    code: "E203_INVALID_API_KEY",
+    name: "INVALID_API_KEY",
+    description: "API 密钥无效 (401/403)",
+    category: "PROVIDER_AI",
     retryable: false,
     fixSuggestion: "请前往设置页面检查并更新 API Key。",
   },
-
-  // 能力/状态/内部错误 (E200-E201, E304-E307, E400)
-  E200: {
-    code: "E200",
+  E204_PROVIDER_ERROR: {
+    code: "E204_PROVIDER_ERROR",
+    name: "PROVIDER_ERROR",
+    description: "Provider 调用失败（非超时/非鉴权/非限流）",
+    category: "PROVIDER_AI",
+    retryable: true,
+    fixSuggestion: "请重试；若持续失败请检查 Provider 状态与网络。",
+  },
+  E210_MODEL_OUTPUT_PARSE_FAILED: {
+    code: "E210_MODEL_OUTPUT_PARSE_FAILED",
+    name: "MODEL_OUTPUT_PARSE_FAILED",
+    description: "模型输出非 JSON 或解析失败",
+    category: "PROVIDER_AI",
+    retryable: true,
+    fixSuggestion: "系统将自动重试并强化输出约束。",
+  },
+  E211_MODEL_SCHEMA_VIOLATION: {
+    code: "E211_MODEL_SCHEMA_VIOLATION",
+    name: "MODEL_SCHEMA_VIOLATION",
+    description: "模型输出不符合 Schema",
+    category: "PROVIDER_AI",
+    retryable: true,
+    fixSuggestion: "系统将自动重试并提示模型修正结构。",
+  },
+  E212_MODEL_CONSTRAINT_VIOLATION: {
+    code: "E212_MODEL_CONSTRAINT_VIOLATION",
+    name: "MODEL_CONSTRAINT_VIOLATION",
+    description: "模型输出违反业务约束",
+    category: "PROVIDER_AI",
+    retryable: true,
+    fixSuggestion: "系统将自动重试；若持续失败请检查输入是否过于含混。",
+  },
+  E213_SAFETY_VIOLATION: {
+    code: "E213_SAFETY_VIOLATION",
     name: "SAFETY_VIOLATION",
     description: "触发安全边界",
-    category: "CAPABILITY",
+    category: "PROVIDER_AI",
     retryable: false,
     fixSuggestion: "请修改输入内容，避免触发安全限制。",
   },
-  E201: {
-    code: "E201",
-    name: "CAPABILITY_MISMATCH",
-    description: "Provider 能力不足或不可用",
-    category: "CAPABILITY",
-    retryable: false,
-    fixSuggestion: "请选择支持此功能的 Provider 或检查配置。",
-  },
 
-  // 能力/状态/内部错误续
-  E304: {
-    code: "E304",
-    name: "PROVIDER_NOT_FOUND",
-    description: "Provider 不存在或未配置",
-    category: "CAPABILITY",
+  // E3xx 系统/IO/状态（视情况）
+  E301_FILE_NOT_FOUND: {
+    code: "E301_FILE_NOT_FOUND",
+    name: "FILE_NOT_FOUND",
+    description: "文件不存在",
+    category: "SYSTEM_IO",
     retryable: false,
-    fixSuggestion: "请检查 Provider 配置是否正确。",
+    fixSuggestion: "请检查文件路径或刷新 Vault 状态后重试。",
   },
-  E305: {
-    code: "E305",
-    name: "INTERNAL_ERROR",
-    description: "内部错误或未预期异常",
-    category: "CAPABILITY",
+  E302_PERMISSION_DENIED: {
+    code: "E302_PERMISSION_DENIED",
+    name: "PERMISSION_DENIED",
+    description: "没有文件操作权限",
+    category: "SYSTEM_IO",
     retryable: false,
-    fixSuggestion: "请重试或重启插件，如持续出现请反馈日志。",
+    fixSuggestion: "请检查 Vault/系统权限或关闭占用文件的程序。",
   },
-  E306: {
-    code: "E306",
+  E303_DISK_FULL: {
+    code: "E303_DISK_FULL",
+    name: "DISK_FULL",
+    description: "磁盘空间不足",
+    category: "SYSTEM_IO",
+    retryable: false,
+    fixSuggestion: "请释放磁盘空间后重试。",
+  },
+  E304_SNAPSHOT_FAILED: {
+    code: "E304_SNAPSHOT_FAILED",
+    name: "SNAPSHOT_FAILED",
+    description: "快照创建失败",
+    category: "SYSTEM_IO",
+    retryable: false,
+    fixSuggestion: "请检查快照目录权限与磁盘空间。",
+  },
+  E305_VECTOR_MISMATCH: {
+    code: "E305_VECTOR_MISMATCH",
+    name: "VECTOR_MISMATCH",
+    description: "向量维度不匹配",
+    category: "SYSTEM_IO",
+    retryable: false,
+    fixSuggestion: "请确认 embedding 模型与 dimensions 一致，必要时重建索引。",
+  },
+  E310_INVALID_STATE: {
+    code: "E310_INVALID_STATE",
     name: "INVALID_STATE",
     description: "状态不正确或前置条件不满足",
-    category: "CAPABILITY",
+    category: "SYSTEM_IO",
     retryable: false,
-    fixSuggestion: "请按流程操作或检查当前状态。",
+    fixSuggestion: "请按流程操作或刷新后重试。",
   },
-  E307: {
-    code: "E307",
+  E311_NOT_FOUND: {
+    code: "E311_NOT_FOUND",
     name: "NOT_FOUND",
     description: "资源或对象不存在",
-    category: "CAPABILITY",
+    category: "SYSTEM_IO",
     retryable: false,
     fixSuggestion: "请检查目标是否仍存在或刷新后重试。",
   },
-  E400: {
-    code: "E400",
+  E320_TASK_CONFLICT: {
+    code: "E320_TASK_CONFLICT",
     name: "TASK_CONFLICT",
     description: "任务/锁冲突或并发限制",
-    category: "CAPABILITY",
+    category: "SYSTEM_IO",
     retryable: false,
     fixSuggestion: "请等待当前任务完成，或取消后再试。",
   },
 
-  // 文件系统错误 (E300-E303)
-  E300: {
-    code: "E300",
-    name: "FILE_WRITE_ERROR",
-    description: "文件写入失败",
-    category: "FILE_SYSTEM",
+  // E4xx 配置（不可重试）
+  E401_PROVIDER_NOT_CONFIGURED: {
+    code: "E401_PROVIDER_NOT_CONFIGURED",
+    name: "PROVIDER_NOT_CONFIGURED",
+    description: "Provider 未配置",
+    category: "CONFIG",
     retryable: false,
-    fixSuggestion: "请检查文件写入权限和磁盘空间。",
+    fixSuggestion: "请先在设置页配置 Provider 与 API Key。",
   },
-  E301: {
-    code: "E301",
-    name: "FILE_READ_ERROR",
-    description: "文件读取失败",
-    category: "FILE_SYSTEM",
+  E404_TEMPLATE_NOT_FOUND: {
+    code: "E404_TEMPLATE_NOT_FOUND",
+    name: "TEMPLATE_NOT_FOUND",
+    description: "Prompt 模板不存在或未加载",
+    category: "CONFIG",
     retryable: false,
-    fixSuggestion: "请检查文件是否存在和读取权限。",
+    fixSuggestion: "请检查 prompts 目录与模板文件是否完整。",
   },
-  E302: {
-    code: "E302",
-    name: "INDEX_CORRUPTED",
-    description: "向量索引损坏",
-    category: "FILE_SYSTEM",
+  E405_TEMPLATE_INVALID: {
+    code: "E405_TEMPLATE_INVALID",
+    name: "TEMPLATE_INVALID",
+    description: "Prompt 模板不符合契约（区块/槽位/占位符校验失败）",
+    category: "CONFIG",
     retryable: false,
-    fixSuggestion: "向量索引可能已损坏，请尝试重建索引。",
+    fixSuggestion: "请检查模板区块结构、槽位映射与占位符是否一致。",
   },
-  E303: {
-    code: "E303",
-    name: "SNAPSHOT_RESTORE_FAILED",
-    description: "快照恢复失败",
-    category: "FILE_SYSTEM",
-    retryable: false,
-    fixSuggestion: "快照恢复失败，请检查快照文件是否完整。",
-  },
-};
 
-// 辅助函数
+  // E5xx 内部错误（不可重试）
+  E500_INTERNAL_ERROR: {
+    code: "E500_INTERNAL_ERROR",
+    name: "INTERNAL_ERROR",
+    description: "内部程序错误或未预期异常",
+    category: "INTERNAL",
+    retryable: false,
+    fixSuggestion: "请重试或重启插件，如持续出现请反馈日志。",
+  },
+} as const satisfies Record<string, ErrorCodeInfo>;
 
-/** 检查是否为有效的错误码 */
+export type ErrorCode = keyof typeof ERROR_CODE_INFO;
+
 export function isValidErrorCode(code: string): code is ErrorCode {
   return code in ERROR_CODE_INFO;
 }
 
-/** 获取错误码信息 */
 export function getErrorCodeInfo(code: string): ErrorCodeInfo | undefined {
-  if (isValidErrorCode(code)) {
-    return ERROR_CODE_INFO[code];
+  if (!isValidErrorCode(code)) {
+    return undefined;
   }
-  return undefined;
+  return ERROR_CODE_INFO[code];
 }
 
-/** 检查错误码是否可重试 */
+export function getErrorCategory(code: string): ErrorCategory | "UNKNOWN" {
+  return getErrorCodeInfo(code)?.category ?? "UNKNOWN";
+}
+
 export function isRetryableErrorCode(code: string): boolean {
-  const info = getErrorCodeInfo(code);
-  return info?.retryable ?? false;
+  return getErrorCodeInfo(code)?.retryable ?? false;
 }
 
-/** 获取错误码的修复建议 */
 export function getFixSuggestion(code: string): string | undefined {
-  const info = getErrorCodeInfo(code);
-  return info?.fixSuggestion;
-}
-
-/** 检查是否为内容错误 (E001-E010) */
-export function isContentErrorCode(code: string): boolean {
-  return code in ContentErrorCodes || /^E00[1-9]$|^E010$/.test(code);
-}
-
-/** 检查是否为网络错误 (E100-E102) */
-export function isNetworkErrorCode(code: string): boolean {
-  return code in NetworkErrorCodes || /^E10[0-2]$/.test(code);
-}
-
-/** 检查是否为认证错误 (E103) */
-export function isAuthErrorCode(code: string): boolean {
-  return code === "E103";
-}
-
-/** 检查是否为能力错误 (E200-E201) */
-export function isCapabilityErrorCode(code: string): boolean {
-  return code in CapabilityErrorCodes || /^E20[0-1]$/.test(code);
-}
-
-/** 检查是否为文件系统错误 (E300-E303) */
-export function isFileSystemErrorCode(code: string): boolean {
-  return code in FileSystemErrorCodes || /^E30[0-3]$/.test(code);
-}
-
-/** 检查是否为终止错误（不可重试） */
-export function isTerminalErrorCode(code: string): boolean {
-  return isAuthErrorCode(code) || isCapabilityErrorCode(code) || isFileSystemErrorCode(code);
-}
-
-/** 获取所有错误码列表 */
-export function getAllErrorCodes(): ErrorCode[] {
-  return Object.keys(ERROR_CODE_INFO) as ErrorCode[];
-}
-
-/**
- * 获取错误码的类别
- */
-export function getErrorCategory(code: string): ErrorCodeInfo["category"] | undefined {
-  const info = getErrorCodeInfo(code);
-  return info?.category;
+  return getErrorCodeInfo(code)?.fixSuggestion;
 }

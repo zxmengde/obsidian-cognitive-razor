@@ -23,11 +23,12 @@ import type { ProviderManager } from "./provider-manager";
 import type { PromptManager } from "./prompt-manager";
 import type { UndoManager } from "./undo-manager";
 import type { VectorIndex } from "./vector-index";
-import type { FileStorage } from "../data/file-storage";
 import type { SettingsStore } from "../data/settings-store";
 import type { Validator } from "../data/validator";
 import { App, MarkdownView, TFile } from "obsidian";
 import { dataUrlToArrayBuffer, inferImageExtension } from "../utils/image";
+import { formatCRTimestamp } from "../utils/date-utils";
+import { NoteRepository } from "./note-repository";
 
 /** 任务管线顺序 */
 const TASK_PIPELINE_ORDER: TaskType[] = [
@@ -114,17 +115,17 @@ class InputValidator {
 
   validate(input: string): string {
     if (typeof input !== "string") {
-      throw new CognitiveRazorError("E001", "输入必须是字符串");
+      throw new CognitiveRazorError("E101_INVALID_INPUT", "输入必须是字符串");
     }
     if (input.length > this.MAX_INPUT_LENGTH) {
-      throw new CognitiveRazorError("E001", `输入过长: ${input.length} 字符 (最大 ${this.MAX_INPUT_LENGTH})`, {
+      throw new CognitiveRazorError("E101_INVALID_INPUT", `输入过长: ${input.length} 字符 (最大 ${this.MAX_INPUT_LENGTH})`, {
         length: input.length,
         maxLength: this.MAX_INPUT_LENGTH
       });
     }
     for (const pattern of this.SUSPICIOUS_PATTERNS) {
       if (pattern.test(input)) {
-        throw new CognitiveRazorError("E001", "输入包含可疑指令，请检查后再试");
+        throw new CognitiveRazorError("E101_INVALID_INPUT", "输入包含可疑指令，请检查后再试");
       }
     }
     const sanitized = input.replace(/[\x00-\x1F\x7F]/g, "").replace(/\s+/g, " ").trim();
@@ -141,9 +142,9 @@ interface TaskRunnerDependencies {
   undoManager: UndoManager;
   logger: ILogger;
   vectorIndex?: VectorIndex;
-  fileStorage?: FileStorage;
   schemaRegistry?: SchemaRegistry;
   settingsStore?: SettingsStore;
+  noteRepository?: NoteRepository;
   app: App;
 }
 
@@ -156,6 +157,11 @@ interface WriteContext {
   originalContent?: string;
 }
 
+interface TaskHandler {
+  taskType: TaskType;
+  run: (task: TaskRecord, signal: AbortSignal) => Promise<Result<TaskResult>>;
+}
+
 export class TaskRunner {
   private providerManager: ProviderManager;
   private promptManager: PromptManager;
@@ -163,12 +169,13 @@ export class TaskRunner {
   private undoManager: UndoManager;
   private logger: ILogger;
   private vectorIndex?: VectorIndex;
-  private fileStorage?: FileStorage;
   private schemaRegistry: SchemaRegistry;
   private settingsStore?: SettingsStore;
   private abortControllers: Map<string, AbortController>;
   private inputValidator: InputValidator;
   private app: App;
+  private noteRepository: NoteRepository;
+  private taskHandlers: Map<TaskType, TaskHandler>;
 
   constructor(deps: TaskRunnerDependencies) {
     this.providerManager = deps.providerManager;
@@ -177,13 +184,39 @@ export class TaskRunner {
     this.undoManager = deps.undoManager;
     this.logger = deps.logger;
     this.vectorIndex = deps.vectorIndex;
-    this.fileStorage = deps.fileStorage;
     // 使用注入的 SchemaRegistry 或默认单例
     this.schemaRegistry = deps.schemaRegistry || schemaRegistry;
     this.settingsStore = deps.settingsStore;
     this.app = deps.app;
+    this.noteRepository = deps.noteRepository ?? new NoteRepository(deps.app, deps.logger);
     this.abortControllers = new Map();
     this.inputValidator = new InputValidator();
+    this.taskHandlers = new Map([
+      [
+        "define",
+        { taskType: "define", run: (task, signal) => this.executeDefine(task, signal) }
+      ],
+      [
+        "tag",
+        { taskType: "tag", run: (task, signal) => this.executeTag(task, signal) }
+      ],
+      [
+        "index",
+        { taskType: "index", run: (task, signal) => this.executeIndex(task, signal) }
+      ],
+      [
+        "write",
+        { taskType: "write", run: (task, signal) => this.executeWrite(task, signal) }
+      ],
+      [
+        "verify",
+        { taskType: "verify", run: (task, signal) => this.executeVerify(task, signal) }
+      ],
+      [
+        "image-generate",
+        { taskType: "image-generate", run: (task, signal) => this.executeImageGenerate(task, signal) }
+      ],
+    ]);
 
     this.logger.debug("TaskRunner", "TaskRunner 初始化完成");
   }
@@ -213,30 +246,10 @@ export class TaskRunner {
       });
 
       // 根据任务类型分发
-      let result: Result<TaskResult>;
-
-        switch (task.taskType) {
-          case "define":
-            result = await this.executeDefine(task, abortController.signal);
-            break;
-          case "tag":
-            result = await this.executeTag(task, abortController.signal);
-            break;
-          case "index":
-            result = await this.executeIndex(task, abortController.signal);
-            break;
-          case "write":
-            result = await this.executeWrite(task, abortController.signal);
-            break;
-          case "verify":
-            result = await this.executeVerify(task, abortController.signal);
-            break;
-          case "image-generate":
-            result = await this.executeImageGenerate(task, abortController.signal);
-            break;
-        default:
-          result = err("E306", `未知的任务类型: ${task.taskType}`);
-      }
+      const handler = this.taskHandlers.get(task.taskType);
+      const result = handler
+        ? await handler.run(task, abortController.signal)
+        : err("E310_INVALID_STATE", `未知的任务类型: ${task.taskType}`);
 
       const elapsedTime = Date.now() - startTime;
 
@@ -262,7 +275,7 @@ export class TaskRunner {
         elapsedTime
       });
 
-      return err("E305", "任务执行异常", error);
+      return err("E500_INTERNAL_ERROR", "任务执行异常", error);
     } finally {
       this.abortControllers.delete(task.id);
     }
@@ -290,14 +303,9 @@ export class TaskRunner {
 
       // 获取原始内容（如果未提供）
       let originalContent = context.originalContent;
-      if (originalContent === undefined && this.fileStorage) {
-        const existsResult = await this.fileStorage.exists(context.filePath);
-        if (existsResult) {
-          const readResult = await this.fileStorage.read(context.filePath);
-          if (readResult.ok) {
-            originalContent = readResult.value;
-          }
-        }
+      if (originalContent === undefined) {
+        const existing = await this.noteRepository.readByPathIfExists(context.filePath);
+        originalContent = existing ?? "";
       }
 
       // 如果文件不存在，使用空字符串作为原始内容
@@ -332,7 +340,7 @@ export class TaskRunner {
       this.logger.error("TaskRunner", "创建快照异常", error as Error, {
         filePath: context.filePath
       });
-      return err("E303", "创建快照失败", error);
+      return err("E304_SNAPSHOT_FAILED", "创建快照失败", error);
     }
   }
 
@@ -341,31 +349,22 @@ export class TaskRunner {
 
   /** 更新笔记状态 */
   async updateNoteStatus(filePath: string, newStatus: NoteState): Promise<Result<void>> {
-    if (!this.fileStorage) {
-      return err("E306", "FileStorage 未配置");
-    }
-
     try {
-      const readResult = await this.fileStorage.read(filePath);
-      if (!readResult.ok) {
-        return readResult as Result<void>;
+      const content = await this.noteRepository.readByPathIfExists(filePath);
+      if (content === null) {
+        return err("E301_FILE_NOT_FOUND", `目标文件不存在: ${filePath}`, { filePath });
       }
-
-      const content = readResult.value;
       
       // 更新 frontmatter 中的 status 字段
       const updatedContent = this.updateFrontmatterStatus(content, newStatus);
       
-      const writeResult = await this.fileStorage.write(filePath, updatedContent);
-      if (!writeResult.ok) {
-        return writeResult;
-      }
+      await this.noteRepository.writeAtomic(filePath, updatedContent);
 
       this.logger.info("TaskRunner", `笔记状态已更新为 ${newStatus}`, { filePath });
       return ok(undefined);
     } catch (error) {
       this.logger.error("TaskRunner", "更新笔记状态失败", error as Error, { filePath });
-      return err("E300", "更新笔记状态失败", error);
+      return err("E302_PERMISSION_DENIED", "更新笔记状态失败", error);
     }
   }
 
@@ -380,9 +379,14 @@ export class TaskRunner {
     }
 
     const frontmatter = match[1];
-    const updatedFrontmatter = frontmatter.replace(
+    const withStatus = frontmatter.replace(
       /^status:\s*.*$/m,
       `status: ${newStatus}`
+    );
+    const now = formatCRTimestamp();
+    const updatedFrontmatter = withStatus.replace(
+      /^updated:\s*.*$/m,
+      `updated: ${now}`
     );
 
     return content.replace(frontmatterRegex, `---\n${updatedFrontmatter}\n---`);
@@ -403,15 +407,10 @@ export class TaskRunner {
       });
 
       // 1. 删除被合并的笔记文件
-      if (this.fileStorage) {
-        const deleteResult = await this.fileStorage.delete(deleteFilePath);
-        if (!deleteResult.ok) {
-          this.logger.error("TaskRunner", "删除被合并笔记失败", undefined, {
-            deleteFilePath,
-            error: deleteResult.error
-          });
-          return deleteResult;
-        }
+      const deleted = await this.noteRepository.deleteByPathIfExists(deleteFilePath);
+      if (!deleted) {
+        this.logger.warn("TaskRunner", "被合并笔记不存在，跳过删除", { deleteFilePath });
+      } else {
         this.logger.info("TaskRunner", `已删除被合并笔记: ${deleteFilePath}`);
       }
 
@@ -440,7 +439,7 @@ export class TaskRunner {
         keepNodeId,
         deleteNodeId
       });
-      return err("E305", "完成合并流程失败", error);
+      return err("E500_INTERNAL_ERROR", "完成合并流程失败", error);
     }
   }
 
@@ -513,7 +512,7 @@ export class TaskRunner {
       const prompt = this.promptManager.build(task.taskType, slots);
 
       // 获取任务模型配置
-      const modelConfig = this.getTaskModelConfig("define");
+      const modelConfig = this.getTaskModelConfig("define", task.providerRef);
 
       // 调用 LLM（使用用户配置的模型）
       const chatRequest: any = {
@@ -563,7 +562,7 @@ export class TaskRunner {
       this.logger.error("TaskRunner", "执行 define 失败", error as Error, {
         taskId: task.id
       });
-      return toErr(error, "E305", "执行 define 失败");
+      return toErr(error, "E500_INTERNAL_ERROR", "执行 define 失败");
     }
   }
 
@@ -582,7 +581,7 @@ export class TaskRunner {
       const prompt = this.promptManager.build(task.taskType, slots);
 
       // 获取任务模型配置
-      const modelConfig = this.getTaskModelConfig("tag");
+      const modelConfig = this.getTaskModelConfig("tag", task.providerRef);
 
       // 调用 LLM（使用用户配置的模型）
       const chatRequest: any = {
@@ -643,7 +642,7 @@ export class TaskRunner {
       this.logger.error("TaskRunner", "执行 tag 失败", error as Error, {
         taskId: task.id
       });
-      return toErr(error, "E305", "执行 tag 失败");
+      return toErr(error, "E500_INTERNAL_ERROR", "执行 tag 失败");
     }
   }
 
@@ -660,13 +659,13 @@ export class TaskRunner {
       if (!text) {
         const standardized = task.payload.standardizedData as StandardizedConcept | undefined;
         if (!standardized) {
-          return this.createTaskError(task, { code: "E001", message: "缺少标准化数据，无法生成嵌入文本" });
+          return this.createTaskError(task, { code: "E310_INVALID_STATE", message: "缺少标准化数据，无法生成嵌入文本" });
         }
 
         const primaryType = (standardized.primaryType || task.payload.conceptType || "Entity") as CRType;
         const currentName = standardized.standardNames?.[primaryType];
         if (!currentName) {
-          return this.createTaskError(task, { code: "E001", message: "标准化名称缺失，无法生成嵌入文本" });
+          return this.createTaskError(task, { code: "E310_INVALID_STATE", message: "标准化名称缺失，无法生成嵌入文本" });
         }
 
         const signature = createConceptSignature(
@@ -682,13 +681,16 @@ export class TaskRunner {
       }
 
       // 获取任务模型配置
-      const modelConfig = this.getTaskModelConfig("index");
+      const modelConfig = this.getTaskModelConfig("index", task.providerRef);
 
       // 调用 Embedding API（使用用户配置的模型和向量维度）
-      const embeddingDimension = this.settingsStore?.getSettings().embeddingDimension || 1536;
+      const embeddingDimension = this.vectorIndex?.getEmbeddingDimension()
+        ?? this.settingsStore?.getSettings().embeddingDimension
+        ?? 1536;
+      const embeddingModel = this.vectorIndex?.getEmbeddingModel() ?? modelConfig.model;
       const embedResult = await this.providerManager.embed({
         providerId: task.providerRef || modelConfig.providerId,
-        model: modelConfig.model,
+        model: embeddingModel,
         input: text,
         dimensions: embeddingDimension
       }, signal);
@@ -710,7 +712,7 @@ export class TaskRunner {
       this.logger.error("TaskRunner", "执行 index 失败", error as Error, {
         taskId: task.id
       });
-      return err("E305", "执行 index 失败", error);
+      return toErr(error, "E500_INTERNAL_ERROR", "执行 index 失败");
     }
   }
 
@@ -730,11 +732,11 @@ export class TaskRunner {
         CTX_LANGUAGE: this.getLanguage()
       };
 
-      // 传递 conceptType 以选择正确的模板（write-domain, write-issue 等）
+      // 传递 conceptType 以选择正确的类型核心模板（prompts/_type/*-core.md）
       const prompt = this.promptManager.build(task.taskType, slots, conceptType);
 
       // 获取任务模型配置
-      const modelConfig = this.getTaskModelConfig("write");
+      const modelConfig = this.getTaskModelConfig("write", task.providerRef);
 
       // 调用 LLM（使用用户配置的模型）
       const chatRequest: any = {
@@ -800,7 +802,7 @@ export class TaskRunner {
       this.logger.error("TaskRunner", "执行 write 失败", error as Error, {
         taskId: task.id
       });
-      return toErr(error, "E305", "执行 write 失败");
+      return toErr(error, "E500_INTERNAL_ERROR", "执行 write 失败");
     }
   }
 
@@ -816,7 +818,7 @@ export class TaskRunner {
     try {
       const currentContent = task.payload.currentContent as string;
       if (!currentContent) {
-        return this.createTaskError(task, { code: "E001", message: "缺少待验证内容 (currentContent)" });
+        return this.createTaskError(task, { code: "E102_MISSING_FIELD", message: "缺少待验证内容 (currentContent)" });
       }
 
       const conceptType = (task.payload.conceptType as CRType) || (task.payload.noteType as CRType) || "Entity";
@@ -832,7 +834,7 @@ export class TaskRunner {
       const prompt = this.promptManager.build(task.taskType, slots, conceptType);
 
       // 获取任务模型配置
-      const modelConfig = this.getTaskModelConfig("verify");
+      const modelConfig = this.getTaskModelConfig("verify", task.providerRef);
 
       // 调用 LLM（使用用户配置的模型）
       const chatRequest: any = {
@@ -858,12 +860,12 @@ export class TaskRunner {
       }
 
       // 解析验证结果
-      let groundingResult: Record<string, unknown>;
+      let verificationResult: Record<string, unknown>;
       try {
-        groundingResult = JSON.parse(chatResult.value.content);
+        verificationResult = JSON.parse(chatResult.value.content);
       } catch {
         // 如果解析失败，构建默认结构
-        groundingResult = {
+        verificationResult = {
           overall_assessment: "needs_review",
           confidence_score: 0.5,
           issues: [],
@@ -874,12 +876,12 @@ export class TaskRunner {
 
       // 确保必要字段存在
       const resultData: Record<string, unknown> = {
-        overall_assessment: groundingResult.overall_assessment || "needs_review",
-        confidence_score: groundingResult.confidence_score || 0.5,
-        issues: groundingResult.issues || [],
-        verified_claims: groundingResult.verified_claims || [],
-        recommendations: groundingResult.recommendations || [],
-        requires_human_review: groundingResult.requires_human_review ?? true
+        overall_assessment: verificationResult.overall_assessment || "needs_review",
+        confidence_score: verificationResult.confidence_score || 0.5,
+        issues: verificationResult.issues || [],
+        verified_claims: verificationResult.verified_claims || [],
+        recommendations: verificationResult.recommendations || [],
+        requires_human_review: verificationResult.requires_human_review ?? true
       };
 
       this.logger.info("TaskRunner", `Verify 任务完成: ${task.id}`, {
@@ -896,7 +898,7 @@ export class TaskRunner {
       this.logger.error("TaskRunner", "执行 verify 失败", error as Error, {
         taskId: task.id
       });
-      return toErr(error, "E305", "执行 verify 失败");
+      return toErr(error, "E500_INTERNAL_ERROR", "执行 verify 失败");
     }
   }
 
@@ -907,37 +909,37 @@ export class TaskRunner {
   ): Promise<Result<TaskResult>> {
     try {
       if (!this.settingsStore) {
-        return this.createTaskError(task, { code: "E001", message: "设置未初始化" });
+        return this.createTaskError(task, { code: "E310_INVALID_STATE", message: "设置未初始化" });
       }
       const payload = task.payload as unknown as ImageGeneratePayload;
       if (!payload || !payload.userPrompt || !payload.filePath) {
-        return this.createTaskError(task, { code: "E001", message: "图片生成任务载荷缺失必要字段" });
+        return this.createTaskError(task, { code: "E102_MISSING_FIELD", message: "图片生成任务载荷缺失必要字段" });
       }
 
       const settings = this.settingsStore.getSettings();
-      const providerId = task.providerRef || settings.defaultProviderId;
-      if (!providerId) {
-        return this.createTaskError(task, { code: "E201", message: "请先配置 Provider" });
+      const modelConfig = this.getTaskModelConfig("image-generate", task.providerRef);
+      if (!modelConfig.providerId) {
+        return this.createTaskError(task, { code: "E401_PROVIDER_NOT_CONFIGURED", message: "请先配置 Provider" });
       }
 
-      const messages = [
-        {
-          role: "system" as const,
-          content: "You return a single Markdown image reference with data URL. Do not add extra text."
-        },
-        {
-          role: "user" as const,
-          content: `User request: ${payload.userPrompt}\nContext before: ${payload.contextBefore}\nContext after: ${payload.contextAfter}`
-        }
-      ];
+      const promptParts = [
+        payload.userPrompt,
+        payload.frontmatter?.type ? `Concept type: ${payload.frontmatter.type}` : undefined,
+        payload.frontmatter?.name ? `Concept name: ${payload.frontmatter.name}` : undefined,
+        payload.contextBefore ? `Context before cursor:\n${payload.contextBefore}` : undefined,
+        payload.contextAfter ? `Context after cursor:\n${payload.contextAfter}` : undefined
+      ].filter((v): v is string => typeof v === "string" && v.trim().length > 0);
+
+      const prompt = promptParts.join("\n\n");
 
       const imageResult = await this.providerManager.generateImage(
         {
-          providerId,
-          model: "gemini-3-pro-image-preview",
-          messages,
-          aspectRatio: settings.imageGeneration.defaultAspectRatio,
-          imageSize: settings.imageGeneration.defaultImageSize || settings.imageGeneration.defaultSize
+          providerId: modelConfig.providerId,
+          model: modelConfig.model,
+          prompt,
+          size: settings.imageGeneration.defaultSize,
+          quality: settings.imageGeneration.defaultQuality,
+          style: settings.imageGeneration.defaultStyle
         },
         signal
       );
@@ -951,23 +953,21 @@ export class TaskRunner {
         return this.createTaskError(task, binaryResult.error);
       }
 
-      const file = this.app.vault.getAbstractFileByPath(payload.filePath);
-      if (!(file instanceof TFile)) {
-        return this.createTaskError(task, { code: "E003", message: "目标文件不存在" });
+      const file = this.noteRepository.getFileByPath(payload.filePath);
+      if (!file) {
+        return this.createTaskError(task, { code: "E301_FILE_NOT_FOUND", message: "目标文件不存在" });
       }
 
-      const currentContent = await this.app.vault.read(file);
+      const currentContent = await this.noteRepository.read(file);
       await this.undoManager.createSnapshot(payload.filePath, currentContent, task.id, payload.frontmatter?.cruid);
 
       const ext = inferImageExtension(imageResult.value.imageUrl);
-      const vaultAny = this.app.vault as any;
-      const attachmentPath = vaultAny.getAvailablePathForAttachment
-        ? vaultAny.getAvailablePathForAttachment(`generated-image.${ext}`, payload.filePath)
-        : file.parent
-          ? `${file.parent.path}/generated-image.${ext}`
-          : `generated-image.${ext}`;
+      const attachmentPath = this.noteRepository.getAvailablePathForAttachment(
+        `generated-image.${ext}`,
+        payload.filePath
+      );
 
-      await this.app.vault.createBinary(attachmentPath, binaryResult.value);
+      await this.noteRepository.createBinary(attachmentPath, binaryResult.value);
 
       const markdown = `![${imageResult.value.altText || payload.userPrompt}](${attachmentPath})\n`;
       await this.insertImageReference(file, currentContent, markdown, payload.cursorPosition);
@@ -986,7 +986,7 @@ export class TaskRunner {
       this.logger.error("TaskRunner", "执行 image-generate 失败", error as Error, {
         taskId: task.id
       });
-      return toErr(error, "E305", "执行 image-generate 失败");
+      return toErr(error, "E500_INTERNAL_ERROR", "执行 image-generate 失败");
     }
   }
 
@@ -1001,7 +1001,7 @@ export class TaskRunner {
     if (activeView && activeView.file && activeView.file.path === file.path) {
       const editor = activeView.editor;
       editor.replaceRange(markdown, cursor);
-      await this.app.vault.modify(file, editor.getValue());
+      await this.noteRepository.modify(file, editor.getValue());
       return;
     }
 
@@ -1015,13 +1015,13 @@ export class TaskRunner {
     const updatedLine = `${targetLine.slice(0, ch)}${markdown}${targetLine.slice(ch)}`;
     lines[lineIndex] = updatedLine;
     const nextContent = lines.join("\n");
-    await this.app.vault.modify(file, nextContent);
+    await this.noteRepository.modify(file, nextContent);
   }
 
   // 辅助方法
 
   /** 获取任务模型配置 */
-  private getTaskModelConfig(taskType: TaskType): {
+  private getTaskModelConfig(taskType: TaskType, providerRef?: string): {
     providerId: string;
     model: string;
     temperature?: number;
@@ -1039,13 +1039,13 @@ export class TaskRunner {
       "index": { model: "text-embedding-3-small" },
       "write": { model: "gpt-4o", temperature: 0.7 },
       "verify": { model: "gpt-4o", temperature: 0.3 },
-      "image-generate": { model: "gemini-3-pro-image-preview", temperature: 0.2, topP: 1 }
+      "image-generate": { model: "gpt-image-1" }
     };
 
     const defaultConfig = defaults[taskType] || { model: "gpt-4o" };
 
     return {
-      providerId: taskConfig?.providerId || settings?.defaultProviderId || "default",
+      providerId: taskConfig?.providerId || providerRef || settings?.defaultProviderId || "",
       model: taskConfig?.model || defaultConfig.model,
       temperature: taskConfig?.temperature ?? defaultConfig.temperature,
       topP: taskConfig?.topP,
@@ -1157,7 +1157,14 @@ export class TaskRunner {
    * @returns 验证结果
    */
   private async validateProviderCapability(task: TaskRecord): Promise<Result<void>> {
-    const providerId = task.providerRef || "default";
+    const modelConfig = this.getTaskModelConfig(task.taskType, task.providerRef);
+    const providerId = modelConfig.providerId;
+    if (!providerId) {
+      return err("E401_PROVIDER_NOT_CONFIGURED", "请先配置 Provider", {
+        taskType: task.taskType,
+        hint: "打开设置 → Cognitive Razor → Providers 进行配置"
+      });
+    }
 
     // 获取任务所需的能力
     const requiredCapability = this.getRequiredCapability(task.taskType);
@@ -1176,7 +1183,7 @@ export class TaskRunner {
     if (!providerExists) {
       // 如果没有配置任何 Provider，返回友好的错误消息
       if (configuredProviders.length === 0) {
-        return err("E201", "尚未配置任何 AI Provider。请在设置中配置至少一个 Provider（如 OpenAI）后再使用此功能。", {
+        return err("E401_PROVIDER_NOT_CONFIGURED", "尚未配置任何 AI Provider。请在设置中配置至少一个 Provider（如 OpenAI）后再使用此功能。", {
           providerId,
           taskType: task.taskType,
           hint: "打开设置 → Cognitive Razor → Providers 进行配置"
@@ -1185,7 +1192,7 @@ export class TaskRunner {
       
       // 如果配置了 Provider 但指定的不存在，建议使用已配置的
       const availableIds = configuredProviders.map(p => p.id).join(", ");
-      return err("E201", `Provider "${providerId}" 不存在。可用的 Provider: ${availableIds}`, {
+      return err("E401_PROVIDER_NOT_CONFIGURED", `Provider "${providerId}" 不存在。可用的 Provider: ${availableIds}`, {
         providerId,
         taskType: task.taskType,
         availableProviders: availableIds
@@ -1196,9 +1203,10 @@ export class TaskRunner {
     const availabilityResult = await this.providerManager.checkAvailability(providerId);
     
     if (!availabilityResult.ok) {
-      return err("E201", `Provider 不可用: ${availabilityResult.error.message}`, {
+      return err(availabilityResult.error.code, `Provider 不可用: ${availabilityResult.error.message}`, {
         providerId,
-        taskType: task.taskType
+        taskType: task.taskType,
+        availabilityError: availabilityResult.error,
       });
     }
 
@@ -1206,7 +1214,7 @@ export class TaskRunner {
 
     // 验证能力匹配
     if (requiredCapability === "chat" && !capabilities.chat) {
-      return err("E201", `Provider ${providerId} 不支持聊天能力`, {
+      return err("E401_PROVIDER_NOT_CONFIGURED", `Provider ${providerId} 不支持聊天能力`, {
         providerId,
         requiredCapability,
         availableCapabilities: capabilities
@@ -1214,7 +1222,15 @@ export class TaskRunner {
     }
 
     if (requiredCapability === "embedding" && !capabilities.embedding) {
-      return err("E201", `Provider ${providerId} 不支持嵌入能力`, {
+      return err("E401_PROVIDER_NOT_CONFIGURED", `Provider ${providerId} 不支持嵌入能力`, {
+        providerId,
+        requiredCapability,
+        availableCapabilities: capabilities
+      });
+    }
+
+    if (requiredCapability === "image" && !capabilities.image) {
+      return err("E401_PROVIDER_NOT_CONFIGURED", `Provider ${providerId} 不支持图片生成能力`, {
         providerId,
         requiredCapability,
         availableCapabilities: capabilities
@@ -1236,15 +1252,16 @@ export class TaskRunner {
    * @param taskType 任务类型
    * @returns 所需能力类型
    */
-  private getRequiredCapability(taskType: TaskType): "chat" | "embedding" {
+  private getRequiredCapability(taskType: TaskType): "chat" | "embedding" | "image" {
     switch (taskType) {
       case "index":
         return "embedding";
+      case "image-generate":
+        return "image";
       case "define":
       case "tag":
       case "write":
       case "verify":
-      case "image-generate":
       default:
         return "chat";
     }

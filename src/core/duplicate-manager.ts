@@ -103,7 +103,7 @@ export class DuplicateManager {
       return ok(undefined);
     } catch (error) {
       this.logger.error("DuplicateManager", "初始化失败", error as Error);
-      return err("E305", "初始化重复管理器失败", error);
+      return err("E500_INTERNAL_ERROR", "初始化重复管理器失败", error);
     }
   }
 
@@ -128,24 +128,22 @@ export class DuplicateManager {
 
     try {
       if (!this.store) {
-        return err("E306", "重复管理器未初始化");
+        return err("E310_INVALID_STATE", "重复管理器未初始化");
       }
 
       const settings = this.settingsStore.getSettings();
       const threshold = settings.similarityThreshold;
-      const topK = settings.topK;
       const dismissedSet = new Set(this.store.dismissedPairs);
       const existingPairIds = new Set(this.store.pairs.map((p) => p.id));
 
       this.logger.debug("DuplicateManager", "开始检测重复", {
         nodeId,
         type,
-        threshold,
-        topK
+        threshold
       });
 
       // 在同类型桶内检索相似概念
-      const searchResult = await this.vectorIndex.search(type, embedding, topK);
+      const searchResult = await this.vectorIndex.searchAboveThreshold(type, embedding, threshold);
 
       if (!searchResult.ok) {
         this.logger.error("DuplicateManager", "向量检索失败", undefined, {
@@ -156,10 +154,8 @@ export class DuplicateManager {
 
       const similarConcepts = searchResult.value;
 
-      // 过滤出相似度 >= 阈值的概念
-      const duplicates = similarConcepts.filter(
-        result => result.similarity >= threshold && result.uid !== nodeId
-      );
+      // searchAboveThreshold 已按阈值过滤，这里只排除自身
+      const duplicates = similarConcepts.filter((result) => result.uid !== nodeId);
 
       if (duplicates.length === 0) {
         this.logger.debug("DuplicateManager", "未检测到重复", {
@@ -232,7 +228,7 @@ export class DuplicateManager {
         nodeId,
         type
       });
-      return err("E305", "检测重复失败", error);
+      return err("E500_INTERNAL_ERROR", "检测重复失败", error);
     } finally {
       // 释放类型锁
       this.lockManager.release(typeLockKey);
@@ -253,13 +249,13 @@ export class DuplicateManager {
   async markAsNonDuplicate(pairId: string): Promise<Result<void>> {
     try {
       if (!this.store) {
-        return err("E306", "重复管理器未初始化");
+        return err("E310_INVALID_STATE", "重复管理器未初始化");
       }
 
       const pairIndex = this.store.pairs.findIndex(p => p.id === pairId);
       if (pairIndex === -1) {
         this.logger.warn("DuplicateManager", "重复对不存在", { pairId });
-        return err("E307", `重复对不存在: ${pairId}`);
+        return err("E311_NOT_FOUND", `重复对不存在: ${pairId}`);
       }
 
       // 更新状态
@@ -286,7 +282,7 @@ export class DuplicateManager {
       this.logger.error("DuplicateManager", "标记为非重复失败", error as Error, {
         pairId
       });
-      return err("E305", "标记为非重复失败", error);
+      return err("E500_INTERNAL_ERROR", "标记为非重复失败", error);
     }
   }
 
@@ -294,13 +290,13 @@ export class DuplicateManager {
   async startMerge(pairId: string): Promise<Result<string>> {
     try {
       if (!this.store) {
-        return err("E306", "重复管理器未初始化");
+        return err("E310_INVALID_STATE", "重复管理器未初始化");
       }
 
       const pairIndex = this.store.pairs.findIndex(p => p.id === pairId);
       if (pairIndex === -1) {
         this.logger.warn("DuplicateManager", "重复对不存在", { pairId });
-        return err("E307", `重复对不存在: ${pairId}`);
+        return err("E311_NOT_FOUND", `重复对不存在: ${pairId}`);
       }
 
       // 更新状态
@@ -327,7 +323,7 @@ export class DuplicateManager {
       this.logger.error("DuplicateManager", "开始合并失败", error as Error, {
         pairId
       });
-      return err("E305", "开始合并失败", error);
+      return err("E500_INTERNAL_ERROR", "开始合并失败", error);
     }
   }
 
@@ -335,13 +331,13 @@ export class DuplicateManager {
   async completeMerge(pairId: string, keepNodeId: string): Promise<Result<void>> {
     try {
       if (!this.store) {
-        return err("E306", "重复管理器未初始化");
+        return err("E310_INVALID_STATE", "重复管理器未初始化");
       }
 
       const pairIndex = this.store.pairs.findIndex(p => p.id === pairId);
       if (pairIndex === -1) {
         this.logger.warn("DuplicateManager", "重复对不存在", { pairId });
-        return err("E307", `重复对不存在: ${pairId}`);
+        return err("E311_NOT_FOUND", `重复对不存在: ${pairId}`);
       }
 
       const pair = this.store.pairs[pairIndex];
@@ -377,7 +373,48 @@ export class DuplicateManager {
         pairId,
         keepNodeId
       });
-      return err("E305", "完成合并失败", error);
+      return err("E500_INTERNAL_ERROR", "完成合并失败", error);
+    }
+  }
+
+  /**
+   * 中止合并（将 merging 状态回退为 pending）
+   *
+   * 用于 Merge 管线在确认写入阶段失败时的恢复，避免重复对长期卡在 merging。
+   */
+  async abortMerge(pairId: string): Promise<Result<void>> {
+    try {
+      if (!this.store) {
+        return err("E310_INVALID_STATE", "重复管理器未初始化");
+      }
+
+      const pairIndex = this.store.pairs.findIndex(p => p.id === pairId);
+      if (pairIndex === -1) {
+        this.logger.warn("DuplicateManager", "重复对不存在", { pairId });
+        return err("E311_NOT_FOUND", `重复对不存在: ${pairId}`);
+      }
+
+      const current = this.store.pairs[pairIndex];
+      if (current.status !== "merging") {
+        return ok(undefined);
+      }
+
+      this.store.pairs[pairIndex].status = "pending";
+
+      const saveResult = await this.saveStore();
+      if (!saveResult.ok) {
+        return saveResult;
+      }
+
+      this.notifyListeners();
+
+      this.logger.info("DuplicateManager", `合并已中止并回退为 pending: ${pairId}`);
+      return ok(undefined);
+    } catch (error) {
+      this.logger.error("DuplicateManager", "中止合并失败", error as Error, {
+        pairId
+      });
+      return err("E500_INTERNAL_ERROR", "中止合并失败", error);
     }
   }
 
@@ -403,13 +440,13 @@ export class DuplicateManager {
   async updateStatus(pairId: string, status: DuplicatePairStatus): Promise<Result<void>> {
     try {
       if (!this.store) {
-        return err("E306", "重复管理器未初始化");
+        return err("E310_INVALID_STATE", "重复管理器未初始化");
       }
 
       const pairIndex = this.store.pairs.findIndex(p => p.id === pairId);
       if (pairIndex === -1) {
         this.logger.warn("DuplicateManager", "重复对不存在", { pairId });
-        return err("E307", `重复对不存在: ${pairId}`);
+        return err("E311_NOT_FOUND", `重复对不存在: ${pairId}`);
       }
 
       // 更新状态
@@ -432,7 +469,7 @@ export class DuplicateManager {
         pairId,
         status
       });
-      return err("E305", "更新状态失败", error);
+      return err("E500_INTERNAL_ERROR", "更新状态失败", error);
     }
   }
 
@@ -440,13 +477,13 @@ export class DuplicateManager {
   async removePair(pairId: string): Promise<Result<void>> {
     try {
       if (!this.store) {
-        return err("E306", "重复管理器未初始化");
+        return err("E310_INVALID_STATE", "重复管理器未初始化");
       }
 
       const pairIndex = this.store.pairs.findIndex(p => p.id === pairId);
       if (pairIndex === -1) {
         this.logger.warn("DuplicateManager", "重复对不存在", { pairId });
-        return err("E307", `重复对不存在: ${pairId}`);
+        return err("E311_NOT_FOUND", `重复对不存在: ${pairId}`);
       }
 
       // 移除重复对
@@ -468,7 +505,7 @@ export class DuplicateManager {
       this.logger.error("DuplicateManager", "移除重复对失败", error as Error, {
         pairId
       });
-      return err("E305", "移除重复对失败", error);
+      return err("E500_INTERNAL_ERROR", "移除重复对失败", error);
     }
   }
 
@@ -498,7 +535,7 @@ export class DuplicateManager {
   async removePairsByNodeId(nodeId: string): Promise<Result<number>> {
     try {
       if (!this.store) {
-        return err("E306", "重复管理器未初始化");
+        return err("E310_INVALID_STATE", "重复管理器未初始化");
       }
 
       const before = this.store.pairs.length;
@@ -541,7 +578,54 @@ export class DuplicateManager {
       this.logger.error("DuplicateManager", "清理重复对失败", error as Error, {
         nodeId
       });
-      return err("E305", "清理重复对失败", error);
+      return err("E500_INTERNAL_ERROR", "清理重复对失败", error);
+    }
+  }
+
+  /**
+   * 清理包含指定 nodeId 的 Pending 重复对（用于内容发生语义变更后的重检）
+   *
+   * 约束：
+   * - 仅清理 pending，保留 dismissed/merged/merging 的历史与状态
+   * - 不触碰 dismissedPairs 历史列表，避免 UX 反复弹出
+   */
+  async clearPendingPairsByNodeId(nodeId: string): Promise<Result<number>> {
+    try {
+      if (!this.store) {
+        return err("E310_INVALID_STATE", "重复管理器未初始化");
+      }
+
+      const before = this.store.pairs.length;
+      this.store.pairs = this.store.pairs.filter((p) => {
+        if (p.status !== "pending") {
+          return true;
+        }
+        return p.nodeIdA !== nodeId && p.nodeIdB !== nodeId;
+      });
+      const removed = before - this.store.pairs.length;
+
+      if (removed === 0) {
+        return ok(0);
+      }
+
+      const saveResult = await this.saveStore();
+      if (!saveResult.ok) {
+        return saveResult as Result<number>;
+      }
+
+      this.notifyListeners();
+
+      this.logger.info("DuplicateManager", "已清理语义变更后的 Pending 重复对", {
+        nodeId,
+        removed
+      });
+
+      return ok(removed);
+    } catch (error) {
+      this.logger.error("DuplicateManager", "清理 Pending 重复对失败", error as Error, {
+        nodeId
+      });
+      return err("E500_INTERNAL_ERROR", "清理 Pending 重复对失败", error);
     }
   }
 
@@ -612,7 +696,7 @@ export class DuplicateManager {
   /** 保存存储 */
   private async saveStore(): Promise<Result<void>> {
     if (!this.store) {
-      return err("E306", "存储未初始化");
+      return err("E310_INVALID_STATE", "存储未初始化");
     }
 
     const writeResult = await this.fileStorage.write(

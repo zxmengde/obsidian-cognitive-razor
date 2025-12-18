@@ -10,11 +10,11 @@ import {
 
 /** 错误类别 */
 type ErrorCategory =
-  | "CONTENT_ERROR"         // 内容错误 (E001-E010)
-  | "NETWORK_ERROR"         // 网络错误 (E100-E102)
-  | "AUTH_ERROR"            // 认证错误 (E103)
-  | "CAPABILITY_ERROR"      // 能力错误 (E200-E201)
-  | "FILE_SYSTEM_ERROR"     // 文件系统错误 (E300-E303)
+  | "INPUT_ERROR"           // 输入/校验错误 (E1xx)
+  | "PROVIDER_ERROR"        // Provider/AI 错误 (E2xx)
+  | "SYSTEM_ERROR"          // 系统/IO/状态错误 (E3xx)
+  | "CONFIG_ERROR"          // 配置错误 (E4xx)
+  | "INTERNAL_ERROR"        // 内部错误 (E5xx)
   | "UNKNOWN";              // 未知错误
 
 /** 重试策略类型 */
@@ -50,13 +50,13 @@ interface RetryConfig {
 }
 
 /** 内容错误的默认配置 */
-const CONTENT_ERROR_CONFIG: RetryConfig = {
+const MODEL_OUTPUT_ERROR_CONFIG: RetryConfig = {
   maxAttempts: 3,
   strategy: "immediate",
 };
 
 /** 网络错误的默认配置 */
-export const NETWORK_ERROR_CONFIG: RetryConfig = {
+export const PROVIDER_ERROR_CONFIG: RetryConfig = {
   maxAttempts: 5,
   strategy: "exponential",
   baseDelayMs: 1000, // 1s, 2s, 4s, 8s, 16s
@@ -74,45 +74,50 @@ export class RetryHandler {
     const category = getErrorCategory(errorCode);
     const retryable = isRetryableErrorCode(errorCode);
 
-    if (category === "CONTENT") {
+    if (category === "INPUT_VALIDATION") {
       return {
-        category: "CONTENT_ERROR",
-        strategy: "immediate",
-        retryable,
-        maxAttempts: 3,
-      };
-    }
-
-    if (category === "NETWORK") {
-      return {
-        category: "NETWORK_ERROR",
-        strategy: "exponential",
-        retryable,
-        maxAttempts: 5,
-      };
-    }
-
-    if (category === "AUTH") {
-      return {
-        category: "AUTH_ERROR",
+        category: "INPUT_ERROR",
         strategy: "no_retry",
         retryable: false,
         maxAttempts: 1,
       };
     }
 
-    if (category === "CAPABILITY") {
+    if (category === "PROVIDER_AI") {
+      const isModelOutputError =
+        errorCode.startsWith("E210_") ||
+        errorCode.startsWith("E211_") ||
+        errorCode.startsWith("E212_");
+
       return {
-        category: "CAPABILITY_ERROR",
+        category: "PROVIDER_ERROR",
+        strategy: isModelOutputError ? "immediate" : "exponential",
+        retryable,
+        maxAttempts: isModelOutputError ? 3 : 5,
+      };
+    }
+
+    if (category === "SYSTEM_IO") {
+      return {
+        category: "SYSTEM_ERROR",
+        strategy: "no_retry",
+        retryable,
+        maxAttempts: retryable ? 3 : 1,
+      };
+    }
+
+    if (category === "CONFIG") {
+      return {
+        category: "CONFIG_ERROR",
         strategy: "no_retry",
         retryable: false,
         maxAttempts: 1,
       };
     }
 
-    if (category === "FILE_SYSTEM") {
+    if (category === "INTERNAL") {
       return {
-        category: "FILE_SYSTEM_ERROR",
+        category: "INTERNAL_ERROR",
         strategy: "no_retry",
         retryable: false,
         maxAttempts: 1,
@@ -315,26 +320,26 @@ export class RetryHandler {
     const classification = this.classifyError(code);
 
     switch (classification.category) {
-      case "AUTH_ERROR":
-        return "认证失败，请检查 API Key 是否正确配置。";
-
-      case "NETWORK_ERROR":
-        if (code === "E102") {
-          return "API 速率限制，系统将自动重试。";
-        }
-        if (code === "E101") {
-          return "请求超时，系统将自动重试。";
-        }
-        return "API 调用失败，系统将自动重试。";
-
-      case "CAPABILITY_ERROR":
+      case "INPUT_ERROR":
+      case "CONFIG_ERROR":
+      case "SYSTEM_ERROR":
+      case "INTERNAL_ERROR":
         return error.error.message;
 
-      case "CONTENT_ERROR":
-        return "AI 输出格式错误，系统将自动重试。";
-
-      case "FILE_SYSTEM_ERROR":
-        return "文件系统操作失败，请检查权限和磁盘空间。";
+      case "PROVIDER_ERROR":
+        if (code === "E202_RATE_LIMITED") {
+          return "触发速率限制，系统将自动重试。";
+        }
+        if (code === "E201_PROVIDER_TIMEOUT") {
+          return "请求超时，系统将自动重试。";
+        }
+        if (code === "E203_INVALID_API_KEY") {
+          return "认证失败，请检查 API Key 是否正确配置。";
+        }
+        if (code.startsWith("E210_") || code.startsWith("E211_") || code.startsWith("E212_")) {
+          return "模型输出不符合要求，系统将自动重试。";
+        }
+        return "Provider 调用失败，系统将自动重试。";
 
       default:
         return error.error.message;
@@ -350,12 +355,13 @@ export class RetryHandler {
   getRetryConfigForError(error: Err): RetryConfig {
     const classification = this.classifyError(error.error.code);
 
-    if (classification.category === "CONTENT_ERROR") {
-      return { ...CONTENT_ERROR_CONFIG };
-    }
+    if (classification.category === "PROVIDER_ERROR") {
+      const isModelOutputError =
+        error.error.code.startsWith("E210_") ||
+        error.error.code.startsWith("E211_") ||
+        error.error.code.startsWith("E212_");
 
-    if (classification.category === "NETWORK_ERROR") {
-      return { ...NETWORK_ERROR_CONFIG };
+      return isModelOutputError ? { ...MODEL_OUTPUT_ERROR_CONFIG } : { ...PROVIDER_ERROR_CONFIG };
     }
 
     // 终止错误：不重试
@@ -365,29 +371,9 @@ export class RetryHandler {
     };
   }
 
-  /** 判断是否为内容错误 (E001-E010) */
-  isContentError(code: string): boolean {
-    return getErrorCategory(code) === "CONTENT";
-  }
-
-  /** 判断是否为网络错误 (E100-E102) */
-  isNetworkError(code: string): boolean {
-    return getErrorCategory(code) === "NETWORK";
-  }
-
-  /** 判断是否为认证错误 (E103) */
-  isAuthError(code: string): boolean {
-    return getErrorCategory(code) === "AUTH";
-  }
-
-  /** 判断是否为能力错误 (E200-E201) */
-  isCapabilityError(code: string): boolean {
-    return getErrorCategory(code) === "CAPABILITY";
-  }
-
-  /** 判断是否为文件系统错误 (E300-E303) */
-  isFileSystemError(code: string): boolean {
-    return getErrorCategory(code) === "FILE_SYSTEM";
+  /** 判断是否为模型输出错误（E210_/E211_/E212_） */
+  isModelOutputError(code: string): boolean {
+    return code.startsWith("E210_") || code.startsWith("E211_") || code.startsWith("E212_");
   }
 
   /** 判断是否为终止错误（不可重试） */

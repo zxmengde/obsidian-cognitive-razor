@@ -13,13 +13,13 @@ export function dataUrlToArrayBuffer(dataUrl: string): Result<ArrayBuffer> {
   try {
     const parts = dataUrl.split(",");
     if (parts.length !== 2) {
-      return err("E998", "data URL 格式不正确");
+      return err("E210_MODEL_OUTPUT_PARSE_FAILED", "data URL 格式不正确");
     }
     const base64 = parts[1];
     const binary = Uint8Array.from(Buffer.from(base64, "base64"));
     return ok(binary.buffer);
   } catch (error) {
-    return err("E998", "解析 data URL 失败", error);
+    return err("E210_MODEL_OUTPUT_PARSE_FAILED", "解析 data URL 失败", error);
   }
 }
 

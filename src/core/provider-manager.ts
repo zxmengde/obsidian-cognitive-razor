@@ -18,8 +18,7 @@ import {
   ImageGenerateResponse
 } from "../types";
 import type { SettingsStore } from "../data/settings-store";
-import { RetryHandler, NETWORK_ERROR_CONFIG } from "./retry-handler";
-import { extractMarkdownDataUrl } from "../utils/image";
+import { RetryHandler, PROVIDER_ERROR_CONFIG } from "./retry-handler";
 
 class SecurityUtils {
   static maskApiKey(apiKey: string): string {
@@ -65,6 +64,15 @@ interface OpenAIEmbedResponse {
   };
 }
 
+/** OpenAI Images API 响应格式 */
+interface OpenAIImagesResponse {
+  data?: Array<{
+    b64_json?: string;
+    url?: string;
+    revised_prompt?: string;
+  }>;
+}
+
 /** HTTP 错误响应 */
 interface HttpErrorResponse {
   error?: {
@@ -78,15 +86,6 @@ interface HttpErrorResponse {
 interface AvailabilityCacheEntry {
   capabilities: ProviderCapabilities;
   timestamp: number;
-}
-
-interface ImagePreviewChoice {
-  message?: { content?: string };
-  finish_reason?: string;
-}
-
-interface ImagePreviewResponse {
-  choices?: ImagePreviewChoice[];
 }
 
 export class ProviderManager {
@@ -167,7 +166,7 @@ export class ProviderManager {
     const result = await this.retryHandler.executeWithRetry(
       async () => this.executeChatRequest(url, requestBody, providerConfig.apiKey, signal),
       {
-        ...NETWORK_ERROR_CONFIG,
+        ...PROVIDER_ERROR_CONFIG,
         onRetry: (attempt, error) => {
           this.logger.warn("ProviderManager", `聊天请求重试 ${attempt}`, {
             event: "API_RETRY",
@@ -191,11 +190,10 @@ export class ProviderManager {
         elapsedTime
       });
     } else {
-      if (result.error.code === "E102") {
-        this.notifyNetworkStatus(false, result as Err);
-      } else {
-        this.notifyNetworkStatus(true);
-      }
+      const offline = result.error.code === "E204_PROVIDER_ERROR" &&
+        typeof result.error.details === "object" &&
+        (result.error.details as { kind?: unknown } | null)?.kind === "network";
+      this.notifyNetworkStatus(!offline, offline ? (result as Err) : undefined);
       this.logger.error("ProviderManager", "聊天请求失败", undefined, {
         event: "API_ERROR",
         providerId: request.providerId,
@@ -250,7 +248,7 @@ export class ProviderManager {
     const result = await this.retryHandler.executeWithRetry(
       async () => this.executeEmbedRequest(url, requestBody, providerConfig.apiKey, signal),
       {
-        ...NETWORK_ERROR_CONFIG,
+        ...PROVIDER_ERROR_CONFIG,
         onRetry: (attempt, error) => {
           this.logger.warn("ProviderManager", `嵌入请求重试 ${attempt}`, {
             event: "API_RETRY",
@@ -275,11 +273,10 @@ export class ProviderManager {
         elapsedTime
       });
     } else {
-      if (result.error.code === "E102") {
-        this.notifyNetworkStatus(false, result as Err);
-      } else {
-        this.notifyNetworkStatus(true);
-      }
+      const offline = result.error.code === "E204_PROVIDER_ERROR" &&
+        typeof result.error.details === "object" &&
+        (result.error.details as { kind?: unknown } | null)?.kind === "network";
+      this.notifyNetworkStatus(!offline, offline ? (result as Err) : undefined);
       this.logger.error("ProviderManager", "嵌入请求失败", undefined, {
         event: "API_ERROR",
         providerId: request.providerId,
@@ -293,7 +290,7 @@ export class ProviderManager {
     return result;
   }
 
-  /** 调用图片生成（chat completions image preview） */
+  /** 调用图片生成（OpenAI-Compatible Images API） */
   async generateImage(request: ImageGenerateRequest, signal?: AbortSignal): Promise<Result<ImageGenerateResponse>> {
     const startTime = Date.now();
 
@@ -304,23 +301,23 @@ export class ProviderManager {
     const providerConfig = configResult.value;
 
     const baseUrl = providerConfig.baseUrl || DEFAULT_ENDPOINTS["openai"];
-    const url = `${baseUrl}/chat/completions`;
+    const url = `${baseUrl}/images/generations`;
     const safeUrl = SecurityUtils.sanitizeUrl(url);
 
     const body: Record<string, unknown> = {
       model: request.model,
-      stream: false,
-      messages: request.messages
+      prompt: request.prompt,
+      n: 1,
+      response_format: "b64_json"
     };
-    if (request.aspectRatio || request.imageSize) {
-      body.extra_body = {
-        google: {
-          image_config: {
-            aspect_ratio: request.aspectRatio,
-            image_size: request.imageSize
-          }
-        }
-      };
+    if (request.size) {
+      body.size = request.size;
+    }
+    if (request.quality) {
+      body.quality = request.quality;
+    }
+    if (request.style) {
+      body.style = request.style;
     }
 
     this.logger.debug("ProviderManager", "发送图片生成请求", {
@@ -334,7 +331,7 @@ export class ProviderManager {
     const result = await this.retryHandler.executeWithRetry(
       async () => this.executeImageRequest(url, body, providerConfig.apiKey, signal),
       {
-        ...NETWORK_ERROR_CONFIG,
+        ...PROVIDER_ERROR_CONFIG,
         onRetry: (attempt, error) => {
           this.logger.warn("ProviderManager", `图片生成请求重试 ${attempt}`, {
             event: "API_RETRY",
@@ -346,6 +343,14 @@ export class ProviderManager {
       }
     );
 
+    if (result.ok && /^https?:\/\//i.test(result.value.imageUrl)) {
+      const normalized = await this.fetchImageUrlAsDataUrl(result.value.imageUrl, signal);
+      if (!normalized.ok) {
+        return err(normalized.error.code, normalized.error.message, normalized.error.details);
+      }
+      result.value.imageUrl = normalized.value;
+    }
+
     const elapsedTime = Date.now() - startTime;
     if (result.ok) {
       this.notifyNetworkStatus(true);
@@ -356,11 +361,10 @@ export class ProviderManager {
         elapsedTime
       });
     } else {
-      if (result.error.code === "E102") {
-        this.notifyNetworkStatus(false, result as Err);
-      } else {
-        this.notifyNetworkStatus(true);
-      }
+      const offline = result.error.code === "E204_PROVIDER_ERROR" &&
+        typeof result.error.details === "object" &&
+        (result.error.details as { kind?: unknown } | null)?.kind === "network";
+      this.notifyNetworkStatus(!offline, offline ? (result as Err) : undefined);
       this.logger.error("ProviderManager", "图片生成请求失败", undefined, {
         event: "API_ERROR",
         providerId: request.providerId,
@@ -434,14 +438,18 @@ export class ProviderManager {
         return errorResult;
       }
 
-      const data = await response.json();
+      const data = (await response.json()) as { data?: Array<{ id: string }> };
 
       // 构建能力信息
+      const models = data.data?.map((m) => m.id) ?? [];
+      const image = models.length === 0 || models.some((modelId) => /image|dall-e/i.test(modelId));
+
       const capabilities: ProviderCapabilities = {
         chat: true,
         embedding: true,
+        image,
         maxContextLength: 128000, // 默认值
-        models: data.data?.map((m: { id: string }) => m.id) || []
+        models
       };
 
       // 更新缓存
@@ -472,12 +480,12 @@ export class ProviderManager {
           providerId,
           cacheAge: Date.now() - cached.timestamp
         });
-        this.notifyNetworkStatus(false, err("E102", "网络请求失败", error));
+        this.notifyNetworkStatus(false, err("E204_PROVIDER_ERROR", "网络请求失败", { kind: "network", error }));
         return ok(cached.capabilities);
       }
 
-      this.notifyNetworkStatus(false, err("E102", "网络请求失败", error));
-      return err("E102", "网络请求失败", error);
+      this.notifyNetworkStatus(false, err("E204_PROVIDER_ERROR", "网络请求失败", { kind: "network", error }));
+      return err("E204_PROVIDER_ERROR", "网络请求失败", { kind: "network", error });
     }
   }
 
@@ -555,18 +563,77 @@ export class ProviderManager {
     const providerConfig = settings.providers[providerId];
 
     if (!providerConfig) {
-      return err("E304", `Provider 未配置: ${providerId}`);
+      return err("E401_PROVIDER_NOT_CONFIGURED", `Provider 未配置: ${providerId}`);
     }
 
     if (!providerConfig.enabled) {
-      return err("E304", `Provider 已禁用: ${providerId}`);
+      return err("E401_PROVIDER_NOT_CONFIGURED", `Provider 已禁用: ${providerId}`);
     }
 
     if (!providerConfig.apiKey) {
-      return err("E103", `Provider API Key 未配置: ${providerId}`);
+      return err("E401_PROVIDER_NOT_CONFIGURED", `Provider API Key 未配置: ${providerId}`);
     }
 
     return ok(providerConfig);
+  }
+
+  private async executeJsonRequest<T>(
+    url: string,
+    body: object,
+    apiKey: string,
+    signal: AbortSignal | undefined,
+    parse: (data: unknown) => Result<T>
+  ): Promise<Result<T>> {
+    const settings = this.settingsStore.getSettings();
+    const timeoutMs = settings.providerTimeoutMs || 60000;
+
+    const controller = new AbortController();
+    const onAbort = () => controller.abort(signal?.reason as any);
+    const timeoutId = setTimeout(() => controller.abort(new Error("请求超时")), timeoutMs);
+    if (signal) {
+      if (signal.aborted) {
+        clearTimeout(timeoutId);
+        return err("E310_INVALID_STATE", "请求已取消", signal.reason);
+      }
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+        cache: "no-store"
+      });
+
+      if (!response.ok) {
+        return this.mapHttpError(response.status, await this.safeReadText(response));
+      }
+
+      const data = (await response.json()) as unknown;
+      return parse(data);
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        if (signal?.aborted) {
+          return err("E310_INVALID_STATE", "请求已取消", signal.reason);
+        }
+        return err("E201_PROVIDER_TIMEOUT", "请求超时", error);
+      }
+      // 网络错误
+      if (error instanceof TypeError && error.message.includes("fetch")) {
+        return err("E204_PROVIDER_ERROR", "网络连接失败", { kind: "network", error });
+      }
+      return err("E204_PROVIDER_ERROR", `请求失败: ${(error as Error).message}`, error);
+    } finally {
+      clearTimeout(timeoutId);
+      if (signal) {
+        signal.removeEventListener("abort", onAbort);
+      }
+    }
   }
 
   /** 执行聊天请求（单次，不含重试逻辑） */
@@ -576,45 +643,17 @@ export class ProviderManager {
     apiKey: string,
     signal?: AbortSignal
   ): Promise<Result<ChatResponse>> {
-    const settings = this.settingsStore.getSettings();
-    const timeoutMs = settings.providerTimeoutMs || 60000;
-    
-    const controller = new AbortController();
-    const onAbort = () => controller.abort(signal?.reason as any);
-    const timeoutId = setTimeout(() => controller.abort(new Error("请求超时")), timeoutMs);
-    if (signal) {
-      if (signal.aborted) {
-        clearTimeout(timeoutId);
-        return err("E102", "请求已取消", signal.reason);
-      }
-      signal.addEventListener("abort", onAbort, { once: true });
-    }
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-        cache: "no-store"
-      });
-
-      if (!response.ok) {
-        return this.mapHttpError(response.status, await this.safeReadText(response));
-      }
-
-      const data: OpenAIChatResponse = await response.json();
+    return this.executeJsonRequest(url, body, apiKey, signal, (raw) => {
+      const data = raw as OpenAIChatResponse;
 
       if (!data.choices || data.choices.length === 0) {
-        return err("E100", "API 返回空响应");
+        return err("E204_PROVIDER_ERROR", "API 返回空响应");
       }
 
       const firstChoice = data.choices[0];
       const content = firstChoice?.message?.content;
       if (typeof content !== "string") {
-        return err("E100", "API 返回格式异常：缺少 message.content");
+        return err("E204_PROVIDER_ERROR", "API 返回格式异常：缺少 message.content");
       }
 
       return ok({
@@ -622,21 +661,7 @@ export class ProviderManager {
         tokensUsed: data.usage?.total_tokens,
         finishReason: firstChoice?.finish_reason
       });
-    } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") {
-        return err("E102", "请求已取消或超时", error);
-      }
-      // 网络错误
-      if (error instanceof TypeError && error.message.includes("fetch")) {
-        return err("E102", "网络连接失败", error);
-      }
-      return err("E100", `请求失败: ${(error as Error).message}`, error);
-    } finally {
-      clearTimeout(timeoutId);
-      if (signal) {
-        signal.removeEventListener("abort", onAbort);
-      }
-    }
+    });
   }
 
   /** 执行嵌入请求（单次，不含重试逻辑） */
@@ -646,65 +671,23 @@ export class ProviderManager {
     apiKey: string,
     signal?: AbortSignal
   ): Promise<Result<EmbedResponse>> {
-    const settings = this.settingsStore.getSettings();
-    const timeoutMs = settings.providerTimeoutMs || 60000;
-    
-    const controller = new AbortController();
-    const onAbort = () => controller.abort(signal?.reason as any);
-    const timeoutId = setTimeout(() => controller.abort(new Error("请求超时")), timeoutMs);
-    if (signal) {
-      if (signal.aborted) {
-        clearTimeout(timeoutId);
-        return err("E102", "请求已取消", signal.reason);
-      }
-      signal.addEventListener("abort", onAbort, { once: true });
-    }
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-        cache: "no-store"
-      });
-
-      if (!response.ok) {
-        return this.mapHttpError(response.status, await this.safeReadText(response));
-      }
-
-      const data: OpenAIEmbedResponse = await response.json();
+    return this.executeJsonRequest(url, body, apiKey, signal, (raw) => {
+      const data = raw as OpenAIEmbedResponse;
 
       if (!data.data || data.data.length === 0) {
-        return err("E100", "API 返回空响应");
+        return err("E204_PROVIDER_ERROR", "API 返回空响应");
       }
 
       const first = data.data[0];
       if (!first || !Array.isArray(first.embedding)) {
-        return err("E100", "API 返回格式异常：缺少 embedding");
+        return err("E204_PROVIDER_ERROR", "API 返回格式异常：缺少 embedding");
       }
 
       return ok({
         embedding: first.embedding,
         tokensUsed: data.usage?.total_tokens
       });
-    } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") {
-        return err("E102", "请求已取消或超时", error);
-      }
-      // 网络错误
-      if (error instanceof TypeError && error.message.includes("fetch")) {
-        return err("E102", "网络连接失败", error);
-      }
-      return err("E100", `请求失败: ${(error as Error).message}`, error);
-    } finally {
-      clearTimeout(timeoutId);
-      if (signal) {
-        signal.removeEventListener("abort", onAbort);
-      }
-    }
+    });
   }
 
   /** 执行图片请求（单次，不含重试） */
@@ -714,58 +697,75 @@ export class ProviderManager {
     apiKey: string,
     signal?: AbortSignal
   ): Promise<Result<ImageGenerateResponse>> {
+    return this.executeJsonRequest(url, body, apiKey, signal, (raw) => {
+      const data = raw as OpenAIImagesResponse;
+      const first = data.data?.[0];
+      if (!first) {
+        return err("E210_MODEL_OUTPUT_PARSE_FAILED", "图片 API 返回空结果");
+      }
+
+      const revisedPrompt = typeof first.revised_prompt === "string" ? first.revised_prompt : undefined;
+
+      if (typeof first.b64_json === "string" && first.b64_json.trim().length > 0) {
+        return ok({
+          imageUrl: `data:image/png;base64,${first.b64_json}`,
+          revisedPrompt
+        });
+      }
+
+      if (typeof first.url === "string" && first.url.trim().length > 0) {
+        return ok({
+          imageUrl: first.url,
+          revisedPrompt
+        });
+      }
+
+      return err("E210_MODEL_OUTPUT_PARSE_FAILED", "图片 API 返回格式异常：缺少 b64_json/url");
+    });
+  }
+
+  private async fetchImageUrlAsDataUrl(url: string, signal?: AbortSignal): Promise<Result<string>> {
     const settings = this.settingsStore.getSettings();
     const timeoutMs = settings.providerTimeoutMs || 60000;
 
     const controller = new AbortController();
     const onAbort = () => controller.abort(signal?.reason as any);
     const timeoutId = setTimeout(() => controller.abort(new Error("请求超时")), timeoutMs);
+
     if (signal) {
       if (signal.aborted) {
         clearTimeout(timeoutId);
-        return err("E102", "请求已取消", signal.reason);
+        return err("E310_INVALID_STATE", "请求已取消", signal.reason);
       }
       signal.addEventListener("abort", onAbort, { once: true });
     }
 
     try {
       const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`
-        },
-        body: JSON.stringify(body),
+        method: "GET",
         signal: controller.signal,
         cache: "no-store"
       });
 
       if (!response.ok) {
-        return this.mapHttpError(response.status, await this.safeReadText(response));
+        return err("E204_PROVIDER_ERROR", `图片下载失败 (${response.status})`);
       }
 
-      const data: ImagePreviewResponse = await response.json();
-      const content = data.choices?.[0]?.message?.content;
-      if (!content || typeof content !== "string") {
-        return err("E998", "未解析到图片数据");
-      }
-      const dataUrl = extractMarkdownDataUrl(content);
-      if (!dataUrl) {
-        return err("E998", "未解析到图片数据");
-      }
-
-      return ok({
-        imageUrl: dataUrl,
-        revisedPrompt: undefined
-      });
+      const contentType = response.headers.get("content-type") || "image/png";
+      const buffer = Buffer.from(await response.arrayBuffer());
+      const base64 = buffer.toString("base64");
+      return ok(`data:${contentType};base64,${base64}`);
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
-        return err("E102", "请求已取消或超时", error);
+        if (signal?.aborted) {
+          return err("E310_INVALID_STATE", "请求已取消", signal.reason);
+        }
+        return err("E201_PROVIDER_TIMEOUT", "请求超时", error);
       }
       if (error instanceof TypeError && error.message.includes("fetch")) {
-        return err("E102", "网络连接失败", error);
+        return err("E204_PROVIDER_ERROR", "网络连接失败", { kind: "network", error });
       }
-      return err("E100", `请求失败: ${(error as Error).message}`, error);
+      return err("E204_PROVIDER_ERROR", `请求失败: ${(error as Error).message}`, error);
     } finally {
       clearTimeout(timeoutId);
       if (signal) {
@@ -787,23 +787,23 @@ export class ProviderManager {
       // 保持原始文本
     }
 
-    // 认证错误 (401/403) → E103
+    // 认证错误 (401/403) → E203_INVALID_API_KEY
     if (status === 401 || status === 403) {
-      return err("E103", `认证失败: ${errorMessage}`);
+      return err("E203_INVALID_API_KEY", `认证失败: ${errorMessage}`);
     }
 
-    // 速率限制 (429) → E102
+    // 速率限制 (429) → E202_RATE_LIMITED
     if (status === 429) {
-      return err("E102", `速率限制: ${errorMessage}`);
+      return err("E202_RATE_LIMITED", `速率限制: ${errorMessage}`);
     }
 
-    // 服务器错误 (5xx) → E100
+    // 服务器错误 (5xx) → E204_PROVIDER_ERROR
     if (status >= 500) {
-      return err("E100", `服务器错误 (${status}): ${errorMessage}`);
+      return err("E204_PROVIDER_ERROR", `服务器错误 (${status}): ${errorMessage}`);
     }
 
-    // 其他客户端错误 → E100
-    return err("E100", `API 错误 (${status}): ${errorMessage}`);
+    // 其他客户端错误 → E204_PROVIDER_ERROR
+    return err("E204_PROVIDER_ERROR", `API 错误 (${status}): ${errorMessage}`);
   }
 
   /** 安全读取响应文本 */

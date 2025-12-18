@@ -1,6 +1,6 @@
 import { App, Modal } from "obsidian";
 import type { CRType } from "../types";
-import type { AbstractCandidate } from "../core/deepen-orchestrator";
+import type { AbstractCandidate } from "../core/expand-orchestrator";
 
 interface AbstractModalLabels {
   titlePrefix: string;

@@ -1,8 +1,8 @@
 import { App, Modal } from "obsidian";
 import type { CRType } from "../types";
-import type { HierarchicalCandidate } from "../core/deepen-orchestrator";
+import type { HierarchicalCandidate } from "../core/expand-orchestrator";
 
-interface DeepenModalLabels {
+interface ExpandModalLabels {
   titlePrefix: string;
   stats: {
     total: string;
@@ -20,23 +20,21 @@ interface DeepenModalLabels {
   empty: string;
 }
 
-interface DeepenModalOptions {
+interface ExpandModalOptions {
   parentTitle: string;
-  parentType: CRType;
-  currentType: CRType;
   candidates: HierarchicalCandidate[];
   looseStructure?: boolean;
-  labels: DeepenModalLabels;
+  labels: ExpandModalLabels;
   onConfirm: (selected: HierarchicalCandidate[]) => void | Promise<void>;
   onCancel?: () => void;
 }
 
-export class DeepenModal extends Modal {
-  private options: DeepenModalOptions;
+export class ExpandModal extends Modal {
+  private options: ExpandModalOptions;
   private selected: Set<string>;
   private confirmBtn: HTMLButtonElement | null = null;
 
-  constructor(app: App, options: DeepenModalOptions) {
+  constructor(app: App, options: ExpandModalOptions) {
     super(app);
     this.options = options;
     this.selected = new Set(
@@ -50,20 +48,20 @@ export class DeepenModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("cr-scope");
-    contentEl.addClass("cr-deepen-modal");
+    contentEl.addClass("cr-expand-modal");
     contentEl.setAttr("role", "dialog");
     contentEl.setAttr("aria-modal", "true");
 
     const title = this.options.labels.titlePrefix
       ? `${this.options.labels.titlePrefix}${this.options.parentTitle}`
-      : `深化：${this.options.parentTitle}`;
+      : `拓展：${this.options.parentTitle}`;
     const titleEl = contentEl.createEl("h2", { text: title });
-    titleEl.id = `cr-deepen-title-${Date.now()}`;
+    titleEl.id = `cr-expand-title-${Date.now()}`;
     contentEl.setAttr("aria-labelledby", titleEl.id);
 
     this.renderSummary(contentEl);
     if (this.options.looseStructure && this.options.labels.looseStructureHint) {
-      const hint = contentEl.createDiv({ cls: "cr-deepen-hint" });
+      const hint = contentEl.createDiv({ cls: "cr-expand-hint" });
       hint.setText(this.options.labels.looseStructureHint);
     }
 
@@ -85,7 +83,7 @@ export class DeepenModal extends Modal {
     const existing = this.options.candidates.filter((c) => c.status === "existing").length;
     const invalid = this.options.candidates.filter((c) => c.status === "invalid").length;
 
-    const summary = container.createDiv({ cls: "cr-deepen-summary" });
+    const summary = container.createDiv({ cls: "cr-expand-summary" });
     summary.createSpan({ text: `${this.options.labels.stats.total}: ${total}` });
     summary.createSpan({ text: `${this.options.labels.stats.creatable}: ${creatable}` });
     summary.createSpan({ text: `${this.options.labels.stats.existing}: ${existing}` });
@@ -93,7 +91,7 @@ export class DeepenModal extends Modal {
   }
 
   private renderControls(container: HTMLElement): void {
-    const controls = container.createDiv({ cls: "cr-deepen-controls" });
+    const controls = container.createDiv({ cls: "cr-expand-controls" });
     const selectAll = controls.createEl("button", { text: this.options.labels.selectAll });
     const deselectAll = controls.createEl("button", { text: this.options.labels.deselectAll });
 
@@ -113,11 +111,11 @@ export class DeepenModal extends Modal {
   }
 
   private renderList(container: HTMLElement): void {
-    const existingList = container.querySelector(".cr-deepen-list");
+    const existingList = container.querySelector(".cr-expand-list");
     if (existingList) existingList.remove();
 
-    const anchor = container.querySelector(".cr-deepen-actions");
-    const list = container.createDiv({ cls: "cr-deepen-list" });
+    const anchor = container.querySelector(".cr-expand-actions");
+    const list = container.createDiv({ cls: "cr-expand-list" });
     if (anchor) {
       container.insertBefore(list, anchor);
     }
@@ -134,12 +132,12 @@ export class DeepenModal extends Modal {
     }
 
     for (const [type, items] of grouped.entries()) {
-      const groupEl = list.createDiv({ cls: "cr-deepen-group" });
+      const groupEl = list.createDiv({ cls: "cr-expand-group" });
       groupEl.createEl("h4", { text: `${type} (${items.length})` });
 
       items.forEach((item) => {
         const key = this.buildKey(item);
-        const row = groupEl.createDiv({ cls: "cr-deepen-item" });
+        const row = groupEl.createDiv({ cls: "cr-expand-item" });
         row.setAttr("tabindex", "0");
 
         const checkbox = row.createEl("input", { type: "checkbox" });
@@ -171,7 +169,7 @@ export class DeepenModal extends Modal {
           // 可选：方向键在列表项之间移动焦点
           if (e.key === "ArrowDown" || e.key === "ArrowUp") {
             e.preventDefault();
-            const all = Array.from(container.querySelectorAll(".cr-deepen-item[tabindex=\"0\"]")) as HTMLElement[];
+            const all = Array.from(container.querySelectorAll(".cr-expand-item[tabindex=\"0\"]")) as HTMLElement[];
             const idx = all.indexOf(row);
             if (idx < 0 || all.length === 0) return;
             const delta = e.key === "ArrowDown" ? 1 : -1;
@@ -190,15 +188,15 @@ export class DeepenModal extends Modal {
           this.updateConfirmState();
         });
 
-        const info = row.createDiv({ cls: "cr-deepen-info" });
-        info.createDiv({ text: `[[${item.name}]]`, cls: "cr-deepen-name" });
+        const info = row.createDiv({ cls: "cr-expand-info" });
+        info.createDiv({ text: `[[${item.name}]]`, cls: "cr-expand-name" });
         if (item.description) {
-          info.createDiv({ text: item.description, cls: "cr-deepen-desc" });
+          info.createDiv({ text: item.description, cls: "cr-expand-desc" });
         }
-        info.createDiv({ text: item.targetPath, cls: "cr-deepen-path" });
+        info.createDiv({ text: item.targetPath, cls: "cr-expand-path" });
 
         if (item.status !== "creatable") {
-          const badge = row.createDiv({ cls: "cr-deepen-badge" });
+          const badge = row.createDiv({ cls: "cr-expand-badge" });
           badge.textContent = item.status === "existing" ? this.options.labels.existing : this.options.labels.invalid;
           if (item.reason) {
             badge.setAttr("title", item.reason);
@@ -209,7 +207,7 @@ export class DeepenModal extends Modal {
   }
 
   private renderActions(container: HTMLElement): void {
-    const actions = container.createDiv({ cls: "cr-deepen-actions" });
+    const actions = container.createDiv({ cls: "cr-expand-actions" });
     this.confirmBtn = actions.createEl("button", { cls: "mod-cta" });
     this.confirmBtn.addEventListener("click", async () => {
       const selected = this.options.candidates.filter((c) => this.selected.has(this.buildKey(c)));

@@ -25,7 +25,7 @@ export class ImageInsertOrchestrator {
       return ok(taskId);
     } catch (error) {
       this.logger.error("ImageInsertOrchestrator", "创建图片生成任务失败", error as Error);
-      return err("E305", "创建图片生成任务失败", error);
+      return err("E500_INTERNAL_ERROR", "创建图片生成任务失败", error);
     }
   }
 }

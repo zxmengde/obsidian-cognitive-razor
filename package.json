@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-cognitive-razor",
-	"version": "0.9.3",
+	"version": "1.0.0",
 	"description": "Cognitive Razor - 公理化知识管理插件",
 	"main": "main.js",
 	"type": "module",
