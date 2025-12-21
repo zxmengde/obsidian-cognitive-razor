@@ -39,6 +39,21 @@ const TASK_PIPELINE_ORDER: TaskType[] = [
   "verify"
 ];
 
+interface AmendPayload {
+  currentContent: string;
+  instruction: string;
+  conceptType: CRType;
+}
+
+interface MergePayload {
+  keepName: string;
+  deleteName: string;
+  keepContent: string;
+  deleteContent: string;
+  conceptType: CRType;
+  finalFileName: string;
+}
+
 
 /** 类型必填字段定义 */
 const TYPE_REQUIRED_FIELDS: Record<CRType, string[]> = {
@@ -207,6 +222,14 @@ export class TaskRunner {
       [
         "write",
         { taskType: "write", run: (task, signal) => this.executeWrite(task, signal) }
+      ],
+      [
+        "amend",
+        { taskType: "amend", run: (task, signal) => this.executeAmend(task, signal) }
+      ],
+      [
+        "merge",
+        { taskType: "merge", run: (task, signal) => this.executeMerge(task, signal) }
       ],
       [
         "verify",
@@ -807,6 +830,205 @@ export class TaskRunner {
   }
 
 
+  /** 执行 amend 任务（修订） */
+  private async executeAmend(
+    task: TaskRecord,
+    signal: AbortSignal
+  ): Promise<Result<TaskResult>> {
+    try {
+      const payload = task.payload as unknown as Partial<AmendPayload>;
+      if (!payload?.currentContent || !payload.instruction) {
+        return this.createTaskError(task, { code: "E102_MISSING_FIELD", message: "修订任务载荷缺失必要字段" });
+      }
+
+      const conceptType = (payload.conceptType as CRType) || "Entity";
+      const slots = {
+        CTX_CURRENT: payload.currentContent,
+        USER_INSTRUCTION: payload.instruction,
+        CONCEPT_TYPE: conceptType,
+        CTX_LANGUAGE: this.getLanguage()
+      };
+
+      const prompt = this.promptManager.build("amend", slots, conceptType);
+      const modelConfig = this.getTaskModelConfig("amend", task.providerRef);
+
+      const chatRequest: any = {
+        providerId: task.providerRef || modelConfig.providerId,
+        model: modelConfig.model,
+        messages: [{ role: "user", content: prompt }],
+        temperature: modelConfig.temperature,
+        topP: modelConfig.topP,
+        maxTokens: modelConfig.maxTokens
+      };
+
+      if (modelConfig.reasoning_effort) {
+        chatRequest.reasoning_effort = modelConfig.reasoning_effort;
+      }
+
+      const chatResult = await this.providerManager.chat(chatRequest, signal);
+      if (!chatResult.ok) {
+        return this.createTaskError(task, chatResult.error!);
+      }
+
+      const amendOutputSchema = {
+        type: "object",
+        properties: {
+          content: { type: "object" },
+          changes_summary: { type: "string" },
+          preserved_sections: { type: "array" },
+          enhanced_sections: { type: "array" }
+        },
+        required: ["content"]
+      };
+
+      const validationResult = await this.validator.validate(
+        chatResult.value.content,
+        amendOutputSchema,
+        []
+      );
+
+      if (!validationResult.valid) {
+        return this.createValidationError(task, validationResult.errors!);
+      }
+
+      const parsed = (validationResult.data || {}) as Record<string, unknown>;
+      const rawContent = parsed.content;
+      if (!rawContent || typeof rawContent !== "object" || Array.isArray(rawContent)) {
+        return this.createTaskError(task, { code: "E211_MODEL_SCHEMA_VIOLATION", message: "修订结果缺少有效的 content 对象" });
+      }
+
+      const schema = this.getSchema(conceptType);
+      const rules = this.getValidationRules(conceptType);
+      const contentValidation = await this.validator.validate(
+        JSON.stringify(rawContent),
+        schema,
+        rules,
+        { type: conceptType }
+      );
+
+      if (!contentValidation.valid) {
+        return this.createValidationError(task, contentValidation.errors!);
+      }
+
+      return ok({
+        taskId: task.id,
+        state: "Completed",
+        data: (contentValidation.data || {}) as Record<string, unknown>
+      });
+    } catch (error) {
+      this.logger.error("TaskRunner", "执行 amend 失败", error as Error, {
+        taskId: task.id
+      });
+      return toErr(error, "E500_INTERNAL_ERROR", "执行 amend 失败");
+    }
+  }
+
+  /** 执行 merge 任务（合并） */
+  private async executeMerge(
+    task: TaskRecord,
+    signal: AbortSignal
+  ): Promise<Result<TaskResult>> {
+    try {
+      const payload = task.payload as unknown as Partial<MergePayload>;
+      if (!payload?.keepContent || !payload.deleteContent || !payload.keepName || !payload.deleteName) {
+        return this.createTaskError(task, { code: "E102_MISSING_FIELD", message: "合并任务载荷缺失必要字段" });
+      }
+
+      const conceptType = (payload.conceptType as CRType) || "Entity";
+      const instruction = payload.finalFileName
+        ? `合并这两个 ${conceptType} 类型的概念笔记，最终文件名为 "${payload.finalFileName}"`
+        : `合并这两个 ${conceptType} 类型的概念笔记`;
+
+      const slots: Record<string, string> = {
+        SOURCE_A_NAME: payload.keepName,
+        CTX_SOURCE_A: payload.keepContent,
+        SOURCE_B_NAME: payload.deleteName,
+        CTX_SOURCE_B: payload.deleteContent,
+        USER_INSTRUCTION: instruction,
+        CONCEPT_TYPE: conceptType,
+        CTX_LANGUAGE: this.getLanguage()
+      };
+
+      const prompt = this.promptManager.build("merge", slots, conceptType);
+      const modelConfig = this.getTaskModelConfig("merge", task.providerRef);
+
+      const chatRequest: any = {
+        providerId: task.providerRef || modelConfig.providerId,
+        model: modelConfig.model,
+        messages: [{ role: "user", content: prompt }],
+        temperature: modelConfig.temperature,
+        topP: modelConfig.topP,
+        maxTokens: modelConfig.maxTokens
+      };
+
+      if (modelConfig.reasoning_effort) {
+        chatRequest.reasoning_effort = modelConfig.reasoning_effort;
+      }
+
+      const chatResult = await this.providerManager.chat(chatRequest, signal);
+      if (!chatResult.ok) {
+        return this.createTaskError(task, chatResult.error!);
+      }
+
+      const mergeOutputSchema = {
+        type: "object",
+        properties: {
+          merged_name: { type: "object" },
+          merge_rationale: { type: "string" },
+          content: { type: "object" },
+          preserved_from_a: { type: "array" },
+          preserved_from_b: { type: "array" }
+        },
+        required: ["merged_name", "merge_rationale", "content", "preserved_from_a", "preserved_from_b"]
+      };
+
+      const validationResult = await this.validator.validate(
+        chatResult.value.content,
+        mergeOutputSchema,
+        []
+      );
+
+      if (!validationResult.valid) {
+        return this.createValidationError(task, validationResult.errors!);
+      }
+
+      const parsed = (validationResult.data || {}) as Record<string, unknown>;
+      const rawContent = parsed.content;
+      if (!rawContent || typeof rawContent !== "object" || Array.isArray(rawContent)) {
+        return this.createTaskError(task, { code: "E211_MODEL_SCHEMA_VIOLATION", message: "合并结果缺少有效的 content 对象" });
+      }
+
+      const schema = this.getSchema(conceptType);
+      const rules = this.getValidationRules(conceptType);
+      const contentValidation = await this.validator.validate(
+        JSON.stringify(rawContent),
+        schema,
+        rules,
+        { type: conceptType }
+      );
+
+      if (!contentValidation.valid) {
+        return this.createValidationError(task, contentValidation.errors!);
+      }
+
+      const mergeResult = {
+        ...parsed,
+        content: (contentValidation.data || {}) as Record<string, unknown>
+      };
+
+      return ok({
+        taskId: task.id,
+        state: "Completed",
+        data: mergeResult as Record<string, unknown>
+      });
+    } catch (error) {
+      this.logger.error("TaskRunner", "执行 merge 失败", error as Error, {
+        taskId: task.id
+      });
+      return toErr(error, "E500_INTERNAL_ERROR", "执行 merge 失败");
+    }
+  }
+
 
 
 
@@ -859,30 +1081,37 @@ export class TaskRunner {
         return this.createTaskError(task, chatResult.error!);
       }
 
-      // 解析验证结果
-      let verificationResult: Record<string, unknown>;
-      try {
-        verificationResult = JSON.parse(chatResult.value.content);
-      } catch {
-        // 如果解析失败，构建默认结构
-        verificationResult = {
-          overall_assessment: "needs_review",
-          confidence_score: 0.5,
-          issues: [],
-          recommendations: ["无法解析验证结果，建议人工审核"],
-          requires_human_review: true
-        };
+      const verifyOutputSchema = {
+        type: "object",
+        required: [
+          "overall_assessment",
+          "confidence_score",
+          "issues",
+          "verified_claims",
+          "recommendations",
+          "requires_human_review"
+        ],
+        properties: {
+          overall_assessment: { type: "string" },
+          confidence_score: { type: "number" },
+          issues: { type: "array" },
+          verified_claims: { type: "array" },
+          recommendations: { type: "array" },
+          requires_human_review: { type: "boolean" }
+        }
+      };
+
+      const validationResult = await this.validator.validate(
+        chatResult.value.content,
+        verifyOutputSchema,
+        []
+      );
+
+      if (!validationResult.valid) {
+        return this.createValidationError(task, validationResult.errors!);
       }
 
-      // 确保必要字段存在
-      const resultData: Record<string, unknown> = {
-        overall_assessment: verificationResult.overall_assessment || "needs_review",
-        confidence_score: verificationResult.confidence_score || 0.5,
-        issues: verificationResult.issues || [],
-        verified_claims: verificationResult.verified_claims || [],
-        recommendations: verificationResult.recommendations || [],
-        requires_human_review: verificationResult.requires_human_review ?? true
-      };
+      const resultData = (validationResult.data || {}) as Record<string, unknown>;
 
       this.logger.info("TaskRunner", `Verify 任务完成: ${task.id}`, {
         overall_assessment: resultData.overall_assessment,
@@ -917,26 +1146,84 @@ export class TaskRunner {
       }
 
       const settings = this.settingsStore.getSettings();
-      const modelConfig = this.getTaskModelConfig("image-generate", task.providerRef);
-      if (!modelConfig.providerId) {
+      const promptSlots = {
+        USER_PROMPT: payload.userPrompt,
+        CONTEXT_BEFORE: payload.contextBefore ?? "",
+        CONTEXT_AFTER: payload.contextAfter ?? "",
+        CONCEPT_TYPE: payload.frontmatter?.type ?? "",
+        CONCEPT_NAME: payload.frontmatter?.name ?? "",
+        CTX_LANGUAGE: this.getLanguage()
+      };
+
+      let promptTemplate: string;
+      try {
+        promptTemplate = this.promptManager.build("image-generate", promptSlots);
+      } catch (error) {
+        return toErr(error, "E500_INTERNAL_ERROR", "构建图片提示词失败");
+      }
+
+      const promptModelConfig = this.getTaskModelConfig("write", task.providerRef);
+      if (!promptModelConfig.providerId) {
         return this.createTaskError(task, { code: "E401_PROVIDER_NOT_CONFIGURED", message: "请先配置 Provider" });
       }
 
-      const promptParts = [
-        payload.userPrompt,
-        payload.frontmatter?.type ? `Concept type: ${payload.frontmatter.type}` : undefined,
-        payload.frontmatter?.name ? `Concept name: ${payload.frontmatter.name}` : undefined,
-        payload.contextBefore ? `Context before cursor:\n${payload.contextBefore}` : undefined,
-        payload.contextAfter ? `Context after cursor:\n${payload.contextAfter}` : undefined
-      ].filter((v): v is string => typeof v === "string" && v.trim().length > 0);
+      const promptRequest: any = {
+        providerId: task.providerRef || promptModelConfig.providerId,
+        model: promptModelConfig.model,
+        messages: [{ role: "user", content: promptTemplate }],
+        temperature: promptModelConfig.temperature,
+        topP: promptModelConfig.topP,
+        maxTokens: promptModelConfig.maxTokens
+      };
+      if (promptModelConfig.reasoning_effort) {
+        promptRequest.reasoning_effort = promptModelConfig.reasoning_effort;
+      }
 
-      const prompt = promptParts.join("\n\n");
+      const promptResult = await this.providerManager.chat(promptRequest, signal);
+      if (!promptResult.ok) {
+        return this.createTaskError(task, promptResult.error!);
+      }
+
+      const promptSchema = {
+        type: "object",
+        required: ["prompt", "altText"],
+        properties: {
+          prompt: { type: "string" },
+          altText: { type: "string" },
+          styleHints: { type: "array" },
+          negativePrompt: { type: "string" }
+        }
+      };
+
+      const promptValidation = await this.validator.validate(
+        promptResult.value.content,
+        promptSchema,
+        []
+      );
+
+      if (!promptValidation.valid) {
+        return this.createValidationError(task, promptValidation.errors!);
+      }
+
+      const promptData = (promptValidation.data || {}) as {
+        prompt?: string;
+        altText?: string;
+      };
+
+      if (!promptData.prompt) {
+        return this.createTaskError(task, { code: "E211_MODEL_SCHEMA_VIOLATION", message: "图片提示词缺失" });
+      }
+
+      const imageModelConfig = this.getTaskModelConfig("image-generate", task.providerRef);
+      if (!imageModelConfig.providerId) {
+        return this.createTaskError(task, { code: "E401_PROVIDER_NOT_CONFIGURED", message: "请先配置 Provider" });
+      }
 
       const imageResult = await this.providerManager.generateImage(
         {
-          providerId: modelConfig.providerId,
-          model: modelConfig.model,
-          prompt,
+          providerId: imageModelConfig.providerId,
+          model: imageModelConfig.model,
+          prompt: promptData.prompt,
           size: settings.imageGeneration.defaultSize,
           quality: settings.imageGeneration.defaultQuality,
           style: settings.imageGeneration.defaultStyle
@@ -959,7 +1246,6 @@ export class TaskRunner {
       }
 
       const currentContent = await this.noteRepository.read(file);
-      await this.undoManager.createSnapshot(payload.filePath, currentContent, task.id, payload.frontmatter?.cruid);
 
       const ext = inferImageExtension(imageResult.value.imageUrl);
       const attachmentPath = this.noteRepository.getAvailablePathForAttachment(
@@ -969,7 +1255,8 @@ export class TaskRunner {
 
       await this.noteRepository.createBinary(attachmentPath, binaryResult.value);
 
-      const markdown = `![${imageResult.value.altText || payload.userPrompt}](${attachmentPath})\n`;
+      const altText = promptData.altText || imageResult.value.altText || payload.userPrompt;
+      const markdown = `![${altText}](${attachmentPath})\n`;
       await this.insertImageReference(file, currentContent, markdown, payload.cursorPosition);
 
       return ok({
@@ -979,7 +1266,7 @@ export class TaskRunner {
           localPath: attachmentPath,
           imageUrl: imageResult.value.imageUrl,
           revisedPrompt: imageResult.value.revisedPrompt,
-          altText: imageResult.value.altText || payload.userPrompt
+          altText
         }
       });
     } catch (error) {
@@ -1034,15 +1321,17 @@ export class TaskRunner {
     
     // 默认配置
     const defaults: Record<TaskType, { model: string; temperature?: number; topP?: number }> = {
-      "define": { model: "gpt-4o", temperature: 0.3 },
-      "tag": { model: "gpt-4o", temperature: 0.5 },
+      "define": { model: "gemini-3-flash-preview", temperature: 0.3 },
+      "tag": { model: "gemini-3-flash-preview", temperature: 0.5 },
       "index": { model: "text-embedding-3-small" },
-      "write": { model: "gpt-4o", temperature: 0.7 },
-      "verify": { model: "gpt-4o", temperature: 0.3 },
-      "image-generate": { model: "gpt-image-1" }
+      "write": { model: "gemini-3-flash-preview", temperature: 0.7 },
+      "amend": { model: "gemini-3-flash-preview", temperature: 0.7 },
+      "merge": { model: "gemini-3-flash-preview", temperature: 0.7 },
+      "verify": { model: "gemini-3-flash-preview", temperature: 0.3 },
+      "image-generate": { model: "gemini-3-pro-image-preview" }
     };
 
-    const defaultConfig = defaults[taskType] || { model: "gpt-4o" };
+    const defaultConfig = defaults[taskType] || { model: "gemini-3-flash-preview" };
 
     return {
       providerId: taskConfig?.providerId || providerRef || settings?.defaultProviderId || "",
@@ -1261,6 +1550,8 @@ export class TaskRunner {
       case "define":
       case "tag":
       case "write":
+      case "amend":
+      case "merge":
       case "verify":
       default:
         return "chat";

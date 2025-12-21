@@ -291,17 +291,21 @@ export class QueueSection {
       } else if (task.state === "Failed") {
         if (task.errors && task.errors.length > 0) {
           const lastError = task.errors[task.errors.length - 1];
-          actionCell.createEl("span", {
-            text: "⚠",
+          const errorIcon = actionCell.createSpan({
             cls: "cr-error-icon",
-            attr: { title: lastError.message }
+            attr: {
+              title: lastError.message,
+              "aria-hidden": "true"
+            }
           });
+          setIcon(errorIcon, "alert-triangle");
         }
       } else if (task.state === "Completed") {
-        actionCell.createEl("span", {
-          text: "✓",
-          cls: "cr-success-icon"
+        const successIcon = actionCell.createSpan({
+          cls: "cr-success-icon",
+          attr: { "aria-hidden": "true" }
         });
+        setIcon(successIcon, "check");
       }
     });
 
@@ -314,6 +318,15 @@ export class QueueSection {
     });
     retryFailedBtn.addEventListener("click", () => {
       void this.handleRetryFailed();
+    });
+
+    const clearPendingBtn = batchActions.createEl("button", {
+      text: this.deps.t("workbench.queueStatus.clearPending"),
+      cls: "cr-btn-small",
+      attr: { "aria-label": this.deps.t("workbench.queueStatus.clearPending") }
+    });
+    clearPendingBtn.addEventListener("click", () => {
+      this.handleClearPending();
     });
 
     const clearCompletedBtn = batchActions.createEl("button", {
@@ -418,5 +431,29 @@ export class QueueSection {
     this.refreshDetailsIfVisible();
     this.update(taskQueue.getStatus());
   }
-}
 
+  private handleClearPending(): void {
+    const plugin = this.deps.getPlugin();
+    if (!plugin) return;
+
+    const taskQueue = plugin.getComponents().taskQueue;
+    const allTasks = taskQueue.getAllTasks();
+
+    let clearedCount = 0;
+    allTasks.forEach(task => {
+      if (task.state === "Pending") {
+        try {
+          taskQueue.cancel(task.id);
+          clearedCount++;
+        } catch {
+          // 忽略单项失败
+        }
+      }
+    });
+
+    new Notice(`${this.deps.t("workbench.notifications.clearComplete")} (${clearedCount})`);
+
+    this.refreshDetailsIfVisible();
+    this.update(taskQueue.getStatus());
+  }
+}

@@ -110,6 +110,8 @@ export const TASK_TYPES: TaskType[] = [
   "define",
   "tag",
   "write",
+  "amend",
+  "merge",
   "index",
   "verify",
   "image-generate",
@@ -119,19 +121,31 @@ export const TASK_TYPES: TaskType[] = [
 export const DEFAULT_TASK_MODEL_CONFIGS: Record<TaskType, TaskModelConfig> = {
   define: {
     providerId: "",
-    model: "gpt-4o",
+    model: "gemini-3-flash-preview",
     temperature: 0.3,
     topP: 1.0,
   },
   tag: {
     providerId: "",
-    model: "gpt-4o",
+    model: "gemini-3-flash-preview",
     temperature: 0.5,
     topP: 1.0,
   },
   write: {
     providerId: "",
-    model: "gpt-4o",
+    model: "gemini-3-flash-preview",
+    temperature: 0.7,
+    topP: 1.0,
+  },
+  amend: {
+    providerId: "",
+    model: "gemini-3-flash-preview",
+    temperature: 0.7,
+    topP: 1.0,
+  },
+  merge: {
+    providerId: "",
+    model: "gemini-3-flash-preview",
     temperature: 0.7,
     topP: 1.0,
   },
@@ -142,13 +156,13 @@ export const DEFAULT_TASK_MODEL_CONFIGS: Record<TaskType, TaskModelConfig> = {
   },
   verify: {
     providerId: "",
-    model: "gpt-4o",
+    model: "gemini-3-flash-preview",
     temperature: 0.3,
     topP: 1.0,
   },
   "image-generate": {
     providerId: "",
-    model: "gpt-image-1",
+    model: "gemini-3-pro-image-preview",
   },
 };
 

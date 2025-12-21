@@ -1,14 +1,15 @@
-import { App, Modal, Notice, TFile } from "obsidian";
+import { App, Notice, TFile } from "obsidian";
 import type { DuplicatePair, SnapshotMetadata } from "../../types";
 import type CognitiveRazorPlugin from "../../../main";
 import { buildLineDiff, renderSideBySideDiff } from "../diff-view";
+import { AbstractModal } from "../abstract-modal";
 
 const ERROR_NOTICE_DURATION = 6000;
 
 /**
  * 重复对预览模态框（改进版）
  */
-export class DuplicatePreviewModal extends Modal {
+export class DuplicatePreviewModal extends AbstractModal {
   private pair: DuplicatePair;
   private contentA: string;
   private contentB: string;
@@ -39,11 +40,8 @@ export class DuplicatePreviewModal extends Modal {
     this.onDismiss = onDismiss;
   }
 
-  onOpen(): void {
-    const { contentEl } = this;
-    contentEl.empty();
+  protected renderContent(contentEl: HTMLElement): void {
     contentEl.addClass("cr-duplicate-preview-modal");
-    contentEl.addClass("cr-scope");
 
     // 标题栏
     const header = contentEl.createDiv({ cls: "cr-preview-header" });
@@ -217,15 +215,14 @@ export class DuplicatePreviewModal extends Modal {
   }
 
   onClose(): void {
-    const { contentEl } = this;
-    contentEl.empty();
+    super.onClose();
   }
 }
 
 /**
  * 确认对话框
  */
-export class ConfirmDialog extends Modal {
+export class ConfirmDialog extends AbstractModal {
   private title: string;
   private message: string;
   private onConfirm: (result: boolean) => void;
@@ -237,11 +234,8 @@ export class ConfirmDialog extends Modal {
     this.onConfirm = onConfirm;
   }
 
-  onOpen(): void {
-    const { contentEl } = this;
-    contentEl.empty();
+  protected renderContent(contentEl: HTMLElement): void {
     contentEl.addClass("cr-confirm-dialog");
-    contentEl.addClass("cr-scope");
 
     contentEl.createEl("h2", { text: this.title });
     contentEl.createEl("p", { text: this.message, cls: "cr-confirm-message" });
@@ -267,15 +261,14 @@ export class ConfirmDialog extends Modal {
   }
 
   onClose(): void {
-    const { contentEl } = this;
-    contentEl.empty();
+    super.onClose();
   }
 }
 
 /**
  * 合并历史模态框
  */
-export class MergeHistoryModal extends Modal {
+export class MergeHistoryModal extends AbstractModal {
   private plugin: CognitiveRazorPlugin | null;
   private currentTab: "merged" | "dismissed" = "merged";
   private listContainer: HTMLElement | null = null;
@@ -306,11 +299,8 @@ export class MergeHistoryModal extends Modal {
     return typeof value === "string" ? value : path;
   }
 
-  async onOpen(): Promise<void> {
-    const { contentEl } = this;
-    contentEl.empty();
+  protected renderContent(contentEl: HTMLElement): void {
     contentEl.addClass("cr-merge-history-modal");
-    contentEl.addClass("cr-scope");
 
     contentEl.createEl("h2", { text: this.t("workbench.duplicateHistory.title") });
 
@@ -359,7 +349,7 @@ export class MergeHistoryModal extends Modal {
     });
 
     // 初始渲染
-    await this.renderList();
+    void this.renderList();
 
     const buttonContainer = contentEl.createDiv({ cls: "cr-modal-buttons" });
     const closeBtn = buttonContainer.createEl("button", {
@@ -494,8 +484,8 @@ export class MergeHistoryModal extends Modal {
   }
 
   onClose(): void {
-    const { contentEl } = this;
-    contentEl.empty();
+    this.listContainer = null;
+    super.onClose();
   }
 
   private resolveName(nodeId: string): string {
@@ -507,7 +497,7 @@ export class MergeHistoryModal extends Modal {
 /**
  * 快照 Diff 预览模态框
  */
-export class SnapshotDiffModal extends Modal {
+export class SnapshotDiffModal extends AbstractModal {
   constructor(
     app: App,
     private options: {
@@ -520,11 +510,8 @@ export class SnapshotDiffModal extends Modal {
     super(app);
   }
 
-  onOpen(): void {
-    const { contentEl } = this;
-    contentEl.empty();
+  protected renderContent(contentEl: HTMLElement): void {
     contentEl.addClass("cr-snapshot-diff");
-    contentEl.addClass("cr-scope");
 
     contentEl.createEl("h2", {
       text: `快照预览: ${this.options.snapshot.id}`
@@ -563,8 +550,7 @@ export class SnapshotDiffModal extends Modal {
   }
 
   onClose(): void {
-    const { contentEl } = this;
-    contentEl.empty();
+    super.onClose();
   }
 
   private formatTime(timestamp: string): string {
@@ -572,4 +558,3 @@ export class SnapshotDiffModal extends Modal {
     return date.toLocaleString("zh-CN");
   }
 }
-

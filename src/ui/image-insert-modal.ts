@@ -1,28 +1,26 @@
-import { App, Modal, Notice, setIcon } from "obsidian";
+import { App, Notice, setIcon } from "obsidian";
+import { AbstractModal } from "./abstract-modal";
 
-interface ImageInsertModalOptions {
+interface VisualizationModalOptions {
   t: any;
   contextBefore: string;
   contextAfter: string;
   onConfirm: (userPrompt: string) => Promise<void> | void;
 }
 
-export class ImageInsertModal extends Modal {
-  private options: ImageInsertModalOptions;
+export class VisualizationModal extends AbstractModal {
+  private options: VisualizationModalOptions;
   private promptInput: HTMLTextAreaElement | null = null;
   private confirmBtn: HTMLButtonElement | null = null;
   private contextContainer: HTMLElement | null = null;
 
-  constructor(app: App, options: ImageInsertModalOptions) {
+  constructor(app: App, options: VisualizationModalOptions) {
     super(app);
     this.options = options;
   }
 
-  onOpen(): void {
-    const { contentEl } = this;
+  protected renderContent(contentEl: HTMLElement): void {
     const t = this.options.t.imageModal || {};
-    contentEl.empty();
-    contentEl.addClass("cr-scope");
     contentEl.createEl("h2", { text: t.title || "生成图片" });
 
     const desc = contentEl.createDiv({ cls: "cr-modal-desc" });
@@ -59,6 +57,13 @@ export class ImageInsertModal extends Modal {
     cancelBtn.addEventListener("click", () => this.close());
 
     this.syncConfirmState();
+  }
+
+  onClose(): void {
+    this.promptInput = null;
+    this.confirmBtn = null;
+    this.contextContainer = null;
+    super.onClose();
   }
 
   private syncConfirmState(): void {

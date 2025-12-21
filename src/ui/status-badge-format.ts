@@ -19,7 +19,7 @@ export interface StatusBadgeFormatResult {
 /**
  * 格式化状态徽章文本
  * 
- * 根据 Requirements 5.5 和设计文档 section 8.5.3 定义的格式：
+ * 根据 Requirements 5.5 和设计文档 UI/UX 规范定义的格式：
  * - 正常: [CR: running/pending ⏳] 例如 [CR: 1/3 ⏳]
  * - 暂停: [CR: ⏸️ n] 例如 [CR: ⏸️ 3]
  * - 有失败: [CR: running/pending ⚠️failed] 例如 [CR: 1/3 ⚠️1]

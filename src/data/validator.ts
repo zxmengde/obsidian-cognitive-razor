@@ -49,77 +49,19 @@ export class Validator {
     const trimmed = output.trim();
 
     const buildParseError = (): ValidationError => ({
-      code: "E001",
+      code: "E210_MODEL_OUTPUT_PARSE_FAILED",
       type: "ParseError",
-      message: "Failed to parse JSON output",
+      message: "模型输出非 JSON 或解析失败",
       rawOutput: trimmed.substring(0, 500),
       fixInstruction:
-        "确保输出为纯 JSON，避免 ```json 代码块或多余说明文字",
+        "确保输出为纯 JSON，禁止使用代码块或额外文本",
     });
 
-    const attemptParse = (text: string): Record<string, unknown> | null => {
-      try {
-        return JSON.parse(text);
-      } catch {
-        return null;
-      }
-    };
-
-    // 1) 直接解析
-    const direct = attemptParse(trimmed);
-    if (direct) {
-      return { ok: true, data: direct };
+    try {
+      return { ok: true, data: JSON.parse(trimmed) as Record<string, unknown> };
+    } catch {
+      return { ok: false, error: buildParseError() };
     }
-
-    // 2) 提取 ```json ``` 或 ``` ``` 代码块
-    const codeBlockMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-    if (codeBlockMatch) {
-      const parsed = attemptParse(codeBlockMatch[1]);
-      if (parsed) {
-        return { ok: true, data: parsed };
-      }
-      // 尝试清理代码块内容后再解析
-      const cleaned = this.cleanJsonString(codeBlockMatch[1]);
-      const parsedCleaned = attemptParse(cleaned);
-      if (parsedCleaned) {
-        return { ok: true, data: parsedCleaned };
-      }
-    }
-
-    // 3) 提取首尾大括号之间的内容（容忍前后缀文本）
-    const firstBrace = trimmed.indexOf("{");
-    const lastBrace = trimmed.lastIndexOf("}");
-    if (firstBrace !== -1 && lastBrace > firstBrace) {
-      const sliced = trimmed.slice(firstBrace, lastBrace + 1);
-      const parsed = attemptParse(sliced);
-      if (parsed) {
-        return { ok: true, data: parsed };
-      }
-      // 尝试清理后再解析
-      const cleaned = this.cleanJsonString(sliced);
-      const parsedCleaned = attemptParse(cleaned);
-      if (parsedCleaned) {
-        return { ok: true, data: parsedCleaned };
-      }
-    }
-
-    return { ok: false, error: buildParseError() };
-  }
-
-  /** 清理 JSON 字符串 */
-  private cleanJsonString(json: string): string {
-    let cleaned = json;
-    
-    // 修复数组元素之间的非法字符：},X { 或 },X{ 模式
-    // 匹配 }, 后跟非空白非 { 非 ] 的字符，再跟 { 或 ]
-    cleaned = cleaned.replace(/\},\s*[^{\[\]\s]+\s*\{/g, "},{");
-    cleaned = cleaned.replace(/\},\s*[^{\[\]\s]+\s*\]/g, "}]");
-    
-    // 修复尾随逗号：,] 或 ,}
-    cleaned = cleaned.replace(/,\s*\]/g, "]");
-    cleaned = cleaned.replace(/,\s*\}/g, "}");
-    
-    return cleaned;
   }
 
   /** Schema 校验 */
@@ -148,22 +90,22 @@ export class Validator {
 
       if (expectedType === "array" && !Array.isArray(value)) {
         errors.push({
-          code: "E002",
+          code: "E211_MODEL_SCHEMA_VIOLATION",
           type: "SchemaError",
-          message: `Field "${key}" should be an array`,
+          message: `字段 "${key}" 应为数组`,
           location: key,
-          fixInstruction: `Ensure "${key}" is an array`,
+          fixInstruction: `请将 "${key}" 输出为数组`,
         });
       } else if (
         expectedType === "object" &&
         (typeof value !== "object" || Array.isArray(value))
       ) {
         errors.push({
-          code: "E002",
+          code: "E211_MODEL_SCHEMA_VIOLATION",
           type: "SchemaError",
-          message: `Field "${key}" should be an object`,
+          message: `字段 "${key}" 应为对象`,
           location: key,
-          fixInstruction: `Ensure "${key}" is an object`,
+          fixInstruction: `请将 "${key}" 输出为对象`,
         });
       } else if (
         expectedType !== "array" &&
@@ -171,11 +113,11 @@ export class Validator {
         expectedType !== actualType
       ) {
         errors.push({
-          code: "E002",
+          code: "E211_MODEL_SCHEMA_VIOLATION",
           type: "SchemaError",
-          message: `Field "${key}" should be of type "${expectedType}", got "${actualType}"`,
+          message: `字段 "${key}" 类型应为 "${expectedType}"，实际为 "${actualType}"`,
           location: key,
-          fixInstruction: `Ensure "${key}" is of type "${expectedType}"`,
+          fixInstruction: `请将 "${key}" 输出为 "${expectedType}" 类型`,
         });
       }
     }
@@ -199,19 +141,19 @@ export class Validator {
       const value = data[field];
       if (value === undefined || value === null) {
         errors.push({
-          code: "E003",
+          code: "E211_MODEL_SCHEMA_VIOLATION",
           type: "MissingField",
-          message: `Required field "${field}" is missing`,
+          message: `缺少必填字段 "${field}"`,
           location: field,
-          fixInstruction: `Provide a value for "${field}"`,
+          fixInstruction: `请补全 "${field}" 字段`,
         });
       } else if (typeof value === "string" && value.trim() === "") {
         errors.push({
-          code: "E003",
+          code: "E211_MODEL_SCHEMA_VIOLATION",
           type: "MissingField",
-          message: `Required field "${field}" is empty`,
+          message: `必填字段 "${field}" 为空`,
           location: field,
-          fixInstruction: `Provide a non-empty value for "${field}"`,
+          fixInstruction: `请为 "${field}" 提供非空值`,
         });
       }
     }

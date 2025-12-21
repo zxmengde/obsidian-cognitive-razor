@@ -674,10 +674,10 @@ export default class CognitiveRazorPlugin extends Plugin {
 	 * 
 	 * 通过 CommandDispatcher 注册所有命令：
 	 * - cognitive-razor:create-concept - 创建概念
-	 * - cognitive-razor:open-queue - 打开队列视图
 	 * - cognitive-razor:open-workbench - 打开工作台面板
 	 * - cognitive-razor:pause-queue - 暂停队列
 	 * - cognitive-razor:resume-queue - 恢复队列
+	 * - cognitive-razor:retry-failed - 重试失败任务
 	 * - 等等...
 	 */
 	private registerCommands(): void {
@@ -808,7 +808,7 @@ export default class CognitiveRazorPlugin extends Plugin {
 				}
 			}
 
-			// 2) 重复对清理（仅清理 pending/dismissed）
+			// 2) 重复对清理（清理所有相关重复对，保留 merging）
 			if (this.duplicateManager) {
 				const result = await this.duplicateManager.removePairsByNodeId(cruid);
 				if (!result.ok) {

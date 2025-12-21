@@ -1,6 +1,7 @@
-import { App, Modal } from "obsidian";
+import { App } from "obsidian";
 import type { CRType } from "../types";
 import type { HierarchicalCandidate } from "../core/expand-orchestrator";
+import { AbstractModal } from "./abstract-modal";
 
 interface ExpandModalLabels {
   titlePrefix: string;
@@ -29,7 +30,7 @@ interface ExpandModalOptions {
   onCancel?: () => void;
 }
 
-export class ExpandModal extends Modal {
+export class ExpandModal extends AbstractModal {
   private options: ExpandModalOptions;
   private selected: Set<string>;
   private confirmBtn: HTMLButtonElement | null = null;
@@ -44,10 +45,7 @@ export class ExpandModal extends Modal {
     );
   }
 
-  onOpen(): void {
-    const { contentEl } = this;
-    contentEl.empty();
-    contentEl.addClass("cr-scope");
+  protected renderContent(contentEl: HTMLElement): void {
     contentEl.addClass("cr-expand-modal");
     contentEl.setAttr("role", "dialog");
     contentEl.setAttr("aria-modal", "true");
@@ -72,9 +70,9 @@ export class ExpandModal extends Modal {
   }
 
   onClose(): void {
-    this.contentEl.empty();
     this.confirmBtn = null;
     this.selected.clear();
+    super.onClose();
   }
 
   private renderSummary(container: HTMLElement): void {

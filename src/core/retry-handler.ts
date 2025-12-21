@@ -55,11 +55,10 @@ const MODEL_OUTPUT_ERROR_CONFIG: RetryConfig = {
   strategy: "immediate",
 };
 
-/** 网络错误的默认配置 */
+/** Provider 错误的默认配置（不引入显式 backoff） */
 export const PROVIDER_ERROR_CONFIG: RetryConfig = {
   maxAttempts: 5,
-  strategy: "exponential",
-  baseDelayMs: 1000, // 1s, 2s, 4s, 8s, 16s
+  strategy: "immediate",
 };
 
 export class RetryHandler {
@@ -91,7 +90,7 @@ export class RetryHandler {
 
       return {
         category: "PROVIDER_ERROR",
-        strategy: isModelOutputError ? "immediate" : "exponential",
+        strategy: "immediate",
         retryable,
         maxAttempts: isModelOutputError ? 3 : 5,
       };

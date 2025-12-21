@@ -33,7 +33,7 @@ const TASK_BLOCKS = [
 
 /** 任务-槽位映射表：定义每种任务类型允许使用的槽位
  * 
- * 遵循 SSOT 5.4.4 槽位契约：
+ * 遵循设计文档 7.4 槽位契约：
  * - 通用槽位：CTX_LANGUAGE（可选；默认 Chinese）
  * - 操作模块槽位：用于 create/merge/amend
  * - 任务型模板槽位：用于现有 TaskType
@@ -55,6 +55,14 @@ const TASK_SLOT_MAPPING: Record<TaskType, { required: string[]; optional: string
     required: ["CTX_META"],
     optional: ["CTX_SOURCES", "CTX_LANGUAGE"]
   },
+  "amend": {
+    required: ["CTX_CURRENT", "USER_INSTRUCTION"],
+    optional: ["CTX_LANGUAGE", "CONCEPT_TYPE"]
+  },
+  "merge": {
+    required: ["SOURCE_A_NAME", "CTX_SOURCE_A", "SOURCE_B_NAME", "CTX_SOURCE_B"],
+    optional: ["USER_INSTRUCTION", "CTX_LANGUAGE", "CONCEPT_TYPE"]
+  },
   "verify": {
     required: ["CTX_META", "CTX_CURRENT"],
     optional: ["CTX_SOURCES", "CTX_LANGUAGE"]
@@ -68,7 +76,7 @@ const TASK_SLOT_MAPPING: Record<TaskType, { required: string[]; optional: string
 /**
  * 操作模块槽位映射（用于 Merge/Amend 等操作）
  * 
- * 遵循 SSOT 5.4.4：
+ * 遵循设计文档 7.4：
  * - Merge：必需 SOURCE_A_NAME, CTX_SOURCE_A, SOURCE_B_NAME, CTX_SOURCE_B
  * - Amend：必需 CTX_CURRENT, USER_INSTRUCTION
  */
@@ -369,6 +377,8 @@ export class PromptManager {
       "tag": "_base/operations/tag",
       "index": "index",
       "write": "_type/entity-core", // 默认值，会被 conceptType 覆盖
+      "amend": "_base/operations/amend",
+      "merge": "_base/operations/merge",
       "verify": "_base/operations/verify",
       "image-generate": "visualize"
     };
@@ -396,7 +406,7 @@ export class PromptManager {
   /**
    * 构建操作 prompt（用于 Merge/Amend 等操作）
    * 
-   * 遵循 SSOT 5.4.4：使用操作模块槽位映射
+   * 遵循设计文档 7.4：使用操作模块槽位映射
    * 
    * @param operation 操作类型：merge | amend
    * @param slots 槽位值

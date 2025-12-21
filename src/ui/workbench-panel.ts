@@ -7,11 +7,11 @@
  * - 队列状态区域（可折叠）
  * - 最近操作区域（可折叠）
  * 
- * 遵循设计文档 section 8.5.1 的四区域布局规范
+ * 遵循设计文档 11.2 的四区域布局规范
  * Requirements: 5.1
  */
 
-import { ItemView, WorkspaceLeaf, Notice, TFile, App, Modal, setIcon, Editor } from "obsidian";
+import { ItemView, WorkspaceLeaf, Notice, TFile, App, setIcon, Editor } from "obsidian";
 import type {
   DuplicatePair,
   QueueStatus,
@@ -29,6 +29,7 @@ import type CognitiveRazorPlugin from "../../main";
 import { renderSideBySideDiff, SimpleDiffView, buildLineDiff } from "./diff-view";
 import { MergeNameSelectionModal } from "./merge-modals";
 import { SimpleInputModal } from "./simple-input-modal";
+import { AbstractModal } from "./abstract-modal";
 
 import type { WorkbenchSectionDeps } from "./workbench/workbench-section-deps";
 import { CreateSection } from "./workbench/create-section";
@@ -101,7 +102,7 @@ export class WorkbenchPanel extends ItemView {
   // 区域折叠状态（默认全部展开）
   private collapseState: SectionCollapseState = {
     createConcept: false,
-    duplicates: true,
+    duplicates: false,
     queueStatus: true,
     recentOps: true,
   };
@@ -2177,17 +2178,21 @@ export class WorkbenchPanel extends ItemView {
       } else if (task.state === "Failed") {
         if (task.errors && task.errors.length > 0) {
           const lastError = task.errors[task.errors.length - 1];
-          actionCell.createEl("span", {
-            text: "⚠",
+          const errorIcon = actionCell.createSpan({
             cls: "cr-error-icon",
-            attr: { title: lastError.message }
+            attr: {
+              title: lastError.message,
+              "aria-hidden": "true"
+            }
           });
+          setIcon(errorIcon, "alert-triangle");
         }
       } else if (task.state === "Completed") {
-        actionCell.createEl("span", {
-          text: "✓",
-          cls: "cr-success-icon"
+        const successIcon = actionCell.createSpan({
+          cls: "cr-success-icon",
+          attr: { "aria-hidden": "true" }
         });
+        setIcon(successIcon, "check");
       }
     });
 
@@ -2411,7 +2416,7 @@ interface RecentOperation {
 /**
  * 重复对预览模态框（改进版）
  */
-class DuplicatePreviewModal extends Modal {
+class DuplicatePreviewModal extends AbstractModal {
   private pair: DuplicatePair;
   private contentA: string;
   private contentB: string;
@@ -2442,11 +2447,8 @@ class DuplicatePreviewModal extends Modal {
     this.onDismiss = onDismiss;
   }
 
-  onOpen(): void {
-    const { contentEl } = this;
-    contentEl.empty();
+  protected renderContent(contentEl: HTMLElement): void {
     contentEl.addClass("cr-duplicate-preview-modal");
-    contentEl.addClass("cr-scope");
 
     // 标题栏
     const header = contentEl.createDiv({ cls: "cr-preview-header" });
@@ -2620,15 +2622,14 @@ class DuplicatePreviewModal extends Modal {
   }
 
   onClose(): void {
-    const { contentEl } = this;
-    contentEl.empty();
+    super.onClose();
   }
 }
 
 /**
  * 确认对话框
  */
-class ConfirmDialog extends Modal {
+class ConfirmDialog extends AbstractModal {
   private title: string;
   private message: string;
   private onConfirm: (result: boolean) => void;
@@ -2640,11 +2641,8 @@ class ConfirmDialog extends Modal {
     this.onConfirm = onConfirm;
   }
 
-  onOpen(): void {
-    const { contentEl } = this;
-    contentEl.empty();
+  protected renderContent(contentEl: HTMLElement): void {
     contentEl.addClass("cr-confirm-dialog");
-    contentEl.addClass("cr-scope");
 
     contentEl.createEl("h2", { text: this.title });
     contentEl.createEl("p", { text: this.message, cls: "cr-confirm-message" });
@@ -2670,15 +2668,14 @@ class ConfirmDialog extends Modal {
   }
 
   onClose(): void {
-    const { contentEl } = this;
-    contentEl.empty();
+    super.onClose();
   }
 }
 
 /**
  * 合并历史模态框
  */
-class MergeHistoryModal extends Modal {
+class MergeHistoryModal extends AbstractModal {
   private plugin: CognitiveRazorPlugin | null;
   private currentTab: "merged" | "dismissed" = "merged";
   private listContainer: HTMLElement | null = null;
@@ -2709,11 +2706,8 @@ class MergeHistoryModal extends Modal {
     return typeof value === 'string' ? value : path;
   }
 
-  async onOpen(): Promise<void> {
-    const { contentEl } = this;
-    contentEl.empty();
+  protected renderContent(contentEl: HTMLElement): void {
     contentEl.addClass("cr-merge-history-modal");
-    contentEl.addClass("cr-scope");
 
     contentEl.createEl("h2", { text: this.t("workbench.duplicateHistory.title") });
 
@@ -2762,7 +2756,7 @@ class MergeHistoryModal extends Modal {
     });
 
     // 初始渲染
-    await this.renderList();
+    void this.renderList();
 
     const buttonContainer = contentEl.createDiv({ cls: "cr-modal-buttons" });
     const closeBtn = buttonContainer.createEl("button", {
@@ -2897,8 +2891,8 @@ class MergeHistoryModal extends Modal {
   }
 
   onClose(): void {
-    const { contentEl } = this;
-    contentEl.empty();
+    this.listContainer = null;
+    super.onClose();
   }
 
   private resolveName(nodeId: string): string {
@@ -2910,7 +2904,7 @@ class MergeHistoryModal extends Modal {
 /**
  * 快照 Diff 预览模态框
  */
-class SnapshotDiffModal extends Modal {
+class SnapshotDiffModal extends AbstractModal {
   constructor(
     app: App,
     private options: {
@@ -2923,11 +2917,8 @@ class SnapshotDiffModal extends Modal {
     super(app);
   }
 
-  onOpen(): void {
-    const { contentEl } = this;
-    contentEl.empty();
+  protected renderContent(contentEl: HTMLElement): void {
     contentEl.addClass("cr-snapshot-diff");
-    contentEl.addClass("cr-scope");
 
     contentEl.createEl("h2", {
       text: `快照预览: ${this.options.snapshot.id}`
@@ -2966,8 +2957,7 @@ class SnapshotDiffModal extends Modal {
   }
 
   onClose(): void {
-    const { contentEl } = this;
-    contentEl.empty();
+    super.onClose();
   }
 
   private formatTime(timestamp: string): string {

@@ -6,9 +6,10 @@
  * - MergeDiffModal: 合并预览 Diff Modal
  */
 
-import { App, Modal, Notice, Setting } from "obsidian";
+import { App, Notice, Setting, setIcon } from "obsidian";
 import { renderSideBySideDiff } from "./diff-view";
 import type { DuplicatePair } from "../types";
+import { AbstractModal } from "./abstract-modal";
 
 /**
  * 名称选择 Modal
@@ -18,7 +19,7 @@ import type { DuplicatePair } from "../types";
  * 2. 使用被合并的名（noteB）
  * 3. 输入自定义名称
  */
-export class MergeNameSelectionModal extends Modal {
+export class MergeNameSelectionModal extends AbstractModal {
   private selectedValue: string;
   private customInput: HTMLInputElement | null = null;
 
@@ -35,11 +36,8 @@ export class MergeNameSelectionModal extends Modal {
     this.selectedValue = this.resolveName(pair.nodeIdA);
   }
 
-  onOpen(): void {
-    const { contentEl } = this;
-    contentEl.empty();
+  protected renderContent(contentEl: HTMLElement): void {
     contentEl.addClass("cr-merge-modal");
-    contentEl.addClass("cr-scope");
     contentEl.setAttr("role", "dialog");
     contentEl.setAttr("aria-modal", "true");
 
@@ -305,8 +303,8 @@ export class MergeNameSelectionModal extends Modal {
   }
 
   onClose(): void {
-    const { contentEl } = this;
-    contentEl.empty();
+    this.customInput = null;
+    super.onClose();
   }
 
   private resolveName(nodeId: string): string {
@@ -323,7 +321,7 @@ export class MergeNameSelectionModal extends Modal {
  * 
  * 显示合并前后的内容对比，用户确认后执行写入
  */
-export class MergeDiffModal extends Modal {
+export class MergeDiffModal extends AbstractModal {
   private diffContainer: HTMLElement | null = null;
   private fullPreviewContainer: HTMLElement | null = null;
   private isDiffMode = true;
@@ -344,10 +342,7 @@ export class MergeDiffModal extends Modal {
     super(app);
   }
 
-  onOpen(): void {
-    const { contentEl } = this;
-    contentEl.empty();
-    contentEl.addClass("cr-scope");
+  protected renderContent(contentEl: HTMLElement): void {
     contentEl.addClass("cr-merge-diff-modal");
     this.modalEl.addClass("cr-merge-diff-modal");
     contentEl.setAttr("role", "dialog");
@@ -410,25 +405,28 @@ export class MergeDiffModal extends Modal {
     const buttonContainer = contentEl.createDiv({ cls: "cr-modal-button-container" });
 
     const confirmBtn = buttonContainer.createEl("button", {
-      text: "✓ 确认合并",
       cls: "mod-cta"
     });
+    const confirmIcon = confirmBtn.createSpan({ cls: "cr-btn-icon", attr: { "aria-hidden": "true" } });
+    setIcon(confirmIcon, "check");
+    const confirmLabel = confirmBtn.createSpan({ text: "确认合并" });
     confirmBtn.onclick = async () => {
       confirmBtn.disabled = true;
-      confirmBtn.textContent = "处理中...";
+      confirmLabel.textContent = "处理中...";
       try {
         await this.options.onConfirm();
         this.close();
       } catch (error) {
         new Notice(`合并失败: ${String(error)}`);
         confirmBtn.disabled = false;
-        confirmBtn.textContent = "✓ 确认合并";
+        confirmLabel.textContent = "确认合并";
       }
     };
 
-    const cancelBtn = buttonContainer.createEl("button", {
-      text: "✕ 取消"
-    });
+    const cancelBtn = buttonContainer.createEl("button");
+    const cancelIcon = cancelBtn.createSpan({ cls: "cr-btn-icon", attr: { "aria-hidden": "true" } });
+    setIcon(cancelIcon, "x");
+    cancelBtn.createSpan({ text: "取消" });
     cancelBtn.onclick = () => {
       this.options.onCancel();
       this.close();
@@ -438,8 +436,7 @@ export class MergeDiffModal extends Modal {
   onClose(): void {
     this.diffContainer = null;
     this.fullPreviewContainer = null;
-    const { contentEl } = this;
-    contentEl.empty();
+    super.onClose();
   }
 
   private renderDiffPanel(): void {

@@ -90,6 +90,10 @@ export function validateCRFrontmatter(data: unknown): Result<CRFrontmatter> {
     return err("INVALID_TYPE", `无效的知识类型: ${fm.type}`);
   }
 
+  if (!fm.name || typeof fm.name !== "string") {
+    return err("MISSING_FIELD", "缺少必填字段: name");
+  }
+
   if (!fm.status || !isValidNoteState(fm.status)) {
     return err("INVALID_STATUS", `无效的笔记状态: ${fm.status}`);
   }
@@ -108,6 +112,16 @@ export function validateCRFrontmatter(data: unknown): Result<CRFrontmatter> {
 
   if (!isValidCRTimestamp(fm.updated)) {
     return err("INVALID_TIMESTAMP", `无效的时间戳格式: ${fm.updated}`);
+  }
+
+  if (!Array.isArray(fm.parents)) {
+    return err("MISSING_FIELD", "缺少必填字段: parents");
+  }
+
+  for (const parent of fm.parents) {
+    if (typeof parent !== "string") {
+      return err("INVALID_FIELD", "parents 必须是字符串数组");
+    }
   }
 
   // 验证可选字段
@@ -141,8 +155,11 @@ export function isValidTaskType(type: string): type is TaskType {
     "define",
     "tag",
     "write",
+    "amend",
+    "merge",
     "index",
     "verify",
+    "image-generate",
   ].includes(type);
 }
 

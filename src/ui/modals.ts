@@ -4,12 +4,13 @@
  * 提供替代 prompt() 和 confirm() 的 Obsidian Modal 实现
  */
 
-import { App, Modal, Setting } from "obsidian";
+import { App, Setting } from "obsidian";
 import type {
   ProviderConfig,
   ConfirmModalOptions,
   ProviderConfigModalOptions
 } from "../types";
+import { AbstractModal } from "./abstract-modal";
 
 // ============================================================================
 // ConfirmModal - 确认对话框
@@ -18,7 +19,7 @@ import type {
 /**
  * 确认 Modal
  */
-export class ConfirmModal extends Modal {
+export class ConfirmModal extends AbstractModal {
   private options: ConfirmModalOptions;
 
   constructor(app: App, options: ConfirmModalOptions) {
@@ -26,11 +27,9 @@ export class ConfirmModal extends Modal {
     this.options = options;
   }
 
-  onOpen(): void {
-    const { contentEl, modalEl } = this;
-    contentEl.empty();
+  protected renderContent(contentEl: HTMLElement): void {
+    const { modalEl } = this;
     modalEl.addClass("cr-scope");
-    contentEl.addClass("cr-scope");
 
     contentEl.createEl("h2", { text: this.options.title });
 
@@ -61,7 +60,7 @@ export class ConfirmModal extends Modal {
   }
 
   onClose(): void {
-    this.contentEl.empty();
+    super.onClose();
   }
 }
 
@@ -72,7 +71,7 @@ export class ConfirmModal extends Modal {
 /**
  * Provider 配置 Modal
  */
-export class ProviderConfigModal extends Modal {
+export class ProviderConfigModal extends AbstractModal {
   private options: ProviderConfigModalOptions;
   private providerIdInput: HTMLInputElement | null = null;
   private apiKeyInput: HTMLInputElement | null = null;
@@ -86,11 +85,9 @@ export class ProviderConfigModal extends Modal {
     this.options = options;
   }
 
-  onOpen(): void {
-    const { contentEl, modalEl } = this;
-    contentEl.empty();
+  protected renderContent(contentEl: HTMLElement): void {
+    const { modalEl } = this;
     modalEl.addClass("cr-scope");
-    contentEl.addClass("cr-scope");
     contentEl.addClass("cr-provider-config-modal");
 
     const modalTitle = this.options.title ?? (this.options.mode === "add" ? "添加 AI Provider" : "编辑 AI Provider");
@@ -98,7 +95,7 @@ export class ProviderConfigModal extends Modal {
 
     // 说明文字
     const descEl = contentEl.createDiv({ cls: "modal-description" });
-    descEl.textContent = "配置 OpenAI 兼容的 API 服务。支持 OpenAI、Azure OpenAI、以及其他兼容服务。";
+    descEl.textContent = "配置 OpenAI 兼容的 API 服务（如 Gemini、OpenAI、Azure OpenAI 等）。";
     descEl.style.marginBottom = "1.5em";
     descEl.style.color = "var(--text-muted)";
 
@@ -157,11 +154,11 @@ export class ProviderConfigModal extends Modal {
     // 自定义端点
     const baseUrlSetting = new Setting(endpointSection)
       .setName("API 端点")
-      .setDesc("留空使用 OpenAI 官方端点 (https://api.openai.com/v1)");
+      .setDesc("留空使用默认端点 (Gemini: https://generativelanguage.googleapis.com/v1beta/openai/)");
 
     this.baseUrlInput = baseUrlSetting.controlEl.createEl("input", {
       type: "text",
-      placeholder: "https://api.openai.com/v1",
+      placeholder: "https://generativelanguage.googleapis.com/v1beta/openai/",
       value: this.options.currentConfig?.baseUrl || ""
     });
     this.baseUrlInput.style.width = "100%";
@@ -177,8 +174,8 @@ export class ProviderConfigModal extends Modal {
 
     this.chatModelInput = chatModelSetting.controlEl.createEl("input", {
       type: "text",
-      placeholder: "gpt-4o",
-      value: this.options.currentConfig?.defaultChatModel || "gpt-4o"
+      placeholder: "gemini-3-flash-preview",
+      value: this.options.currentConfig?.defaultChatModel || "gemini-3-flash-preview"
     });
     this.chatModelInput.style.width = "100%";
 
@@ -248,7 +245,7 @@ export class ProviderConfigModal extends Modal {
     const config: ProviderConfig = {
       apiKey,
       baseUrl: baseUrl || undefined,
-      defaultChatModel: chatModel || "gpt-4o",
+      defaultChatModel: chatModel || "gemini-3-flash-preview",
       defaultEmbedModel: embedModel || "text-embedding-3-small",
       enabled: this.options.currentConfig?.enabled ?? true
     };
@@ -283,6 +280,12 @@ export class ProviderConfigModal extends Modal {
   }
 
   onClose(): void {
-    this.contentEl.empty();
+    this.providerIdInput = null;
+    this.apiKeyInput = null;
+    this.baseUrlInput = null;
+    this.chatModelInput = null;
+    this.embedModelInput = null;
+    this.errorEl = null;
+    super.onClose();
   }
 }

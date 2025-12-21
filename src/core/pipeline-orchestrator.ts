@@ -21,7 +21,6 @@ import { extractFrontmatter, generateFrontmatter, generateMarkdownContent } from
 import { ContentRenderer } from "./content-renderer";
 import { NoteRepository } from "./note-repository";
 import { createConceptSignature, generateFilePath, sanitizeFileName } from "./naming-utils";
-import { schemaRegistry } from "./schema-registry";
 import { mapStandardizeOutput } from "./standardize-mapper";
 import { TaskFactory } from "./task-factory";
 import { generateUUID } from "../data/validators";
@@ -940,7 +939,7 @@ export class PipelineOrchestrator {
   /**
    * 启动合并管线
    * 
-   * 遵循 SSOT 6.3：Merge 流程
+   * 遵循设计文档 6.6：Merge 流程
    * - 用户从重复对列表进入 merge，对 A/B 选择主笔记
    * - 创建快照：A、B 各一份
    * - 生成合并候选（正文 + frontmatter）
@@ -979,7 +978,7 @@ export class PipelineOrchestrator {
     const deleteNote = { nodeId: deleteId, name: this.cruidCache?.getName(deleteId) || deleteId, path: deletePath };
 
     // 前置校验
-    const prereqResult = this.validatePrerequisites("write", pair.type);
+    const prereqResult = this.validatePrerequisites("merge", pair.type);
     if (!prereqResult.ok) {
       return prereqResult as Result<string>;
     }
@@ -1066,7 +1065,7 @@ export class PipelineOrchestrator {
       context.deleteContent = deleteContent;
       context.filePath = keepNote.path;
 
-      // 2. 创建双快照（SSOT 要求）
+      // 2. 创建双快照（设计文档要求）
       context.stage = "saving";
       context.updatedAt = formatCRTimestamp();
 
@@ -1076,48 +1075,29 @@ export class PipelineOrchestrator {
         context.pipelineId,
         keepNote.nodeId
       );
-      if (keepSnapshotResult.ok) {
-        context.snapshotId = keepSnapshotResult.value;
+      if (!keepSnapshotResult.ok) {
+        context.stage = "failed";
+        context.error = { code: keepSnapshotResult.error.code, message: keepSnapshotResult.error.message };
+        this.publishEvent({
+          type: "pipeline_failed",
+          pipelineId: context.pipelineId,
+          stage: "failed",
+          context,
+          timestamp: formatCRTimestamp()
+        });
+        return;
       }
+      context.snapshotId = keepSnapshotResult.value;
 
-      await this.undoManager.createSnapshot(
+      const deleteSnapshotResult = await this.undoManager.createSnapshot(
         deleteNote.path,
         deleteContent,
         `merge-delete-${context.pipelineId}`,
         deleteNote.nodeId
       );
-
-      this.logger.info("PipelineOrchestrator", "合并快照已创建", {
-        pipelineId: context.pipelineId,
-        keepSnapshotId: context.snapshotId
-      });
-
-      // 3. 调用 LLM 生成合并内容
-      context.stage = "saving";
-      context.updatedAt = formatCRTimestamp();
-
-      this.publishEvent({
-        type: "stage_changed",
-        pipelineId: context.pipelineId,
-        stage: "writing",
-        context,
-        timestamp: context.updatedAt
-      });
-
-      // 构建 merge prompt 并调用 LLM
-      const mergeResult = await this.generateMergeContent(
-        context,
-        keepNote.name,
-        deleteNote.name,
-        keepContent,
-        deleteContent,
-        pair.type,
-        finalFileName
-      );
-
-      if (!mergeResult.ok) {
+      if (!deleteSnapshotResult.ok) {
         context.stage = "failed";
-        context.error = { code: mergeResult.error.code, message: mergeResult.error.message };
+        context.error = { code: deleteSnapshotResult.error.code, message: deleteSnapshotResult.error.message };
         this.publishEvent({
           type: "pipeline_failed",
           pipelineId: context.pipelineId,
@@ -1128,20 +1108,55 @@ export class PipelineOrchestrator {
         return;
       }
 
-      context.generatedContent = mergeResult.value.content;
-      context.newContent = mergeResult.value.finalContent;
+      this.logger.info("PipelineOrchestrator", "合并快照已创建", {
+        pipelineId: context.pipelineId,
+        keepSnapshotId: context.snapshotId
+      });
 
-      // 4. 进入等待确认阶段
-      context.stage = "review_changes";
+      // 3. 入队 merge 任务
+      context.stage = "writing";
       context.updatedAt = formatCRTimestamp();
 
       this.publishEvent({
-        type: "confirmation_required",
+        type: "stage_changed",
         pipelineId: context.pipelineId,
-        stage: "review_changes",
+        stage: "writing",
         context,
         timestamp: context.updatedAt
       });
+
+      const settings = this.getSettings();
+      let taskId: string;
+      try {
+        taskId = this.taskQueue.enqueue(TaskFactory.create({
+          nodeId: context.nodeId,
+          taskType: "merge",
+          maxAttempts: settings.maxRetryAttempts,
+          providerRef: this.getProviderIdForTask("merge"),
+          payload: {
+            pipelineId: context.pipelineId,
+            keepName: keepNote.name,
+            deleteName: deleteNote.name,
+            keepContent,
+            deleteContent,
+            conceptType: pair.type,
+            finalFileName
+          }
+        }));
+      } catch (error) {
+        context.stage = "failed";
+        context.error = { code: "E500_INTERNAL_ERROR", message: "创建合并任务失败" };
+        this.publishEvent({
+          type: "pipeline_failed",
+          pipelineId: context.pipelineId,
+          stage: "failed",
+          context,
+          timestamp: formatCRTimestamp()
+        });
+        return;
+      }
+
+      this.taskToPipeline.set(taskId, context.pipelineId);
 
     } catch (error) {
       this.logger.error("PipelineOrchestrator", "合并管线执行失败", error as Error, {
@@ -1157,192 +1172,6 @@ export class PipelineOrchestrator {
         timestamp: formatCRTimestamp()
       });
     }
-  }
-
-  /**
-   * 生成合并内容
-   * 
-   * 遵循 SSOT 5.4.4：使用 PromptManager.buildOperation 构建 merge prompt
-   */
-  private async generateMergeContent(
-    context: PipelineContext,
-    keepNoteName: string,
-    deleteNoteName: string,
-    keepContent: string,
-    deleteContent: string,
-    type: CRType,
-    finalFileName: string
-  ): Promise<Result<{ content: Record<string, unknown>; finalContent: string }>> {
-    if (!this.promptManager || !this.providerManager) {
-      return err("E310_INVALID_STATE", "PromptManager 或 ProviderManager 未初始化");
-    }
-
-    const settings = this.getSettings();
-    const language = settings.language === "en" ? "English" : "Chinese";
-
-    // 构建 merge prompt（遵循 SSOT 5.4.4 槽位契约）
-    const slots: Record<string, string> = {
-      SOURCE_A_NAME: keepNoteName,
-      CTX_SOURCE_A: keepContent,
-      SOURCE_B_NAME: deleteNoteName,
-      CTX_SOURCE_B: deleteContent,
-      USER_INSTRUCTION: `合并这两个 ${type} 类型的概念笔记，最终文件名为 "${finalFileName}"`,
-      CONCEPT_TYPE: type,
-      CTX_LANGUAGE: language
-    };
-
-    // 使用 buildOperation 构建 merge prompt
-    let promptContent: string;
-    try {
-      promptContent = this.promptManager.buildOperation("merge", slots);
-    } catch (error) {
-      // 如果 merge 模板不可用或构建失败，使用简化的合并 prompt
-      this.logger.warn("PipelineOrchestrator", "merge 模板不可用，使用简化 prompt", {
-        pipelineId: context.pipelineId,
-        error
-      });
-
-      promptContent = this.buildSimpleMergePrompt(
-        keepNoteName,
-        deleteNoteName,
-        keepContent,
-        deleteContent,
-        type,
-        language
-      );
-    }
-
-    // 获取任务模型配置
-    const taskConfig = settings.taskModels?.["write"];
-    const providerId = taskConfig?.providerId || settings.defaultProviderId || "default";
-    const model = taskConfig?.model || "gpt-4o";
-
-    // 调用 LLM
-    const chatResult = await this.providerManager.chat({
-      providerId,
-      model,
-      messages: [{ role: "user", content: promptContent }],
-      temperature: taskConfig?.temperature ?? 0.7,
-      maxTokens: taskConfig?.maxTokens
-    });
-
-    if (!chatResult.ok) {
-      return chatResult as Result<{ content: Record<string, unknown>; finalContent: string }>;
-    }
-
-    const mergeOutputSchema = {
-      type: "object",
-      properties: {
-        merged_name: { type: "object" },
-        merge_rationale: { type: "string" },
-        content: { type: "object" },
-        preserved_from_a: { type: "array" },
-        preserved_from_b: { type: "array" }
-      },
-      required: ["content"]
-    };
-
-    // JSON → 校验（外层）
-    const validationResult = await this.validator.validate(
-      chatResult.value.content,
-      mergeOutputSchema,
-      []
-    );
-
-    if (!validationResult.valid) {
-      this.logger.warn("PipelineOrchestrator", "合并结果校验失败", {
-        pipelineId: context.pipelineId,
-        errors: validationResult.errors
-      });
-      return err("E211_MODEL_SCHEMA_VIOLATION", "合并结果校验失败", { errors: validationResult.errors });
-    }
-
-    const parsed = (validationResult.data || {}) as Record<string, unknown>;
-    const rawContent = parsed.content;
-
-    if (!rawContent || typeof rawContent !== "object" || Array.isArray(rawContent)) {
-      return err("E211_MODEL_SCHEMA_VIOLATION", "合并结果缺少有效的 content 对象");
-    }
-
-    // JSON → 校验（内容 Schema）
-    const schema = schemaRegistry.getSchema(type);
-    const rules = schemaRegistry.getValidationRules(type);
-    const contentValidation = await this.validator.validate(
-      JSON.stringify(rawContent),
-      schema,
-      rules,
-      { type }
-    );
-
-    if (!contentValidation.valid) {
-      this.logger.warn("PipelineOrchestrator", "合并内容不符合 Schema", {
-        pipelineId: context.pipelineId,
-        type,
-        errors: contentValidation.errors
-      });
-      return err("E211_MODEL_SCHEMA_VIOLATION", "合并内容不符合 Schema", { errors: contentValidation.errors });
-    }
-
-    const mergeResult = {
-      ...parsed,
-      content: (contentValidation.data || {}) as Record<string, unknown>
-    } satisfies Record<string, unknown>;
-
-    // 构建最终内容
-    const buildResult = this.buildMergedContent(
-      mergeResult,
-      context.previousContent || "",
-      type,
-      deleteNoteName
-    );
-
-    if (!buildResult.ok) {
-      return buildResult as Result<{ content: Record<string, unknown>; finalContent: string }>;
-    }
-
-    return ok({
-      content: (mergeResult.content || {}) as Record<string, unknown>,
-      finalContent: buildResult.value,
-    });
-  }
-
-  /**
-   * 构建简化的合并 prompt
-   */
-  private buildSimpleMergePrompt(
-    keepNoteName: string,
-    deleteNoteName: string,
-    keepContent: string,
-    deleteContent: string,
-    type: CRType,
-    language: string
-  ): string {
-    return `你是一个知识合并专家。请将以下两个 ${type} 类型的概念笔记合并为一个统一的知识节点。
-
-**源笔记 A（主笔记）：${keepNoteName}**
-\`\`\`
-${keepContent}
-\`\`\`
-
-**源笔记 B（被合并笔记）：${deleteNoteName}**
-\`\`\`
-${deleteContent}
-\`\`\`
-
-**要求**：
-1. 保留两个笔记中的所有关键信息
-2. 消除重复和冗余
-3. 使用 ${language} 作为主要语言
-4. 将被合并笔记的名称添加到 aliases 中
-
-**输出格式**：纯 JSON，不使用 markdown 代码块
-{
-  "merged_name": { "chinese": "...", "english": "..." },
-  "merge_rationale": "合并理由说明",
-  "content": { ... 按照 ${type} 类型的结构组织内容 ... },
-  "preserved_from_a": ["从笔记A保留的信息点"],
-  "preserved_from_b": ["从笔记B保留的信息点"]
-}`;
   }
 
   /**
@@ -1362,7 +1191,7 @@ ${deleteContent}
     instruction: string
   ): Result<string> {
     // 前置校验
-    const prereqResult = this.validatePrerequisites("write");
+    const prereqResult = this.validatePrerequisites("amend");
     if (!prereqResult.ok) {
       return prereqResult as Result<string>;
     }
@@ -1408,7 +1237,7 @@ ${deleteContent}
   /**
    * 启动 Verify 管线（手动触发）
    *
-   * 遵循 SSOT 6.10：
+   * 遵循设计文档 6.10：
    * - 读取当前笔记（frontmatter + 正文）
    * - 执行 Verify（入队）
    * - 将报告追加到笔记末尾（仅追加，不修改原文）
@@ -1558,23 +1387,33 @@ ${deleteContent}
       context.nodeId = extracted.frontmatter.cruid;
       context.type = extracted.frontmatter.type;
 
-      // 3. 创建快照（SSOT 要求）
+      // 3. 创建快照（设计文档要求）
       const snapshotResult = await this.undoManager.createSnapshot(
         context.filePath!,
         content,
         context.pipelineId,
         context.nodeId
       );
-      if (snapshotResult.ok) {
-        context.snapshotId = snapshotResult.value;
+      if (!snapshotResult.ok) {
+        context.stage = "failed";
+        context.error = { code: snapshotResult.error.code, message: snapshotResult.error.message };
+        this.publishEvent({
+          type: "pipeline_failed",
+          pipelineId: context.pipelineId,
+          stage: "failed",
+          context,
+          timestamp: formatCRTimestamp()
+        });
+        return;
       }
+      context.snapshotId = snapshotResult.value;
 
       this.logger.info("PipelineOrchestrator", "修订快照已创建", {
         pipelineId: context.pipelineId,
         snapshotId: context.snapshotId
       });
 
-      // 4. 调用 LLM 生成改进内容
+      // 4. 入队 amend 任务
       context.stage = "writing";
       context.updatedAt = formatCRTimestamp();
 
@@ -1586,15 +1425,24 @@ ${deleteContent}
         timestamp: context.updatedAt
       });
 
-      const improveResult = await this.generateAmendContent(
-        context,
-        content,
-        instruction
-      );
-
-      if (!improveResult.ok) {
+      const settings = this.getSettings();
+      let taskId: string;
+      try {
+        taskId = this.taskQueue.enqueue(TaskFactory.create({
+          nodeId: context.nodeId,
+          taskType: "amend",
+          maxAttempts: settings.maxRetryAttempts,
+          providerRef: this.getProviderIdForTask("amend"),
+          payload: {
+            pipelineId: context.pipelineId,
+            currentContent: content,
+            instruction,
+            conceptType: context.type
+          }
+        }));
+      } catch (error) {
         context.stage = "failed";
-        context.error = { code: improveResult.error.code, message: improveResult.error.message };
+        context.error = { code: "E500_INTERNAL_ERROR", message: "创建修订任务失败" };
         this.publishEvent({
           type: "pipeline_failed",
           pipelineId: context.pipelineId,
@@ -1605,38 +1453,7 @@ ${deleteContent}
         return;
       }
 
-      context.generatedContent = improveResult.value;
-
-      // 生成预览内容：JSON → 渲染 → 写入（写入前仅预览）
-      const updatedFrontmatter: CRFrontmatter = {
-        ...extracted.frontmatter,
-        name: extracted.frontmatter.name?.trim() || file.basename,
-        parents: extracted.frontmatter.parents ?? [],
-        updated: formatCRTimestamp()
-      };
-      const nextDefinition = typeof improveResult.value.definition === "string"
-        ? improveResult.value.definition.trim()
-        : undefined;
-      if (nextDefinition) {
-        updatedFrontmatter.definition = nextDefinition;
-      }
-
-      context.newContent = generateMarkdownContent(
-        updatedFrontmatter,
-        this.renderContentToMarkdown(context, updatedFrontmatter.name)
-      );
-
-      // 5. 进入等待确认阶段
-      context.stage = "review_changes";
-      context.updatedAt = formatCRTimestamp();
-
-      this.publishEvent({
-        type: "confirmation_required",
-        pipelineId: context.pipelineId,
-        stage: "review_changes",
-        context,
-        timestamp: context.updatedAt
-      });
+      this.taskToPipeline.set(taskId, context.pipelineId);
 
     } catch (error) {
       this.logger.error("PipelineOrchestrator", "修订管线执行失败", error as Error, {
@@ -1652,154 +1469,6 @@ ${deleteContent}
         timestamp: formatCRTimestamp()
       });
     }
-  }
-
-  /**
-   * 生成修订（Amend）内容
-   */
-  private async generateAmendContent(
-    context: PipelineContext,
-    currentContent: string,
-    instruction: string
-  ): Promise<Result<Record<string, unknown>>> {
-    if (!this.providerManager) {
-      return err("E310_INVALID_STATE", "ProviderManager 未初始化");
-    }
-
-    const settings = this.getSettings();
-    const language = settings.language === "en" ? "English" : "Chinese";
-
-    // 构建修订 prompt（优先使用操作模板，失败则回退到简化 prompt）
-    let promptContent = this.buildAmendPrompt(
-      currentContent,
-      instruction,
-      context.type,
-      language
-    );
-
-    if (this.promptManager) {
-      const slots: Record<string, string> = {
-        CTX_CURRENT: currentContent,
-        USER_INSTRUCTION: instruction,
-        CONCEPT_TYPE: context.type,
-        CTX_LANGUAGE: language
-      };
-
-      try {
-        promptContent = this.promptManager.buildOperation("amend", slots);
-      } catch (error) {
-        this.logger.warn("PipelineOrchestrator", "amend 模板不可用，使用简化 prompt", {
-          pipelineId: context.pipelineId,
-          error
-        });
-      }
-    }
-
-    // 获取任务模型配置
-    const taskConfig = settings.taskModels?.["write"];
-    const providerId = taskConfig?.providerId || settings.defaultProviderId || "default";
-    const model = taskConfig?.model || "gpt-4o";
-
-    // 调用 LLM
-    const chatResult = await this.providerManager.chat({
-      providerId,
-      model,
-      messages: [{ role: "user", content: promptContent }],
-      temperature: taskConfig?.temperature ?? 0.7,
-      maxTokens: taskConfig?.maxTokens
-    });
-
-    if (!chatResult.ok) {
-      return chatResult as Result<Record<string, unknown>>;
-    }
-
-    const amendOutputSchema = {
-      type: "object",
-      properties: {
-        content: { type: "object" },
-        changes_summary: { type: "string" },
-        preserved_sections: { type: "array" },
-        enhanced_sections: { type: "array" }
-      },
-      required: ["content"]
-    };
-
-    // JSON → 校验（外层）
-    const validationResult = await this.validator.validate(
-      chatResult.value.content,
-      amendOutputSchema,
-      []
-    );
-
-    if (!validationResult.valid) {
-      this.logger.warn("PipelineOrchestrator", "修订结果校验失败", {
-        pipelineId: context.pipelineId,
-        errors: validationResult.errors
-      });
-      return err("E211_MODEL_SCHEMA_VIOLATION", "修订结果校验失败", { errors: validationResult.errors });
-    }
-
-    const parsed = (validationResult.data || {}) as Record<string, unknown>;
-    const rawContent = parsed.content;
-
-    if (!rawContent || typeof rawContent !== "object" || Array.isArray(rawContent)) {
-      return err("E211_MODEL_SCHEMA_VIOLATION", "修订结果缺少有效的 content 对象");
-    }
-
-    // JSON → 校验（内容 Schema）
-    const schema = schemaRegistry.getSchema(context.type);
-    const rules = schemaRegistry.getValidationRules(context.type);
-    const contentValidation = await this.validator.validate(
-      JSON.stringify(rawContent),
-      schema,
-      rules,
-      { type: context.type }
-    );
-
-    if (!contentValidation.valid) {
-      this.logger.warn("PipelineOrchestrator", "修订内容不符合 Schema", {
-        pipelineId: context.pipelineId,
-        type: context.type,
-        errors: contentValidation.errors
-      });
-      return err("E211_MODEL_SCHEMA_VIOLATION", "修订内容不符合 Schema", { errors: contentValidation.errors });
-    }
-
-    return ok((contentValidation.data || {}) as Record<string, unknown>);
-  }
-
-  /**
-   * 构建修订（Amend）prompt
-   */
-  private buildAmendPrompt(
-    currentContent: string,
-    instruction: string,
-    type: CRType,
-    language: string
-  ): string {
-    return `你是一个知识改进专家。请根据用户指令改进以下 ${type} 类型的概念笔记。
-
-**当前笔记内容**：
-\`\`\`
-${currentContent}
-\`\`\`
-
-**用户指令**：${instruction}
-
-**要求**：
-1. 保留原笔记中所有有效内容
-2. 根据用户指令进行针对性改进
-3. 使用 ${language} 作为主要语言
-4. 改进后的内容必须是原内容的语义超集（保留有效信息）
-5. 输出为结构化 JSON（由系统渲染 Markdown），不要输出 Markdown
-
-**输出格式**：纯 JSON，不使用 markdown 代码块
-{
-  "content": { "... 按照 ${type} 类型的结构组织内容 ..." },
-  "changes_summary": "改进内容摘要",
-  "preserved_sections": ["保留的章节列表"],
-  "enhanced_sections": ["增强的章节列表"]
-}`;
   }
 
   /**
@@ -2218,6 +1887,12 @@ ${currentContent}
       case "write":
         await this.handleWriteCompleted(context, task);
         break;
+      case "amend":
+        await this.handleAmendCompleted(context, task);
+        break;
+      case "merge":
+        await this.handleMergeCompleted(context, task);
+        break;
       case "verify":
         await this.handleVerifyCompleted(context, task);
         break;
@@ -2227,7 +1902,7 @@ ${currentContent}
   /**
    * 处理 Verify 任务完成
    * 
-   * 遵循 SSOT 6.10：
+   * 遵循设计文档 6.10：
    * - 将 Verify 结果写入 context.verificationResult 供 UI 展示
    * - 将报告追加到笔记末尾（仅追加，不修改原文）
    * - 追加成功后结束管线
@@ -2497,10 +2172,163 @@ ${currentContent}
     await this.executeEmbeddingDirect(context);
   }
 
+  private async handleAmendCompleted(
+    context: PipelineContext,
+    task: TaskRecord
+  ): Promise<void> {
+    const result = (task.result || task.payload?.result) as Record<string, unknown> | undefined;
+    if (!result) {
+      context.stage = "failed";
+      context.error = { code: "E310_INVALID_STATE", message: "Amend 结果缺失" };
+      context.updatedAt = formatCRTimestamp();
+      this.publishEvent({
+        type: "pipeline_failed",
+        pipelineId: context.pipelineId,
+        stage: "failed",
+        context,
+        timestamp: context.updatedAt
+      });
+      return;
+    }
+
+    if (!context.previousContent || !context.filePath) {
+      context.stage = "failed";
+      context.error = { code: "E310_INVALID_STATE", message: "缺少修订前内容或文件路径" };
+      context.updatedAt = formatCRTimestamp();
+      this.publishEvent({
+        type: "pipeline_failed",
+        pipelineId: context.pipelineId,
+        stage: "failed",
+        context,
+        timestamp: context.updatedAt
+      });
+      return;
+    }
+
+    const extracted = extractFrontmatter(context.previousContent);
+    if (!extracted) {
+      context.stage = "failed";
+      context.error = { code: "E500_INTERNAL_ERROR", message: "无法解析目标笔记的 frontmatter" };
+      context.updatedAt = formatCRTimestamp();
+      this.publishEvent({
+        type: "pipeline_failed",
+        pipelineId: context.pipelineId,
+        stage: "failed",
+        context,
+        timestamp: context.updatedAt
+      });
+      return;
+    }
+
+    context.generatedContent = result;
+
+    const file = this.noteRepository.getFileByPath(context.filePath);
+    const fallbackName = extracted.frontmatter.name?.trim()
+      || file?.basename
+      || "Unnamed Concept";
+
+    const updatedFrontmatter: CRFrontmatter = {
+      ...extracted.frontmatter,
+      name: fallbackName,
+      parents: extracted.frontmatter.parents ?? [],
+      updated: formatCRTimestamp()
+    };
+
+    const nextDefinition = typeof result.definition === "string"
+      ? result.definition.trim()
+      : undefined;
+    if (nextDefinition) {
+      updatedFrontmatter.definition = nextDefinition;
+    }
+
+    context.newContent = generateMarkdownContent(
+      updatedFrontmatter,
+      this.renderContentToMarkdown(context, updatedFrontmatter.name)
+    );
+
+    context.stage = "review_changes";
+    context.updatedAt = formatCRTimestamp();
+    this.publishEvent({
+      type: "confirmation_required",
+      pipelineId: context.pipelineId,
+      stage: "review_changes",
+      context,
+      timestamp: context.updatedAt
+    });
+  }
+
+  private async handleMergeCompleted(
+    context: PipelineContext,
+    task: TaskRecord
+  ): Promise<void> {
+    const result = (task.result || task.payload?.result) as Record<string, unknown> | undefined;
+    if (!result) {
+      context.stage = "failed";
+      context.error = { code: "E310_INVALID_STATE", message: "Merge 结果缺失" };
+      context.updatedAt = formatCRTimestamp();
+      this.publishEvent({
+        type: "pipeline_failed",
+        pipelineId: context.pipelineId,
+        stage: "failed",
+        context,
+        timestamp: context.updatedAt
+      });
+      return;
+    }
+
+    if (!context.previousContent) {
+      context.stage = "failed";
+      context.error = { code: "E310_INVALID_STATE", message: "缺少合并前内容" };
+      context.updatedAt = formatCRTimestamp();
+      this.publishEvent({
+        type: "pipeline_failed",
+        pipelineId: context.pipelineId,
+        stage: "failed",
+        context,
+        timestamp: context.updatedAt
+      });
+      return;
+    }
+
+    context.generatedContent = (result.content as Record<string, unknown>) || result;
+
+    const buildResult = this.buildMergedContent(
+      result,
+      context.previousContent,
+      context.type,
+      context.deleteNoteName || ""
+    );
+
+    if (!buildResult.ok) {
+      context.stage = "failed";
+      context.error = { code: buildResult.error.code, message: buildResult.error.message };
+      context.updatedAt = formatCRTimestamp();
+      this.publishEvent({
+        type: "pipeline_failed",
+        pipelineId: context.pipelineId,
+        stage: "failed",
+        context,
+        timestamp: context.updatedAt
+      });
+      return;
+    }
+
+    context.newContent = buildResult.value;
+    context.stage = "review_changes";
+    context.updatedAt = formatCRTimestamp();
+    this.publishEvent({
+      type: "confirmation_required",
+      pipelineId: context.pipelineId,
+      stage: "review_changes",
+      context,
+      timestamp: context.updatedAt
+    });
+  }
+
   /**
    * 启动 Verify 任务
    * 
-   * 遵循 SSOT 6.10：写入落盘后执行 Verify，并将报告追加到笔记末尾
+   * 遵循设计文档 6.10：写入落盘后执行 Verify，并将报告追加到笔记末尾
    */
   private async startVerifyTask(context: PipelineContext): Promise<Result<void>> {
     const filePath = context.filePath;

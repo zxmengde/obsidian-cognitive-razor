@@ -7,7 +7,8 @@
  * - 用于创建概念等简单输入场景
  */
 
-import { App, Modal, Notice, setIcon } from "obsidian";
+import { App, Notice, setIcon } from "obsidian";
+import { AbstractModal } from "./abstract-modal";
 
 /**
  * 简单输入 Modal 选项
@@ -28,7 +29,7 @@ interface SimpleInputModalOptions {
 /**
  * 极简单行输入 Modal
  */
-export class SimpleInputModal extends Modal {
+export class SimpleInputModal extends AbstractModal {
   private options: SimpleInputModalOptions;
   private inputValue: string;
 
@@ -38,10 +39,7 @@ export class SimpleInputModal extends Modal {
     this.inputValue = options.defaultValue || "";
   }
 
-  onOpen(): void {
-    const { contentEl } = this;
-    contentEl.empty();
-    contentEl.addClass("cr-scope");
+  protected renderContent(contentEl: HTMLElement): void {
     contentEl.addClass("cr-simple-input-modal");
 
     // 标题
@@ -100,8 +98,7 @@ export class SimpleInputModal extends Modal {
   }
 
   onClose(): void {
-    const { contentEl } = this;
-    contentEl.empty();
+    super.onClose();
   }
 
   /**

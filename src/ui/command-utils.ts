@@ -17,7 +17,7 @@ const COMMAND_PREFIX = "cognitive-razor";
 /**
  * 核心命令 ID 常量
  * 
- * 遵循 SSOT 第 11 章：命令与快捷键
+ * 遵循设计文档第 12 章：命令系统
  * 至少需要：
  * - 打开 Workbench
  * - 创建概念
@@ -25,7 +25,7 @@ const COMMAND_PREFIX = "cognitive-razor";
  * - 对当前重复对启动 Merge
  */
 export const COMMAND_IDS = {
-  // 核心命令（SSOT 第 11 章）
+  // 核心命令（设计文档第 12 章）
   CREATE_CONCEPT: `${COMMAND_PREFIX}:create-concept`,
   OPEN_WORKBENCH: `${COMMAND_PREFIX}:open-workbench`,
   IMPROVE_NOTE: `${COMMAND_PREFIX}:improve-note`,
@@ -33,7 +33,7 @@ export const COMMAND_IDS = {
   EXPAND_CURRENT_NOTE: `${COMMAND_PREFIX}:expand-current-note`,
   INSERT_IMAGE: `${COMMAND_PREFIX}:insert-image`,
   VERIFY_CURRENT_NOTE: `${COMMAND_PREFIX}:verify-current-note`,
-  EXPORT_DIAGNOSTICS: `${COMMAND_PREFIX}:export-diagnostics`,
+  RETRY_FAILED: `${COMMAND_PREFIX}:retry-failed`,
 
   // 重要功能（阶段 2）
   VIEW_DUPLICATES: `${COMMAND_PREFIX}:view-duplicates`,
@@ -48,7 +48,7 @@ export const COMMAND_IDS = {
 /**
  * 获取核心命令 ID 列表
  * 
- * 遵循 SSOT 第 11 章：命令与快捷键
+ * 遵循设计文档第 12 章：命令系统
  */
 export function getCoreCommandIds(): string[] {
   return [

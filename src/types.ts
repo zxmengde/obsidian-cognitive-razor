@@ -61,6 +61,8 @@ export type TaskType =
   | "define"   // 定义
   | "tag"      // 标记
   | "write"    // 撰写
+  | "amend"    // 修订
+  | "merge"    // 合并
   | "index"    // 索引
   | "verify"   // 校验
   | "image-generate"; // 图片生成
@@ -297,7 +299,7 @@ export interface ChatResponse {
 export interface ImageGenerateRequest {
   /** Provider ID */
   providerId: string;
-  /** 模型名称（默认 gpt-image-1） */
+  /** 模型名称（默认 gemini-3-pro-image-preview） */
   model: string;
   /** 图片提示词（映射到 images/generations.prompt） */
   prompt: string;
@@ -573,7 +575,7 @@ export interface SnapshotRecord {
   created: string;
   /** 文件大小（字节） */
   fileSize: number;
-  /** 内容校验和（MD5） */
+  /** 内容校验和（SHA-256） */
   checksum: string;
 }
 

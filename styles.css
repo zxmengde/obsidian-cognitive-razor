@@ -274,6 +274,37 @@
     position: relative;
 }
 
+.cr-search-clear-btn {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-m);
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    margin-right: 4px;
+}
+
+.cr-search-clear-btn:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+.cr-search-clear-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.cr-search-clear-btn svg {
+    width: 16px;
+    height: 16px;
+}
+
 .cr-search-action-btn svg {
     width: 18px;
     height: 18px;

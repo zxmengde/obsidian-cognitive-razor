@@ -531,6 +531,7 @@ export class DuplicateManager {
 
   /**
    * 清理包含指定 nodeId 的重复对（用于笔记删除后的关联数据清理）
+   * 仅保留 merging 状态，避免与合并管线产生竞态
    */
   async removePairsByNodeId(nodeId: string): Promise<Result<number>> {
     try {
@@ -540,16 +541,10 @@ export class DuplicateManager {
 
       const before = this.store.pairs.length;
       this.store.pairs = this.store.pairs.filter((p) => {
-        const includesNode = p.nodeIdA === nodeId || p.nodeIdB === nodeId;
-        // 合并中的记录需要保留，避免与管线的 completeMerge 发生竞态
         if (p.status === "merging") {
           return true;
         }
-        // 仅清理无法再处理的记录（pending/dismissed）
-        if (includesNode && (p.status === "pending" || p.status === "dismissed")) {
-          return false;
-        }
-        return true;
+        return p.nodeIdA !== nodeId && p.nodeIdB !== nodeId;
       });
       const removed = before - this.store.pairs.length;
 

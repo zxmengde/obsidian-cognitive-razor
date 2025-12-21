@@ -7,7 +7,8 @@
  * - 接受/放弃操作
  */
 
-import { Modal, App, Notice } from "obsidian";
+import { App, Notice } from "obsidian";
+import { AbstractModal } from "./abstract-modal";
 
 /**
  * 差异类型
@@ -49,7 +50,7 @@ interface DiffData {
 /**
  * DiffView 模态框（完整版，预留供未来使用）
  */
-class DiffView extends Modal {
+class DiffView extends AbstractModal {
   private diffData: DiffData;
   private onAccept: (selectedDiffs: DiffItem[]) => void;
   private onReject: () => void;
@@ -73,11 +74,8 @@ class DiffView extends Modal {
     });
   }
 
-  onOpen(): void {
-    const { contentEl } = this;
-    contentEl.empty();
+  protected renderContent(contentEl: HTMLElement): void {
     contentEl.addClass("cr-diff-view");
-    contentEl.addClass("cr-scope");
     contentEl.setAttr("role", "dialog");
     contentEl.setAttr("aria-modal", "true");
     contentEl.setAttr("aria-live", "polite");
@@ -390,10 +388,9 @@ class DiffView extends Modal {
   }
 
   onClose(): void {
-    const { contentEl } = this;
-    contentEl.empty();
     this.diffsContainer = null;
     this.selectedDiffs.clear();
+    super.onClose();
   }
 }
 
@@ -457,7 +454,7 @@ export function buildLineDiff(oldContent: string, newContent: string): LineDiff[
 /**
  * 简化的差异视图（用于快速预览）
  */
-export class SimpleDiffView extends Modal {
+export class SimpleDiffView extends AbstractModal {
   private originalContent: string;
   private newContent: string;
   private title: string;
@@ -480,11 +477,8 @@ export class SimpleDiffView extends Modal {
     this.onReject = onReject;
   }
 
-  onOpen(): void {
-    const { contentEl } = this;
-    contentEl.empty();
+  protected renderContent(contentEl: HTMLElement): void {
     contentEl.addClass("cr-simple-diff-view");
-    contentEl.addClass("cr-scope");
 
     // 标题
     contentEl.createEl("h2", { text: this.title });
@@ -530,8 +524,7 @@ export class SimpleDiffView extends Modal {
   }
 
   onClose(): void {
-    const { contentEl } = this;
-    contentEl.empty();
+    super.onClose();
   }
 }
 

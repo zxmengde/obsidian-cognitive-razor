@@ -4,17 +4,20 @@ import type { WorkbenchSectionDeps } from "./workbench-section-deps";
 import { SimpleInputModal } from "../simple-input-modal";
 import type { ExpandPlan, HierarchicalPlan, AbstractPlan } from "../../core/expand-orchestrator";
 import { ExpandModal } from "../expand-modal";
-import { AbstractModal } from "../abstract-modal";
+import { AbstractExpandModal } from "../abstract-expand-modal";
 import { formatMessage } from "../../core/i18n";
-import { ImageInsertModal } from "../image-insert-modal";
+import { VisualizationModal } from "../image-insert-modal";
 
 export class CreateSection {
   private deps: WorkbenchSectionDeps;
 
   private conceptInput: HTMLInputElement | null = null;
   private standardizeBtn: HTMLButtonElement | null = null;
+  private clearBtn: HTMLButtonElement | null = null;
   private typeConfidenceTableContainer: HTMLElement | null = null;
+  private improveSection: HTMLElement | null = null;
   private improveBtn: HTMLButtonElement | null = null;
+  private expandBtn: HTMLButtonElement | null = null;
   private insertImageBtn: HTMLButtonElement | null = null;
   private verifyBtn: HTMLButtonElement | null = null;
 
@@ -38,6 +41,16 @@ export class CreateSection {
       }
     });
 
+    const clearLabel = this.deps.t("workbench.createConcept.clear");
+    this.clearBtn = wrapper.createEl("button", {
+      cls: "cr-search-clear-btn",
+      attr: {
+        "aria-label": clearLabel,
+        "title": clearLabel
+      }
+    });
+    setIcon(this.clearBtn, "x");
+
     this.standardizeBtn = wrapper.createEl("button", {
       cls: "cr-search-action-btn",
       attr: {
@@ -47,13 +60,16 @@ export class CreateSection {
     });
     setIcon(this.standardizeBtn, "corner-down-left");
 
+    this.clearBtn.disabled = true;
+    this.standardizeBtn.disabled = true;
+
     this.standardizeBtn.addEventListener("click", () => void this.handleStandardize());
+    this.clearBtn.addEventListener("click", () => {
+      this.clearConceptInput();
+    });
 
     this.conceptInput.addEventListener("input", () => {
-      const hasValue = this.conceptInput?.value.trim();
-      if (this.standardizeBtn) {
-        this.standardizeBtn.disabled = !hasValue;
-      }
+      this.updateInputActionState();
     });
 
     this.conceptInput.addEventListener("keydown", (e: KeyboardEvent) => {
@@ -63,13 +79,13 @@ export class CreateSection {
       }
     });
 
-    const improveSection = container.createDiv({ cls: "cr-improve-section" });
+    this.improveSection = container.createDiv({ cls: "cr-improve-section" });
     const improveLabel = this.deps.t("workbench.buttons.improveNote");
     const expandLabel = this.deps.t("workbench.buttons.expand");
     const insertImageLabel = this.deps.t("workbench.buttons.insertImage");
     const verifyLabel = this.deps.t("workbench.buttons.verify");
 
-    this.improveBtn = improveSection.createEl("button", {
+    this.improveBtn = this.improveSection.createEl("button", {
       text: improveLabel,
       cls: "cr-btn-secondary",
       attr: { "aria-label": improveLabel }
@@ -78,16 +94,16 @@ export class CreateSection {
       void this.handleStartAmend();
     });
 
-    const expandBtn = improveSection.createEl("button", {
+    this.expandBtn = this.improveSection.createEl("button", {
       text: expandLabel,
       cls: "cr-btn-secondary",
       attr: { "aria-label": expandLabel }
     });
-    expandBtn.addEventListener("click", () => {
+    this.expandBtn.addEventListener("click", () => {
       void this.handleStartExpand();
     });
 
-    this.insertImageBtn = improveSection.createEl("button", {
+    this.insertImageBtn = this.improveSection.createEl("button", {
       text: insertImageLabel,
       cls: "cr-btn-secondary",
       attr: { "aria-label": insertImageLabel }
@@ -96,7 +112,7 @@ export class CreateSection {
       void this.startImageInsert();
     });
 
-    this.verifyBtn = improveSection.createEl("button", {
+    this.verifyBtn = this.improveSection.createEl("button", {
       text: verifyLabel,
       cls: "cr-btn-secondary",
       attr: { "aria-label": verifyLabel }
@@ -117,8 +133,11 @@ export class CreateSection {
   onClose(): void {
     this.conceptInput = null;
     this.standardizeBtn = null;
+    this.clearBtn = null;
     this.typeConfidenceTableContainer = null;
+    this.improveSection = null;
     this.improveBtn = null;
+    this.expandBtn = null;
     this.insertImageBtn = null;
     this.verifyBtn = null;
     this.currentStandardizedData = null;
@@ -274,7 +293,7 @@ export class CreateSection {
     const { before, after } = this.getContextSegments(editor, cursor, contextSize);
     const frontmatter = this.buildFrontmatter(file);
 
-    const modal = new ImageInsertModal(this.deps.app, {
+    const modal = new VisualizationModal(this.deps.app, {
       t,
       contextBefore: before,
       contextAfter: after,
@@ -310,6 +329,10 @@ export class CreateSection {
     const hasMarkdown = !!activeFile && activeFile.extension === "md";
     const improveLabel = this.deps.t("workbench.buttons.improveNote");
     const needMarkdownLabel = this.deps.t("workbench.notifications.openMarkdownFirst");
+    if (this.improveSection) {
+      this.improveSection.style.display = hasMarkdown ? "" : "none";
+    }
+
     this.improveBtn.textContent = improveLabel;
     this.improveBtn.setAttr("aria-label", improveLabel);
     this.improveBtn.disabled = !hasMarkdown;
@@ -318,6 +341,15 @@ export class CreateSection {
       "title",
       hasMarkdown ? improveLabel : needMarkdownLabel
     );
+
+    if (this.expandBtn) {
+      const label = this.deps.t("workbench.buttons.expand");
+      this.expandBtn.textContent = label;
+      this.expandBtn.setAttr("aria-label", label);
+      this.expandBtn.disabled = !hasMarkdown;
+      this.expandBtn.setAttr("aria-disabled", String(!hasMarkdown));
+      this.expandBtn.setAttr("title", hasMarkdown ? label : needMarkdownLabel);
+    }
 
     if (this.insertImageBtn) {
       const plugin = this.deps.getPlugin();
@@ -345,9 +377,9 @@ export class CreateSection {
 
   private resetStandardizeButton(): void {
     if (this.standardizeBtn) {
-      this.standardizeBtn.disabled = false;
       this.standardizeBtn.classList.remove("is-loading");
     }
+    this.updateInputActionState();
   }
 
   private async handleStandardize(descriptionOverride?: string): Promise<void> {
@@ -367,9 +399,14 @@ export class CreateSection {
       this.conceptInput.value = description;
     }
 
+    this.updateInputActionState();
+
     if (this.standardizeBtn) {
       this.standardizeBtn.disabled = true;
       this.standardizeBtn.classList.add("is-loading");
+    }
+    if (this.clearBtn) {
+      this.clearBtn.disabled = true;
     }
 
     try {
@@ -484,8 +521,7 @@ export class CreateSection {
 
       new Notice(`${this.deps.t("workbench.notifications.conceptCreated")} (${result.value})`);
 
-      this.hideTypeConfidenceTable();
-      this.resetConceptInput();
+      this.clearConceptInput();
     } catch (error) {
       this.deps.logError("创建概念失败", error);
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -505,6 +541,31 @@ export class CreateSection {
     if (this.conceptInput) {
       this.conceptInput.value = "";
       this.conceptInput.focus();
+    }
+  }
+
+  private clearConceptInput(): void {
+    this.pendingConceptInput = null;
+    this.hideTypeConfidenceTable();
+    this.resetConceptInput();
+
+    if (this.standardizeBtn) {
+      this.standardizeBtn.disabled = true;
+      this.standardizeBtn.classList.remove("is-loading");
+    }
+
+    if (this.clearBtn) {
+      this.clearBtn.disabled = true;
+    }
+  }
+
+  private updateInputActionState(): void {
+    const hasValue = Boolean(this.conceptInput?.value.trim());
+    if (this.standardizeBtn && !this.standardizeBtn.classList.contains("is-loading")) {
+      this.standardizeBtn.disabled = !hasValue;
+    }
+    if (this.clearBtn) {
+      this.clearBtn.disabled = !hasValue;
     }
   }
 
@@ -579,7 +640,7 @@ export class CreateSection {
       empty: this.deps.t("expand.empty")
     };
 
-    const modal = new AbstractModal(this.deps.app, {
+    const modal = new AbstractExpandModal(this.deps.app, {
       currentTitle: plan.currentTitle,
       currentType: plan.currentType,
       candidates: plan.candidates,

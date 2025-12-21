@@ -564,8 +564,11 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
       { key: "define", name: t.taskModels?.tasks?.define?.name || t.taskTypes.define.name, desc: t.taskModels?.tasks?.define?.desc || t.taskTypes.define.desc },
       { key: "tag", name: t.taskModels?.tasks?.tag?.name || t.taskTypes.tag.name, desc: t.taskModels?.tasks?.tag?.desc || t.taskTypes.tag.desc },
       { key: "write", name: t.taskModels?.tasks?.write?.name || t.taskTypes.write.name, desc: t.taskModels?.tasks?.write?.desc || t.taskTypes.write.desc },
+      { key: "amend", name: t.taskModels?.tasks?.amend?.name || t.taskTypes.amend.name, desc: t.taskModels?.tasks?.amend?.desc || t.taskTypes.amend.desc },
+      { key: "merge", name: t.taskModels?.tasks?.merge?.name || t.taskTypes.merge.name, desc: t.taskModels?.tasks?.merge?.desc || t.taskTypes.merge.desc },
       { key: "index", name: t.taskModels?.tasks?.index?.name || t.taskTypes.index.name, desc: t.taskModels?.tasks?.index?.desc || t.taskTypes.index.desc },
       { key: "verify", name: t.taskModels?.tasks?.verify?.name || t.taskTypes.verify.name, desc: t.taskModels?.tasks?.verify?.desc || t.taskTypes.verify.desc },
+      { key: "image-generate", name: t.taskModels?.tasks?.["image-generate"]?.name || t.taskTypes["image-generate"].name, desc: t.taskModels?.tasks?.["image-generate"]?.desc || t.taskTypes["image-generate"].desc },
     ];
 
     tasks.forEach((task) => {
@@ -663,7 +666,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
     // 模型
     this.renderFieldRow(body, t.taskModels?.fields?.model || "模型名称", t.taskModels?.fields?.modelDesc || "", (control) => {
       const input = control.createEl("input", { type: "text", cls: "model-input" });
-      input.placeholder = t.taskModels?.fields?.modelDesc || "gpt-4o";
+      input.placeholder = "gemini-3-flash-preview";
       input.value = taskConfig?.model || "";
       input.disabled = disabledInputs;
       input.addEventListener("change", async () => {
@@ -712,6 +715,34 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
               return;
             }
             await this.persistTaskModel(task.key, { topP: parsed });
+            applyStatus();
+          });
+        }
+      );
+
+      // Max Tokens
+      this.renderFieldRow(
+        body,
+        t.taskModels?.fields?.maxTokens || "最大输出 Tokens",
+        t.taskModels?.fields?.maxTokensDesc || "限制模型输出 token 上限（留空表示不限制）",
+        (control) => {
+          const input = control.createEl("input", { type: "number", cls: "numeric-input", attr: { min: "1", step: "1" } });
+          input.value = taskConfig?.maxTokens?.toString() || "";
+          input.disabled = disabledInputs;
+          input.addEventListener("blur", async () => {
+            const raw = input.value.trim();
+            if (raw === "") {
+              await this.persistTaskModel(task.key, { maxTokens: undefined });
+              applyStatus();
+              return;
+            }
+            const parsed = parseInt(raw, 10);
+            if (Number.isNaN(parsed) || parsed <= 0) {
+              new Notice(t.taskModels?.validation?.maxTokens || "最大输出 Tokens 需为正整数");
+              input.value = taskConfig?.maxTokens?.toString() || "";
+              return;
+            }
+            await this.persistTaskModel(task.key, { maxTokens: parsed });
             applyStatus();
           });
         }

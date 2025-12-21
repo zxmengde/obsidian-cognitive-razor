@@ -16,6 +16,7 @@
 import { Plugin, Menu, setIcon } from "obsidian";
 import type { QueueStatus } from "../types";
 import { formatStatusBadgeText } from "./status-badge-format";
+import { COMMAND_IDS } from "./command-utils";
 
 /**
  * StatusBadge 组件
@@ -290,28 +291,36 @@ export class StatusBadge {
    * 打开工作台（替代原队列视图）
    */
   private openWorkbench(): void {
-    this.plugin.app.workspace.trigger("cognitive-razor:open-workbench");
+    this.executeCommand(COMMAND_IDS.OPEN_WORKBENCH);
   }
 
   /**
    * 创建概念
    */
   private createConcept(): void {
-    this.plugin.app.workspace.trigger("cognitive-razor:create-concept");
+    this.executeCommand(COMMAND_IDS.CREATE_CONCEPT);
   }
 
   /**
    * 切换队列状态
    */
   private toggleQueue(): void {
-    this.plugin.app.workspace.trigger("cognitive-razor:toggle-queue");
+    const commandId = this.queueStatus.paused ? COMMAND_IDS.RESUME_QUEUE : COMMAND_IDS.PAUSE_QUEUE;
+    this.executeCommand(commandId);
   }
 
   /**
    * 重试失败任务
    */
   private retryFailedTasks(): void {
-    this.plugin.app.workspace.trigger("cognitive-razor:retry-failed");
+    this.executeCommand(COMMAND_IDS.RETRY_FAILED);
+  }
+
+  private executeCommand(commandId: string): void {
+    const appWithCommands = this.plugin.app as unknown as {
+      commands: { executeCommandById: (id: string) => boolean };
+    };
+    appWithCommands.commands.executeCommandById(commandId);
   }
 
   /**

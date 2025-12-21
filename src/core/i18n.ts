@@ -44,6 +44,7 @@ interface Translations {
       defining: string;
       selectType: string;
       create: string;
+      clear: string;
     };
     duplicates: {
       title: string;
@@ -73,6 +74,7 @@ interface Translations {
       completed: string;
       failed: string;
       cancelled: string;
+      clearPending: string;
       clearCompleted: string;
       clearFailed: string;
       retryFailed: string;
@@ -449,6 +451,14 @@ interface Translations {
       name: string;
       desc: string;
     };
+    amend: {
+      name: string;
+      desc: string;
+    };
+    merge: {
+      name: string;
+      desc: string;
+    };
     index: {
       name: string;
       desc: string;
@@ -458,6 +468,10 @@ interface Translations {
       desc: string;
     };
     verify: {
+      name: string;
+      desc: string;
+    };
+    "image-generate": {
       name: string;
       desc: string;
     };
@@ -490,27 +504,32 @@ interface Translations {
     isDefault: string;
     isCustom: string;
     recommended: string;
-    fields: {
-      provider: string;
-      providerDesc: string;
-      useDefaultProvider: string;
-      model: string;
-      modelDesc: string;
-      temperature: string;
-      temperatureDesc: string;
-      topP: string;
-      topPDesc: string;
-      reasoningEffort: string;
-      reasoningEffortDesc: string;
-      embeddingDimension: string;
-      embeddingDimensionDesc: string;
-    };
+        fields: {
+          provider: string;
+          providerDesc: string;
+          useDefaultProvider: string;
+          model: string;
+          modelDesc: string;
+          temperature: string;
+          temperatureDesc: string;
+          topP: string;
+          topPDesc: string;
+          maxTokens: string;
+          maxTokensDesc: string;
+          reasoningEffort: string;
+          reasoningEffortDesc: string;
+          embeddingDimension: string;
+          embeddingDimensionDesc: string;
+        };
     tasks: {
       define: { name: string; desc: string };
       tag: { name: string; desc: string };
       write: { name: string; desc: string };
+      amend: { name: string; desc: string };
+      merge: { name: string; desc: string };
       index: { name: string; desc: string };
       verify: { name: string; desc: string };
+      "image-generate": { name: string; desc: string };
     };
     reasoningEffortOptions: {
       notSet: string;
@@ -518,11 +537,12 @@ interface Translations {
       medium: string;
       high: string;
     };
-    validation: {
-      temperature: string;
-      topP: string;
-    };
-  };
+        validation: {
+          temperature: string;
+          topP: string;
+          maxTokens: string;
+        };
+      };
 
   imageGeneration: {
     title: string;
@@ -605,6 +625,7 @@ export class I18n {
           defining: "定义中...",
           selectType: "请选择概念类型",
           create: "创建",
+          clear: "清空输入",
         },
         duplicates: {
           title: "重复概念",
@@ -634,6 +655,7 @@ export class I18n {
           completed: "已完成",
           failed: "失败",
           cancelled: "已取消",
+          clearPending: "清除待处理",
           clearCompleted: "清除已完成",
           clearFailed: "清除失败",
           retryFailed: "重试失败",
@@ -1002,6 +1024,14 @@ export class I18n {
           name: "标记",
           desc: "生成别名与标签",
         },
+        amend: {
+          name: "修订",
+          desc: "对现有内容进行增量优化",
+        },
+        merge: {
+          name: "合并",
+          desc: "融合语义重复的概念",
+        },
         index: {
           name: "索引",
           desc: "生成语义向量以便检索",
@@ -1013,6 +1043,10 @@ export class I18n {
         verify: {
           name: "校验",
           desc: "验证生成内容的准确性",
+        },
+        "image-generate": {
+          name: "图像生成",
+          desc: "生成图片并插入笔记",
         },
       },
       crTypes: {
@@ -1043,11 +1077,13 @@ export class I18n {
           providerDesc: "选择 AI Provider（留空则使用默认 Provider）",
           useDefaultProvider: "使用默认 Provider",
           model: "模型名称",
-          modelDesc: "指定使用的模型（如 gpt-4o, claude-3-opus）",
+          modelDesc: "指定使用的模型（如 gemini-3-flash-preview）",
           temperature: "Temperature",
           temperatureDesc: "控制生成内容的随机性 (0-2)，较低值更确定，较高值更创意",
           topP: "Top P",
           topPDesc: "核采样参数 (0-1)，控制生成内容的多样性",
+          maxTokens: "最大输出 Tokens",
+          maxTokensDesc: "限制模型输出 token 上限（留空表示不限制）",
           reasoningEffort: "推理强度",
           reasoningEffortDesc: "用于支持推理的模型（如 o1, o3）",
           embeddingDimension: "嵌入维度",
@@ -1057,8 +1093,11 @@ export class I18n {
           define: { name: "Define (定义)", desc: "分析和定义概念的核心含义" },
           tag: { name: "Tag (标记)", desc: "标记和分类概念" },
           write: { name: "Write (撰写)", desc: "撰写和扩展概念内容" },
+          amend: { name: "Amend (修订)", desc: "对已有概念进行增量优化" },
+          merge: { name: "Merge (合并)", desc: "融合重复概念并生成合并内容" },
           index: { name: "Index (索引)", desc: "生成语义向量并建立索引" },
           verify: { name: "Verify (校验)", desc: "验证和检查概念质量" },
+          "image-generate": { name: "Image (图像)", desc: "生成图片并插入笔记" },
         },
         reasoningEffortOptions: {
           notSet: "不设置",
@@ -1069,6 +1108,7 @@ export class I18n {
         validation: {
           temperature: "Temperature 需在 0-2 之间",
           topP: "Top P 需在 0-1 之间",
+          maxTokens: "最大输出 Tokens 需为正整数",
         }
       },
       imageGeneration: {
@@ -1142,6 +1182,7 @@ export class I18n {
           defining: "Defining...",
           selectType: "Please select concept type",
           create: "Create",
+          clear: "Clear input",
         },
         duplicates: {
           title: "Duplicate Concepts",
@@ -1171,6 +1212,7 @@ export class I18n {
           completed: "Completed",
           failed: "Failed",
           cancelled: "Cancelled",
+          clearPending: "Clear Pending",
           clearCompleted: "Clear Completed",
           clearFailed: "Clear Failed",
           retryFailed: "Retry Failed",
@@ -1539,6 +1581,14 @@ export class I18n {
           name: "Tag",
           desc: "Generate aliases and tags",
         },
+        amend: {
+          name: "Amend",
+          desc: "Improve existing content incrementally",
+        },
+        merge: {
+          name: "Merge",
+          desc: "Merge duplicate concepts",
+        },
         index: {
           name: "Index",
           desc: "Produce semantic vectors for retrieval",
@@ -1550,6 +1600,10 @@ export class I18n {
         verify: {
           name: "Verify",
           desc: "Check the accuracy of generated content",
+        },
+        "image-generate": {
+          name: "Image",
+          desc: "Generate images and insert into notes",
         },
       },
       crTypes: {
@@ -1580,11 +1634,13 @@ export class I18n {
           providerDesc: "Select AI Provider (leave empty to use default Provider)",
           useDefaultProvider: "Use Default Provider",
           model: "Model Name",
-          modelDesc: "Specify the model to use (e.g., gpt-4o, claude-3-opus)",
+          modelDesc: "Specify the model to use (e.g., gemini-3-flash-preview)",
           temperature: "Temperature",
           temperatureDesc: "Controls randomness (0-2), lower values are more deterministic, higher values are more creative",
           topP: "Top P",
           topPDesc: "Nucleus sampling parameter (0-1), controls diversity",
+          maxTokens: "Max output tokens",
+          maxTokensDesc: "Limit output tokens (leave empty for no limit)",
           reasoningEffort: "Reasoning Effort",
           reasoningEffortDesc: "For models that support reasoning (e.g., o1, o3)",
           embeddingDimension: "Embedding Dimension",
@@ -1594,8 +1650,11 @@ export class I18n {
           define: { name: "Define", desc: "Analyze and define core concept meaning" },
           tag: { name: "Tag", desc: "Tag and categorize concepts" },
           write: { name: "Write", desc: "Write and expand concept content" },
+          amend: { name: "Amend", desc: "Improve existing content" },
+          merge: { name: "Merge", desc: "Merge duplicate concepts" },
           index: { name: "Index", desc: "Generate semantic vectors and build index" },
           verify: { name: "Verify", desc: "Validate and check concept quality" },
+          "image-generate": { name: "Image", desc: "Generate images and insert into notes" },
         },
         reasoningEffortOptions: {
           notSet: "Not Set",
@@ -1606,6 +1665,7 @@ export class I18n {
         validation: {
           temperature: "Temperature must be between 0 and 2",
           topP: "Top P must be between 0 and 1",
+          maxTokens: "Max output tokens must be a positive integer",
         }
       },
       imageGeneration: {

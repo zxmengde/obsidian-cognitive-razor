@@ -128,11 +128,10 @@ export class TaskQueue {
 
       // 创建完整的任务记录
       const now = formatCRTimestamp();
-      const inferredTypeLockKey = typeof task.typeLockKey === "string"
+      // 仅使用显式传入的 typeLockKey（不再从 payload 推断）
+      const explicitTypeLockKey = typeof task.typeLockKey === "string"
         ? task.typeLockKey
-        : typeof (task.payload as Record<string, unknown>)?.conceptType === "string"
-          ? `type:${String((task.payload as Record<string, unknown>).conceptType)}`
-          : undefined;
+        : undefined;
       const fullTask: TaskRecord = {
         ...task,
         id: taskId,
@@ -140,7 +139,7 @@ export class TaskQueue {
         updated: now,
         state: "Pending",
         lockKey: task.lockKey ?? task.nodeId,
-        typeLockKey: inferredTypeLockKey
+        typeLockKey: explicitTypeLockKey
       };
 
       // 添加到队列

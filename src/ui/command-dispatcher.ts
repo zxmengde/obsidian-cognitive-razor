@@ -21,7 +21,6 @@ import { WorkbenchPanel, WORKBENCH_VIEW_TYPE } from "./workbench-panel";
 import { TaskQueue } from "../core/task-queue";
 import { COMMAND_IDS, getCoreCommandIds, isValidCommandId } from "./command-utils";
 import type CognitiveRazorPlugin from "../../main";
-import type { DuplicatePair, SnapshotMetadata } from "../types";
 
 /**
  * 命令处理器类型
@@ -104,7 +103,7 @@ export class CommandDispatcher {
   /**
    * 注册所有命令
    * 
-   * 遵循 SSOT 第 11 章：命令与快捷键
+   * 遵循设计文档第 12 章：命令系统
    * 核心命令：
    * - 打开 Workbench
    * - 创建概念
@@ -225,7 +224,30 @@ export class CommandDispatcher {
       }
     });
 
-    // 清空队列（取消所有 Pending/Running/Failed 任务）
+    // 重试失败任务
+    this.registerCommand({
+      id: COMMAND_IDS.RETRY_FAILED,
+      name: t.workbench.queueStatus.retryFailed,
+      icon: "refresh-cw",
+      handler: async () => {
+        const taskQueue = this.taskQueue ?? this.plugin.getComponents().taskQueue;
+        if (!taskQueue) {
+          new Notice(t.workbench.notifications.systemNotInitialized);
+          return;
+        }
+
+        const result = await taskQueue.retryFailed();
+        if (!result.ok) {
+          new Notice(`${t.common.error}: ${result.error.message}`);
+          return;
+        }
+
+        new Notice(`${t.workbench.notifications.retryComplete}: ${result.value}`);
+        await this.openWorkbench();
+      }
+    });
+
+    // 清空队列（取消所有 Pending 任务）
     this.registerCommand({
       id: COMMAND_IDS.CLEAR_QUEUE,
       name: t.workbench.queueStatus.clearFailed || "清空任务队列",
@@ -238,7 +260,7 @@ export class CommandDispatcher {
         }
 
         const tasks = taskQueue.getAllTasks();
-        const cancellable = tasks.filter(t => t.state === "Pending" || t.state === "Running" || t.state === "Failed");
+        const cancellable = tasks.filter(t => t.state === "Pending");
 
         let cancelled = 0;
         for (const task of cancellable) {
@@ -265,15 +287,6 @@ export class CommandDispatcher {
       }
     });
 
-    // 导出诊断信息（Planned）
-    this.registerCommand({
-      id: COMMAND_IDS.EXPORT_DIAGNOSTICS,
-      name: "导出诊断信息",
-      icon: "info",
-      handler: async () => {
-        new Notice("导出诊断信息：功能尚未实现（Planned）");
-      }
-    });
   }
 
   /**
@@ -361,7 +374,7 @@ export class CommandDispatcher {
   /**
    * 注册合并重复对命令
    * 
-   * 遵循 SSOT 第 11 章：对当前重复对启动 Merge
+   * 遵循设计文档第 12 章：命令系统
    */
   private registerMergeCommands(): void {
     this.registerCommand({
@@ -628,7 +641,7 @@ export class CommandDispatcher {
   /**
    * 修订笔记
    * 
-   * 遵循 SSOT 6.7：Amend（修订）流程
+   * 遵循设计文档 6.7：Amend（修订）流程
    * - 创建快照
    * - 生成候选改写
    * - DiffView 确认后落盘

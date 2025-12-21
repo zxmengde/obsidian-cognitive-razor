@@ -11,12 +11,16 @@ import YAML from "yaml";
 import { formatCRTimestamp } from "../utils/date-utils";
 
 const FRONTMATTER_DELIMITER = "---";
-const REQUIRED_FIELDS: Array<keyof CRFrontmatter> = [
+const REQUIRED_STRING_FIELDS: Array<keyof CRFrontmatter> = [
   "cruid",
   "type",
+  "name",
   "status",
   "created",
   "updated"
+];
+const REQUIRED_ARRAY_FIELDS: Array<keyof CRFrontmatter> = [
+  "parents"
 ];
 const ARRAY_FIELDS: Array<keyof CRFrontmatter> = ["aliases", "tags", "sourceUids", "parents"];
 
@@ -205,8 +209,17 @@ function parseFrontmatter(yaml: string): CRFrontmatter | null {
     }
 
     // 验证必填字段
-    for (const field of REQUIRED_FIELDS) {
-      if (!normalized[field] || typeof normalized[field] !== "string") {
+    for (const field of REQUIRED_STRING_FIELDS) {
+      if (typeof normalized[field] !== "string" || normalized[field]?.toString().trim() === "") {
+        return null;
+      }
+    }
+
+    for (const field of REQUIRED_ARRAY_FIELDS) {
+      if (!Object.prototype.hasOwnProperty.call(normalized, field)) {
+        return null;
+      }
+      if (!Array.isArray(normalized[field])) {
         return null;
       }
     }
