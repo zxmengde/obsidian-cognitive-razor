@@ -171,11 +171,9 @@ export class MergeNameSelectionModal extends AbstractModal {
         // 如果选择保留 B，且未输入自定义名称，默认名称也切换到 B
         if (!this.customInput?.value.trim()) {
           this.selectedValue = nameB;
-          // 更新名称选择部分的选中状态 (需要重新渲染或手动更新 DOM，这里简化处理，假设用户会手动确认)
-          // 更好的做法是让名称选择部分响应状态变化，但为了保持简单，这里暂不自动切换 UI 选中状态，只切换值
-          // 或者我们可以触发名称选择部分的 radio 点击
-          const nameRadios = document.getElementsByName("merge-name");
-          if (nameRadios.length > 1) (nameRadios[1] as HTMLInputElement).click();
+          // 在 modal 容器内 scoped 查询，避免全局 DOM 查询导致并发弹窗误选
+          const nameRadios = contentEl.querySelectorAll<HTMLInputElement>('input[type="radio"][name="merge-name"]');
+          if (nameRadios.length > 1) nameRadios[1].click();
         }
       }
     );
@@ -296,7 +294,7 @@ export class MergeNameSelectionModal extends AbstractModal {
 
     const confirmBtn = buttonContainer.createEl("button", {
       text: this.text("workbench.mergeSelection.confirm", "确认合并"),
-      cls: "mod-cta"
+      cls: "cr-btn-primary"
     });
     confirmBtn.onclick = async () => {
       const finalName = this.selectedValue.trim();
@@ -378,6 +376,7 @@ export class MergeDiffModal extends AbstractModal {
       afterContent: string;
       onConfirm: () => Promise<void>;
       onCancel: () => void;
+      t?: Translator;
     }
   ) {
     super(app);
@@ -397,29 +396,35 @@ export class MergeDiffModal extends AbstractModal {
     contentEl.createEl("h2", { text: this.options.title });
 
     const badge = contentEl.createDiv({ cls: "cr-merge-diff-badge" });
-    badge.createEl("span", { text: "自动快照已启用", cls: "cr-badge" });
+    badge.createEl("span", {
+      text: this.text("workbench.mergeDiff.snapshotEnabled", "Auto snapshot enabled"),
+      cls: "cr-badge"
+    });
 
     const infoEl = contentEl.createDiv({ cls: "cr-merge-diff-info" });
     infoEl.createEl("p", {
-      text: `合并 "${this.options.deleteNoteName}" 到 "${this.options.keepNoteName}"`,
+      text: formatMessage(
+        this.text("workbench.mergeDiff.mergeDescription", "Merge \"{from}\" into \"{to}\""),
+        { from: this.options.deleteNoteName, to: this.options.keepNoteName }
+      ),
       cls: "cr-merge-diff-description"
     });
     infoEl.createEl("p", {
-      text: "操作前会为双方创建快照，可随时恢复。",
+      text: this.text("workbench.mergeDiff.reversibleHint", "Snapshots will be created before merge and can be restored anytime."),
       cls: "cr-merge-diff-warning"
     });
 
     const controlRow = contentEl.createDiv({ cls: "cr-merge-diff-controls" });
     const diffBtn = controlRow.createEl("button", {
-      text: "差异视图",
+      text: this.text("workbench.mergeDiff.diffView", "Diff View"),
       cls: "cr-toggle-btn cr-toggle-active"
     });
     const fullBtn = controlRow.createEl("button", {
-      text: "完整视图",
+      text: this.text("workbench.mergeDiff.fullView", "Full View"),
       cls: "cr-toggle-btn"
     });
     const swapBtn = controlRow.createEl("button", {
-      text: "交换方向",
+      text: this.text("workbench.mergeDiff.swapDirection", "Swap Direction"),
       cls: "cr-toggle-btn"
     });
 
@@ -451,28 +456,33 @@ export class MergeDiffModal extends AbstractModal {
     const buttonContainer = contentEl.createDiv({ cls: "cr-modal-button-container" });
 
     const confirmBtn = buttonContainer.createEl("button", {
-      cls: "mod-cta"
+      cls: "cr-btn-primary"
     });
     const confirmIcon = confirmBtn.createSpan({ cls: "cr-btn-icon", attr: { "aria-hidden": "true" } });
     setIcon(confirmIcon, "check");
-    const confirmLabel = confirmBtn.createSpan({ text: "确认合并" });
+    const confirmLabel = confirmBtn.createSpan({
+      text: this.text("workbench.mergeSelection.confirm", "Confirm merge")
+    });
     confirmBtn.onclick = async () => {
       confirmBtn.disabled = true;
-      confirmLabel.textContent = "处理中...";
+      confirmLabel.textContent = this.text("workbench.mergeSelection.processing", "Processing...");
       try {
         await this.options.onConfirm();
         this.close();
       } catch (error) {
-        new Notice(`合并失败: ${String(error)}`);
+        new Notice(formatMessage(
+          this.text("workbench.mergeDiff.failed", "Merge failed: {message}"),
+          { message: String(error) }
+        ));
         confirmBtn.disabled = false;
-        confirmLabel.textContent = "确认合并";
+        confirmLabel.textContent = this.text("workbench.mergeSelection.confirm", "Confirm merge");
       }
     };
 
     const cancelBtn = buttonContainer.createEl("button");
     const cancelIcon = cancelBtn.createSpan({ cls: "cr-btn-icon", attr: { "aria-hidden": "true" } });
     setIcon(cancelIcon, "x");
-    cancelBtn.createSpan({ text: "取消" });
+    cancelBtn.createSpan({ text: this.text("workbench.mergeSelection.cancel", "Cancel") });
     cancelBtn.onclick = () => {
       this.options.onCancel();
       this.close();
@@ -490,8 +500,13 @@ export class MergeDiffModal extends AbstractModal {
     this.diffContainer.empty();
     const leftContent = this.directionSwapped ? this.options.afterContent : this.options.beforeContent;
     const rightContent = this.directionSwapped ? this.options.beforeContent : this.options.afterContent;
-    const leftHeader = this.directionSwapped ? "合并后内容" : `原内容 (${this.options.keepNoteName})`;
-    const rightHeader = this.directionSwapped ? `原内容 (${this.options.keepNoteName})` : "合并后内容";
+    const originalContentTitle = formatMessage(
+      this.text("workbench.mergeDiff.originalContent", "Original content ({name})"),
+      { name: this.options.keepNoteName }
+    );
+    const mergedContentTitle = this.text("workbench.mergeDiff.mergedContent", "Merged content");
+    const leftHeader = this.directionSwapped ? mergedContentTitle : originalContentTitle;
+    const rightHeader = this.directionSwapped ? originalContentTitle : mergedContentTitle;
     renderSideBySideDiff(
       this.diffContainer,
       leftContent,
@@ -508,7 +523,12 @@ export class MergeDiffModal extends AbstractModal {
 
     const wrapper = this.fullPreviewContainer.createDiv({ cls: "cr-merge-full-grid" });
     const beforeBox = wrapper.createDiv({ cls: "cr-merge-full-box" });
-    beforeBox.createEl("h4", { text: `原内容 (${this.options.keepNoteName})` });
+    beforeBox.createEl("h4", {
+      text: formatMessage(
+        this.text("workbench.mergeDiff.originalContent", "Original content ({name})"),
+        { name: this.options.keepNoteName }
+      )
+    });
     const beforeScroll = beforeBox.createDiv({ cls: "cr-merge-full-content" });
     beforeScroll.createEl("pre", {
       text: this.options.beforeContent,
@@ -516,7 +536,7 @@ export class MergeDiffModal extends AbstractModal {
     });
 
     const afterBox = wrapper.createDiv({ cls: "cr-merge-full-box" });
-    afterBox.createEl("h4", { text: "合并后内容" });
+    afterBox.createEl("h4", { text: this.text("workbench.mergeDiff.mergedContent", "Merged content") });
     const afterScroll = afterBox.createDiv({ cls: "cr-merge-full-content" });
     afterScroll.createEl("pre", {
       text: this.options.afterContent,
@@ -559,5 +579,11 @@ export class MergeDiffModal extends AbstractModal {
     if (this.fullPreviewContainer) {
       this.fullPreviewContainer.style.display = this.isDiffMode ? "none" : "block";
     }
+  }
+
+  private text(path: string, fallback: string): string {
+    if (!this.options.t) return fallback;
+    const value = this.options.t(path);
+    return value === path ? fallback : value;
   }
 }

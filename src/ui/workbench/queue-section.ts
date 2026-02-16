@@ -1,11 +1,8 @@
-/**
- * QueueSection — 队列区组件
+﻿/**
+ * QueueSection - 队列区组件
  *
  * 负责显示任务队列状态、任务列表、暂停/恢复等操作。
  * 通过 QueueSectionDeps 注入依赖，不直接依赖 Plugin 实例。
- * 队列无任务时显示空状态提示文本。
- *
- * 需求: 6.1, 8.3
  */
 
 import { Notice, setIcon } from "obsidian";
@@ -14,6 +11,7 @@ import { safeErrorMessage } from "../../types";
 import { renderNamingTemplate } from "../../core/naming-utils";
 import type { QueueSectionDeps } from "./workbench-section-deps";
 import { WorkbenchSection } from "./workbench-section";
+import { ConfirmModal } from "../modals";
 
 export class QueueSection extends WorkbenchSection<QueueSectionDeps> {
   private queueStatusContainer: HTMLElement | null = null;
@@ -68,24 +66,16 @@ export class QueueSection extends WorkbenchSection<QueueSectionDeps> {
     this.detailsContainer.style.display = "none";
 
     queueIndicator.addEventListener("click", () => {
-      if (!this.detailsContainer || !this.expandIcon) {
-        return;
-      }
+      this.toggleQueueDetails(queueIndicator);
+    });
 
-      const isExpanded = this.detailsContainer.style.display !== "none";
-      if (isExpanded) {
-        this.detailsContainer.style.display = "none";
-        this.expandIcon.classList.remove("is-expanded");
-        queueIndicator.setAttribute("aria-expanded", "false");
-      } else {
-        this.detailsContainer.style.display = "block";
-        this.expandIcon.classList.add("is-expanded");
-        queueIndicator.setAttribute("aria-expanded", "true");
-        this.renderQueueDetails(this.detailsContainer);
+    queueIndicator.addEventListener("keydown", (event: KeyboardEvent) => {
+      if (event.key === "Enter" || event.key === " " || event.key === "Spacebar") {
+        event.preventDefault();
+        this.toggleQueueDetails(queueIndicator);
       }
     });
 
-    // 初始化状态显示
     this.renderStatus({
       paused: false,
       pending: 0,
@@ -132,7 +122,7 @@ export class QueueSection extends WorkbenchSection<QueueSectionDeps> {
   }
 
   /**
-   * 渲染队列状态（紧凑版统计 + 状态指示器）
+   * 渲染队列状态（紧凑统计 + 状态指示器）
    */
   private renderStatus(status: QueueStatus): void {
     if (!this.queueStatusContainer) return;
@@ -155,7 +145,6 @@ export class QueueSection extends WorkbenchSection<QueueSectionDeps> {
       }
     });
 
-    // 空状态：队列无任务时显示提示文本（需求 8.3）
     if (renderedCount === 0) {
       this.queueStatusContainer.createDiv({
         cls: "cr-empty-stat",
@@ -164,6 +153,25 @@ export class QueueSection extends WorkbenchSection<QueueSectionDeps> {
     }
 
     this.updateStatusIndicator(status);
+  }
+
+  private toggleQueueDetails(queueIndicator: HTMLElement): void {
+    if (!this.detailsContainer || !this.expandIcon) {
+      return;
+    }
+
+    const isExpanded = this.detailsContainer.style.display !== "none";
+    if (isExpanded) {
+      this.detailsContainer.style.display = "none";
+      this.expandIcon.classList.remove("is-expanded");
+      queueIndicator.setAttribute("aria-expanded", "false");
+      return;
+    }
+
+    this.detailsContainer.style.display = "block";
+    this.expandIcon.classList.add("is-expanded");
+    queueIndicator.setAttribute("aria-expanded", "true");
+    this.renderQueueDetails(this.detailsContainer);
   }
 
   private async handleTogglePause(): Promise<void> {
@@ -320,7 +328,7 @@ export class QueueSection extends WorkbenchSection<QueueSectionDeps> {
           text: this.deps.t("workbench.queueStatus.cancel"),
           cls: "cr-btn-small",
           attr: {
-            "aria-label": `${this.deps.t("workbench.queueStatus.cancel")}`,
+            "aria-label": this.deps.t("workbench.queueStatus.cancel"),
             "data-tooltip-position": "top"
           }
         });
@@ -352,7 +360,7 @@ export class QueueSection extends WorkbenchSection<QueueSectionDeps> {
 
     const retryFailedBtn = batchActions.createEl("button", {
       text: this.deps.t("workbench.queueStatus.retryFailed"),
-      cls: "cr-btn-small mod-cta",
+      cls: "cr-btn-small cr-btn-primary",
       attr: {
         "aria-label": this.deps.t("workbench.queueStatus.retryFailed"),
         "data-tooltip-position": "top"
@@ -371,7 +379,7 @@ export class QueueSection extends WorkbenchSection<QueueSectionDeps> {
       }
     });
     clearPendingBtn.addEventListener("click", () => {
-      this.handleClearPending();
+      void this.handleClearPending();
     });
 
     const clearCompletedBtn = batchActions.createEl("button", {
@@ -395,7 +403,7 @@ export class QueueSection extends WorkbenchSection<QueueSectionDeps> {
       }
     });
     clearFailedBtn.addEventListener("click", () => {
-      this.handleClearFailed();
+      void this.handleClearFailed();
     });
   }
 
@@ -442,6 +450,14 @@ export class QueueSection extends WorkbenchSection<QueueSectionDeps> {
   }
 
   private async handleClearCompleted(): Promise<void> {
+    const confirmed = await this.confirmDangerousAction(
+      "workbench.queueStatus.clearCompletedConfirmTitle",
+      "workbench.queueStatus.clearCompletedConfirmMessage"
+    );
+    if (!confirmed) {
+      return;
+    }
+
     try {
       const taskQueue = this.deps.taskQueue;
       const result = await taskQueue.clearCompleted();
@@ -451,21 +467,31 @@ export class QueueSection extends WorkbenchSection<QueueSectionDeps> {
         this.refreshDetailsIfVisible();
         this.renderStatus(taskQueue.getStatus());
       } else {
-        this.deps.showErrorNotice(`清除失败: ${result.error.message}`);
+        this.deps.showErrorNotice(`${this.deps.t("workbench.notifications.clearFailed")}: ${result.error.message}`);
       }
     } catch (error) {
       this.deps.logError("清除已完成任务异常", error);
-      this.deps.showErrorNotice(safeErrorMessage(error, "清除失败"));
+      this.deps.showErrorNotice(safeErrorMessage(error, this.deps.t("workbench.notifications.clearFailed")));
     }
   }
 
-  private handleClearFailed(): void {
+  /**
+   * 按状态批量清除任务（DRY：统一 clearPending/clearFailed 逻辑）
+   */
+  private async clearTasksByState(
+    state: "Pending" | "Failed",
+    confirmTitleKey: string,
+    confirmMessageKey: string
+  ): Promise<void> {
+    const confirmed = await this.confirmDangerousAction(confirmTitleKey, confirmMessageKey);
+    if (!confirmed) return;
+
     const taskQueue = this.deps.taskQueue;
     const allTasks = taskQueue.getAllTasks();
 
     let clearedCount = 0;
     allTasks.forEach(task => {
-      if (task.state === "Failed") {
+      if (task.state === state) {
         try {
           taskQueue.cancel(task.id);
           clearedCount++;
@@ -476,30 +502,38 @@ export class QueueSection extends WorkbenchSection<QueueSectionDeps> {
     });
 
     new Notice(`${this.deps.t("workbench.notifications.clearComplete")} (${clearedCount})`);
-
     this.refreshDetailsIfVisible();
     this.renderStatus(taskQueue.getStatus());
   }
 
-  private handleClearPending(): void {
-    const taskQueue = this.deps.taskQueue;
-    const allTasks = taskQueue.getAllTasks();
+  private async handleClearFailed(): Promise<void> {
+    await this.clearTasksByState(
+      "Failed",
+      "workbench.queueStatus.clearFailedConfirmTitle",
+      "workbench.queueStatus.clearFailedConfirmMessage"
+    );
+  }
 
-    let clearedCount = 0;
-    allTasks.forEach(task => {
-      if (task.state === "Pending") {
-        try {
-          taskQueue.cancel(task.id);
-          clearedCount++;
-        } catch {
-          // 忽略单项失败
-        }
-      }
+  private async handleClearPending(): Promise<void> {
+    await this.clearTasksByState(
+      "Pending",
+      "workbench.queueStatus.clearPendingConfirmTitle",
+      "workbench.queueStatus.clearPendingConfirmMessage"
+    );
+  }
+
+  private async confirmDangerousAction(titleKey: string, messageKey: string): Promise<boolean> {
+    return await new Promise((resolve) => {
+      const modal = new ConfirmModal(this.deps.app, {
+        title: this.deps.t(titleKey),
+        message: this.deps.t(messageKey),
+        confirmText: this.deps.t("common.confirm"),
+        cancelText: this.deps.t("common.cancel"),
+        danger: true,
+        onConfirm: () => resolve(true),
+        onCancel: () => resolve(false)
+      });
+      modal.open();
     });
-
-    new Notice(`${this.deps.t("workbench.notifications.clearComplete")} (${clearedCount})`);
-
-    this.refreshDetailsIfVisible();
-    this.renderStatus(taskQueue.getStatus());
   }
 }

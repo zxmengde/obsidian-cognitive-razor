@@ -1224,10 +1224,12 @@ export interface ConfirmModalOptions {
   confirmText?: string;
   /** 取消按钮文本 */
   cancelText?: string;
+  /** i18n ???? */
+  t?: (path: string) => string;
   /** 是否为危险操作 */
   danger?: boolean;
-  /** 确认回调 */
-  onConfirm: () => void;
+  /** 确认回调（支持异步，Modal 会等待完成后再关闭） */
+  onConfirm: () => void | Promise<void>;
   /** 取消回调 */
   onCancel?: () => void;
 }
@@ -1240,6 +1242,8 @@ export interface ProviderConfigModalOptions {
   mode: "add" | "edit";
   /** 模态框标题 */
   title: string;
+  /** i18n ???? */
+  t?: (path: string) => string;
   /** Provider ID (编辑模式) */
   providerId?: string;
   /** 当前配置 (编辑模式) */

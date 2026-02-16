@@ -25,7 +25,8 @@
       "improveNote": "改进当前笔记",
       "expand": "拓展当前笔记",
       "insertImage": "插入图片",
-      "verify": "事实核查"
+      "verify": "事实核查",
+      "openNoteHint": "打开一篇 Markdown 笔记以使用改进、拓展等工具"
     },
     "createConcept": {
       "title": "创建概念",
@@ -88,7 +89,13 @@
       "progress": "进度",
       "actions": "操作",
       "noTasks": "队列中暂无任务",
-      "noteName": "笔记名"
+      "noteName": "笔记名",
+      "clearPendingConfirmTitle": "确认清空待处理",
+      "clearPendingConfirmMessage": "是否取消所有待处理任务？",
+      "clearCompletedConfirmTitle": "确认清空已完成",
+      "clearCompletedConfirmMessage": "是否清空所有已完成任务记录？",
+      "clearFailedConfirmTitle": "确认清空失败",
+      "clearFailedConfirmMessage": "是否取消所有失败任务？"
     },
     "recentOps": {
       "title": "操作历史",
@@ -201,7 +208,14 @@
       "accept": "接受",
       "reject": "放弃",
       "acceptAria": "接受更改",
-      "rejectAria": "放弃更改"
+      "rejectAria": "放弃更改",
+      "modeLabel": "差异视图模式",
+      "unifiedView": "统一视图",
+      "unifiedViewAria": "切换到统一差异视图",
+      "sideBySideView": "并排视图",
+      "sideBySideViewAria": "切换到并排差异视图",
+      "leftTitle": "原始内容",
+      "rightTitle": "更新后内容"
     },
     "snapshotDiff": {
       "title": "快照预览: {id}",
@@ -233,6 +247,17 @@
       "nameRequired": "请选择或输入笔记名称",
       "invalidName": "文件名不能包含以下字符: \\ / : * ? \" < > |",
       "processing": "处理中..."
+    },
+    "mergeDiff": {
+      "snapshotEnabled": "已启用自动快照",
+      "mergeDescription": "将 \"{from}\" 合并到 \"{to}\"",
+      "reversibleHint": "操作前会为双方创建快照，可随时恢复。",
+      "diffView": "差异视图",
+      "fullView": "完整视图",
+      "swapDirection": "交换方向",
+      "failed": "合并失败: {message}",
+      "originalContent": "原内容（{name}）",
+      "mergedContent": "合并后内容"
     },
     "notifications": {
       "systemNotInitialized": "系统未初始化",
@@ -289,7 +314,8 @@
       "noPendingDuplicates": "没有待处理的重复对",
       "pendingDuplicatesHint": "有 {count} 个待处理的重复对，请在工作台中选择要合并的重复对",
       "improveInstructionRequired": "请输入修订指令",
-      "conceptLocked": "该概念正在被处理中，请稍后再试"
+      "conceptLocked": "该概念正在被处理中，请稍后再试",
+      "clearFailed": "清空失败"
     }
   },
   "expand": {
@@ -459,7 +485,73 @@
     }
   },
   "setupWizard": {
-    "title": "配置 AI Provider"
+    "title": "配置 AI Provider",
+    "welcome": {
+      "title": "欢迎使用 Cognitive Razor",
+      "subtitle": "将想法快速转化为结构化概念，并持续演进知识图谱。",
+      "featureDefineTagWrite": "定义 -> 标注 -> 写作：完整创建管线",
+      "featureMergeAmend": "合并与修订：安全的 Diff 确认",
+      "featureVector": "向量索引：去重与相似检索",
+      "languageName": "语言",
+      "languageDesc": "选择界面语言",
+      "languageOptionZh": "中文",
+      "languageOptionEn": "English"
+    },
+    "provider": {
+      "title": "配置 AI Provider",
+      "apiKeyHintBeforeLink": "从 ",
+      "apiKeyHintAfterLink": " 获取 API Key",
+      "apiKeyDesc": "本地保存，不会上传",
+      "customEndpointName": "自定义端点",
+      "customEndpointDesc": "留空使用 Gemini OpenAI 兼容端点",
+      "chatModelName": "聊天模型",
+      "embedModelName": "嵌入模型"
+    },
+    "directory": {
+      "title": "初始化目录",
+      "subtitle": "将为 5 个概念类型创建目录结构。"
+    },
+    "complete": {
+      "title": "配置完成",
+      "subtitle": "Cognitive Razor 已准备就绪，打开工作台开始使用。"
+    },
+    "actions": {
+      "getStarted": "开始配置",
+      "back": "上一步",
+      "saveAndValidate": "保存并校验",
+      "createAndContinue": "创建目录并继续",
+      "openWorkbench": "打开工作台",
+      "saving": "保存中...",
+      "creating": "创建中...",
+      "skipAndContinue": "跳过并继续"
+    },
+    "validation": {
+      "idle": "尚未校验",
+      "checking": "正在校验连接...",
+      "ok": "连接正常",
+      "offline": "网络不可用，可跳过继续",
+      "error": "校验失败，请检查配置",
+      "offlineSaved": "网络不可用，配置已保存，可跳过继续",
+      "failedWithMessage": "校验失败：{message}",
+      "offlineSavedByError": "网络错误，配置已保存，可跳过继续"
+    },
+    "directoryStatus": {
+      "idle": "尚未初始化目录",
+      "creating": "正在创建目录...",
+      "done": "目录已初始化",
+      "error": "目录初始化失败",
+      "createFailed": "创建目录失败"
+    },
+    "notices": {
+      "enterApiKey": "请输入 API Key",
+      "enterProviderId": "请输入 Provider ID",
+      "invalidEndpointUrl": "端点 URL 无效: {message}",
+      "saveFailed": "保存失败: {message}",
+      "validationSkippedOffline": "网络不可用，已跳过在线校验",
+      "validationSkippedNetworkError": "网络错误，已跳过校验",
+      "saveErrorFallback": "保存出错",
+      "saveError": "保存出错: {message}"
+    }
   },
   "modals": {
     "addProvider": {
@@ -467,6 +559,40 @@
     },
     "editProvider": {
       "title": "编辑 AI Provider"
+    },
+    "simpleInput": {
+      "submit": "提交",
+      "submitHint": "提交（Enter）",
+      "emptyValue": "请输入内容"
+    },
+    "providerConfig": {
+      "description": "配置兼容 OpenAI 的 API 服务（如 Gemini、OpenAI、Azure OpenAI 等）。",
+      "sections": {
+        "basic": "基础配置",
+        "endpoint": "端点配置",
+        "model": "默认模型"
+      },
+      "fields": {
+        "providerId": "Provider ID",
+        "providerIdDesc": "唯一标识，例如 my-openai",
+        "apiKey": "API Key",
+        "apiKeyDesc": "你的 API 密钥",
+        "endpoint": "API 端点",
+        "endpointDesc": "留空使用默认 Gemini 端点。",
+        "chatModel": "聊天模型",
+        "chatModelDesc": "用于生成类任务",
+        "embedModel": "嵌入模型",
+        "embedModelDesc": "用于向量嵌入与语义检索"
+      },
+      "showSecret": "显示",
+      "hideSecret": "隐藏",
+      "errors": {
+        "providerIdRequired": "请输入 Provider ID",
+        "apiKeyRequired": "请输入 API Key",
+        "saveFailed": "保存失败",
+        "invalidUrlProtocol": "URL 必须以 http:// 或 https:// 开头",
+        "invalidUrl": "URL 格式无效"
+      }
     }
   },
   "notices": {
@@ -671,5 +797,15 @@
     "ariaPaused": "Cognitive Razor - 队列已暂停，{count} 个任务",
     "ariaError": "Cognitive Razor - {count} 个任务失败",
     "ariaOffline": "Cognitive Razor - 离线"
+  },
+  "imageModal": {
+    "title": "生成图片",
+    "promptLabel": "描述你想要的图片",
+    "promptPlaceholder": "例如：一张展示量子纠缠的简洁线稿图，带精炼标注。",
+    "contextPreview": "上下文预览",
+    "generate": "生成",
+    "cancel": "取消",
+    "promptTooShort": "请至少输入 5 个字符。",
+    "genericFailure": "操作失败，请稍后重试"
   }
 }

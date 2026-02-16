@@ -665,6 +665,7 @@ export class PromptManager {
       "_base/operations/define",
       "_base/operations/tag",
       "_base/operations/verify",
+      "_base/operations/write-phased",
       "_type/domain-core",
       "_type/issue-core",
       "_type/theory-core",
@@ -752,6 +753,60 @@ export class PromptManager {
     });
 
     return ok(undefined);
+  }
+
+  /**
+   * 构建分阶段 Write prompt
+   * 
+   * 用于 Chain-of-Fields 分阶段写入，每次只生成部分字段。
+   * 绕过 TASK_SLOT_MAPPING 约束，直接使用 write-phased 模板。
+   * 
+   * @param slots 槽位值（CTX_META, CTX_PREVIOUS, CTX_SOURCES, CTX_LANGUAGE, CONCEPT_TYPE, PHASE_SCHEMA, PHASE_FOCUS）
+   * @returns 构建的 prompt
+   */
+  buildPhasedWrite(slots: Record<string, string>): string {
+    try {
+      const templateId = "_base/operations/write-phased";
+      const template = this.loadTemplate(templateId);
+
+      let prompt = template.content;
+
+      // 替换所有槽位
+      for (const [key, value] of Object.entries(slots)) {
+        prompt = replaceVariable(prompt, key, value);
+      }
+
+      // 可选槽位未提供时按空字符串处理
+      const optionalSlots = ["CTX_PREVIOUS", "CTX_SOURCES"];
+      for (const optionalKey of optionalSlots) {
+        if (!(optionalKey in slots)) {
+          prompt = replaceVariable(prompt, optionalKey, "");
+        }
+      }
+
+      // 验证是否还有未替换的变量
+      const unreplacedVars = findUnreplacedVariables(prompt);
+      if (unreplacedVars.length > 0) {
+        this.logger.error("PromptManager", "分阶段 prompt 存在未替换的变量", undefined, {
+          unreplacedVars
+        });
+        throw new CognitiveRazorError("E405_TEMPLATE_INVALID", `存在未替换的变量: ${unreplacedVars.join(", ")}`, {
+          unreplacedVars
+        });
+      }
+
+      this.logger.debug("PromptManager", "分阶段 Write Prompt 构建成功", {
+        promptLength: prompt.length
+      });
+
+      return prompt;
+    } catch (error) {
+      if (error instanceof CognitiveRazorError) {
+        throw error;
+      }
+      this.logger.error("PromptManager", "构建分阶段 prompt 失败", error as Error);
+      throw new CognitiveRazorError("E500_INTERNAL_ERROR", "构建分阶段 prompt 失败", error);
+    }
   }
 
   /** 清除模板缓存（用于测试） */

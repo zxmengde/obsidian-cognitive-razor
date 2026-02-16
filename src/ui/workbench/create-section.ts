@@ -27,6 +27,7 @@ export class CreateSection extends WorkbenchSection<CreateSectionDeps> {
   private clearBtn: HTMLButtonElement | null = null;
   private typeConfidenceTableContainer: HTMLElement | null = null;
   private improveSection: HTMLElement | null = null;
+  private openNoteHint: HTMLElement | null = null;
   private improveBtn: HTMLButtonElement | null = null;
   private expandBtn: HTMLButtonElement | null = null;
   private insertImageBtn: HTMLButtonElement | null = null;
@@ -87,6 +88,12 @@ export class CreateSection extends WorkbenchSection<CreateSectionDeps> {
     });
 
     this.improveSection = container.createDiv({ cls: "cr-improve-section" });
+
+    // 无活跃笔记时的引导提示
+    this.openNoteHint = container.createDiv({ cls: "cr-open-note-hint" });
+    this.openNoteHint.textContent = this.deps.t("workbench.buttons.openNoteHint");
+    this.openNoteHint.style.display = "none";
+
     const improveLabel = this.deps.t("workbench.buttons.improveNote");
     const expandLabel = this.deps.t("workbench.buttons.expand");
     const insertImageLabel = this.deps.t("workbench.buttons.insertImage");
@@ -149,6 +156,7 @@ export class CreateSection extends WorkbenchSection<CreateSectionDeps> {
     this.clearBtn = null;
     this.typeConfidenceTableContainer = null;
     this.improveSection = null;
+    this.openNoteHint = null;
     this.improveBtn = null;
     this.expandBtn = null;
     this.insertImageBtn = null;
@@ -202,6 +210,7 @@ export class CreateSection extends WorkbenchSection<CreateSectionDeps> {
     const modal = new SimpleInputModal(this.deps.app, {
       title: this.deps.t("workbench.amendModal.title"),
       placeholder: this.deps.t("workbench.amendModal.placeholder"),
+      t: this.deps.t,
       onSubmit: async (instruction) => {
         try {
           const result = orchestrator.startAmendPipeline(activeFile.path, instruction);
@@ -292,10 +301,8 @@ export class CreateSection extends WorkbenchSection<CreateSectionDeps> {
       const frontmatter = this.buildFrontmatter(file);
 
       // 获取完整翻译对象传递给 Modal
-      const t = this.deps.getTranslations() as Record<string, Record<string, unknown>>;
-
       const modal = new VisualizationModal(this.deps.app, {
-        t,
+        t: this.deps.t,
         contextBefore: before,
         contextAfter: after,
         onConfirm: async (userPrompt) => {
@@ -310,9 +317,9 @@ export class CreateSection extends WorkbenchSection<CreateSectionDeps> {
               cursorPosition: cursor
             } as unknown as ImageGeneratePayload);
             if (result.ok) {
-              new Notice((t.workbench as Record<string, Record<string, string>>)?.notifications?.imageTaskCreated || "图片生成任务已创建");
+              new Notice(this.deps.t("workbench.notifications.imageTaskCreated"));
             } else {
-              new Notice(result.error.message || ((t.workbench as Record<string, Record<string, string>>)?.notifications?.imageGenerationFailed || "图片生成任务创建失败"));
+              new Notice(result.error.message || this.deps.t("workbench.notifications.imageGenerationFailed"));
             }
           } catch (error) {
             this.deps.logError("图片生成任务创建失败", error);
@@ -336,9 +343,12 @@ export class CreateSection extends WorkbenchSection<CreateSectionDeps> {
     const improveLabel = this.deps.t("workbench.buttons.improveNote");
     const needMarkdownLabel = this.deps.t("workbench.notifications.openMarkdownFirst");
 
-    // 需求 8.4：无活跃笔记时隐藏 Amend/Expand/Visualize/Verify 按钮
+    // 需求 8.4：无活跃笔记时隐藏按钮行，显示引导提示
     if (this.improveSection) {
       this.improveSection.style.display = hasMarkdown ? "" : "none";
+    }
+    if (this.openNoteHint) {
+      this.openNoteHint.style.display = hasMarkdown ? "none" : "";
     }
 
     this.improveBtn.textContent = improveLabel;
@@ -500,7 +510,7 @@ export class CreateSection extends WorkbenchSection<CreateSectionDeps> {
       const actionCell = row.createEl("td", { cls: "cr-action-cell" });
       const createBtn = actionCell.createEl("button", {
         text: this.deps.t("workbench.createConcept.create"),
-        cls: index === 0 ? "mod-cta cr-create-btn" : "cr-create-btn",
+        cls: index === 0 ? "cr-btn-primary cr-create-btn" : "cr-create-btn",
         attr: { "aria-label": `${this.deps.t("workbench.createConcept.create")} ${type}` }
       });
 

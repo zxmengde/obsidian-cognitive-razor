@@ -164,7 +164,7 @@ export class DuplicatePreviewModal extends AbstractModal {
 
     const mergeBtn = buttonContainer.createEl("button", {
       text: this.text("workbench.duplicatePreview.mergeAction", "🔀 合并"),
-      cls: "mod-cta"
+      cls: "cr-btn-primary"
     });
     mergeBtn.addEventListener("click", () => {
       this.close();
@@ -261,7 +261,7 @@ export class ConfirmDialog extends AbstractModal {
 
     const confirmBtn = buttonContainer.createEl("button", {
       text: this.text("common.confirm", "确认"),
-      cls: "mod-cta"
+      cls: "cr-btn-primary"
     });
     confirmBtn.addEventListener("click", () => {
       this.close();
@@ -443,7 +443,7 @@ export class MergeHistoryModal extends AbstractModal {
         // 已忽略的可以撤销
         const undoBtn = actions.createEl("button", {
           text: this.t("workbench.duplicateHistory.undoDismiss"),
-          cls: "cr-btn-small mod-cta"
+          cls: "cr-btn-small cr-btn-primary"
         });
         undoBtn.addEventListener("click", async () => {
           await this.handleUndoDismiss(pair.id);
@@ -571,7 +571,7 @@ export class SnapshotDiffModal extends AbstractModal {
 
     const restoreBtn = actions.createEl("button", {
       text: this.text("workbench.snapshotDiff.restore", "恢复此快照"),
-      cls: "mod-cta"
+      cls: "cr-btn-primary"
     });
     restoreBtn.addEventListener("click", async () => {
       restoreBtn.disabled = true;

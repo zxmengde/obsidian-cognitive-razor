@@ -146,7 +146,7 @@ export class RecentOpsSection extends WorkbenchSection<RecentOpsSectionDeps> {
       onUndo: async (id: string) => {
         await this.handleUndoFromToast(id);
       },
-      timeout: 5000,
+      timeout: 8000,
     });
 
     notification.show();

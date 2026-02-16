@@ -748,3 +748,126 @@ export class SchemaRegistry {
 }
 
 export const schemaRegistry = new SchemaRegistry();
+
+// ============================================================================
+// 分阶段写入配置（模块级导出）
+// ============================================================================
+
+/**
+ * 分阶段写入配置
+ *
+ * 每种知识类型的字段被分为多个阶段（phase），每个阶段聚焦少量字段。
+ * 后续阶段可以引用前面阶段已生成的内容作为上下文，避免注意力稀释。
+ *
+ * 设计原则：
+ * - 叙事性字段（historical_genesis, holistic_understanding）单独一个阶段
+ * - 结构化列表字段归为一组
+ * - 框架性字段归为一组
+ */
+export interface WritePhase {
+    /** 阶段 ID */
+    id: string;
+    /** 本阶段要生成的字段名列表 */
+    fields: string[];
+    /** 本阶段的聚焦指令 */
+    focusInstruction: string;
+}
+
+/** 各知识类型的分阶段配置 */
+export const WRITE_PHASES: Record<CRType, WritePhase[]> = {
+    Domain: [
+        {
+            id: "framework",
+            fields: ["definition", "teleology", "methodology", "boundaries"],
+            focusInstruction: "聚焦于这个领域的概念框架：给出严格的形式定义（属+种差），阐明其终极目的（为什么存在），描述其认识论基础（如何验证真理），并划定明确的边界（它不是什么）。"
+        },
+        {
+            id: "narrative",
+            fields: ["historical_genesis"],
+            focusInstruction: "聚焦于这个领域的思想史谱系：追溯其起源、危机、范式转换和关键人物。用辩证法结构（正题→反题→合题）重建思想的戏剧，不要罗列事件。"
+        },
+        {
+            id: "synthesis",
+            fields: ["holistic_understanding"],
+            focusInstruction: "聚焦于对这个领域的哲学综合理解：本体论（这个领域中存在的根本性质是什么？）、认识论（知识如何获取和验证？）、实践论（如何在人类实践中体现？）。结合前面已生成的内容，给出一个完整的认知地图。"
+        },
+        {
+            id: "structure",
+            fields: ["sub_domains", "issues"],
+            focusInstruction: "聚焦于这个领域的内部结构分解：列出子领域（MECE 原则）并说明每个在整体中的功能；列出核心议题（优先涌现性议题——由部分交互或整体产生的问题）。"
+        }
+    ],
+    Issue: [
+        {
+            id: "framework",
+            fields: ["definition", "core_tension", "significance", "epistemic_barrier", "counter_intuition"],
+            focusInstruction: "聚焦于这个议题的问题框架：给出严格的形式定义，明确核心张力（二元对立用 A vs B，多极用分号分隔），解释其重要性（如果不解决会怎样），分析认识论障碍（为什么至今未解决），以及它如何挑战常识。"
+        },
+        {
+            id: "narrative",
+            fields: ["historical_genesis"],
+            focusInstruction: "聚焦于这个问题的思想史谱系：追溯矛盾何时变得明显，什么具体事件或发现触发了它。用辩证法结构组织叙事。"
+        },
+        {
+            id: "synthesis",
+            fields: ["holistic_understanding"],
+            focusInstruction: "聚焦于对这个议题的哲学综合理解：这个未解决的张力如何塑造了整个领域？解决它的前沿在哪里？结合前面已生成的内容，给出完整的认知综合。"
+        },
+        {
+            id: "structure",
+            fields: ["sub_issues", "stakeholder_perspectives", "boundary_conditions", "theories"],
+            focusInstruction: "聚焦于这个议题的结构分解：列出子议题（MECE 原则），列出各利益相关方的立场，明确边界条件（何时这个议题不相关），以及试图解决它的理论（标注主流/边缘/已证伪）。"
+        }
+    ],
+    Theory: [
+        {
+            id: "framework",
+            fields: ["definition", "axioms", "logical_structure"],
+            focusInstruction: "聚焦于这个理论的逻辑骨架：给出严格的形式定义，列出基本公理及其理由，然后重建从公理到结论的完整推理链（公理 A + 公理 B → 中间引理 → 机制激活 → 最终结论/预测）。"
+        },
+        {
+            id: "narrative",
+            fields: ["historical_genesis"],
+            focusInstruction: "聚焦于这个理论的思想考古：前范式状态（之前相信什么？）→ 反常（什么出了问题？）→ 火花（具体的洞见/论文）→ 战斗（抵抗与接受）。提及具体的关键人物、开创性论文和触发理论的具体智识危机。"
+        },
+        {
+            id: "synthesis",
+            fields: ["holistic_understanding", "core_predictions", "limitations"],
+            focusInstruction: "聚焦于这个理论的哲学含义和边界：本体论承诺（根据这个理论，现实的本质是什么？）、认识论地位（我们如何知道它是真的？）、目的论（终极解释目标是什么？）。同时列出可检验的预测和理论的局限性。"
+        },
+        {
+            id: "structure",
+            fields: ["sub_theories", "entities", "mechanisms"],
+            focusInstruction: "聚焦于这个理论的内部组件：列出子理论（MECE 原则），提取构成性实体（重建理论逻辑所需的最小充分集），以及因果机制（每个机制必须作用于具体实体）。"
+        }
+    ],
+    Entity: [
+        {
+            id: "framework",
+            fields: ["definition", "classification", "properties", "states", "constraints"],
+            focusInstruction: "聚焦于这个实体的本体论定义：给出严格的形式定义（属+种差），明确分类（直接父类别和区分特征），列出属性（内在/外在）、可能状态和约束条件。"
+        },
+        {
+            id: "synthesis",
+            fields: ["holistic_understanding", "composition", "distinguishing_features", "examples", "counter_examples"],
+            focusInstruction: "聚焦于这个实体的认知定位：它在领域中扮演什么角色（主角还是道具）？它的组成结构（向上/向下），与相似概念的严格对比（为什么 X 不是 Y？），以及具体的正例和反例。"
+        }
+    ],
+    Mechanism: [
+        {
+            id: "framework",
+            fields: ["definition", "trigger_conditions", "operates_on", "inputs", "outputs", "side_effects", "termination_conditions"],
+            focusInstruction: "聚焦于这个机制的动力学框架：给出严格的形式定义，明确触发条件、作用对象（主体/客体）、输入、输出、副作用和终止条件。"
+        },
+        {
+            id: "process",
+            fields: ["causal_chain", "modulation"],
+            focusInstruction: "聚焦于这个机制的因果过程：将机制分解为离散的原子步骤（触发 → 步骤1 → 步骤2 → ... → 结果），不要跳过逻辑环节。同时列出调节因素（什么加速/减速/调节它）。"
+        },
+        {
+            id: "synthesis",
+            fields: ["holistic_understanding"],
+            focusInstruction: "聚焦于这个机制的系统意义：它如何驱动系统的演化或稳定？将微观过程连接到宏观现象。结合前面已生成的因果链和调节因素，给出完整的系统视角。"
+        }
+    ]
+};

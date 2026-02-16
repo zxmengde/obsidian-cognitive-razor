@@ -206,7 +206,7 @@ export class ExpandModal extends AbstractModal {
 
   private renderActions(container: HTMLElement): void {
     const actions = container.createDiv({ cls: "cr-expand-actions" });
-    this.confirmBtn = actions.createEl("button", { cls: "mod-cta" });
+    this.confirmBtn = actions.createEl("button", { cls: "cr-btn-primary" });
     this.confirmBtn.addEventListener("click", async () => {
       const selected = this.options.candidates.filter((c) => this.selected.has(this.buildKey(c)));
       await this.options.onConfirm(selected);

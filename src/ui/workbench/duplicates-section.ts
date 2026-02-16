@@ -14,24 +14,16 @@ import type { DuplicatesSectionDeps } from "./workbench-section-deps";
 import { WorkbenchSection } from "./workbench-section";
 import { SimpleDiffView } from "../diff-view";
 import { MergeNameSelectionModal } from "../merge-modals";
-import { ConfirmDialog, DuplicatePreviewModal } from "./workbench-modals";
+import { DuplicatePreviewModal } from "./workbench-modals";
 import { formatMessage } from "../../core/i18n";
-
-type DuplicateSortOrder =
-  | "similarity-desc"
-  | "similarity-asc"
-  | "time-desc"
-  | "time-asc"
-  | "type";
 
 export class DuplicatesSection extends WorkbenchSection<DuplicatesSectionDeps> {
   private container: HTMLElement | null = null;
   private sectionEl: HTMLElement | null = null;
   private badgeEl: HTMLElement | null = null;
 
+  // TODO: selectedDuplicates 有 checkbox 交互但未连接批量操作，待后续迭代补齐
   private selectedDuplicates: Set<string> = new Set();
-  private currentSortOrder: DuplicateSortOrder = "similarity-desc";
-  private currentTypeFilter: DuplicatePair["type"] | "all" = "all";
   private allDuplicates: DuplicatePair[] = [];
 
   /**
@@ -93,12 +85,8 @@ export class DuplicatesSection extends WorkbenchSection<DuplicatesSectionDeps> {
 
     this.allDuplicates = duplicates;
 
-    let filteredDuplicates = duplicates;
-    if (this.currentTypeFilter !== "all") {
-      filteredDuplicates = duplicates.filter(pair => pair.type === this.currentTypeFilter);
-    }
-
-    const sortedDuplicates = this.sortDuplicates(filteredDuplicates);
+    // 默认按相似度降序排列
+    const sortedDuplicates = [...duplicates].sort((a, b) => b.similarity - a.similarity);
 
     this.container.empty();
 
@@ -120,6 +108,12 @@ export class DuplicatesSection extends WorkbenchSection<DuplicatesSectionDeps> {
 
   private renderDuplicateItem(container: HTMLElement, pair: DuplicatePair): void {
     const item = container.createDiv({ cls: "cr-duplicate-item" });
+    const nameA = this.deps.resolveNoteName(pair.nodeIdA);
+    const nameB = this.deps.resolveNoteName(pair.nodeIdB);
+
+    item.setAttribute("role", "button");
+    item.setAttribute("tabindex", "0");
+    item.setAttribute("aria-label", `${this.deps.t("workbench.duplicates.selectPair")}: ${nameA} <-> ${nameB}`);
 
     const checkboxWrapper = item.createDiv({ cls: "cr-checkbox-wrapper" });
     const checkbox = checkboxWrapper.createEl("input", {
@@ -137,6 +131,8 @@ export class DuplicatesSection extends WorkbenchSection<DuplicatesSectionDeps> {
         this.selectedDuplicates.delete(pair.id);
       }
     });
+    checkbox.addEventListener("click", (event) => event.stopPropagation());
+    checkbox.addEventListener("keydown", (event) => event.stopPropagation());
 
     const statusBar = item.createDiv({ cls: "cr-duplicate-status-bar" });
     const fill = statusBar.createDiv({ cls: "cr-status-fill" });
@@ -148,10 +144,8 @@ export class DuplicatesSection extends WorkbenchSection<DuplicatesSectionDeps> {
     const content = item.createDiv({ cls: "cr-duplicate-content" });
 
     const header = content.createDiv({ cls: "cr-duplicate-header" });
-    const nameA = this.deps.resolveNoteName(pair.nodeIdA);
-    const nameB = this.deps.resolveNoteName(pair.nodeIdB);
     header.createDiv({ cls: "cr-duplicate-note", text: nameA });
-    header.createDiv({ cls: "cr-duplicate-arrow", text: "↔" });
+    header.createDiv({ cls: "cr-duplicate-arrow", text: "<->" });
     header.createDiv({ cls: "cr-duplicate-note", text: nameB });
 
     const meta = content.createDiv({ cls: "cr-duplicate-meta" });
@@ -185,32 +179,16 @@ export class DuplicatesSection extends WorkbenchSection<DuplicatesSectionDeps> {
       void this.handleShowDuplicatePreview(pair);
     };
 
-    item.addEventListener("mouseenter", () => { actions.style.opacity = "1"; });
-    item.addEventListener("mouseleave", () => { actions.style.opacity = "0"; });
-  }
+    item.addEventListener("keydown", (event: KeyboardEvent) => {
+      if (event.target !== item) {
+        return;
+      }
+      if (event.key === "Enter" || event.key === " " || event.key === "Spacebar") {
+        event.preventDefault();
+        void this.handleShowDuplicatePreview(pair);
+      }
+    });
 
-  private sortDuplicates(duplicates: DuplicatePair[]): DuplicatePair[] {
-    const sorted = [...duplicates];
-
-    switch (this.currentSortOrder) {
-      case "similarity-desc":
-        sorted.sort((a, b) => b.similarity - a.similarity);
-        break;
-      case "similarity-asc":
-        sorted.sort((a, b) => a.similarity - b.similarity);
-        break;
-      case "time-desc":
-        sorted.sort((a, b) => new Date(b.detectedAt).getTime() - new Date(a.detectedAt).getTime());
-        break;
-      case "time-asc":
-        sorted.sort((a, b) => new Date(a.detectedAt).getTime() - new Date(b.detectedAt).getTime());
-        break;
-      case "type":
-        sorted.sort((a, b) => a.type.localeCompare(b.type));
-        break;
-    }
-
-    return sorted;
   }
 
   private renderEmpty(): void {
@@ -218,13 +196,6 @@ export class DuplicatesSection extends WorkbenchSection<DuplicatesSectionDeps> {
     this.container.createEl("div", {
       text: this.deps.t("workbench.duplicates.empty"),
       cls: "cr-empty-state"
-    });
-  }
-
-  private showConfirmDialog(title: string, message: string): Promise<boolean> {
-    return new Promise((resolve) => {
-      const modal = new ConfirmDialog(this.deps.app, title, message, resolve, this.deps.t);
-      modal.open();
     });
   }
 
@@ -411,12 +382,31 @@ export class DuplicatesSection extends WorkbenchSection<DuplicatesSectionDeps> {
     }
   }
 
-  private getDiffViewLabels(): { accept: string; reject: string; acceptAria: string; rejectAria: string } {
+  private getDiffViewLabels(): {
+    accept: string;
+    reject: string;
+    acceptAria: string;
+    rejectAria: string;
+    modeLabel: string;
+    unifiedView: string;
+    unifiedViewAria: string;
+    sideBySideView: string;
+    sideBySideViewAria: string;
+    leftTitle: string;
+    rightTitle: string;
+  } {
     return {
       accept: this.deps.t("workbench.diffPreview.accept"),
       reject: this.deps.t("workbench.diffPreview.reject"),
       acceptAria: this.deps.t("workbench.diffPreview.acceptAria"),
       rejectAria: this.deps.t("workbench.diffPreview.rejectAria"),
+      modeLabel: this.deps.t("workbench.diffPreview.modeLabel"),
+      unifiedView: this.deps.t("workbench.diffPreview.unifiedView"),
+      unifiedViewAria: this.deps.t("workbench.diffPreview.unifiedViewAria"),
+      sideBySideView: this.deps.t("workbench.diffPreview.sideBySideView"),
+      sideBySideViewAria: this.deps.t("workbench.diffPreview.sideBySideViewAria"),
+      leftTitle: this.deps.t("workbench.diffPreview.leftTitle"),
+      rightTitle: this.deps.t("workbench.diffPreview.rightTitle"),
     };
   }
 }

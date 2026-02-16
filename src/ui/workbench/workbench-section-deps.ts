@@ -107,21 +107,3 @@ export interface RecentOpsSectionDeps extends SectionDeps {
     undoManager: UndoManager;
 }
 
-/**
- * 旧版兼容接口 — 过渡期保留
- *
- * @deprecated 请使用 SectionDeps 及其子接口替代。
- * 此接口将在所有 Section 迁移完成后移除。
- */
-export interface WorkbenchSectionDeps {
-    app: App;
-    getPlugin: () => import("../../../main").default | null;
-    t: (path: string) => string;
-    showErrorNotice: (message: string) => void;
-    logError: (context: string, error: unknown, extra?: Record<string, unknown>) => void;
-    logWarn: (context: string, extra?: Record<string, unknown>) => void;
-    resolveNoteName: (nodeId: string) => string;
-    resolveNotePath: (nodeId: string) => string | null;
-    registerEvent: (eventRef: EventRef) => void;
-    getContainerEl: () => HTMLElement;
-}

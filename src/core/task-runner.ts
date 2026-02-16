@@ -26,7 +26,7 @@ import {
   AnyTaskPayload,
   TypedTaskRecord
 } from "../types";
-import { schemaRegistry, SchemaRegistry } from "./schema-registry";
+import { schemaRegistry, SchemaRegistry, WRITE_PHASES } from "./schema-registry";
 import { createConceptSignature, generateSignatureText } from "./naming-utils";
 import { mapStandardizeOutput } from "./standardize-mapper";
 import type { ProviderManager } from "./provider-manager";
@@ -34,6 +34,7 @@ import type { PromptManager } from "./prompt-manager";
 import type { UndoManager } from "./undo-manager";
 import type { VectorIndex } from "./vector-index";
 import type { SettingsStore } from "../data/settings-store";
+import { DEFAULT_TASK_MODEL_CONFIGS } from "../data/settings-store";
 import type { Validator } from "../data/validator";
 import { App, MarkdownView, TFile } from "obsidian";
 import { dataUrlToArrayBuffer, inferImageExtension } from "../utils/image";
@@ -758,7 +759,7 @@ export class TaskRunner {
     }
   }
 
-  /** 执行 write 任务 */
+  /** 执行 write 任务（分阶段 Chain-of-Fields） */
   private async executeWrite(
     task: TaskRecord,
     signal: AbortSignal
@@ -770,77 +771,140 @@ export class TaskRunner {
         return this.createTaskError(task, { code: "E310_INVALID_STATE", message: "任务类型不匹配: 期望 write" });
       }
       const payload = typed.payload;
-      const conceptType = payload.conceptType || "Entity";
-      const schema = this.getSchema(conceptType);
+      const conceptType = (payload.conceptType || "Entity") as CRType;
+      const fullSchema = this.getSchema(conceptType);
       const sources = typeof payload.sources === "string" ? payload.sources : "";
+      const metaContext = this.buildMetaContext(payload);
+      const language = this.getLanguage();
 
-      const slots = {
-        CTX_META: this.buildMetaContext(payload),
-        CTX_SOURCES: sources,
-        CTX_LANGUAGE: this.getLanguage()
-      };
-
-      // 传递 conceptType 以选择正确的类型核心模板（prompts/_type/*-core.md）
-      const prompt = this.promptManager.build(task.taskType, slots, conceptType);
+      // 获取分阶段配置
+      const phases = WRITE_PHASES[conceptType];
+      if (!phases || phases.length === 0) {
+        // 回退到旧的一次性生成
+        return this.executeWriteLegacy(task, signal);
+      }
 
       // 获取任务模型配置
       const modelConfig = this.getTaskModelConfig("write", task.providerRef);
 
-      // 调用 LLM（使用用户配置的模型）
-      const chatRequest: ChatRequest = {
-        providerId: task.providerRef || modelConfig.providerId,
-        model: modelConfig.model,
-        messages: [
-          { role: "user", content: prompt }
-        ],
-        temperature: modelConfig.temperature,
-        topP: modelConfig.topP,
-        maxTokens: modelConfig.maxTokens,
-        reasoning_effort: modelConfig.reasoning_effort
-      };
-      
-      const chatResult = await this.providerManager.chat(chatRequest, signal);
+      // 累积已生成的字段
+      const accumulated: Record<string, unknown> = {};
 
-      if (!chatResult.ok) {
-        return this.createTaskError(task, chatResult.error!);
+      this.logger.info("TaskRunner", `开始分阶段 Write: ${conceptType}`, {
+        taskId: task.id,
+        phaseCount: phases.length
+      });
+
+      // 逐阶段调用 LLM
+      for (let i = 0; i < phases.length; i++) {
+        const phase = phases[i];
+
+        // 检查中断信号
+        if (signal.aborted) {
+          return this.createTaskError(task, { code: "E310_INVALID_STATE", message: "任务已被中断" });
+        }
+
+        // 构建本阶段的 schema 片段
+        const phaseSchema = this.buildPhaseSchema(fullSchema, phase.fields);
+
+        // 构建已生成内容的上下文
+        const previousContext = Object.keys(accumulated).length > 0
+          ? JSON.stringify(accumulated, null, 2)
+          : "";
+
+        // 构建分阶段 prompt
+        const prompt = this.promptManager.buildPhasedWrite({
+          CTX_META: metaContext,
+          CTX_PREVIOUS: previousContext,
+          CTX_SOURCES: sources,
+          CTX_LANGUAGE: language,
+          CONCEPT_TYPE: conceptType,
+          PHASE_SCHEMA: phaseSchema,
+          PHASE_FOCUS: phase.focusInstruction
+        });
+
+        // 调用 LLM
+        const chatResult = await this.providerManager.chat({
+          providerId: task.providerRef || modelConfig.providerId,
+          model: modelConfig.model,
+          messages: [{ role: "user", content: prompt }],
+          temperature: modelConfig.temperature,
+          topP: modelConfig.topP,
+          maxTokens: modelConfig.maxTokens,
+          reasoning_effort: modelConfig.reasoning_effort
+        }, signal);
+
+        if (!chatResult.ok) {
+          return this.createTaskError(task, chatResult.error!);
+        }
+
+        // 验证本阶段输出（仅验证本阶段的字段）
+        const phaseValidationSchema = this.buildPhaseValidationSchema(fullSchema, phase.fields);
+        const validationResult = await this.validator.validate(
+          chatResult.value.content,
+          phaseValidationSchema,
+          []
+        );
+
+        if (!validationResult.valid) {
+          this.logger.warn("TaskRunner", `阶段 ${phase.id} 验证失败，尝试解析原始内容`, {
+            taskId: task.id,
+            phase: phase.id,
+            errors: validationResult.errors
+          });
+          // 尝试直接解析 JSON
+          try {
+            const content = chatResult.value.content.trim();
+            const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/) || content.match(/```\s*([\s\S]*?)\s*```/);
+            const jsonStr = jsonMatch ? jsonMatch[1] : content;
+            const parsed = JSON.parse(jsonStr);
+            // 仅提取本阶段的字段
+            for (const field of phase.fields) {
+              if (parsed[field] !== undefined) {
+                accumulated[field] = parsed[field];
+              }
+            }
+          } catch {
+            return this.createValidationError(task, validationResult.errors!);
+          }
+        } else {
+          // 合并本阶段结果到累积数据
+          const phaseData = (validationResult.data as Record<string, unknown>) || {};
+          for (const field of phase.fields) {
+            if (phaseData[field] !== undefined) {
+              accumulated[field] = phaseData[field];
+            }
+          }
+        }
+
+        this.logger.info("TaskRunner", `阶段 ${phase.id} 完成`, {
+          taskId: task.id,
+          phase: phase.id,
+          phaseIndex: i + 1,
+          totalPhases: phases.length,
+          fieldsGenerated: phase.fields.filter(f => accumulated[f] !== undefined)
+        });
       }
-
-      // 使用 SchemaRegistry 获取验证规则和 Schema
-      const rules = this.getValidationRules(conceptType);
-
-      const validationResult = await this.validator.validate(
-        chatResult.value.content,
-        schema,
-        rules
-      );
-
-      if (!validationResult.valid) {
-        return this.createValidationError(task, validationResult.errors!);
-      }
-
-      // 解析结果
-      const data = (validationResult.data as Record<string, unknown>) || JSON.parse(chatResult.value.content);
 
       // 创建快照（写入前）
       const skipSnapshot = payload.skipSnapshot === true;
       if (payload.filePath && !skipSnapshot) {
         const snapshotResult = await this.createSnapshotBeforeWrite({
           filePath: payload.filePath,
-          content: "", // 新文件，原始内容为空
+          content: "",
           nodeId: task.nodeId,
           taskId: task.id,
           originalContent: payload.originalContent || ""
         });
-
         if (snapshotResult.ok) {
-          data.snapshotId = snapshotResult.value;
+          accumulated.snapshotId = snapshotResult.value;
         }
       }
 
       return ok({
         taskId: task.id,
         state: "Completed",
-        data
+        data: accumulated
       });
     } catch (error) {
       this.logger.error("TaskRunner", "执行 write 失败", error as Error, {
@@ -848,6 +912,133 @@ export class TaskRunner {
       });
       return toErr(error, "E500_INTERNAL_ERROR", "执行 write 失败");
     }
+  }
+
+  /** 旧版一次性 Write（回退路径） */
+  private async executeWriteLegacy(
+    task: TaskRecord,
+    signal: AbortSignal
+  ): Promise<Result<TaskResult>> {
+    const typed = narrowTask(task);
+    if (typed.taskType !== "write") {
+      return this.createTaskError(task, { code: "E310_INVALID_STATE", message: "任务类型不匹配" });
+    }
+    const payload = typed.payload;
+    const conceptType = payload.conceptType || "Entity";
+    const schema = this.getSchema(conceptType);
+    const sources = typeof payload.sources === "string" ? payload.sources : "";
+
+    const slots = {
+      CTX_META: this.buildMetaContext(payload),
+      CTX_SOURCES: sources,
+      CTX_LANGUAGE: this.getLanguage()
+    };
+
+    const prompt = this.promptManager.build(task.taskType, slots, conceptType);
+    const modelConfig = this.getTaskModelConfig("write", task.providerRef);
+
+    const chatResult = await this.providerManager.chat({
+      providerId: task.providerRef || modelConfig.providerId,
+      model: modelConfig.model,
+      messages: [{ role: "user", content: prompt }],
+      temperature: modelConfig.temperature,
+      topP: modelConfig.topP,
+      maxTokens: modelConfig.maxTokens,
+      reasoning_effort: modelConfig.reasoning_effort
+    }, signal);
+
+    if (!chatResult.ok) {
+      return this.createTaskError(task, chatResult.error!);
+    }
+
+    const validationResult = await this.validator.validate(
+      chatResult.value.content, schema, []
+    );
+
+    if (!validationResult.valid) {
+      return this.createValidationError(task, validationResult.errors!);
+    }
+
+    const data = (validationResult.data as Record<string, unknown>) || JSON.parse(chatResult.value.content);
+
+    const skipSnapshot = payload.skipSnapshot === true;
+    if (payload.filePath && !skipSnapshot) {
+      const snapshotResult = await this.createSnapshotBeforeWrite({
+        filePath: payload.filePath,
+        content: "",
+        nodeId: task.nodeId,
+        taskId: task.id,
+        originalContent: payload.originalContent || ""
+      });
+      if (snapshotResult.ok) {
+        data.snapshotId = snapshotResult.value;
+      }
+    }
+
+    return ok({ taskId: task.id, state: "Completed", data });
+  }
+
+  /**
+   * 构建阶段 Schema 描述（用于 prompt 中的 PHASE_SCHEMA 槽位）
+   * 生成人类可读的字段描述，而非完整 JSON Schema
+   */
+  private buildPhaseSchema(fullSchema: object, fields: string[]): string {
+    const properties = (fullSchema as Record<string, unknown>).properties as Record<string, Record<string, unknown>> | undefined;
+    if (!properties) return fields.map(f => `"${f}": "..."`).join(",\n");
+
+    const lines: string[] = ["{"];
+    for (const field of fields) {
+      const prop = properties[field];
+      if (!prop) {
+        lines.push(`  "${field}": "..."`);
+        continue;
+      }
+      const desc = prop.description || field;
+      const type = prop.type || "string";
+
+      if (type === "array" && prop.items) {
+        const items = prop.items as Record<string, unknown>;
+        if (items.type === "object" && items.properties) {
+          const subProps = items.properties as Record<string, Record<string, unknown>>;
+          const subFields = Object.keys(subProps).map(k => `"${k}": "${subProps[k].description || k}"`).join(", ");
+          lines.push(`  "${field}": [{ ${subFields} }, ...]  // ${desc}`);
+        } else {
+          lines.push(`  "${field}": ["...", ...]  // ${desc}`);
+        }
+      } else if (type === "object" && prop.properties) {
+        const subProps = prop.properties as Record<string, Record<string, unknown>>;
+        const subFields = Object.keys(subProps).map(k => `"${k}": "${subProps[k].description || k}"`).join(", ");
+        lines.push(`  "${field}": { ${subFields} }  // ${desc}`);
+      } else {
+        lines.push(`  "${field}": "..."  // ${desc}`);
+      }
+    }
+    lines.push("}");
+    return lines.join("\n");
+  }
+
+  /**
+   * 构建阶段验证 Schema（仅包含本阶段字段的 JSON Schema）
+   */
+  private buildPhaseValidationSchema(fullSchema: object, fields: string[]): object {
+    const full = fullSchema as Record<string, unknown>;
+    const properties = full.properties as Record<string, unknown> | undefined;
+    if (!properties) {
+      return { type: "object", required: fields, properties: {} };
+    }
+
+    const phaseProperties: Record<string, unknown> = {};
+    for (const field of fields) {
+      if (properties[field]) {
+        phaseProperties[field] = properties[field];
+      }
+    }
+
+    return {
+      type: "object",
+      required: fields,
+      properties: phaseProperties
+    };
   }
 
 
@@ -1349,44 +1540,57 @@ export class TaskRunner {
     const settings = this.settingsStore?.getSettings();
     const taskConfig = settings?.taskModels?.[taskType];
     
-    // 默认配置
-    const defaults: Record<TaskType, { model: string; temperature?: number; topP?: number }> = {
-      "define": { model: "gemini-3-flash-preview", temperature: 0.3 },
-      "tag": { model: "gemini-3-flash-preview", temperature: 0.5 },
-      "index": { model: "text-embedding-3-small" },
-      "write": { model: "gemini-3-flash-preview", temperature: 0.7 },
-      "amend": { model: "gemini-3-flash-preview", temperature: 0.7 },
-      "merge": { model: "gemini-3-flash-preview", temperature: 0.7 },
-      "verify": { model: "gemini-3-flash-preview", temperature: 0.3 },
-      "image-generate": { model: "gemini-3-pro-image-preview" }
-    };
-
-    const defaultConfig = defaults[taskType] || { model: "gemini-3-flash-preview" };
+    // 从 SSOT 默认配置获取回退值（DRY：消除与 settings-store.ts 的重复）
+    const defaultConfig = DEFAULT_TASK_MODEL_CONFIGS[taskType];
 
     return {
       providerId: taskConfig?.providerId || providerRef || settings?.defaultProviderId || "",
       model: taskConfig?.model || defaultConfig.model,
       temperature: taskConfig?.temperature ?? defaultConfig.temperature,
-      topP: taskConfig?.topP,
+      topP: taskConfig?.topP ?? defaultConfig.topP,
       maxTokens: taskConfig?.maxTokens,
       reasoning_effort: taskConfig?.reasoning_effort,
-      embeddingDimension: taskConfig?.embeddingDimension
+      embeddingDimension: taskConfig?.embeddingDimension ?? defaultConfig.embeddingDimension
     };
   }
 
-  /** 构建 CTX_META 上下文字符串 */
+  /** 构建 CTX_META 上下文字符串（丰富版） */
   private buildMetaContext(payload: AnyTaskPayload): string {
     const standardized = ("standardizedData" in payload) ? payload.standardizedData as StandardizedConcept | undefined : undefined;
     const primaryType = (standardized?.primaryType || (("conceptType" in payload) ? payload.conceptType : undefined)) as CRType | undefined;
     const standardNames = standardized?.standardNames;
     const selectedName = primaryType && standardNames ? standardNames[primaryType] : undefined;
 
-    // 简化的元数据格式
+    // 丰富的元数据格式：包含核心定义、别名、标签等上下文
     const meta: Record<string, unknown> = {
       Type: primaryType || "",
       standard_name_cn: selectedName?.chinese || "",
       standard_name_en: selectedName?.english || ""
     };
+
+    // 注入核心定义（Define 阶段已生成）
+    if (standardized?.coreDefinition) {
+      meta.core_definition = standardized.coreDefinition;
+    }
+    if ("coreDefinition" in payload && typeof payload.coreDefinition === "string" && payload.coreDefinition) {
+      meta.core_definition = payload.coreDefinition;
+    }
+
+    // 注入别名和标签（Tag 阶段已生成）
+    if ("enrichedData" in payload && payload.enrichedData) {
+      const enriched = payload.enrichedData as { aliases?: string[]; tags?: string[] };
+      if (enriched.aliases?.length) {
+        meta.aliases = enriched.aliases;
+      }
+      if (enriched.tags?.length) {
+        meta.tags = enriched.tags;
+      }
+    }
+
+    // 注入用户输入
+    if ("userInput" in payload && typeof payload.userInput === "string" && payload.userInput) {
+      meta.user_input = payload.userInput;
+    }
 
     return JSON.stringify(meta, null, 2);
   }

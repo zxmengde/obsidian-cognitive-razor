@@ -634,6 +634,7 @@ export class CommandDispatcher {
     const modal = new SimpleInputModal(this.plugin.app, {
       title: this.t("workbench.createConcept.title"),
       placeholder: this.t("workbench.createConcept.placeholder"),
+      t: (path) => this.t(path),
       onSubmit: async (input) => {
         const workbench = await this.openWorkbench();
         if (!workbench) {
@@ -672,6 +673,7 @@ export class CommandDispatcher {
       const modal = new SimpleInputModal(this.plugin.app, {
         title: this.t("workbench.amendModal.title"),
         placeholder: this.t("workbench.amendModal.placeholder"),
+        t: (path) => this.t(path),
         onSubmit: async (instruction) => {
           try {
             if (!instruction.trim()) {

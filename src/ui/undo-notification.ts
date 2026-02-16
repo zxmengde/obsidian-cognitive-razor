@@ -35,7 +35,7 @@ export class UndoNotification {
   constructor(options: UndoNotificationOptions) {
     this.options = {
       ...options,
-      timeout: options.timeout ?? 5000, // 默认 5 秒
+      timeout: options.timeout ?? 8000, // 默认 8 秒，给用户充裕的反应时间
     };
   }
 
@@ -107,7 +107,7 @@ export class UndoNotification {
     });
 
     // 动画进度条（如果支持 style）
-    const duration = this.options.timeout || 5000;
+    const duration = this.options.timeout || 8000;
     const prefersReducedMotion =
       typeof window !== "undefined" &&
       typeof window.matchMedia === "function" &&

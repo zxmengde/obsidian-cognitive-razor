@@ -55,13 +55,21 @@ interface SimpleDiffLabels {
     reject: string;
     acceptAria: string;
     rejectAria: string;
+    modeLabel: string;
+    unifiedView: string;
+    unifiedViewAria: string;
+    sideBySideView: string;
+    sideBySideViewAria: string;
+    leftTitle: string;
+    rightTitle: string;
 }
 
 /** 视图模式 */
 type DiffViewMode = "unified" | "side-by-side";
 
 /**
- * DiffView 模态框（完整版，预留供未来使用）
+ * @deprecated 旧版 DiffView 模态框，已被 SimpleDiffView 替代。
+ * 保留仅供参考，禁止新代码引用。计划在下一个大版本中删除。
  */
 class DiffView extends AbstractModal {
     private diffData: DiffData;
@@ -142,7 +150,7 @@ class DiffView extends AbstractModal {
 
         const acceptBtn = actions.createEl("button", {
             text: "接受更改",
-            cls: "mod-cta",
+            cls: "cr-btn-primary",
             attr: { "aria-label": "接受选中的更改" }
         });
         acceptBtn.addEventListener("click", () => {
@@ -496,7 +504,7 @@ export class SimpleDiffView extends AbstractModal {
         newContent: string,
         onAccept: () => void,
         onReject: () => void,
-        labels?: Partial<SimpleDiffLabels>
+        labels: SimpleDiffLabels
     ) {
         super(app);
         this.isDestructive = true;
@@ -505,12 +513,7 @@ export class SimpleDiffView extends AbstractModal {
         this.newContent = newContent;
         this.onAccept = onAccept;
         this.onReject = onReject;
-        this.labels = {
-            accept: labels?.accept ?? "接受",
-            reject: labels?.reject ?? "放弃",
-            acceptAria: labels?.acceptAria ?? "接受更改",
-            rejectAria: labels?.rejectAria ?? "放弃更改",
-        };
+        this.labels = labels;
     }
 
     /** 破坏性 Escape：触发放弃操作 */
@@ -528,28 +531,28 @@ export class SimpleDiffView extends AbstractModal {
         // 模式切换 Tab 栏
         const tabBar = contentEl.createDiv({
             cls: "cr-diff-mode-tabs",
-            attr: { role: "tablist", "aria-label": "差异视图模式" }
+            attr: { role: "tablist", "aria-label": this.labels.modeLabel }
         });
 
         const unifiedTab = tabBar.createEl("button", {
-            text: "统一视图",
+            text: this.labels.unifiedView,
             cls: "cr-diff-mode-tab cr-diff-mode-tab-active",
             attr: {
                 role: "tab",
                 "aria-selected": "true",
                 "aria-controls": "cr-diff-content",
-                "aria-label": "切换到统一差异视图"
+                "aria-label": this.labels.unifiedViewAria,
             }
         });
 
         const sideBySideTab = tabBar.createEl("button", {
-            text: "并排视图",
+            text: this.labels.sideBySideView,
             cls: "cr-diff-mode-tab",
             attr: {
                 role: "tab",
                 "aria-selected": "false",
                 "aria-controls": "cr-diff-content",
-                "aria-label": "切换到并排差异视图"
+                "aria-label": this.labels.sideBySideViewAria,
             }
         });
 
@@ -582,7 +585,7 @@ export class SimpleDiffView extends AbstractModal {
 
         const acceptBtn = actions.createEl("button", {
             text: this.labels.accept,
-            cls: "mod-cta",
+            cls: "cr-btn-primary",
             attr: { "aria-label": this.labels.acceptAria }
         });
         acceptBtn.addEventListener("click", () => {
@@ -592,6 +595,7 @@ export class SimpleDiffView extends AbstractModal {
 
         const rejectBtn = actions.createEl("button", {
             text: this.labels.reject,
+            cls: "cr-btn-secondary",
             attr: { "aria-label": this.labels.rejectAria }
         });
         rejectBtn.addEventListener("click", () => {
@@ -674,8 +678,8 @@ export class SimpleDiffView extends AbstractModal {
             this.diffContentContainer,
             this.originalContent,
             this.newContent,
-            "原始内容",
-            "修改后内容"
+            this.labels.leftTitle,
+            this.labels.rightTitle
         );
     }
 

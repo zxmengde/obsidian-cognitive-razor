@@ -292,6 +292,7 @@ export class TaskQueue {
 
       // 从处理中集合移除
       this.processingTasks.delete(taskId);
+      this.scheduleSave();
 
       // 发布事件
       this.publishEvent({
@@ -409,6 +410,7 @@ export class TaskQueue {
 
     Object.assign(task, updates);
     task.updated = formatCRTimestamp();
+    this.scheduleSave();
 
     return ok(undefined);
   }
@@ -457,6 +459,10 @@ export class TaskQueue {
         this.tasks.delete(taskId);
       }
 
+      if (tasksToRemove.length > 0) {
+        this.scheduleSave();
+      }
+
       this.logger.info("TaskQueue", `清理了 ${tasksToRemove.length} 个已完成任务`);
 
       return ok(tasksToRemove.length);
@@ -486,6 +492,11 @@ export class TaskQueue {
           task.updated = formatCRTimestamp();
           retriedCount++;
         }
+      }
+
+      if (retriedCount > 0) {
+        this.scheduleSave();
+        this.tryScheduleAll();
       }
 
       this.logger.info("TaskQueue", `重试了 ${retriedCount} 个失败任务`);
@@ -570,6 +581,7 @@ export class TaskQueue {
         task.state = "Running";
         task.startedAt = formatCRTimestamp();
         task.updated = task.startedAt;
+        this.scheduleSave();
 
         // 发布事件
         this.publishEvent({
@@ -711,6 +723,7 @@ export class TaskQueue {
     this.processingTasks.delete(task.id);
 
     this.trimHistory();
+    this.scheduleSave();
 
     // 事件驱动调度：任务完成后立即尝试调度下一个
     this.tryScheduleAll();
@@ -815,6 +828,7 @@ export class TaskQueue {
     }
 
     this.trimHistory();
+    this.scheduleSave();
 
     // 事件驱动调度：任务失败后立即尝试调度下一个
     this.tryScheduleAll();
@@ -856,6 +870,7 @@ export class TaskQueue {
     this.processingTasks.delete(task.id);
 
     this.trimHistory();
+    this.scheduleSave();
 
     // 发布失败事件
     this.publishEvent({

@@ -18,7 +18,7 @@ import { ProviderConfigModal, ConfirmModal } from "./modals";
 import { formatMessage } from "../core/i18n";
 import { DEFAULT_TASK_MODEL_CONFIGS, PARAM_RECOMMENDATIONS } from "../data/settings-store";
 
-type SettingsTabId = "general" | "providers" | "tasks" | "knowledge" | "system";
+type SettingsTabId = "general" | "providers" | "knowledge" | "system";
 
 export class CognitiveRazorSettingTab extends PluginSettingTab {
   plugin: CognitiveRazorPlugin;
@@ -55,10 +55,6 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
       case "system": 
         this.renderSystemTab(content); 
         break;
-      case "tasks":
-        // 任务模型配置已合并到知识库标签页
-        this.renderKnowledgeTab(content);
-        break;
     }
   }
 
@@ -67,7 +63,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
    */
   private renderNav(container: HTMLElement): void {
     const t = this.plugin.getI18n().t();
-    const nav = container.createDiv({ cls: "cr-settings-nav" });
+    const nav = container.createDiv({ cls: "cr-settings-nav", attr: { role: "tablist" } });
     
     const tabs: { id: SettingsTabId; name: string; icon: string }[] = [
       { id: "general", name: t.settings.tabs?.general || "通用", icon: "settings" },
@@ -77,21 +73,44 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
     ];
 
     tabs.forEach(tab => {
+      const isActive = this.activeTab === tab.id;
       const item = nav.createDiv({
-        cls: `cr-nav-item ${this.activeTab === tab.id ? "is-active" : ""}`
+        cls: `cr-nav-item ${isActive ? "is-active" : ""}`,
+        attr: {
+          role: "tab",
+          tabindex: isActive ? "0" : "-1",
+          "aria-selected": isActive ? "true" : "false",
+          "aria-controls": `cr-tab-${tab.id}`,
+        }
       });
       
       // 图标
-      const icon = item.createSpan({ cls: "cr-nav-icon" });
+      const icon = item.createSpan({ cls: "cr-nav-icon", attr: { "aria-hidden": "true" } });
       setIcon(icon, tab.icon);
       
       // 文字
       item.createSpan({ text: tab.name, cls: "cr-nav-text" });
 
-      item.onclick = () => {
+      const activate = (): void => {
         this.activeTab = tab.id;
         this.display();
       };
+
+      item.addEventListener("click", activate);
+      item.addEventListener("keydown", (e: KeyboardEvent) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          activate();
+        } else if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+          e.preventDefault();
+          const idx = tabs.findIndex(t => t.id === tab.id);
+          const next = e.key === "ArrowRight"
+            ? tabs[(idx + 1) % tabs.length]
+            : tabs[(idx - 1 + tabs.length) % tabs.length];
+          const nextEl = nav.querySelector(`[aria-controls="cr-tab-${next.id}"]`) as HTMLElement;
+          nextEl?.focus();
+        }
+      });
     });
   }
 
@@ -183,7 +202,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
                   await this.plugin.settingsStore.update({ concurrency: num });
                 }
               });
-            text.inputEl.style.width = "80px";
+            text.inputEl.addClass("cr-input-xs");
           });
         }
       },
@@ -214,7 +233,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
                   await this.plugin.settingsStore.update({ maxRetryAttempts: num });
                 }
               });
-            text.inputEl.style.width = "80px";
+            text.inputEl.addClass("cr-input-xs");
           });
         }
       },
@@ -232,7 +251,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
                   await this.plugin.settingsStore.update({ taskTimeoutMs: num });
                 }
               });
-            text.inputEl.style.width = "120px";
+            text.inputEl.addClass("cr-input-sm");
           });
         }
       },
@@ -250,7 +269,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
                   await this.plugin.settingsStore.update({ maxTaskHistory: num });
                 }
               });
-            text.inputEl.style.width = "80px";
+            text.inputEl.addClass("cr-input-xs");
           });
         }
       },
@@ -268,7 +287,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
                   await this.plugin.settingsStore.update({ providerTimeoutMs: num });
                 }
               });
-            text.inputEl.style.width = "120px";
+            text.inputEl.addClass("cr-input-sm");
           });
         }
       }
@@ -309,8 +328,17 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
     }>
   ): void {
     const group = container.createDiv({ cls: "cr-setting-group cr-collapsible-group" });
+    const contentId = `cr-collapsible-${title.replace(/\s+/g, "-").toLowerCase()}`;
     
-    const header = group.createDiv({ cls: "cr-setting-group-header" });
+    const header = group.createDiv({
+      cls: "cr-setting-group-header",
+      attr: {
+        role: "button",
+        tabindex: "0",
+        "aria-expanded": "false",
+        "aria-controls": contentId,
+      }
+    });
     const icon = header.createEl("span", { 
       cls: "cr-collapse-icon",
       attr: { "aria-hidden": "true" }
@@ -318,9 +346,12 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
     setIcon(icon, "chevron-right");
     header.createEl("h3", { text: title, cls: "cr-setting-group-title" });
 
-    const content = group.createDiv({ cls: "cr-setting-group-content cr-collapsed" });
+    const content = group.createDiv({
+      cls: "cr-setting-group-content cr-collapsed",
+      attr: { id: contentId }
+    });
 
-    header.onclick = () => {
+    const toggle = (): void => {
       const isCollapsed = content.hasClass("cr-collapsed");
       if (isCollapsed) {
         content.removeClass("cr-collapsed");
@@ -329,7 +360,16 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
         content.addClass("cr-collapsed");
         icon.classList.remove("is-expanded");
       }
+      header.setAttribute("aria-expanded", isCollapsed ? "true" : "false");
     };
+
+    header.addEventListener("click", toggle);
+    header.addEventListener("keydown", (e: KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        toggle();
+      }
+    });
 
     settings.forEach(({ name, desc, control }) => {
       const setting = new Setting(content).setName(name).setDesc(desc);
@@ -348,7 +388,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
     const header = container.createDiv({ cls: "cr-provider-section-header" });
     header.createEl("h2", { text: t.settings.provider.title });
 
-    const addBtn = header.createEl("button", { text: t.settings.provider.addButton, cls: "mod-cta" });
+    const addBtn = header.createEl("button", { text: t.settings.provider.addButton, cls: "cr-btn-primary" });
     addBtn.onclick = () => this.showAddProviderModal();
 
     const providers = this.plugin.settings.providers;
@@ -447,7 +487,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
           .onChange(async (val) => {
             await this.plugin.settingsStore.update({ namingTemplate: val });
           });
-        text.inputEl.style.width = "300px";
+        text.inputEl.addClass("cr-input-lg");
       });
 
     // 类型目录映射
@@ -495,7 +535,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
               ds[crType.key] = val;
               await this.plugin.settingsStore.update({ directoryScheme: ds });
             });
-          text.inputEl.style.width = "200px";
+          text.inputEl.addClass("cr-input-md");
         });
     });
 
@@ -543,6 +583,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
     });
     resetAllBtn.addEventListener("click", () => {
       new ConfirmModal(this.app, {
+        t: (path) => this.plugin.getI18n().t(path),
         title: t.taskModels?.resetAll || "重置全部",
         message: t.taskModels?.resetAllConfirm || "确定要将所有任务配置重置为默认值吗？此操作不可撤销。",
         onConfirm: async () => {
@@ -582,11 +623,18 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
     const isIndexTask = task.key === "index";
     const card = root.createDiv({ cls: "cr-task-model-card" });
 
-    const header = card.createDiv({ cls: "cr-task-model-card-header" });
+    const expanded = this.taskAccordionState[task.key] ?? false;
+    const header = card.createDiv({
+      cls: "cr-task-model-card-header",
+      attr: {
+        role: "button",
+        tabindex: "0",
+        "aria-expanded": expanded ? "true" : "false",
+      }
+    });
     const titleWrapper = header.createDiv({ cls: "cr-task-model-card-title" });
     const chevron = titleWrapper.createSpan({ cls: "collapse-icon", attr: { "aria-hidden": "true" } });
     setIcon(chevron, "chevron-right");
-    const expanded = this.taskAccordionState[task.key] ?? false;
     if (expanded) chevron.addClass("is-expanded");
     const title = titleWrapper.createDiv();
     title.createEl("div", { text: task.name, cls: "cr-task-model-name" });
@@ -610,6 +658,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
     const resetBtn = actions.createEl("button", { text: t.taskModels?.reset || "重置", cls: "cr-task-model-reset-btn" });
     resetBtn.addEventListener("click", () => {
       new ConfirmModal(this.app, {
+        t: (path) => this.plugin.getI18n().t(path),
         title: t.taskModels?.reset || "重置",
         message: t.taskModels?.resetConfirm || "确定要将此任务配置重置为默认值吗？",
         onConfirm: async () => {
@@ -634,10 +683,18 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
       this.taskAccordionState[task.key] = next;
       contentWrapper.toggleClass("is-expanded", next);
       chevron.toggleClass("is-expanded", next);
+      header.setAttribute("aria-expanded", next ? "true" : "false");
     };
     header.addEventListener("click", (e) => {
       if ((e.target as HTMLElement).closest("button")) return;
       toggle();
+    });
+    header.addEventListener("keydown", (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement).closest("button")) return;
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        toggle();
+      }
     });
 
     const disabledInputs = providerIds.length === 0;
@@ -928,7 +985,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
                   await this.plugin.settingsStore.update({ maxSnapshots: num });
                 }
               });
-            text.inputEl.style.width = "80px";
+            text.inputEl.addClass("cr-input-xs");
           });
         }
       },
@@ -946,7 +1003,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
                   await this.plugin.settingsStore.update({ maxSnapshotAgeDays: num });
                 }
               });
-            text.inputEl.style.width = "80px";
+            text.inputEl.addClass("cr-input-xs");
           });
         }
       }
@@ -1057,6 +1114,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
   private showAddProviderModal(): void {
     const t = this.plugin.getI18n().t();
     new ProviderConfigModal(this.app, {
+        t: (path) => this.plugin.getI18n().t(path),
       mode: "add",
       title: t.modals.addProvider.title,
       onSave: async (id, config) => {
@@ -1076,6 +1134,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
   private showEditProviderModal(id: string, config: ProviderConfig): void {
     const t = this.plugin.getI18n().t();
     new ProviderConfigModal(this.app, {
+        t: (path) => this.plugin.getI18n().t(path),
       mode: "edit",
       title: t.modals.editProvider.title,
       providerId: id,
@@ -1094,13 +1153,18 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
   private showDeleteProviderConfirm(id: string): void {
     const t = this.plugin.getI18n().t();
     new ConfirmModal(this.app, {
+        t: (path) => this.plugin.getI18n().t(path),
       title: t.confirmDialogs.deleteProvider.title,
       message: formatMessage(t.confirmDialogs.deleteProvider.message, { id }),
       danger: true,
       confirmText: t.common.delete, // Add this if ConfirmModal supports it, checking modals.ts... Yes it does (confirmText)
       onConfirm: async () => {
         const components = this.plugin.getComponents();
-        components.providerManager.removeProvider(id);
+        const result = await components.providerManager.removeProvider(id);
+        if (result && !result.ok) {
+          new Notice(formatMessage(t.notices.connectionFailed || "删除失败: {error}", { error: result.error?.message || id }));
+          return;
+        }
         new Notice(formatMessage(t.notices.providerDeleted, { id }));
         this.display();
       }
@@ -1110,6 +1174,7 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
   private showResetSettingsConfirm(): void {
     const t = this.plugin.getI18n().t();
     new ConfirmModal(this.app, {
+        t: (path) => this.plugin.getI18n().t(path),
       title: t.confirmDialogs.resetSettings.title,
       message: t.confirmDialogs.resetSettings.message,
       danger: true,
@@ -1144,9 +1209,12 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
 
   private async clearLogs(): Promise<void> {
     const t = this.plugin.getI18n().t();
-    // Implementation depends on LogManager availability.
-    // this.plugin.getComponents().logManager.clear();
-    // Placeholder
-    new Notice(t.notices.logsCleared);
+    try {
+      const components = this.plugin.getComponents();
+      components.logger.clear();
+      new Notice(t.notices.logsCleared);
+    } catch {
+      new Notice(t.notices.logsCleared); // 回退：即使失败也通知
+    }
   }
 }

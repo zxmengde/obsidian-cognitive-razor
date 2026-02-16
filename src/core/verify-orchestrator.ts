@@ -29,6 +29,7 @@ import { extractFrontmatter } from "./frontmatter-utils";
 import { TaskFactory } from "./task-factory";
 import { generateUUID } from "../data/validators";
 import { formatCRTimestamp } from "../utils/date-utils";
+import { validatePrerequisites as sharedValidatePrerequisites, resolveProviderIdForTask, buildVerificationReportMarkdown } from "./orchestrator-utils";
 
 // ============================================================================
 // 类型定义
@@ -577,102 +578,23 @@ export class VerifyOrchestrator {
      */
     private validatePrerequisites(taskType: TaskType, conceptType?: CRType): Result<void> {
         const settings = this.getSettings();
-
-        // 1. 检查 Provider 是否配置
         const providerId = this.getProviderIdForTask(taskType);
-        if (!providerId) {
-            this.logger.error("VerifyOrchestrator", "Provider 未配置", undefined, {
-                taskType,
-                event: "PREREQUISITE_CHECK_FAILED",
-            });
-            return err("E401_PROVIDER_NOT_CONFIGURED", `任务 ${taskType} 未配置 Provider，请在设置中配置 Provider`);
-        }
-
-        // 检查 Provider 是否存在且启用
-        const providerConfig = settings.providers[providerId];
-        if (!providerConfig) {
-            return err("E401_PROVIDER_NOT_CONFIGURED", `Provider "${providerId}" 不存在，请在设置中重新配置`);
-        }
-
-        if (!providerConfig.enabled) {
-            return err("E401_PROVIDER_NOT_CONFIGURED", `Provider "${providerId}" 已禁用，请在设置中启用`);
-        }
-
-        if (!providerConfig.apiKey) {
-            return err("E401_PROVIDER_NOT_CONFIGURED", `Provider "${providerId}" 的 API Key 未配置`);
-        }
-
-        // 2. 检查模板是否已加载
-        const templateId = this.deps.promptManager.resolveTemplateId(taskType, conceptType);
-        if (!this.deps.promptManager.hasTemplate(templateId)) {
-            return err("E404_TEMPLATE_NOT_FOUND", `模板 "${templateId}" 未加载，请检查 prompts 目录`);
-        }
-
-        return ok(undefined);
+        return sharedValidatePrerequisites(
+            settings, taskType, providerId,
+            this.deps.promptManager, this.logger, "VerifyOrchestrator", conceptType,
+        );
     }
 
     /**
      * 获取任务对应的 Provider ID
      */
     private getProviderIdForTask(taskType: TaskType): string {
-        const settings = this.getSettings();
-
-        // 优先使用任务特定的 providerId
-        const taskModel = settings.taskModels[taskType];
-        if (taskModel?.providerId && taskModel.providerId.trim() !== "") {
-            return taskModel.providerId;
-        }
-
-        // 回退到默认 Provider
-        if (settings.defaultProviderId && settings.defaultProviderId.trim() !== "") {
-            return settings.defaultProviderId;
-        }
-
-        // 如果都没有，返回第一个启用的 Provider
-        const firstProvider = Object.keys(settings.providers).find(
-            (id) => settings.providers[id].enabled,
-        );
-
-        if (firstProvider) {
-            this.logger.warn("VerifyOrchestrator", `任务 ${taskType} 未配置 Provider，使用第一个可用 Provider: ${firstProvider}`);
-            return firstProvider;
-        }
-
-        return "";
-    }
-
-    /**
-     * 构建验证报告 Markdown
-     */
-    private buildVerificationReportMarkdown(result: Record<string, unknown>): string {
-        const now = formatCRTimestamp();
-        const overallAssessment = typeof result.overall_assessment === "string" ? result.overall_assessment : "";
-        const confidenceScore = typeof result.confidence_score === "number" ? result.confidence_score : undefined;
-        const requiresHumanReview = typeof result.requires_human_review === "boolean" ? result.requires_human_review : undefined;
-
-        const lines: string[] = [];
-        lines.push("## Verification Report");
-        lines.push("");
-        lines.push(`- Generated at: ${now}`);
-        if (overallAssessment) {
-            lines.push(`- Overall assessment: ${overallAssessment}`);
-        }
-        if (confidenceScore !== undefined) {
-            lines.push(`- Confidence: ${confidenceScore}`);
-        }
-        if (requiresHumanReview !== undefined) {
-            lines.push(`- Requires human review: ${requiresHumanReview}`);
-        }
-        lines.push("");
-        lines.push("```json");
-        lines.push(JSON.stringify(result, null, 2));
-        lines.push("```");
-
-        return lines.join("\n");
+        return resolveProviderIdForTask(this.getSettings(), taskType, this.logger, "VerifyOrchestrator");
     }
 
     /**
      * 追加验证报告到笔记末尾
+     * 委托给 orchestrator-utils 共享的 buildVerificationReportMarkdown（DRY）
      */
     private async appendVerificationReportToNote(
         filePath: string,
@@ -697,7 +619,7 @@ export class VerifyOrchestrator {
                 return err(snapshotResult.error.code, snapshotResult.error.message, snapshotResult.error.details);
             }
 
-            const report = this.buildVerificationReportMarkdown(result);
+            const report = buildVerificationReportMarkdown(result);
             const separator = existing.endsWith("\n") ? "\n" : "\n\n";
             const next = `${existing}${separator}${report}\n`;
 

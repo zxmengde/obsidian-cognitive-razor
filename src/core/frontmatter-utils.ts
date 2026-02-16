@@ -121,21 +121,8 @@ export function generateFrontmatter(options: {
  */
 function formatArrayInline(arr: string[]): string {
   if (arr.length === 0) return '[]';
-  const formatted = arr.map(item => {
-    // 如果包含特殊字符，需要加引号
-    if (
-      item.includes(" ") ||
-      item.includes(",") ||
-      item.includes(":") ||
-      item.includes("#") ||
-      item.includes("[") ||
-      item.includes("]") ||
-      item.includes("|")
-    ) {
-      return `"${item.replace(/"/g, '\\"')}"`;
-    }
-    return item;
-  });
+  // ?????????? YAML ? "00"?true?null ???????????????
+  const formatted = arr.map((item) => formatYamlString(item));
   return `[${formatted.join(', ')}]`;
 }
 

@@ -520,10 +520,8 @@ export class ProviderManager {
 
   /** 设置 Provider 配置 */
   setProvider(id: string, config: ProviderConfig): void {
-    const settings = this.settingsStore.getSettings();
-    settings.providers[id] = config;
-    
-    this.settingsStore.updateSettings({ providers: settings.providers });
+    // 通过 updateSettings 正规路径更新，避免直接改写设置对象（DIP）
+    this.settingsStore.updateSettings({ providers: { [id]: config } });
 
     this.logger.info("ProviderManager", `Provider 配置已更新: ${id}`, {
       event: "PROVIDER_UPDATED",
@@ -534,15 +532,21 @@ export class ProviderManager {
   }
 
   /** 移除 Provider */
-  removeProvider(id: string): void {
-    const settings = this.settingsStore.getSettings();
-    delete settings.providers[id];
-    
-    this.settingsStore.updateSettings({ providers: settings.providers });
+  async removeProvider(id: string): Promise<Result<void>> {
+    // 通过 SettingsStore 正规路径删除，避免直接改写设置对象
+    const result = await this.settingsStore.removeProvider(id);
+    if (!result.ok) {
+      this.logger.error("ProviderManager", `Provider 移除失败: ${id}`, undefined, {
+        event: "PROVIDER_REMOVE_FAILED",
+        errorCode: result.error.code
+      });
+      return result;
+    }
 
     this.logger.info("ProviderManager", `Provider 已移除: ${id}`, {
       event: "PROVIDER_REMOVED"
     });
+    return result;
   }
 
   /** 通知网络状态（仅在状态变更时触发） */

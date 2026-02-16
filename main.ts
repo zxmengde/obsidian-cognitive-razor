@@ -242,42 +242,6 @@ export default class CognitiveRazorPlugin extends Plugin {
 	}
 
 	/**
-	 * 完整初始化流程：Data → Core → UI
-	 * 将所有服务注册到 ServiceContainer，然后按层级顺序初始化
-	 * @deprecated 已拆分为 initializeDataLayerOnly + initializeAfterLayout
-	 */
-	private async initializeServices(): Promise<void> {
-		// ---- Data 层 ----
-		await this.registerDataLayer();
-
-		const logger = this.container.resolve<Logger>(SERVICE_TOKENS.logger);
-
-		logger.info('CognitiveRazorPlugin', 'Cognitive Razor 插件初始化开始', {
-			event: 'PLUGIN_INIT',
-			version: this.manifest.version,
-			minAppVersion: this.manifest.minAppVersion
-		});
-
-		// 加载设置
-		await this.loadSettings();
-
-		// ---- Core 层 ----
-		await this.registerCoreLayer();
-
-		// ---- UI 层 ----
-		this.registerUILayer();
-
-		// ---- 事件订阅 ----
-		this.subscribeToEvents();
-
-		logger.info('CognitiveRazorPlugin', 'Cognitive Razor 插件初始化完成', {
-			event: 'PLUGIN_INIT_COMPLETE',
-			version: this.manifest.version,
-			logLevel: this.settings.logLevel
-		});
-	}
-
-	/**
 	 * 注册并初始化 Data 层服务
 	 * 如果此层失败，将抛出异常触发安全模式
 	 */

@@ -28,6 +28,7 @@ import {
 import { extractFrontmatter, generateFrontmatter, generateMarkdownContent } from "./frontmatter-utils";
 import { createConceptSignature, generateFilePath, sanitizeFileName } from "./naming-utils";
 import { mapStandardizeOutput } from "./standardize-mapper";
+import { validatePrerequisites as sharedValidatePrerequisites, resolveProviderIdForTask, buildVerificationReportMarkdown } from "./orchestrator-utils";
 import { TaskFactory } from "./task-factory";
 import { generateUUID } from "../data/validators";
 import { formatCRTimestamp } from "../utils/date-utils";
@@ -1105,67 +1106,15 @@ export class CreateOrchestrator {
 
     /**
      * 前置校验：检查 Provider 和模板是否可用
+     * 委托给 orchestrator-utils 共享实现（DRY）
      */
     private validatePrerequisites(taskType: TaskType, conceptType?: CRType): Result<void> {
         const settings = this.getSettings();
-
-        // 1. 检查 Provider 是否配置
         const providerId = this.getProviderIdForTask(taskType);
-        if (!providerId) {
-            this.logger.error("CreateOrchestrator", "Provider 未配置", undefined, {
-                taskType,
-                event: "PREREQUISITE_CHECK_FAILED",
-            });
-            return err("E401_PROVIDER_NOT_CONFIGURED", `任务 ${taskType} 未配置 Provider，请在设置中配置 Provider`);
-        }
-
-        // 检查 Provider 是否存在且启用
-        const providerConfig = settings.providers[providerId];
-        if (!providerConfig) {
-            this.logger.error("CreateOrchestrator", "Provider 不存在", undefined, {
-                taskType,
-                providerId,
-                event: "PREREQUISITE_CHECK_FAILED",
-            });
-            return err("E401_PROVIDER_NOT_CONFIGURED", `Provider "${providerId}" 不存在，请在设置中重新配置`);
-        }
-
-        if (!providerConfig.enabled) {
-            this.logger.error("CreateOrchestrator", "Provider 已禁用", undefined, {
-                taskType,
-                providerId,
-                event: "PREREQUISITE_CHECK_FAILED",
-            });
-            return err("E401_PROVIDER_NOT_CONFIGURED", `Provider "${providerId}" 已禁用，请在设置中启用`);
-        }
-
-        if (!providerConfig.apiKey) {
-            this.logger.error("CreateOrchestrator", "Provider API Key 未配置", undefined, {
-                taskType,
-                providerId,
-                event: "PREREQUISITE_CHECK_FAILED",
-            });
-            return err("E401_PROVIDER_NOT_CONFIGURED", `Provider "${providerId}" 的 API Key 未配置`);
-        }
-
-        // 2. 检查模板是否已加载
-        const templateId = this.deps.promptManager.resolveTemplateId(taskType, conceptType);
-        if (!this.deps.promptManager.hasTemplate(templateId)) {
-            this.logger.error("CreateOrchestrator", "模板未加载", undefined, {
-                taskType,
-                templateId,
-                event: "PREREQUISITE_CHECK_FAILED",
-            });
-            return err("E404_TEMPLATE_NOT_FOUND", `模板 "${templateId}" 未加载，请检查 prompts 目录`);
-        }
-
-        this.logger.debug("CreateOrchestrator", "前置校验通过", {
-            taskType,
-            providerId,
-            event: "PREREQUISITE_CHECK_PASSED",
-        });
-
-        return ok(undefined);
+        return sharedValidatePrerequisites(
+            settings, taskType, providerId,
+            this.deps.promptManager, this.logger, "CreateOrchestrator", conceptType,
+        );
     }
 
     /**
@@ -1224,34 +1173,10 @@ export class CreateOrchestrator {
 
     /**
      * 获取任务对应的 Provider ID
+     * 委托给 orchestrator-utils 共享实现（DRY）
      */
     private getProviderIdForTask(taskType: TaskType): string {
-        const settings = this.getSettings();
-
-        // 优先使用任务特定的 providerId
-        const taskModel = settings.taskModels[taskType];
-        if (taskModel?.providerId && taskModel.providerId.trim() !== "") {
-            return taskModel.providerId;
-        }
-
-        // 回退到默认 Provider
-        if (settings.defaultProviderId && settings.defaultProviderId.trim() !== "") {
-            return settings.defaultProviderId;
-        }
-
-        // 如果都没有，返回第一个启用的 Provider
-        const firstProvider = Object.keys(settings.providers).find(
-            (id) => settings.providers[id].enabled,
-        );
-
-        if (firstProvider) {
-            this.logger.warn("CreateOrchestrator", `任务 ${taskType} 未配置 Provider，使用第一个可用 Provider: ${firstProvider}`);
-            return firstProvider;
-        }
-
-        // 如果没有任何可用 Provider，返回空字符串（会在前置校验中报错）
-        this.logger.error("CreateOrchestrator", `任务 ${taskType} 未配置 Provider，且没有可用的 Provider`);
-        return "";
+        return resolveProviderIdForTask(this.getSettings(), taskType, this.logger, "CreateOrchestrator");
     }
 
     /**
@@ -1436,40 +1361,8 @@ export class CreateOrchestrator {
     }
 
     /**
-     * 构建验证报告 Markdown
-     */
-    private buildVerificationReportMarkdown(result: Record<string, unknown>): string {
-        const lines: string[] = [];
-        lines.push("\n---\n");
-        lines.push("## 事实核查报告\n");
-
-        if (result.summary && typeof result.summary === "string") {
-            lines.push(result.summary);
-            lines.push("");
-        }
-
-        if (Array.isArray(result.claims)) {
-            for (const claim of result.claims) {
-                if (typeof claim === "object" && claim !== null) {
-                    const c = claim as Record<string, unknown>;
-                    const status = c.status === "verified" ? "✅" : c.status === "unverified" ? "⚠️" : "❌";
-                    lines.push(`- ${status} ${c.claim || ""}`);
-                    if (c.explanation) {
-                        lines.push(`  - ${c.explanation}`);
-                    }
-                }
-            }
-            lines.push("");
-        }
-
-        const timestamp = formatCRTimestamp();
-        lines.push(`> 核查时间: ${timestamp}\n`);
-
-        return lines.join("\n");
-    }
-
-    /**
      * 追加验证报告到笔记末尾
+     * 委托给 orchestrator-utils 共享的 buildVerificationReportMarkdown（DRY）
      */
     private async appendVerificationReportToNote(
         filePath: string,
@@ -1482,8 +1375,9 @@ export class CreateOrchestrator {
                 return;
             }
 
-            const report = this.buildVerificationReportMarkdown(result);
-            const newContent = currentContent + report;
+            const report = buildVerificationReportMarkdown(result);
+            const separator = currentContent.endsWith("\n") ? "\n" : "\n\n";
+            const newContent = `${currentContent}${separator}${report}`;
             await this.deps.noteRepository.writeAtomic(filePath, newContent);
 
             this.logger.info("CreateOrchestrator", `验证报告已追加: ${filePath}`);

@@ -608,12 +608,26 @@ export class WorkbenchPanel extends ItemView {
     }
 
     /** 获取 DiffView 按钮标签 */
-    private getDiffViewLabels(): { accept: string; reject: string; acceptAria: string; rejectAria: string } {
+    private getDiffViewLabels(): {
+        accept: string; reject: string;
+        acceptAria: string; rejectAria: string;
+        modeLabel: string;
+        unifiedView: string; unifiedViewAria: string;
+        sideBySideView: string; sideBySideViewAria: string;
+        leftTitle: string; rightTitle: string;
+    } {
         return {
             accept: this.t("workbench.diffPreview.accept"),
             reject: this.t("workbench.diffPreview.reject"),
             acceptAria: this.t("workbench.diffPreview.acceptAria"),
             rejectAria: this.t("workbench.diffPreview.rejectAria"),
+            modeLabel: this.t("workbench.diffPreview.modeLabel"),
+            unifiedView: this.t("workbench.diffPreview.unifiedView"),
+            unifiedViewAria: this.t("workbench.diffPreview.unifiedViewAria"),
+            sideBySideView: this.t("workbench.diffPreview.sideBySideView"),
+            sideBySideViewAria: this.t("workbench.diffPreview.sideBySideViewAria"),
+            leftTitle: this.t("workbench.diffPreview.leftTitle"),
+            rightTitle: this.t("workbench.diffPreview.rightTitle"),
         };
     }
 

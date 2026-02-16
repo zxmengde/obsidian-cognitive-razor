@@ -1,8 +1,8 @@
-import { App, Notice, setIcon } from "obsidian";
+﻿import { App, Notice, setIcon } from "obsidian";
 import { AbstractModal } from "./abstract-modal";
 
 interface VisualizationModalOptions {
-  t: any;
+  t: (path: string) => string;
   contextBefore: string;
   contextAfter: string;
   onConfirm: (userPrompt: string) => Promise<void> | void;
@@ -20,25 +20,26 @@ export class VisualizationModal extends AbstractModal {
   }
 
   protected renderContent(contentEl: HTMLElement): void {
-    const t = this.options.t.imageModal || {};
-    contentEl.createEl("h2", { text: t.title || "生成图片" });
+    contentEl.createEl("h2", { text: this.text("imageModal.title", "Generate Image") });
 
     const desc = contentEl.createDiv({ cls: "cr-modal-desc" });
-    desc.setText(t.promptLabel || "描述你想要的图片");
+    desc.setText(this.text("imageModal.promptLabel", "Describe the image you want"));
 
     this.promptInput = contentEl.createEl("textarea", {
       cls: "cr-textarea",
       attr: {
-        placeholder: t.promptPlaceholder || "例如：一个展示量子纠缠的示意图，使用简洁的线条和颜色..."
+        placeholder: this.text(
+          "imageModal.promptPlaceholder",
+          "Example: A clean line-art diagram showing quantum entanglement with concise labels."
+        )
       }
     });
     this.promptInput.rows = 4;
     this.promptInput.addEventListener("input", () => this.syncConfirmState());
 
-    // 上下文预览（可折叠）
     this.contextContainer = contentEl.createDiv({ cls: "cr-context-preview" });
     const header = this.contextContainer.createDiv({ cls: "cr-context-header" });
-    header.setText(t.contextPreview || "上下文预览");
+    header.setText(this.text("imageModal.contextPreview", "Context preview"));
     const toggleIcon = header.createSpan({ cls: "cr-collapse-icon", attr: { "aria-hidden": "true" } });
     setIcon(toggleIcon, "chevron-right");
     const body = this.contextContainer.createDiv({ cls: "cr-context-body cr-collapsed" });
@@ -50,8 +51,8 @@ export class VisualizationModal extends AbstractModal {
     body.createEl("p", { text: this.options.contextAfter, cls: "cr-context-block" });
 
     const actions = contentEl.createDiv({ cls: "cr-modal-buttons" });
-    this.confirmBtn = actions.createEl("button", { text: t.generate || "生成", cls: "mod-cta" });
-    const cancelBtn = actions.createEl("button", { text: t.cancel || "取消" });
+    this.confirmBtn = actions.createEl("button", { text: this.text("imageModal.generate", "Generate"), cls: "cr-btn-primary" });
+    const cancelBtn = actions.createEl("button", { text: this.text("imageModal.cancel", "Cancel") });
 
     this.confirmBtn.addEventListener("click", () => this.handleSubmit());
     cancelBtn.addEventListener("click", () => this.close());
@@ -77,20 +78,25 @@ export class VisualizationModal extends AbstractModal {
     if (!this.promptInput || !this.confirmBtn) return;
     const value = this.promptInput.value.trim();
     if (value.length < 5) {
-      new Notice("请输入至少 5 个字符的描述");
+      new Notice(this.text("imageModal.promptTooShort", "Please enter at least 5 characters."));
       return;
     }
+
     this.confirmBtn.disabled = true;
     try {
       await this.options.onConfirm(value);
       this.close();
     } catch (error) {
-      // 需求 23.4：不暴露原始错误堆栈或 API 响应
       const safeMsg = error instanceof Error && error.message.length < 100
         ? error.message
-        : "操作失败，请稍后重试";
+        : this.text("imageModal.genericFailure", "Operation failed, please try again later");
       new Notice(safeMsg);
       this.confirmBtn.disabled = false;
     }
+  }
+
+  private text(path: string, fallback: string): string {
+    const value = this.options.t(path);
+    return value === path ? fallback : value;
   }
 }

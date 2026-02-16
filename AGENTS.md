@@ -15,26 +15,12 @@ Kiro 负责代码修改、构建、测试、调试和实际在 Obsidian 中运�
 - **用户**：提出功能需求 / 描述 Bug / 反馈使用体验 / 使用插件
 - **Kiro**：分析需求 → 定位代码 → 实现修改 → 构建 → 测试 → 在 Obsidian 中实际运行、验证和测试 → 交付可用版本
 
-### Obsidian CLI 集成（Windows）
-
-Kiro 可通过 `obsidian` CLI 直接与运行中的 Obsidian 交互，实现自动化验证。
-
-**关键约束**：Windows 下必须使用 `cmd /c "obsidian ..."` 包装命令以正确捕获输出。
-
-#### 内容引号规则
-在 `cmd /c "..."` 内部使用双引号时，需要转义：
-- 简单值：`name=test`
-- 带空格：`name="My Note"` 或 `content="Hello World"`
-- 多行内容：使用 `obsidian append` 分步添加
-
 ### 关键约束
 - 每次修改后必须 `npm run build` + `npm run test`
 - 修改核心模块时必须跑测试
 - 代码注释保持中文，与现有风格一致
 - 不要创建总结性 markdown 文件
-- Obsidian CLI 重载后需等待初始化：使用 `Start-Sleep -Seconds 3`（PowerShell）或 `timeout /t 3 /nobreak >nul`（CMD）
 - 审计类任务使用 `grepSearch` 工具定位目标代码，不手动逐文件检查
-
 ---
 
 ## 1. 项目概览
@@ -63,7 +49,7 @@ Stub（Tag 后占位）→ Draft（Write 后有正文）→ Evergreen（用户�
 
 ---
 
-## 2. 构建、测试与开发命令
+## 2. 构建与测试
 
 | 命令 | 用途 | 何时使用 |
 |------|------|----------|
@@ -71,6 +57,32 @@ Stub（Tag 后占位）→ Draft（Write 后有正文）→ Evergreen（用户�
 | `npm run test` | Vitest 单次运行 | 修改核心模块后必须运行 |
 | `npm run test:coverage` | 覆盖率报告 | 大范围重构时推荐 |
 | `npm run prepare-release` | 构建 + 发布校验 | 发布前运行 |
+
+### Obsidian CLI 运行时验证（全自动）
+
+> 激活 `obsidian-cli` skill 获取完整命令参考和 workaround 细节。
+
+每次修改后的标准验证流程：
+
+```powershell
+# 1. 构建 + 重载
+npm run build
+obsidian plugin:reload id=obsidian-cognitive-razor
+
+# 2. 检查加载错误
+obsidian dev:errors
+
+# 3. 验证插件状态
+obsidian eval code="app.plugins.plugins['obsidian-cognitive-razor'] ? 'loaded' : 'not loaded'" | Out-String
+```
+
+**关键规则：**
+- 需要读取输出的命令追加 `| Out-String`（解决 PowerShell 输出截断）
+- `dev:` 系列命令（`dev:errors`、`dev:console`、`dev:screenshot`）不加 `| Out-String`
+- Frontmatter 操作用 `eval + processFrontMatter`，不用 `property:set`（静默失败）
+- DOM 查询用 `eval + document.querySelector`，不用 `dev:dom`（输出为空）
+- `eval` 不支持 top-level `await`，异步用 `.then()` 链
+- 创建带 frontmatter 的笔记用 `eval + app.vault.create`
 
 ---
 
@@ -88,12 +100,9 @@ Stub（Tag 后占位）→ Draft（Write 后有正文）→ Evergreen（用户�
 - 注释语言：中文（与现有代码一致）
 
 ### Obsidian API 规范
-- `this.app` 不用全局 `app`；`registerEvent/Interval/DomEvent` 管理生命周期
-- `requestUrl()` 替代 `fetch()`；`normalizePath()` 处理路径
-- `Vault.process()` 原子写入；`FileManager.processFrontMatter()` 改 frontmatter
-- `fileManager.trashFile()` 删除文件；`vault.cachedRead()` 优先读取
-- 不用 `innerHTML/outerHTML`，用 `createDiv/createSpan/createEl`
-- CSS 用 Obsidian 主题变量，类名 `cr-` 前缀，4px 间距网格
+> 激活 `obsidian` skill 获取完整规则（27 条 ESLint 规则、内存管理、类型安全、无障碍等）
+
+本项目特定约定：CSS 类名 `cr-` 前缀，4px 间距网格
 
 ### 错误处理
 - 错误码：E1xx（输入）、E2xx（Provider）、E3xx（系统）、E4xx（配置）、E5xx（内部）
@@ -108,17 +117,37 @@ Stub（Tag 后占位）→ Draft（Write 后有正文）→ Evergreen（用户�
 - 框架：Vitest + happy-dom + fast-check（v4.3.0）
 - 文件命名：`*.test.ts`，与源文件同层
 - TypeScript 编译排除测试文件，Vitest 自行编译
-- 修改核心流程必须跑 `npm run test`
+- 正确性属性（P1-P6）定义 → `requirements.md` 末尾
 
-### 正确性属性（Property-Based Testing）
-| 属性 | 验证目标 |
-|------|----------|
-| P1 | ErrorRegistry `formatMessage()` 输出不含未解析占位符 |
-| P2 | 有效 PluginSettings 校验返回 `valid: true` |
-| P3 | `sanitizeContext()` 输出不含原始敏感值 |
-| P4 | TaskRecord 序列化往返一致性 |
-| P5 | Frontmatter 序列化往返一致性 |
-| P6 | 命名模板输出不含非法文件名字符 |
+### 端到端测试（E2E）
+
+> 激活 `obsidian-cli` skill 获取完整的 E2E 测试命令参考。
+
+通过 `obsidian eval` 直接调用 Orchestrator API，绕过 Modal UI，实现全自动端到端测试。
+
+**核心入口：**
+```powershell
+# 获取所有组件
+obsidian eval code="const c = app.plugins.plugins['obsidian-cognitive-razor'].getComponents(); Object.keys(c).join(', ')" | Out-String
+```
+
+**可测试的操作：**
+
+| 操作 | 方法链 | 需要确认 |
+|------|--------|---------|
+| Create（自动） | `defineDirect()` → `startCreatePipelineWithStandardized()` | 自动完成 |
+| Create（手动） | `defineDirect()` → `startCreatePipeline()` → `confirmCreate()` → `confirmWrite()` | 两步确认 |
+| Amend | `startAmendPipeline(path, instruction)` → `confirmWrite()` | 一步确认 |
+| Merge | `startMergePipeline(pair, keepId, name)` → `confirmWrite()` | 一步确认 |
+| Verify | `startVerifyPipeline(path)` | 自动完成 |
+| Expand | `prepare(file)` → `createFromHierarchical/Abstract()` | 委托 Create |
+| Image | `startImagePipeline(options)` | 自动完成 |
+
+**测试规范：**
+- 测试笔记使用 `__test_` 前缀，便于批量清理
+- 异步管线用轮询模式等待（500ms 间隔，120 秒超时）
+- 每步操作后 `obsidian dev:errors` 检查异常
+- 流程：Setup → Execute → Wait → Verify → Cleanup
 
 ---
 
@@ -126,13 +155,10 @@ Stub（Tag 后占位）→ Draft（Write 后有正文）→ Evergreen（用户�
 
 > 完整架构设计 → `.kiro/specs/cognitive-razor-SSOT/design.md`
 
-### 三层架构
-UI → Core → Data，依赖单向流动。`ServiceContainer` 管理注册（Data → Core → UI）和释放（逆序）。
-
 ### SSOT 权威索引
 | 关注点 | 权威来源 |
 |--------|----------|
-| 类型/枚举/TaskRecord 联合类型 | `src/types.ts` + `src/data/settings-store.ts` |
+| 类型/枚举/TaskRecord | `src/types.ts` + `src/data/settings-store.ts` |
 | 服务注册与生命周期 | `src/core/service-container.ts` |
 | 错误码与消息模板 | `src/data/error-codes.ts` |
 | Prompt 槽位与模板 | `src/core/prompt-manager.ts` + `prompts/` |
@@ -143,22 +169,17 @@ UI → Core → Data，依赖单向流动。`ServiceContainer` 管理注册（Da
 | 国际化 | `src/locales/*.json` + `src/core/i18n.ts` |
 | Modal 生命周期 | `src/ui/modal-manager.ts` + `src/ui/abstract-modal.ts` |
 | 命令 ID | `src/ui/command-utils.ts` |
-
-### 并发模型
-- NodeLock：同一 cruid 写入互斥（内存级），启动时清空残留
-- 去重检测使用 `type:${CRType}` 锁（最佳努力）
-
-### 数据持久化
-| 文件 | 用途 |
-|------|------|
-| Vault Markdown | SSOT（frontmatter + 正文） |
-| `data/queue-state.json` | 队列状态（2 秒防抖写入） |
-| `data/vectors/` | 向量嵌入（按类型分目录，按需加载 + TTL） |
-| `data/duplicate-pairs.json` | 重复对 |
-| `data/snapshots/` | 撤销快照（过期清理） |
-| `data/pipeline-state.json` | 管线状态（Diff 确认阶段恢复） |
-| `data/app.log` | JSONL 日志（脱敏） |
-| `data.json` | 插件设置（含 uiState） |
+| 命令注册 | `src/ui/command-dispatcher.ts` |
+| 工作台 UI | `src/ui/workbench-panel.ts` + `src/ui/workbench/*.ts` |
+| 设置页 | `src/ui/settings-tab.ts` |
+| 样式 | `styles.css` |
+| 向量索引 | `src/core/vector-index.ts` |
+| 去重 | `src/core/duplicate-manager.ts` |
+| 日志/脱敏 | `src/data/logger.ts` |
+| Frontmatter | `src/core/frontmatter-utils.ts` |
+| 命名模板 | `src/core/naming-utils.ts` |
+| 快照/撤销 | `src/core/undo-manager.ts` |
+| 哲学基线 | `docs/PHILOSOPHICAL_FOUNDATIONS.md` |
 
 ---
 
@@ -169,7 +190,7 @@ Skills 安装在 `.kiro/skills/`，按任务类型按需激活：
 | 任务类型 | 需激活的 Skills |
 |----------|----------------|
 | 所有开发任务 | `obsidian` |
-| 运行时验证 | `obsidian-cli` |
+| 运行时验证 | `obsidian-cli`（含 PowerShell workaround 和 eval 替代方案） |
 | Data/Core 层 | `obsidian-sdk-patterns` |
 | 文件/笔记操作 | `obsidian-core-workflow-a` |
 | UI 组件 | `obsidian-core-workflow-b` |
@@ -180,62 +201,3 @@ Skills 安装在 `.kiro/skills/`，按任务类型按需激活：
 | 大范围重构 | `obsidian-reference-architecture` |
 | 发布准备 | `obsidian-prod-checklist` + `obsidian-deploy-integration` |
 | CI/CD | `obsidian-ci-integration` |
-
----
-
-## 7. 自动化验证协议
-
-### 7.1 标准验证（每次修改后）
-1. `getDiagnostics` 检查修改文件
-2. `npm run build`
-3. `npm run test`
-
-### 7.2 完整验证（重要修改）
-标准验证 + Obsidian CLI 运行时验证：
-1. `cmd /c "obsidian command id=app:reload"` → 等待 3 秒
-2. `cmd /c "obsidian dev:errors"` → 确认无错误
-3. `cmd /c "obsidian plugin id=obsidian-cognitive-razor"` → 确认 enabled
-4. `cmd /c "obsidian command id=obsidian-cognitive-razor:cognitive-razor:open-workbench"` → 确认工作台
-5. `cmd /c "obsidian dev:errors"` → 确认无新错误
-
-CLI 不可用时降级为编译 + 测试 + getDiagnostics，注明需用户手动验证。
-
----
-
-## 8. 提交规范
-
-- 格式：`feat|fix|chore|refactor|docs|test: 简要动词短语`
-- 聚焦单一责任
-- 不提交 Vault 数据、密钥或凭证
-- 发布前 `npm run prepare-release`
-
----
-
-## 9. 常用文件速查
-
-| 需求 | 文件 |
-|------|------|
-| 类型/字段/TaskRecord | `src/types.ts` |
-| 默认设置/校验 | `src/data/settings-store.ts` |
-| 服务注册 | `src/core/service-container.ts` |
-| 错误码 | `src/data/error-codes.ts` |
-| 管线编排 | `src/core/*-orchestrator.ts` |
-| 任务执行 | `src/core/task-runner.ts` |
-| 任务创建 | `src/core/task-factory.ts` |
-| AI 提示词 | `prompts/` |
-| 命令注册 | `src/ui/command-dispatcher.ts` + `command-utils.ts` |
-| 工作台 UI | `src/ui/workbench-panel.ts` + `src/ui/workbench/*.ts` |
-| Modal | `src/ui/modal-manager.ts` + `abstract-modal.ts` |
-| 设置页 | `src/ui/settings-tab.ts` |
-| 样式 | `styles.css` |
-| Schema/渲染 | `src/core/schema-registry.ts` + `content-renderer.ts` |
-| 向量索引 | `src/core/vector-index.ts` |
-| 去重 | `src/core/duplicate-manager.ts` |
-| 国际化 | `src/locales/*.json` + `src/core/i18n.ts` |
-| 日志/脱敏 | `src/data/logger.ts` |
-| Frontmatter | `src/core/frontmatter-utils.ts` |
-| 命名模板 | `src/core/naming-utils.ts` |
-| 并发锁 | `src/core/lock-manager.ts` |
-| 快照/撤销 | `src/core/undo-manager.ts` |
-| 哲学基线 | `docs/PHILOSOPHICAL_FOUNDATIONS.md` |
-| 架构 spec | `.kiro/specs/cognitive-razor-SSOT/` |

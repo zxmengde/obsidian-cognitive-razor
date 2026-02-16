@@ -1,6 +1,6 @@
-/**
+﻿/**
  * 通用 Modal 组件
- * 
+ *
  * 提供替代 prompt() 和 confirm() 的 Obsidian Modal 实现
  */
 
@@ -12,14 +12,12 @@ import type {
 } from "../types";
 import { safeErrorMessage } from "../types";
 import { AbstractModal } from "./abstract-modal";
+import { validateUrl as sharedValidateUrl } from "../data/validators";
 
 // ============================================================================
 // ConfirmModal - 确认对话框
 // ============================================================================
 
-/**
- * 确认 Modal
- */
 export class ConfirmModal extends AbstractModal {
   private options: ConfirmModalOptions;
 
@@ -40,7 +38,7 @@ export class ConfirmModal extends AbstractModal {
     const buttonContainer = contentEl.createDiv({ cls: "modal-button-container" });
 
     const cancelBtn = buttonContainer.createEl("button", {
-      text: this.options.cancelText || "取消"
+      text: this.options.cancelText || this.text("common.cancel", "Cancel")
     });
     cancelBtn.addEventListener("click", () => {
       this.options.onCancel?.();
@@ -48,11 +46,21 @@ export class ConfirmModal extends AbstractModal {
     });
 
     const confirmBtn = buttonContainer.createEl("button", {
-      text: this.options.confirmText || "确认",
-      cls: this.options.danger ? "mod-warning" : "mod-cta"
+      text: this.options.confirmText || this.text("common.confirm", "Confirm"),
+      cls: this.options.danger ? "cr-btn-danger" : "cr-btn-primary"
     });
-    confirmBtn.addEventListener("click", () => {
-      this.options.onConfirm();
+    confirmBtn.addEventListener("click", async () => {
+      // 禁用按钮防止重复点击，等待异步完成后再关闭
+      confirmBtn.disabled = true;
+      cancelBtn.disabled = true;
+      try {
+        await this.options.onConfirm();
+      } catch {
+        // 异步失败时恢复按钮，不关闭 Modal
+        confirmBtn.disabled = false;
+        cancelBtn.disabled = false;
+        return;
+      }
       this.close();
     });
 
@@ -62,15 +70,21 @@ export class ConfirmModal extends AbstractModal {
   onClose(): void {
     super.onClose();
   }
+
+  private text(path: string, fallback: string): string {
+    const translator = this.options.t;
+    if (!translator) {
+      return fallback;
+    }
+    const value = translator(path);
+    return value === path ? fallback : value;
+  }
 }
 
 // ============================================================================
 // ProviderConfigModal - Provider 配置对话框
 // ============================================================================
 
-/**
- * Provider 配置 Modal
- */
 export class ProviderConfigModal extends AbstractModal {
   private options: ProviderConfigModalOptions;
   private providerIdInput: HTMLInputElement | null = null;
@@ -90,23 +104,30 @@ export class ProviderConfigModal extends AbstractModal {
     modalEl.addClass("cr-scope");
     contentEl.addClass("cr-provider-config-modal");
 
-    const modalTitle = this.options.title ?? (this.options.mode === "add" ? "添加 AI Provider" : "编辑 AI Provider");
+    const modalTitle = this.options.title ?? (
+      this.options.mode === "add"
+        ? this.text("modals.addProvider.title", "Add AI Provider")
+        : this.text("modals.editProvider.title", "Edit AI Provider")
+    );
     contentEl.createEl("h2", { text: modalTitle });
 
-    // 说明文字
     const descEl = contentEl.createDiv({ cls: "cr-modal-description" });
-    descEl.textContent = "配置 OpenAI 兼容的 API 服务（如 Gemini、OpenAI、Azure OpenAI 等）。";
+    descEl.textContent = this.text(
+      "modals.providerConfig.description",
+      "Configure an OpenAI-compatible API service (Gemini, OpenAI, Azure OpenAI, etc.)."
+    );
 
     const formEl = contentEl.createDiv({ cls: "modal-form" });
 
-    // === 基础配置 ===
     const basicSection = formEl.createDiv({ cls: "modal-section" });
-    basicSection.createEl("h3", { text: "基础配置", cls: "modal-section-title" });
+    basicSection.createEl("h3", {
+      text: this.text("modals.providerConfig.sections.basic", "Basic Configuration"),
+      cls: "modal-section-title"
+    });
 
-    // Provider ID
     const idSetting = new Setting(basicSection)
-      .setName("Provider ID")
-      .setDesc("唯一标识符，建议使用英文字母和连字符，例如: my-openai");
+      .setName(this.text("modals.providerConfig.fields.providerId", "Provider ID"))
+      .setDesc(this.text("modals.providerConfig.fields.providerIdDesc", "Unique identifier, e.g. my-openai"));
 
     this.providerIdInput = idSetting.controlEl.createEl("input", {
       type: "text",
@@ -119,10 +140,9 @@ export class ProviderConfigModal extends AbstractModal {
       this.providerIdInput.disabled = true;
     }
 
-    // API Key
     const apiKeySetting = new Setting(basicSection)
-      .setName("API Key")
-      .setDesc("您的 API 密钥");
+      .setName(this.text("modals.providerConfig.fields.apiKey", "API Key"))
+      .setDesc(this.text("modals.providerConfig.fields.apiKeyDesc", "Your API key"));
 
     this.apiKeyInput = apiKeySetting.controlEl.createEl("input", {
       type: "password",
@@ -133,26 +153,32 @@ export class ProviderConfigModal extends AbstractModal {
 
     apiKeySetting.addButton(button => {
       button
-        .setButtonText("显示")
+        .setButtonText(this.text("modals.providerConfig.showSecret", "Show"))
         .onClick(() => {
           if (this.apiKeyInput) {
             const isPassword = this.apiKeyInput.type === "password";
             this.apiKeyInput.type = isPassword ? "text" : "password";
-            button.setButtonText(isPassword ? "隐藏" : "显示");
+            button.setButtonText(
+              isPassword
+                ? this.text("modals.providerConfig.hideSecret", "Hide")
+                : this.text("modals.providerConfig.showSecret", "Show")
+            );
           }
         });
     });
 
-
-
-    // === 端点配置 ===
     const endpointSection = formEl.createDiv({ cls: "modal-section" });
-    endpointSection.createEl("h3", { text: "端点配置", cls: "modal-section-title" });
+    endpointSection.createEl("h3", {
+      text: this.text("modals.providerConfig.sections.endpoint", "Endpoint Configuration"),
+      cls: "modal-section-title"
+    });
 
-    // 自定义端点
     const baseUrlSetting = new Setting(endpointSection)
-      .setName("API 端点")
-      .setDesc("留空使用默认端点 (Gemini: https://generativelanguage.googleapis.com/v1beta/openai/)");
+      .setName(this.text("modals.providerConfig.fields.endpoint", "API Endpoint"))
+      .setDesc(this.text(
+        "modals.providerConfig.fields.endpointDesc",
+        "Leave empty to use the default Gemini endpoint."
+      ));
 
     this.baseUrlInput = baseUrlSetting.controlEl.createEl("input", {
       type: "text",
@@ -161,14 +187,15 @@ export class ProviderConfigModal extends AbstractModal {
     });
     this.baseUrlInput.style.width = "100%";
 
-    // === 模型配置 ===
     const modelSection = formEl.createDiv({ cls: "modal-section" });
-    modelSection.createEl("h3", { text: "默认模型", cls: "modal-section-title" });
+    modelSection.createEl("h3", {
+      text: this.text("modals.providerConfig.sections.model", "Default Model"),
+      cls: "modal-section-title"
+    });
 
-    // 聊天模型
     const chatModelSetting = new Setting(modelSection)
-      .setName("聊天模型")
-      .setDesc("用于标准化、推理等任务");
+      .setName(this.text("modals.providerConfig.fields.chatModel", "Chat Model"))
+      .setDesc(this.text("modals.providerConfig.fields.chatModelDesc", "Used for generation tasks"));
 
     this.chatModelInput = chatModelSetting.controlEl.createEl("input", {
       type: "text",
@@ -177,10 +204,9 @@ export class ProviderConfigModal extends AbstractModal {
     });
     this.chatModelInput.style.width = "100%";
 
-    // 嵌入模型
     const embedModelSetting = new Setting(modelSection)
-      .setName("嵌入模型")
-      .setDesc("用于向量嵌入和语义搜索");
+      .setName(this.text("modals.providerConfig.fields.embedModel", "Embedding Model"))
+      .setDesc(this.text("modals.providerConfig.fields.embedModelDesc", "Used for vector embedding and semantic search"));
 
     this.embedModelInput = embedModelSetting.controlEl.createEl("input", {
       type: "text",
@@ -193,15 +219,17 @@ export class ProviderConfigModal extends AbstractModal {
 
     const buttonContainer = contentEl.createDiv({ cls: "modal-button-container" });
 
-    const cancelBtn = buttonContainer.createEl("button", { text: "取消" });
+    const cancelBtn = buttonContainer.createEl("button", {
+      text: this.text("common.cancel", "Cancel")
+    });
     cancelBtn.addEventListener("click", () => {
       this.options.onCancel?.();
       this.close();
     });
 
     const saveBtn = buttonContainer.createEl("button", {
-      text: "保存",
-      cls: "mod-cta"
+      text: this.text("common.save", "Save"),
+      cls: "cr-btn-primary"
     });
     saveBtn.addEventListener("click", () => this.handleSave());
 
@@ -222,12 +250,12 @@ export class ProviderConfigModal extends AbstractModal {
     const embedModel = this.embedModelInput?.value.trim() || "";
 
     if (!providerId) {
-      this.showError("请输入 Provider ID");
+      this.showError(this.text("modals.providerConfig.errors.providerIdRequired", "Please enter Provider ID"));
       return;
     }
 
     if (!apiKey) {
-      this.showError("请输入 API Key");
+      this.showError(this.text("modals.providerConfig.errors.apiKeyRequired", "Please enter API Key"));
       return;
     }
 
@@ -251,20 +279,15 @@ export class ProviderConfigModal extends AbstractModal {
       await this.options.onSave(providerId, config);
       this.close();
     } catch (error) {
-      this.showError(`保存失败: ${safeErrorMessage(error, "保存失败")}`);
+      this.showError(`${this.text("modals.providerConfig.errors.saveFailed", "Save failed")}: ${safeErrorMessage(error, this.text("modals.providerConfig.errors.saveFailed", "Save failed"))}`);
     }
   }
 
+  /**
+   * URL 校验 — 委托给 validators.ts 共享实现（DRY）
+   */
   private validateUrl(url: string): string | null {
-    if (!/^https?:\/\/.+/.test(url)) {
-      return "URL 必须以 http:// 或 https:// 开头";
-    }
-    try {
-      new URL(url);
-      return null;
-    } catch {
-      return "无效的 URL 格式";
-    }
+    return sharedValidateUrl(url);
   }
 
   private showError(message: string): void {
@@ -282,5 +305,14 @@ export class ProviderConfigModal extends AbstractModal {
     this.embedModelInput = null;
     this.errorEl = null;
     super.onClose();
+  }
+
+  private text(path: string, fallback: string): string {
+    const translator = this.options.t;
+    if (!translator) {
+      return fallback;
+    }
+    const value = translator(path);
+    return value === path ? fallback : value;
   }
 }
