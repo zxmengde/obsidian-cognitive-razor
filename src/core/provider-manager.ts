@@ -1,5 +1,6 @@
 /** Provider 管理器：与 AI 服务提供商交互，支持 OpenAI 标准格式 */
 
+import { requestUrl, type RequestUrlParam, type RequestUrlResponse } from "obsidian";
 import {
   ILogger,
   ChatRequest,
@@ -412,15 +413,18 @@ export class ProviderManager {
     });
 
     try {
-      const response = await fetch(url, {
+      // 需求 22.7：使用 requestUrl() 而非 fetch()，绕过 CORS 限制
+      const response = await requestUrl({
+        url,
         method: "GET",
         headers: {
           "Authorization": `Bearer ${providerConfig.apiKey}`
-        }
+        },
+        throw: false
       });
 
-      if (!response.ok) {
-        const errorResult = this.mapHttpError(response.status, await this.safeReadText(response));
+      if (response.status < 200 || response.status >= 300) {
+        const errorResult = this.mapHttpError(response.status, typeof response.text === "string" ? response.text : "");
         
         // errorResult 是 Err 类型，安全访问 error 属性
         const errorCode = !errorResult.ok ? errorResult.error.code : 'UNKNOWN';
@@ -438,7 +442,7 @@ export class ProviderManager {
         return errorResult;
       }
 
-      const data = (await response.json()) as { data?: Array<{ id: string }> };
+      const data = response.json as { data?: Array<{ id: string }> };
 
       // 构建能力信息
       const models = data.data?.map((m) => m.id) ?? [];
@@ -577,64 +581,48 @@ export class ProviderManager {
     return ok(providerConfig);
   }
 
-  private async executeJsonRequest<T>(
-    url: string,
-    body: object,
-    apiKey: string,
-    signal: AbortSignal | undefined,
-    parse: (data: unknown) => Result<T>
-  ): Promise<Result<T>> {
-    const settings = this.settingsStore.getSettings();
-    const timeoutMs = settings.providerTimeoutMs || 60000;
-
-    const controller = new AbortController();
-    const onAbort = () => controller.abort(signal?.reason as any);
-    const timeoutId = setTimeout(() => controller.abort(new Error("请求超时")), timeoutMs);
-    if (signal) {
-      if (signal.aborted) {
-        clearTimeout(timeoutId);
+  // 需求 22.7：使用 requestUrl() 而非 fetch()，绕过 CORS 限制
+    private async executeJsonRequest<T>(
+      url: string,
+      body: object,
+      apiKey: string,
+      signal: AbortSignal | undefined,
+      parse: (data: unknown) => Result<T>
+    ): Promise<Result<T>> {
+      if (signal?.aborted) {
         return err("E310_INVALID_STATE", "请求已取消", signal.reason);
       }
-      signal.addEventListener("abort", onAbort, { once: true });
-    }
 
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-        cache: "no-store"
-      });
+      try {
+        const params: RequestUrlParam = {
+          url,
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${apiKey}`
+          },
+          body: JSON.stringify(body),
+          throw: false
+        };
 
-      if (!response.ok) {
-        return this.mapHttpError(response.status, await this.safeReadText(response));
-      }
+        const response = await requestUrl(params);
 
-      const data = (await response.json()) as unknown;
-      return parse(data);
-    } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") {
+        if (response.status < 200 || response.status >= 300) {
+          return this.mapHttpError(response.status, typeof response.text === "string" ? response.text : "");
+        }
+
+        const data = response.json as unknown;
+        return parse(data);
+      } catch (error) {
+        // requestUrl 在网络错误时抛出异常
         if (signal?.aborted) {
           return err("E310_INVALID_STATE", "请求已取消", signal.reason);
         }
-        return err("E201_PROVIDER_TIMEOUT", "请求超时", error);
-      }
-      // 网络错误
-      if (error instanceof TypeError && error.message.includes("fetch")) {
-        return err("E204_PROVIDER_ERROR", "网络连接失败", { kind: "network", error });
-      }
-      return err("E204_PROVIDER_ERROR", `请求失败: ${(error as Error).message}`, error);
-    } finally {
-      clearTimeout(timeoutId);
-      if (signal) {
-        signal.removeEventListener("abort", onAbort);
+        // 需求 23.4：不暴露原始错误消息给用户，放入 details 供日志使用
+        return err("E204_PROVIDER_ERROR", "网络请求失败，请检查网络连接", { kind: "network", rawError: (error as Error).message });
       }
     }
-  }
+
 
   /** 执行聊天请求（单次，不含重试逻辑） */
   private async executeChatRequest(
@@ -724,64 +712,47 @@ export class ProviderManager {
     });
   }
 
+  // 需求 22.7：使用 requestUrl() 而非 fetch()，绕过 CORS 限制
   private async fetchImageUrlAsDataUrl(url: string, signal?: AbortSignal): Promise<Result<string>> {
-    const settings = this.settingsStore.getSettings();
-    const timeoutMs = settings.providerTimeoutMs || 60000;
-
-    const controller = new AbortController();
-    const onAbort = () => controller.abort(signal?.reason as any);
-    const timeoutId = setTimeout(() => controller.abort(new Error("请求超时")), timeoutMs);
-
-    if (signal) {
-      if (signal.aborted) {
-        clearTimeout(timeoutId);
-        return err("E310_INVALID_STATE", "请求已取消", signal.reason);
-      }
-      signal.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) {
+      return err("E310_INVALID_STATE", "请求已取消", signal.reason);
     }
 
     try {
-      const response = await fetch(url, {
+      const response = await requestUrl({
+        url,
         method: "GET",
-        signal: controller.signal,
-        cache: "no-store"
+        throw: false
       });
 
-      if (!response.ok) {
+      if (response.status < 200 || response.status >= 300) {
         return err("E204_PROVIDER_ERROR", `图片下载失败 (${response.status})`);
       }
 
-      const contentType = response.headers.get("content-type") || "image/png";
-      const buffer = Buffer.from(await response.arrayBuffer());
+      const contentType = response.headers["content-type"] || "image/png";
+      const buffer = Buffer.from(response.arrayBuffer);
       const base64 = buffer.toString("base64");
       return ok(`data:${contentType};base64,${base64}`);
     } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") {
-        if (signal?.aborted) {
-          return err("E310_INVALID_STATE", "请求已取消", signal.reason);
-        }
-        return err("E201_PROVIDER_TIMEOUT", "请求超时", error);
+      if (signal?.aborted) {
+        return err("E310_INVALID_STATE", "请求已取消", signal.reason);
       }
-      if (error instanceof TypeError && error.message.includes("fetch")) {
-        return err("E204_PROVIDER_ERROR", "网络连接失败", { kind: "network", error });
-      }
-      return err("E204_PROVIDER_ERROR", `请求失败: ${(error as Error).message}`, error);
-    } finally {
-      clearTimeout(timeoutId);
-      if (signal) {
-        signal.removeEventListener("abort", onAbort);
-      }
+      // 需求 23.4：不暴露原始错误消息给用户
+      return err("E204_PROVIDER_ERROR", "图片下载失败，请检查网络连接", { kind: "network", rawError: (error as Error).message });
     }
   }
 
-  /** 将 HTTP 状态码映射为错误结果 */
+  /**
+   * 将 HTTP 状态码映射为错误结果
+   * 需求 23.4：用户可见消息仅包含错误码 + 安全描述，原始 API 响应放入 details
+   */
   private mapHttpError(status: number, responseText: string): Result<never> {
-    // 尝试解析错误响应
-    let errorMessage = responseText;
+    // 解析原始响应用于日志/调试（放入 details，不暴露给用户）
+    let rawDetail = responseText;
     try {
       const errorData: HttpErrorResponse = JSON.parse(responseText);
       if (errorData.error?.message) {
-        errorMessage = errorData.error.message;
+        rawDetail = errorData.error.message;
       }
     } catch {
       // 保持原始文本
@@ -789,29 +760,21 @@ export class ProviderManager {
 
     // 认证错误 (401/403) → E203_INVALID_API_KEY
     if (status === 401 || status === 403) {
-      return err("E203_INVALID_API_KEY", `认证失败: ${errorMessage}`);
+      return err("E203_INVALID_API_KEY", "认证失败，请检查 API Key 是否正确", { status, rawResponse: rawDetail });
     }
 
     // 速率限制 (429) → E202_RATE_LIMITED
     if (status === 429) {
-      return err("E202_RATE_LIMITED", `速率限制: ${errorMessage}`);
+      return err("E202_RATE_LIMITED", "请求频率超限，请稍后重试", { status, rawResponse: rawDetail });
     }
 
     // 服务器错误 (5xx) → E204_PROVIDER_ERROR
     if (status >= 500) {
-      return err("E204_PROVIDER_ERROR", `服务器错误 (${status}): ${errorMessage}`);
+      return err("E204_PROVIDER_ERROR", `服务器错误 (${status})，请稍后重试`, { status, rawResponse: rawDetail });
     }
 
     // 其他客户端错误 → E204_PROVIDER_ERROR
-    return err("E204_PROVIDER_ERROR", `API 错误 (${status}): ${errorMessage}`);
+    return err("E204_PROVIDER_ERROR", `API 请求失败 (${status})`, { status, rawResponse: rawDetail });
   }
 
-  /** 安全读取响应文本 */
-  private async safeReadText(response: Response): Promise<string> {
-    try {
-      return await response.text();
-    } catch {
-      return "";
-    }
-  }
 }

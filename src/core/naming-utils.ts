@@ -1,6 +1,13 @@
 /** 命名工具：概念命名模板渲染、签名生成、文件路径生成 */
 
-import { CRType } from "../types";
+import { normalizePath } from "obsidian";
+import { CRType, type ILogger } from "../types";
+
+/** Obsidian 非法文件名字符 */
+const ILLEGAL_FILENAME_CHARS = /[\\/:*?"<>|]/g;
+
+/** 已知占位符列表 */
+const KNOWN_PLACEHOLDERS = ["chinese", "english", "type", "type_cn", "uid", "alias"];
 
 /** 概念签名接口 */
 interface ConceptSignature {
@@ -30,14 +37,20 @@ interface NamingTemplateContext {
   alias?: string;
 }
 
-/** 渲染命名模板，支持 {{chinese}}, {{english}}, {{type}}, {{type_cn}}, {{uid}}, {{alias}} */
+/**
+ * 渲染命名模板，支持 {{chinese}}, {{english}}, {{type}}, {{type_cn}}, {{uid}}, {{alias}}
+ * - 已知占位符替换为上下文值（未提供时替换为空字符串）
+ * - 未知占位符替换为空字符串并记录警告（需求 30.3）
+ * - 输出不含 Obsidian 非法文件名字符（需求 30.2）
+ */
 export function renderNamingTemplate(
   template: string,
-  context: NamingTemplateContext
+  context: NamingTemplateContext,
+  logger?: ILogger
 ): string {
   let result = template;
 
-  // 替换占位符
+  // 替换已知占位符
   result = result.replace(/\{\{chinese\}\}/g, context.chinese || "");
   result = result.replace(/\{\{english\}\}/g, context.english || "");
   result = result.replace(/\{\{type\}\}/g, context.type || "");
@@ -45,10 +58,27 @@ export function renderNamingTemplate(
   result = result.replace(/\{\{uid\}\}/g, context.uid || "");
   result = result.replace(/\{\{alias\}\}/g, context.alias || "");
 
+  // 处理未知占位符：替换为空字符串并记录警告（需求 30.3）
+  result = result.replace(/\{\{(\w+)\}\}/g, (_match, name: string) => {
+    if (logger) {
+      logger.warn("NamingUtils", `未定义的命名模板占位符: {{${name}}}，已替换为空字符串`, {
+        placeholder: name,
+        template
+      });
+    }
+    return "";
+  });
+
   // 清理多余的空格和括号
   result = result.replace(/\(\s*\)/g, ""); // 移除空括号
   result = result.replace(/\s+/g, " "); // 合并多个空格
   result = result.trim();
+
+  // 移除 Obsidian 非法文件名字符（需求 30.2）
+  result = result.replace(ILLEGAL_FILENAME_CHARS, "");
+
+  // 再次清理可能因移除字符产生的多余空格
+  result = result.replace(/\s+/g, " ").trim();
 
   return result;
 }
@@ -79,7 +109,8 @@ export function createConceptSignature(
   },
   type: CRType,
   namingTemplate: string = "{{chinese}} ({{english}})",
-  uid?: string
+  uid?: string,
+  logger?: ILogger
 ): ConceptSignature {
   // 渲染标准名
   const standardName = renderNamingTemplate(namingTemplate, {
@@ -89,7 +120,7 @@ export function createConceptSignature(
     type_cn: getTypeChinese(type),
     uid,
     alias: standardizedData.aliases[0]
-  });
+  }, logger);
 
   return {
     standardName,
@@ -125,7 +156,7 @@ export function validateNamingTemplate(template: string): {
   }
 
   // 检查是否包含至少一个有效占位符
-  const validPlaceholders = ["{{chinese}}", "{{english}}", "{{type}}", "{{type_cn}}", "{{uid}}", "{{alias}}"];
+  const validPlaceholders = KNOWN_PLACEHOLDERS.map(p => `{{${p}}}`);
   const hasValidPlaceholder = validPlaceholders.some(p => template.includes(p));
   
   if (!hasValidPlaceholder) {
@@ -145,7 +176,7 @@ export function validateNamingTemplate(template: string): {
   let match;
   while ((match = placeholderRegex.exec(template)) !== null) {
     const placeholder = match[1];
-    if (!["chinese", "english", "type", "type_cn", "uid", "alias"].includes(placeholder)) {
+    if (!KNOWN_PLACEHOLDERS.includes(placeholder)) {
       errors.push(`无效的占位符: {{${placeholder}}}`);
     }
   }
@@ -158,9 +189,9 @@ export function validateNamingTemplate(template: string): {
 
 /** 清理文件名（移除非法字符） */
 export function sanitizeFileName(name: string): string {
-  // 移除 Windows 和 Unix 文件系统中的非法字符
+  // 移除 Obsidian 非法文件名字符
   return name
-    .replace(/[\\/:*?"<>|]/g, "-")
+    .replace(ILLEGAL_FILENAME_CHARS, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -173,7 +204,7 @@ function getDirectoryForType(
   return scheme[type] || "";
 }
 
-/** 生成文件路径 */
+/** 生成文件路径，对结果调用 normalizePath() 确保路径规范化（需求 30.4） */
 export function generateFilePath(
   standardName: string,
   directoryScheme: Record<CRType, string>,
@@ -182,9 +213,12 @@ export function generateFilePath(
   const directory = getDirectoryForType(type, directoryScheme);
   const fileName = sanitizeFileName(standardName);
   
+  let path: string;
   if (directory) {
-    return `${directory}/${fileName}.md`;
+    path = `${directory}/${fileName}.md`;
+  } else {
+    path = `${fileName}.md`;
   }
-  
-  return `${fileName}.md`;
+
+  return normalizePath(path);
 }

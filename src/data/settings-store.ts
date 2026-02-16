@@ -1,6 +1,6 @@
 /** SettingsStore - 管理插件配置，支持版本兼容性检查和导入导出 */
 
-import { PluginSettings, ProviderConfig, Result, ok, err, DirectoryScheme, TaskType, TaskModelConfig } from "../types";
+import { PluginSettings, ProviderConfig, Result, ok, err, DirectoryScheme, TaskType, TaskModelConfig, DEFAULT_UI_STATE } from "../types";
 import { Plugin } from "obsidian";
 
 /**
@@ -211,6 +211,7 @@ export interface SettingsValidationError {
   message: string;
   expectedType?: string;
   actualType?: string;
+  severity: 'error' | 'warning';  // 区分阻断性错误和警告
 }
 
 /**
@@ -269,6 +270,9 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   
   // Provider 请求超时（毫秒，默认 60000 = 60秒）
   providerTimeoutMs: 60000,
+
+  // 工作台 UI 状态
+  uiState: { ...DEFAULT_UI_STATE, sectionCollapsed: { ...DEFAULT_UI_STATE.sectionCollapsed }, sortPreferences: {} },
 };
 
 /** SettingsStore 实现类 */
@@ -487,7 +491,8 @@ export class SettingsStore {
       directoryScheme: { ...DEFAULT_SETTINGS.directoryScheme },
       providers: { ...DEFAULT_SETTINGS.providers },
       taskModels: createDefaultTaskModels(),
-      imageGeneration: { ...DEFAULT_IMAGE_SETTINGS }
+      imageGeneration: { ...DEFAULT_IMAGE_SETTINGS },
+      uiState: { ...DEFAULT_UI_STATE, sectionCollapsed: { ...DEFAULT_UI_STATE.sectionCollapsed }, sortPreferences: {} },
     };
   }
 
@@ -549,6 +554,7 @@ export class SettingsStore {
         message: "Settings must be a non-null object",
         expectedType: "object",
         actualType: data === null ? "null" : typeof data,
+        severity: 'error',
       });
       return { valid: false, errors };
     }
@@ -567,6 +573,7 @@ export class SettingsStore {
         message: "providers must be an object",
         expectedType: "object",
         actualType: settings.providers === null ? "null" : typeof settings.providers,
+        severity: 'error',
       });
     } else {
       for (const [providerId, providerConfig] of Object.entries(settings.providers)) {
@@ -575,7 +582,8 @@ export class SettingsStore {
             field: `providers.${providerId}`,
             message: "provider config must be an object",
             expectedType: "ProviderConfig",
-            actualType: providerConfig === null ? "null" : typeof providerConfig
+            actualType: providerConfig === null ? "null" : typeof providerConfig,
+            severity: 'error',
           });
           continue;
         }
@@ -585,7 +593,8 @@ export class SettingsStore {
             field: `providers.${providerId}.apiKey`,
             message: "apiKey must be a string",
             expectedType: "string",
-            actualType: typeof cfg.apiKey
+            actualType: typeof cfg.apiKey,
+            severity: 'error',
           });
         }
         if (cfg.baseUrl !== undefined && typeof cfg.baseUrl !== "string") {
@@ -593,15 +602,27 @@ export class SettingsStore {
             field: `providers.${providerId}.baseUrl`,
             message: "baseUrl must be a string",
             expectedType: "string",
-            actualType: typeof cfg.baseUrl
+            actualType: typeof cfg.baseUrl,
+            severity: 'error',
           });
+        }
+        // baseUrl 格式校验（需求 21.2）
+        if (cfg.baseUrl !== undefined && typeof cfg.baseUrl === "string" && cfg.baseUrl !== "") {
+          try { new URL(cfg.baseUrl); } catch {
+            errors.push({
+              field: `providers.${providerId}.baseUrl`,
+              message: "baseUrl 格式无效",
+              severity: 'error',
+            });
+          }
         }
         if (typeof cfg.defaultChatModel !== "string") {
           errors.push({
             field: `providers.${providerId}.defaultChatModel`,
             message: "defaultChatModel must be a string",
             expectedType: "string",
-            actualType: typeof cfg.defaultChatModel
+            actualType: typeof cfg.defaultChatModel,
+            severity: 'error',
           });
         }
         if (typeof cfg.defaultEmbedModel !== "string") {
@@ -609,7 +630,8 @@ export class SettingsStore {
             field: `providers.${providerId}.defaultEmbedModel`,
             message: "defaultEmbedModel must be a string",
             expectedType: "string",
-            actualType: typeof cfg.defaultEmbedModel
+            actualType: typeof cfg.defaultEmbedModel,
+            severity: 'error',
           });
         }
         if (typeof cfg.enabled !== "boolean") {
@@ -617,7 +639,8 @@ export class SettingsStore {
             field: `providers.${providerId}.enabled`,
             message: "enabled must be a boolean",
             expectedType: "boolean",
-            actualType: typeof cfg.enabled
+            actualType: typeof cfg.enabled,
+            severity: 'error',
           });
         }
 
@@ -627,6 +650,9 @@ export class SettingsStore {
     // 验证 taskModels 字段
     this.validateTaskModels(settings.taskModels, errors);
 
+    // TaskModel → Provider 引用交叉校验（需求 21.3）
+    this.validateTaskModelProviderRefs(settings.taskModels, settings.providers, errors);
+
     // 图片生成配置
     if (settings.imageGeneration !== undefined) {
       const img = settings.imageGeneration as Record<string, unknown>;
@@ -635,7 +661,8 @@ export class SettingsStore {
           field: "imageGeneration",
           message: "imageGeneration must be an object",
           expectedType: "object",
-          actualType: img === null ? "null" : typeof img
+          actualType: img === null ? "null" : typeof img,
+          severity: 'error',
         });
       } else {
         if (typeof img.enabled !== "boolean") {
@@ -643,7 +670,8 @@ export class SettingsStore {
             field: "imageGeneration.enabled",
             message: "imageGeneration.enabled must be a boolean",
             expectedType: "boolean",
-            actualType: typeof img.enabled
+            actualType: typeof img.enabled,
+            severity: 'error',
           });
         }
         if (typeof img.defaultSize !== "string") {
@@ -651,7 +679,8 @@ export class SettingsStore {
             field: "imageGeneration.defaultSize",
             message: "imageGeneration.defaultSize must be a string",
             expectedType: "string",
-            actualType: typeof img.defaultSize
+            actualType: typeof img.defaultSize,
+            severity: 'error',
           });
         }
         if (img.defaultImageSize !== undefined && typeof img.defaultImageSize !== "string") {
@@ -659,7 +688,8 @@ export class SettingsStore {
             field: "imageGeneration.defaultImageSize",
             message: "imageGeneration.defaultImageSize must be a string",
             expectedType: "string",
-            actualType: typeof img.defaultImageSize
+            actualType: typeof img.defaultImageSize,
+            severity: 'error',
           });
         }
         if (img.defaultAspectRatio !== undefined && typeof img.defaultAspectRatio !== "string") {
@@ -667,7 +697,8 @@ export class SettingsStore {
             field: "imageGeneration.defaultAspectRatio",
             message: "imageGeneration.defaultAspectRatio must be a string",
             expectedType: "string",
-            actualType: typeof img.defaultAspectRatio
+            actualType: typeof img.defaultAspectRatio,
+            severity: 'error',
           });
         }
         if (typeof img.defaultQuality !== "string") {
@@ -675,7 +706,8 @@ export class SettingsStore {
             field: "imageGeneration.defaultQuality",
             message: "imageGeneration.defaultQuality must be a string",
             expectedType: "string",
-            actualType: typeof img.defaultQuality
+            actualType: typeof img.defaultQuality,
+            severity: 'error',
           });
         }
         if (typeof img.defaultStyle !== "string") {
@@ -683,7 +715,8 @@ export class SettingsStore {
             field: "imageGeneration.defaultStyle",
             message: "imageGeneration.defaultStyle must be a string",
             expectedType: "string",
-            actualType: typeof img.defaultStyle
+            actualType: typeof img.defaultStyle,
+            severity: 'error',
           });
         }
         if (typeof img.contextWindowSize !== "number") {
@@ -691,13 +724,14 @@ export class SettingsStore {
             field: "imageGeneration.contextWindowSize",
             message: "imageGeneration.contextWindowSize must be a number",
             expectedType: "number",
-            actualType: typeof img.contextWindowSize
+            actualType: typeof img.contextWindowSize,
+            severity: 'error',
           });
         }
       }
     }
 
-    return { valid: errors.length === 0, errors };
+    return { valid: errors.filter(e => e.severity === 'error').length === 0, errors };
   }
 
   private validateScalarSettings(settings: Record<string, unknown>, errors: SettingsValidationError[]): void {
@@ -711,6 +745,7 @@ export class SettingsStore {
             message: `${spec.key} is required`,
             expectedType: spec.type,
             actualType: "undefined",
+            severity: 'error',
           });
         }
         continue;
@@ -723,6 +758,7 @@ export class SettingsStore {
             message: `${spec.key} must be a string`,
             expectedType: "string",
             actualType: value === null ? "null" : typeof value,
+            severity: 'error',
           });
           continue;
         }
@@ -733,6 +769,7 @@ export class SettingsStore {
             message: `${spec.key} must be one of: ${spec.allowed.join(", ")}`,
             expectedType: spec.allowed.join(" | "),
             actualType: `'${value}'`,
+            severity: 'error',
           });
         }
         continue;
@@ -745,6 +782,7 @@ export class SettingsStore {
             message: `${spec.key} must be a boolean`,
             expectedType: "boolean",
             actualType: value === null ? "null" : typeof value,
+            severity: 'error',
           });
         }
         continue;
@@ -756,6 +794,7 @@ export class SettingsStore {
           message: `${spec.key} must be a number`,
           expectedType: "number",
           actualType: value === null ? "null" : typeof value,
+          severity: 'error',
         });
         continue;
       }
@@ -766,6 +805,7 @@ export class SettingsStore {
           message: `${spec.key} must be an integer`,
           expectedType: "integer",
           actualType: String(value),
+          severity: 'error',
         });
         continue;
       }
@@ -776,6 +816,7 @@ export class SettingsStore {
           message: `${spec.key} must be >= ${spec.min}`,
           expectedType: `number (>=${spec.min})`,
           actualType: String(value),
+          severity: 'error',
         });
       }
 
@@ -785,6 +826,7 @@ export class SettingsStore {
           message: `${spec.key} must be <= ${spec.max}`,
           expectedType: `number (<=${spec.max})`,
           actualType: String(value),
+          severity: 'error',
         });
       }
     }
@@ -849,6 +891,7 @@ export class SettingsStore {
         message: "directoryScheme must be an object",
         expectedType: "object",
         actualType: directoryScheme === null ? "null" : typeof directoryScheme,
+        severity: 'error',
       });
       return;
     }
@@ -862,6 +905,7 @@ export class SettingsStore {
           message: `directoryScheme.${field} must be a string`,
           expectedType: "string",
           actualType: typeof scheme[field],
+          severity: 'error',
         });
       }
     }
@@ -878,6 +922,7 @@ export class SettingsStore {
         message: "taskModels must be an object",
         expectedType: "object",
         actualType: taskModels === null ? "null" : typeof taskModels,
+        severity: 'error',
       });
       return;
     }
@@ -892,6 +937,7 @@ export class SettingsStore {
           message: `taskModels.${taskType} must be an object`,
           expectedType: "TaskModelConfig",
           actualType: model === null ? "null" : typeof model,
+          severity: 'error',
         });
         continue;
       }
@@ -905,6 +951,7 @@ export class SettingsStore {
           message: `taskModels.${taskType}.providerId must be a string`,
           expectedType: "string",
           actualType: typeof modelConfig.providerId,
+          severity: 'error',
         });
       }
 
@@ -915,6 +962,7 @@ export class SettingsStore {
           message: `taskModels.${taskType}.model must be a string`,
           expectedType: "string",
           actualType: typeof modelConfig.model,
+          severity: 'error',
         });
       }
 
@@ -925,6 +973,7 @@ export class SettingsStore {
           message: `taskModels.${taskType}.temperature must be a number`,
           expectedType: "number",
           actualType: typeof modelConfig.temperature,
+          severity: 'error',
         });
       }
 
@@ -935,6 +984,7 @@ export class SettingsStore {
           message: `taskModels.${taskType}.topP must be a number`,
           expectedType: "number",
           actualType: typeof modelConfig.topP,
+          severity: 'error',
         });
       }
 
@@ -945,6 +995,35 @@ export class SettingsStore {
           message: `taskModels.${taskType}.maxTokens must be a number`,
           expectedType: "number",
           actualType: typeof modelConfig.maxTokens,
+          severity: 'error',
+        });
+      }
+    }
+  }
+
+  /** TaskModel → Provider 引用交叉校验（需求 21.3） */
+  private validateTaskModelProviderRefs(
+    taskModels: unknown,
+    providers: unknown,
+    errors: SettingsValidationError[]
+  ): void {
+    // 仅在两者都是有效对象时才做交叉校验
+    if (typeof taskModels !== "object" || taskModels === null) return;
+    if (typeof providers !== "object" || providers === null) return;
+
+    const models = taskModels as Record<string, Record<string, unknown>>;
+    const providerMap = providers as Record<string, unknown>;
+
+    for (const taskType of TASK_TYPES) {
+      const model = models[taskType];
+      if (typeof model !== "object" || model === null) continue;
+      const providerId = model.providerId;
+      if (typeof providerId !== "string" || providerId === "") continue;
+      if (!providerMap[providerId]) {
+        errors.push({
+          field: `taskModels.${taskType}.providerId`,
+          message: `引用的 Provider "${providerId}" 不存在，将回退到默认 Provider`,
+          severity: 'warning',
         });
       }
     }
@@ -1022,6 +1101,26 @@ export class SettingsStore {
       next.imageGeneration = {
         ...next.imageGeneration,
         ...(partial.imageGeneration as PluginSettings["imageGeneration"])
+      };
+    }
+
+    // UI 状态（折叠/排序偏好）
+    if (partial.uiState !== undefined) {
+      if (!this.isPlainObject(partial.uiState)) {
+        return err("E101_INVALID_INPUT", "uiState 必须是对象");
+      }
+      const currentUI = next.uiState ?? { ...DEFAULT_UI_STATE };
+      next.uiState = {
+        ...currentUI,
+        ...(partial.uiState as PluginSettings["uiState"]),
+        sectionCollapsed: {
+          ...(currentUI.sectionCollapsed ?? {}),
+          ...((partial.uiState as PluginSettings["uiState"])?.sectionCollapsed ?? {}),
+        },
+        sortPreferences: {
+          ...(currentUI.sortPreferences ?? {}),
+          ...((partial.uiState as PluginSettings["uiState"])?.sortPreferences ?? {}),
+        },
       };
     }
 

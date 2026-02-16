@@ -1,9 +1,21 @@
+/**
+ * DuplicatesSection — 重复对区组件
+ *
+ * 负责显示重复概念对列表，支持合并、忽略、预览操作。
+ * 通过 DuplicatesSectionDeps 注入依赖，不直接依赖 Plugin 实例。
+ *
+ * 需求: 6.1, 8.2
+ */
+
 import { Notice, TFile, setIcon } from "obsidian";
 import type { DuplicatePair } from "../../types";
-import type { WorkbenchSectionDeps } from "./workbench-section-deps";
+import { safeErrorMessage } from "../../types";
+import type { DuplicatesSectionDeps } from "./workbench-section-deps";
+import { WorkbenchSection } from "./workbench-section";
 import { SimpleDiffView } from "../diff-view";
 import { MergeNameSelectionModal } from "../merge-modals";
-import { ConfirmDialog, DuplicatePreviewModal, MergeHistoryModal } from "./workbench-modals";
+import { ConfirmDialog, DuplicatePreviewModal } from "./workbench-modals";
+import { formatMessage } from "../../core/i18n";
 
 type DuplicateSortOrder =
   | "similarity-desc"
@@ -12,9 +24,7 @@ type DuplicateSortOrder =
   | "time-asc"
   | "type";
 
-export class DuplicatesSection {
-  private deps: WorkbenchSectionDeps;
-
+export class DuplicatesSection extends WorkbenchSection<DuplicatesSectionDeps> {
   private container: HTMLElement | null = null;
   private sectionEl: HTMLElement | null = null;
   private badgeEl: HTMLElement | null = null;
@@ -24,10 +34,9 @@ export class DuplicatesSection {
   private currentTypeFilter: DuplicatePair["type"] | "all" = "all";
   private allDuplicates: DuplicatePair[] = [];
 
-  constructor(deps: WorkbenchSectionDeps) {
-    this.deps = deps;
-  }
-
+  /**
+   * 挂载到可折叠区域（由 WorkbenchPanel 的 renderCollapsibleSection 调用）
+   */
   mount(options: { content: HTMLElement; badge: HTMLElement; section: HTMLElement }): void {
     this.container = options.content;
     this.badgeEl = options.badge;
@@ -36,7 +45,18 @@ export class DuplicatesSection {
     this.refresh();
   }
 
-  onClose(): void {
+  render(container: HTMLElement): void {
+    // 由 mount() 处理实际渲染（可折叠区域模式）
+    this.container = container;
+    this.renderEmpty();
+    this.refresh();
+  }
+
+  update(): void {
+    this.refresh();
+  }
+
+  dispose(): void {
     this.container = null;
     this.sectionEl = null;
     this.badgeEl = null;
@@ -44,34 +64,31 @@ export class DuplicatesSection {
     this.allDuplicates = [];
   }
 
+  /**
+   * 兼容旧接口：WorkbenchPanel.onClose() 调用
+   */
+  onClose(): void {
+    this.dispose();
+  }
+
   reveal(): void {
     this.refresh();
     this.sectionEl?.scrollIntoView({ block: "start", behavior: "smooth" });
   }
 
-  openOperationHistory(): void {
-    const plugin = this.deps.getPlugin();
-    if (!plugin) return;
-    const modal = new MergeHistoryModal(this.deps.app, plugin);
-    modal.open();
-  }
-
   refresh(): void {
-    const plugin = this.deps.getPlugin();
-    if (!plugin) return;
-
     try {
-      const duplicateManager = plugin.getComponents().duplicateManager;
+      const duplicateManager = this.deps.duplicateManager;
       if (!duplicateManager) return;
       const pairs = duplicateManager.getPendingPairs();
-      this.update(pairs);
+      this.updateDuplicates(pairs);
     } catch (error) {
       this.deps.logWarn("刷新重复列表失败", { error });
-      this.deps.showErrorNotice(`${this.deps.t("common.error")}: ${error instanceof Error ? error.message : String(error)}`);
+      this.deps.showErrorNotice(`${this.deps.t("common.error")}: ${safeErrorMessage(error)}`);
     }
   }
 
-  update(duplicates: DuplicatePair[]): void {
+  updateDuplicates(duplicates: DuplicatePair[]): void {
     if (!this.container) return;
 
     this.allDuplicates = duplicates;
@@ -124,9 +141,9 @@ export class DuplicatesSection {
     const statusBar = item.createDiv({ cls: "cr-duplicate-status-bar" });
     const fill = statusBar.createDiv({ cls: "cr-status-fill" });
     fill.style.width = `${pair.similarity * 100}%`;
-    if (pair.similarity > 0.9) fill.style.backgroundColor = "var(--color-red)";
-    else if (pair.similarity > 0.8) fill.style.backgroundColor = "var(--color-orange)";
-    else fill.style.backgroundColor = "var(--color-yellow)";
+    if (pair.similarity > 0.9) fill.addClass("cr-similarity-high");
+    else if (pair.similarity > 0.8) fill.addClass("cr-similarity-medium");
+    else fill.addClass("cr-similarity-low");
 
     const content = item.createDiv({ cls: "cr-duplicate-content" });
 
@@ -145,14 +162,20 @@ export class DuplicatesSection {
 
     const mergeBtn = actions.createEl("button", {
       cls: "cr-icon-btn",
-      attr: { "aria-label": this.deps.t("workbench.duplicates.merge") }
+      attr: {
+        "aria-label": this.deps.t("workbench.duplicates.merge"),
+        "data-tooltip-position": "top"
+      }
     });
     setIcon(mergeBtn, "git-merge");
     mergeBtn.onclick = (e) => { e.stopPropagation(); void this.handleMergeDuplicate(pair); };
 
     const dismissBtn = actions.createEl("button", {
       cls: "cr-icon-btn",
-      attr: { "aria-label": this.deps.t("workbench.duplicates.dismiss") }
+      attr: {
+        "aria-label": this.deps.t("workbench.duplicates.dismiss"),
+        "data-tooltip-position": "top"
+      }
     });
     setIcon(dismissBtn, "x");
     dismissBtn.onclick = (e) => { e.stopPropagation(); void this.handleDismissDuplicate(pair); };
@@ -200,7 +223,7 @@ export class DuplicatesSection {
 
   private showConfirmDialog(title: string, message: string): Promise<boolean> {
     return new Promise((resolve) => {
-      const modal = new ConfirmDialog(this.deps.app, title, message, resolve);
+      const modal = new ConfirmDialog(this.deps.app, title, message, resolve, this.deps.t);
       modal.open();
     });
   }
@@ -233,13 +256,13 @@ export class DuplicatesSection {
         return;
       }
 
-      const contentA = await this.deps.app.vault.read(fileA);
-      const contentB = await this.deps.app.vault.read(fileB);
+      const contentA = await this.deps.app.vault.cachedRead(fileA);
+      const contentB = await this.deps.app.vault.cachedRead(fileB);
 
       this.showDuplicatePreviewModal(pair, contentA, contentB);
     } catch (error) {
       this.deps.logError("显示预览失败", error, { pairId: pair.id });
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = safeErrorMessage(error, this.deps.t("workbench.notifications.previewFailed"));
       this.deps.showErrorNotice(`${this.deps.t("workbench.notifications.previewFailed")}: ${errorMessage}`);
     }
   }
@@ -255,18 +278,13 @@ export class DuplicatesSection {
         resolvePath: (nodeId: string) => this.deps.resolveNotePath(nodeId),
       },
       () => { void this.handleMergeDuplicate(pair); },
-      () => { void this.handleDismissDuplicate(pair); }
+      () => { void this.handleDismissDuplicate(pair); },
+      this.deps.t
     );
     modal.open();
   }
 
   private async handleMergeDuplicate(pair: DuplicatePair): Promise<void> {
-    const plugin = this.deps.getPlugin();
-    if (!plugin) {
-      this.deps.showErrorNotice(this.deps.t("workbench.notifications.pluginNotInitialized"));
-      return;
-    }
-
     try {
       const pathA = this.deps.resolveNotePath(pair.nodeIdA);
       const pathB = this.deps.resolveNotePath(pair.nodeIdB);
@@ -294,13 +312,13 @@ export class DuplicatesSection {
         return;
       }
 
-      const contentA = await this.deps.app.vault.read(fileA);
-      const contentB = await this.deps.app.vault.read(fileB);
+      const contentA = await this.deps.app.vault.cachedRead(fileA);
+      const contentB = await this.deps.app.vault.cachedRead(fileB);
 
       this.showMergePreviewDiffView(pair, contentA, contentB);
     } catch (error) {
       this.deps.logError("显示合并预览失败", error, { pairId: pair.id });
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = safeErrorMessage(error, this.deps.t("workbench.notifications.previewFailed"));
       this.deps.showErrorNotice(`${this.deps.t("workbench.notifications.previewFailed")}: ${errorMessage}`);
     }
   }
@@ -318,26 +336,23 @@ export class DuplicatesSection {
       },
       () => {
         new Notice(this.deps.t("workbench.notifications.mergeCancelled"));
-      }
+      },
+      this.getDiffViewLabels()
     );
 
     diffView.open();
   }
 
   private async confirmMerge(pair: DuplicatePair): Promise<void> {
-    const plugin = this.deps.getPlugin();
-    if (!plugin) {
-      this.deps.showErrorNotice(this.deps.t("workbench.notifications.pluginNotInitialized"));
-      return;
-    }
-
-    const components = plugin.getComponents();
-    const orchestrator = components.pipelineOrchestrator;
+    const orchestrator = this.deps.mergeOrchestrator;
 
     if (!orchestrator) {
       this.deps.showErrorNotice(this.deps.t("workbench.notifications.orchestratorNotInitialized"));
       return;
     }
+
+    const cruidCache = this.deps.cruidCache;
+    const duplicateManager = this.deps.duplicateManager;
 
     const modal = new MergeNameSelectionModal(
       this.deps.app,
@@ -347,39 +362,33 @@ export class DuplicatesSection {
           try {
             const result = orchestrator.startMergePipeline(pair, keepNodeId, finalFileName);
             if (!result.ok) {
-              this.deps.showErrorNotice(`启动合并失败: ${result.error.message}`);
+              this.deps.showErrorNotice(formatMessage(this.deps.t("workbench.notifications.startFailed"), { message: result.error.message }));
               return;
             }
 
             new Notice(this.deps.t("workbench.notifications.mergeStarted"));
 
-            const duplicateManager = components.duplicateManager;
             if (duplicateManager) {
               await duplicateManager.updateStatus(pair.id, "merging");
             }
           } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            this.deps.showErrorNotice(`启动合并失败: ${errorMessage}`);
+            const errorMessage = safeErrorMessage(error);
+            this.deps.showErrorNotice(formatMessage(this.deps.t("workbench.notifications.startFailed"), { message: errorMessage }));
           }
         },
         onCancel: () => {
           new Notice(this.deps.t("workbench.notifications.mergeCancelled"));
         },
-        resolveName: (nodeId: string) => components.cruidCache?.getName(nodeId) || nodeId
+        resolveName: (nodeId: string) => cruidCache?.getName(nodeId) || nodeId,
+        t: this.deps.t
       }
     );
     modal.open();
   }
 
   private async handleDismissDuplicate(pair: DuplicatePair): Promise<void> {
-    const plugin = this.deps.getPlugin();
-    if (!plugin) {
-      this.deps.showErrorNotice(this.deps.t("workbench.notifications.pluginNotInitialized"));
-      return;
-    }
-
     try {
-      const duplicateManager = plugin.getComponents().duplicateManager;
+      const duplicateManager = this.deps.duplicateManager;
 
       if (!duplicateManager) {
         this.deps.showErrorNotice(this.deps.t("workbench.notifications.duplicateManagerNotInitialized"));
@@ -397,8 +406,17 @@ export class DuplicatesSection {
       this.refresh();
     } catch (error) {
       this.deps.logError("忽略重复对失败", error, { pairId: pair.id });
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = safeErrorMessage(error, this.deps.t("workbench.notifications.dismissFailed"));
       this.deps.showErrorNotice(`${this.deps.t("workbench.notifications.dismissFailed")}: ${errorMessage}`);
     }
+  }
+
+  private getDiffViewLabels(): { accept: string; reject: string; acceptAria: string; rejectAria: string } {
+    return {
+      accept: this.deps.t("workbench.diffPreview.accept"),
+      reject: this.deps.t("workbench.diffPreview.reject"),
+      acceptAria: this.deps.t("workbench.diffPreview.acceptAria"),
+      rejectAria: this.deps.t("workbench.diffPreview.rejectAria"),
+    };
   }
 }

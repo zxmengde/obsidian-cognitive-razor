@@ -183,16 +183,16 @@ export function validateTaskRecord(data: unknown): Result<TaskRecord> {
     return err("MISSING_FIELD", "缺少必填字段: id");
   }
 
+  if (!task.taskType || !isValidTaskType(task.taskType)) {
+    return err("INVALID_TYPE", `无效的任务类型: ${task.taskType}`);
+  }
+
   if (!task.nodeId || typeof task.nodeId !== "string") {
     return err("MISSING_FIELD", "缺少必填字段: nodeId");
   }
 
-  if (!isValidUUID(task.nodeId)) {
+  if (!isValidUUID(task.nodeId) && task.taskType !== "image-generate") {
     return err("INVALID_UUID", `无效的节点 UUID: ${task.nodeId}`);
-  }
-
-  if (!task.taskType || !isValidTaskType(task.taskType)) {
-    return err("INVALID_TYPE", `无效的任务类型: ${task.taskType}`);
   }
 
   if (!task.state || !isValidTaskState(task.state)) {

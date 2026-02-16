@@ -1,6 +1,19 @@
+/**
+ * CreateSection — 创建区组件
+ *
+ * 负责概念创建入口（Define → 类型选择 → 创建管线），
+ * 以及 Amend/Expand/Visualize/Verify 操作按钮。
+ *
+ * 通过 CreateSectionDeps 注入依赖，不直接依赖 Plugin 实例。
+ *
+ * 需求: 6.1, 9.1, 9.2, 9.3, 9.4, 9.5, 8.4
+ */
+
 import { Editor, MarkdownView, Notice, TFile, setIcon } from "obsidian";
 import type { CRFrontmatter, CRType, StandardizedConcept, ImageGeneratePayload } from "../../types";
-import type { WorkbenchSectionDeps } from "./workbench-section-deps";
+import { safeErrorMessage } from "../../types";
+import type { CreateSectionDeps } from "./workbench-section-deps";
+import { WorkbenchSection } from "./workbench-section";
 import { SimpleInputModal } from "../simple-input-modal";
 import type { ExpandPlan, HierarchicalPlan, AbstractPlan } from "../../core/expand-orchestrator";
 import { ExpandModal } from "../expand-modal";
@@ -8,9 +21,7 @@ import { AbstractExpandModal } from "../abstract-expand-modal";
 import { formatMessage } from "../../core/i18n";
 import { VisualizationModal } from "../image-insert-modal";
 
-export class CreateSection {
-  private deps: WorkbenchSectionDeps;
-
+export class CreateSection extends WorkbenchSection<CreateSectionDeps> {
   private conceptInput: HTMLInputElement | null = null;
   private standardizeBtn: HTMLButtonElement | null = null;
   private clearBtn: HTMLButtonElement | null = null;
@@ -23,10 +34,6 @@ export class CreateSection {
 
   private currentStandardizedData: StandardizedConcept | null = null;
   private pendingConceptInput: string | null = null;
-
-  constructor(deps: WorkbenchSectionDeps) {
-    this.deps = deps;
-  }
 
   render(container: HTMLElement): void {
     const heroContainer = container.createDiv({ cls: "cr-hero-container" });
@@ -46,7 +53,7 @@ export class CreateSection {
       cls: "cr-search-clear-btn",
       attr: {
         "aria-label": clearLabel,
-        "title": clearLabel
+        "data-tooltip-position": "top"
       }
     });
     setIcon(this.clearBtn, "x");
@@ -55,7 +62,7 @@ export class CreateSection {
       cls: "cr-search-action-btn",
       attr: {
         "aria-label": this.deps.t("workbench.createConcept.startButton"),
-        "title": `${this.deps.t("workbench.createConcept.defining")} (Enter)`
+        "data-tooltip-position": "top"
       }
     });
     setIcon(this.standardizeBtn, "corner-down-left");
@@ -128,9 +135,15 @@ export class CreateSection {
 
     this.typeConfidenceTableContainer = container.createDiv({ cls: "cr-type-confidence-table" });
     this.typeConfidenceTableContainer.style.display = "none";
+    this.typeConfidenceTableContainer.setAttr("aria-live", "polite");
   }
 
-  onClose(): void {
+  update(): void {
+    this.updateImproveButtonState();
+    this.updateInputActionState();
+  }
+
+  dispose(): void {
     this.conceptInput = null;
     this.standardizeBtn = null;
     this.clearBtn = null;
@@ -142,6 +155,13 @@ export class CreateSection {
     this.verifyBtn = null;
     this.currentStandardizedData = null;
     this.pendingConceptInput = null;
+  }
+
+  /**
+   * 兼容旧接口：WorkbenchPanel.onClose() 调用
+   */
+  onClose(): void {
+    this.dispose();
   }
 
   async consumePendingInput(): Promise<void> {
@@ -171,33 +191,28 @@ export class CreateSection {
   }
 
   async handleStartAmend(): Promise<void> {
-    const plugin = this.deps.getPlugin();
-    if (!plugin) {
-      this.deps.showErrorNotice(this.deps.t("workbench.notifications.pluginNotInitialized"));
-      return;
-    }
-
     const activeFile = this.deps.app.workspace.getActiveFile();
     if (!activeFile || activeFile.extension !== "md") {
       this.deps.showErrorNotice(this.deps.t("workbench.notifications.openMarkdownFirst"));
       return;
     }
 
-    const orchestrator = plugin.getComponents().pipelineOrchestrator;
-    if (!orchestrator) {
-      this.deps.showErrorNotice(this.deps.t("workbench.notifications.orchestratorNotInitialized"));
-      return;
-    }
+    const orchestrator = this.deps.amendOrchestrator;
 
     const modal = new SimpleInputModal(this.deps.app, {
-      title: "修订笔记",
-      placeholder: "请输入修订指令（例如：补充更多示例、优化定义、添加相关理论）",
+      title: this.deps.t("workbench.amendModal.title"),
+      placeholder: this.deps.t("workbench.amendModal.placeholder"),
       onSubmit: async (instruction) => {
-        const result = orchestrator.startAmendPipeline(activeFile.path, instruction);
-        if (result.ok) {
-          new Notice(this.deps.t("workbench.notifications.improveStarted"));
-        } else {
-          this.deps.showErrorNotice(`启动失败: ${result.error.message}`);
+        try {
+          const result = orchestrator.startAmendPipeline(activeFile.path, instruction);
+          if (result.ok) {
+            new Notice(this.deps.t("workbench.notifications.improveStarted"));
+          } else {
+            this.deps.showErrorNotice(formatMessage(this.deps.t("workbench.notifications.startFailed"), { message: result.error.message }));
+          }
+        } catch (error) {
+          this.deps.logError("启动修订管线失败", error);
+          this.deps.showErrorNotice(safeErrorMessage(error, this.deps.t("workbench.notifications.startFailed")));
         }
       }
     });
@@ -206,119 +221,110 @@ export class CreateSection {
   }
 
   async handleStartVerify(): Promise<void> {
-    const plugin = this.deps.getPlugin();
-    if (!plugin) {
-      this.deps.showErrorNotice(this.deps.t("workbench.notifications.pluginNotInitialized"));
-      return;
-    }
-
     const activeFile = this.deps.app.workspace.getActiveFile();
     if (!activeFile || activeFile.extension !== "md") {
       this.deps.showErrorNotice(this.deps.t("workbench.notifications.openMarkdownFirst"));
       return;
     }
 
-    const orchestrator = plugin.getComponents().pipelineOrchestrator;
-    if (!orchestrator) {
-      this.deps.showErrorNotice(this.deps.t("workbench.notifications.orchestratorNotInitialized"));
-      return;
-    }
+    const orchestrator = this.deps.verifyOrchestrator;
 
     const result = orchestrator.startVerifyPipeline(activeFile.path);
     if (result.ok) {
       new Notice(this.deps.t("workbench.notifications.verifyStarted"));
     } else {
-      this.deps.showErrorNotice(`启动失败: ${result.error.message}`);
+      this.deps.showErrorNotice(formatMessage(this.deps.t("workbench.notifications.startFailed"), { message: result.error.message }));
     }
   }
 
   async handleStartExpand(file?: TFile): Promise<void> {
-    const plugin = this.deps.getPlugin();
-    if (!plugin) {
-      this.deps.showErrorNotice(this.deps.t("workbench.notifications.pluginNotInitialized"));
-      return;
-    }
+    try {
+      const targetFile = file ?? this.deps.app.workspace.getActiveFile();
+      if (!targetFile || targetFile.extension !== "md") {
+        this.deps.showErrorNotice(this.deps.t("workbench.notifications.openMarkdownFirst"));
+        return;
+      }
 
-    const targetFile = file ?? this.deps.app.workspace.getActiveFile();
-    if (!targetFile || targetFile.extension !== "md") {
-      this.deps.showErrorNotice(this.deps.t("workbench.notifications.openMarkdownFirst"));
-      return;
-    }
+      const orchestrator = this.deps.expandOrchestrator;
 
-    const orchestrator = plugin.getComponents().expandOrchestrator;
-    if (!orchestrator) {
-      this.deps.showErrorNotice(this.deps.t("expand.notInitialized"));
-      return;
-    }
+      const prepareResult = await orchestrator.prepare(targetFile);
+      if (!prepareResult.ok) {
+        this.deps.showErrorNotice(prepareResult.error.message);
+        return;
+      }
 
-    const prepareResult = await orchestrator.prepare(targetFile);
-    if (!prepareResult.ok) {
-      this.deps.showErrorNotice(prepareResult.error.message);
-      return;
-    }
-
-    const plan = prepareResult.value as ExpandPlan;
-    if (plan.mode === "hierarchical") {
-      this.openHierarchicalExpand(plan as HierarchicalPlan);
-    } else if (plan.mode === "abstract") {
-      this.openAbstractExpand(plan as AbstractPlan);
+      const plan = prepareResult.value as ExpandPlan;
+      if (plan.mode === "hierarchical") {
+        this.openHierarchicalExpand(plan as HierarchicalPlan);
+      } else if (plan.mode === "abstract") {
+        this.openAbstractExpand(plan as AbstractPlan);
+      }
+    } catch (error) {
+      this.deps.logError("拓展操作失败", error);
+      this.deps.showErrorNotice(safeErrorMessage(error, this.deps.t("workbench.notifications.startFailed")));
     }
   }
 
   async startImageInsert(): Promise<void> {
-    const plugin = this.deps.getPlugin();
-    if (!plugin) return;
-
-    const t = plugin.getI18n().t();
-    const imgSettings = plugin.settings.imageGeneration;
-    if (!imgSettings?.enabled) {
-      new Notice(t.workbench.notifications.featureDisabled || "功能已关闭");
-      return;
-    }
-
-    const view = this.deps.app.workspace.getActiveViewOfType(MarkdownView);
-    if (!view || view.getMode() !== "source") {
-      new Notice(this.deps.t("workbench.notifications.openMarkdownFirst"));
-      return;
-    }
-    const file = view.file;
-    if (!file) {
-      new Notice(this.deps.t("workbench.notifications.fileNotFound"));
-      return;
-    }
-
-    const editor = view.editor;
-    const cursor = editor.getCursor();
-    const contextSize = imgSettings.contextWindowSize ?? 500;
-    const { before, after } = this.getContextSegments(editor, cursor, contextSize);
-    const frontmatter = this.buildFrontmatter(file);
-
-    const modal = new VisualizationModal(this.deps.app, {
-      t,
-      contextBefore: before,
-      contextAfter: after,
-      onConfirm: async (userPrompt) => {
-        const orchestrator = plugin.getComponents().imageInsertOrchestrator;
-        if (!orchestrator) {
-          new Notice(this.deps.t("workbench.notifications.systemNotInitialized"));
-          return;
-        }
-        const result = orchestrator.execute({
-          userPrompt,
-          contextBefore: before,
-          contextAfter: after,
-          frontmatter,
-          filePath: file.path,
-          cursorPosition: cursor
-        } as unknown as ImageGeneratePayload);
-        if (result.ok) {
-          new Notice(t.workbench.notifications.imageTaskCreated || "图片生成任务已创建");
-        } else {
-          new Notice(result.error.message || (t.workbench.notifications.imageGenerationFailed || "图片生成任务创建失败"));
-        }
+    try {
+      const settings = this.deps.getSettings();
+      const imgSettings = settings.imageGeneration;
+      if (!imgSettings?.enabled) {
+        new Notice(this.deps.t("workbench.notifications.featureDisabled") || "功能已关闭");
+        return;
       }
-    });
-    modal.open();
+
+      const view = this.deps.app.workspace.getActiveViewOfType(MarkdownView);
+      if (!view || view.getMode() !== "source") {
+        new Notice(this.deps.t("workbench.notifications.openMarkdownFirst"));
+        return;
+      }
+      const file = view.file;
+      if (!file) {
+        new Notice(this.deps.t("workbench.notifications.fileNotFound"));
+        return;
+      }
+
+      const editor = view.editor;
+      const cursor = editor.getCursor();
+      const contextSize = imgSettings.contextWindowSize ?? 500;
+      const { before, after } = this.getContextSegments(editor, cursor, contextSize);
+      const frontmatter = this.buildFrontmatter(file);
+
+      // 获取完整翻译对象传递给 Modal
+      const t = this.deps.getTranslations() as Record<string, Record<string, unknown>>;
+
+      const modal = new VisualizationModal(this.deps.app, {
+        t,
+        contextBefore: before,
+        contextAfter: after,
+        onConfirm: async (userPrompt) => {
+          try {
+            const orchestrator = this.deps.imageInsertOrchestrator;
+            const result = orchestrator.execute({
+              userPrompt,
+              contextBefore: before,
+              contextAfter: after,
+              frontmatter,
+              filePath: file.path,
+              cursorPosition: cursor
+            } as unknown as ImageGeneratePayload);
+            if (result.ok) {
+              new Notice((t.workbench as Record<string, Record<string, string>>)?.notifications?.imageTaskCreated || "图片生成任务已创建");
+            } else {
+              new Notice(result.error.message || ((t.workbench as Record<string, Record<string, string>>)?.notifications?.imageGenerationFailed || "图片生成任务创建失败"));
+            }
+          } catch (error) {
+            this.deps.logError("图片生成任务创建失败", error);
+            this.deps.showErrorNotice(safeErrorMessage(error, "图片生成任务创建失败"));
+          }
+        }
+      });
+      modal.open();
+    } catch (error) {
+      this.deps.logError("图片插入操作失败", error);
+      this.deps.showErrorNotice(safeErrorMessage(error, this.deps.t("workbench.notifications.startFailed")));
+    }
   }
 
   private updateImproveButtonState(): void {
@@ -329,6 +335,8 @@ export class CreateSection {
     const hasMarkdown = !!activeFile && activeFile.extension === "md";
     const improveLabel = this.deps.t("workbench.buttons.improveNote");
     const needMarkdownLabel = this.deps.t("workbench.notifications.openMarkdownFirst");
+
+    // 需求 8.4：无活跃笔记时隐藏 Amend/Expand/Visualize/Verify 按钮
     if (this.improveSection) {
       this.improveSection.style.display = hasMarkdown ? "" : "none";
     }
@@ -337,10 +345,7 @@ export class CreateSection {
     this.improveBtn.setAttr("aria-label", improveLabel);
     this.improveBtn.disabled = !hasMarkdown;
     this.improveBtn.setAttr("aria-disabled", String(!hasMarkdown));
-    this.improveBtn.setAttr(
-      "title",
-      hasMarkdown ? improveLabel : needMarkdownLabel
-    );
+    this.improveBtn.setAttr("data-tooltip-position", "top");
 
     if (this.expandBtn) {
       const label = this.deps.t("workbench.buttons.expand");
@@ -348,21 +353,18 @@ export class CreateSection {
       this.expandBtn.setAttr("aria-label", label);
       this.expandBtn.disabled = !hasMarkdown;
       this.expandBtn.setAttr("aria-disabled", String(!hasMarkdown));
-      this.expandBtn.setAttr("title", hasMarkdown ? label : needMarkdownLabel);
+      this.expandBtn.setAttr("data-tooltip-position", "top");
     }
 
     if (this.insertImageBtn) {
-      const plugin = this.deps.getPlugin();
-      const imgEnabled = plugin?.settings.imageGeneration?.enabled !== false;
+      const settings = this.deps.getSettings();
+      const imgEnabled = settings.imageGeneration?.enabled !== false;
       const label = this.deps.t("workbench.buttons.insertImage");
       this.insertImageBtn.textContent = label;
       this.insertImageBtn.setAttr("aria-label", label);
       this.insertImageBtn.disabled = !hasMarkdown || !imgEnabled;
       this.insertImageBtn.setAttr("aria-disabled", String(!hasMarkdown || !imgEnabled));
-      this.insertImageBtn.setAttr(
-        "title",
-        !imgEnabled ? this.deps.t("workbench.notifications.featureDisabled") : hasMarkdown ? label : needMarkdownLabel
-      );
+      this.insertImageBtn.setAttr("data-tooltip-position", "top");
     }
 
     if (this.verifyBtn) {
@@ -371,7 +373,7 @@ export class CreateSection {
       this.verifyBtn.setAttr("aria-label", label);
       this.verifyBtn.disabled = !hasMarkdown;
       this.verifyBtn.setAttr("aria-disabled", String(!hasMarkdown));
-      this.verifyBtn.setAttr("title", hasMarkdown ? label : needMarkdownLabel);
+      this.verifyBtn.setAttr("data-tooltip-position", "top");
     }
   }
 
@@ -382,13 +384,12 @@ export class CreateSection {
     this.updateInputActionState();
   }
 
+  /**
+   * 处理 Define 操作（标准化）
+   * 需求 9.1: 加载指示器
+   * 需求 9.4: 失败时错误消息和重试入口
+   */
   private async handleStandardize(descriptionOverride?: string): Promise<void> {
-    const plugin = this.deps.getPlugin();
-    if (!plugin) {
-      this.deps.showErrorNotice(this.deps.t("workbench.notifications.systemNotInitialized"));
-      return;
-    }
-
     const description = (descriptionOverride ?? this.conceptInput?.value ?? "").trim();
     if (!description) {
       this.deps.showErrorNotice(this.deps.t("workbench.notifications.enterDescription"));
@@ -401,6 +402,7 @@ export class CreateSection {
 
     this.updateInputActionState();
 
+    // 需求 9.1: 加载指示器 + 防重复提交
     if (this.standardizeBtn) {
       this.standardizeBtn.disabled = true;
       this.standardizeBtn.classList.add("is-loading");
@@ -410,27 +412,33 @@ export class CreateSection {
     }
 
     try {
-      const po = plugin.getComponents().pipelineOrchestrator;
-      const result = await po.defineDirect(description);
+      const result = await this.deps.createOrchestrator.defineDirect(description);
 
       if (!result.ok) {
+        // 需求 9.4: Define 失败时显示错误消息
         this.deps.showErrorNotice(`${this.deps.t("workbench.notifications.standardizeFailed")}: ${result.error.message}`);
         return;
       }
 
       this.currentStandardizedData = result.value;
+      // 需求 9.2: 类型候选列表显示（置信度 + 用户覆盖）
       this.renderTypeConfidenceTable(result.value);
 
       new Notice(this.deps.t("workbench.notifications.standardizeComplete"));
     } catch (error) {
       this.deps.logError("标准化失败", error);
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = safeErrorMessage(error, this.deps.t("workbench.notifications.standardizeFailed"));
       this.deps.showErrorNotice(`${this.deps.t("workbench.notifications.standardizeFailed")}: ${errorMessage}`);
     } finally {
+      // 需求 9.4: 重试入口 — 重置按钮状态，用户可再次点击
       this.resetStandardizeButton();
     }
   }
 
+  /**
+   * 渲染类型置信度表格
+   * 需求 9.2: 类型候选列表（置信度 + 用户覆盖选择）
+   */
   private renderTypeConfidenceTable(standardizedData: StandardizedConcept): void {
     if (!this.typeConfidenceTableContainer) return;
 
@@ -466,8 +474,7 @@ export class CreateSection {
       const typeCell = row.createEl("td", { cls: "cr-type-cell" });
       const typeLabel = typeCell.createEl("span", { text: type, cls: "cr-type-name" });
       if (index === 0) {
-        typeLabel.style.fontWeight = "600";
-        typeLabel.style.color = "var(--interactive-accent)";
+        typeLabel.addClass("cr-type-name-primary");
       }
 
       const nameCell = row.createEl("td", { cls: "cr-name-cell" });
@@ -503,16 +510,13 @@ export class CreateSection {
     });
   }
 
+  /**
+   * 处理创建概念（用户选择类型后）
+   * 需求 9.3: 创建管线步骤名称显示
+   */
   private async handleCreateConcept(selectedType: CRType, standardizedData: StandardizedConcept): Promise<void> {
-    const plugin = this.deps.getPlugin();
-    if (!plugin) {
-      this.deps.showErrorNotice(this.deps.t("workbench.notifications.pluginNotInitialized"));
-      return;
-    }
-
     try {
-      const po = plugin.getComponents().pipelineOrchestrator;
-      const result = po.startCreatePipelineWithStandardized(standardizedData, selectedType);
+      const result = this.deps.createOrchestrator.startCreatePipelineWithStandardized(standardizedData, selectedType);
 
       if (!result.ok) {
         this.deps.showErrorNotice(`${this.deps.t("workbench.notifications.createFailed")}: ${result.error.message}`);
@@ -521,10 +525,11 @@ export class CreateSection {
 
       new Notice(`${this.deps.t("workbench.notifications.conceptCreated")} (${result.value})`);
 
+      // 需求 9.5: 清空输入时重置所有中间状态
       this.clearConceptInput();
     } catch (error) {
       this.deps.logError("创建概念失败", error);
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = safeErrorMessage(error, this.deps.t("workbench.notifications.createFailed"));
       this.deps.showErrorNotice(`${this.deps.t("workbench.notifications.createFailed")}: ${errorMessage}`);
     }
   }
@@ -544,6 +549,10 @@ export class CreateSection {
     }
   }
 
+  /**
+   * 清空输入并重置所有中间状态
+   * 需求 9.5: 清空输入时重置所有中间状态
+   */
   private clearConceptInput(): void {
     this.pendingConceptInput = null;
     this.hideTypeConfidenceTable();
@@ -570,13 +579,7 @@ export class CreateSection {
   }
 
   private openHierarchicalExpand(plan: HierarchicalPlan): void {
-    const plugin = this.deps.getPlugin();
-    if (!plugin) return;
-    const orchestrator = plugin.getComponents().expandOrchestrator;
-    if (!orchestrator) {
-      this.deps.showErrorNotice(this.deps.t("expand.notInitialized"));
-      return;
-    }
+    const orchestrator = this.deps.expandOrchestrator;
 
     const labels = {
       titlePrefix: this.deps.t("expand.titlePrefix"),
@@ -623,13 +626,7 @@ export class CreateSection {
   }
 
   private openAbstractExpand(plan: AbstractPlan): void {
-    const plugin = this.deps.getPlugin();
-    if (!plugin) return;
-    const orchestrator = plugin.getComponents().expandOrchestrator;
-    if (!orchestrator) {
-      this.deps.showErrorNotice(this.deps.t("expand.notInitialized"));
-      return;
-    }
+    const orchestrator = this.deps.expandOrchestrator;
 
     const labels = {
       titlePrefix: this.deps.t("expand.abstractTitlePrefix"),

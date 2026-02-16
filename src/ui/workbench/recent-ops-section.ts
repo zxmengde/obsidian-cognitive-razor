@@ -1,20 +1,28 @@
+/**
+ * RecentOpsSection — 历史区组件
+ *
+ * 负责显示最近操作快照列表，支持撤销、查看 Diff 等操作。
+ * 通过 RecentOpsSectionDeps 注入依赖，不直接依赖 Plugin 实例。
+ *
+ * 需求: 6.1
+ */
+
 import { Notice, TFile } from "obsidian";
 import type { SnapshotMetadata } from "../../types";
-import type { WorkbenchSectionDeps } from "./workbench-section-deps";
+import { safeErrorMessage } from "../../types";
+import type { RecentOpsSectionDeps } from "./workbench-section-deps";
+import { WorkbenchSection } from "./workbench-section";
 import { UndoNotification } from "../undo-notification";
 import { ConfirmDialog, SnapshotDiffModal } from "./workbench-modals";
 
-export class RecentOpsSection {
-  private deps: WorkbenchSectionDeps;
-
+export class RecentOpsSection extends WorkbenchSection<RecentOpsSectionDeps> {
   private container: HTMLElement | null = null;
   private sectionEl: HTMLElement | null = null;
   private badgeEl: HTMLElement | null = null;
 
-  constructor(deps: WorkbenchSectionDeps) {
-    this.deps = deps;
-  }
-
+  /**
+   * 挂载到可折叠区域（由 WorkbenchPanel 的 renderCollapsibleSection 调用）
+   */
   mount(options: { content: HTMLElement; badge: HTMLElement; section: HTMLElement }): void {
     this.container = options.content;
     this.badgeEl = options.badge;
@@ -22,10 +30,24 @@ export class RecentOpsSection {
     void this.refresh();
   }
 
-  onClose(): void {
+  render(container: HTMLElement): void {
+    // 由 mount() 处理实际渲染（可折叠区域模式）
+    this.container = container;
+    void this.refresh();
+  }
+
+  update(): void {
+    void this.refresh();
+  }
+
+  dispose(): void {
     this.container = null;
     this.sectionEl = null;
     this.badgeEl = null;
+  }
+
+  onClose(): void {
+    this.dispose();
   }
 
   reveal(): void {
@@ -33,74 +55,90 @@ export class RecentOpsSection {
   }
 
   async refresh(): Promise<void> {
-    const plugin = this.deps.getPlugin();
-    if (!this.container || !plugin) return;
+    try {
+      if (!this.container) return;
 
-    this.container.empty();
+      this.container.empty();
 
-    const undoManager = plugin.getComponents().undoManager;
-    const result = await undoManager.listSnapshots();
+      const result = await this.deps.undoManager.listSnapshots();
 
-    if (!result.ok || result.value.length === 0) {
-      this.renderEmpty();
-      if (this.badgeEl) {
-        this.badgeEl.textContent = "0";
-        this.badgeEl.style.display = "none";
+      if (!result.ok || result.value.length === 0) {
+        this.renderEmpty();
+        if (this.badgeEl) {
+          this.badgeEl.textContent = "0";
+          this.badgeEl.style.display = "none";
+        }
+        return;
       }
-      return;
-    }
 
-    const snapshots = result.value.sort(
-      (a, b) => new Date(b.created).getTime() - new Date(a.created).getTime()
-    );
+      const snapshots = result.value.sort(
+        (a, b) => new Date(b.created).getTime() - new Date(a.created).getTime()
+      );
 
-    if (this.badgeEl) {
-      this.badgeEl.textContent = snapshots.length.toString();
-      this.badgeEl.style.display = "";
-    }
+      if (this.badgeEl) {
+        this.badgeEl.textContent = snapshots.length.toString();
+        this.badgeEl.style.display = "";
+      }
 
-    const recentSnapshots = snapshots.slice(0, 10);
+      const recentSnapshots = snapshots.slice(0, 10);
 
-    recentSnapshots.forEach(snapshot => {
-      const item = this.container!.createDiv({ cls: "cr-recent-op-item" });
+      recentSnapshots.forEach(snapshot => {
+        const item = this.container!.createDiv({ cls: "cr-recent-op-item" });
 
-      const info = item.createDiv({ cls: "cr-op-info" });
+        const info = item.createDiv({ cls: "cr-op-info" });
 
-      const description = `${this.getOperationDisplayName(snapshot.taskId)}: ${snapshot.path.split("/").pop()}`;
-      info.createEl("div", { text: description, cls: "cr-op-description" });
+        const description = `${this.getOperationDisplayName(snapshot.taskId)}: ${snapshot.path.split("/").pop()}`;
+        info.createEl("div", { text: description, cls: "cr-op-description" });
 
-      info.createEl("div", { text: this.formatTime(snapshot.created), cls: "cr-op-time" });
+        info.createEl("div", { text: this.formatTime(snapshot.created), cls: "cr-op-time" });
 
-      const undoBtn = item.createEl("button", {
-        text: this.deps.t("workbench.recentOps.undo"),
-        cls: "cr-undo-btn cr-btn-small",
-        attr: { "aria-label": `${this.deps.t("workbench.recentOps.undo")}: ${description}` }
+        const undoBtn = item.createEl("button", {
+          text: this.deps.t("workbench.recentOps.undo"),
+          cls: "cr-undo-btn cr-btn-small",
+          attr: {
+            "aria-label": `${this.deps.t("workbench.recentOps.undo")}: ${description}`,
+            "data-tooltip-position": "top"
+          }
+        });
+        undoBtn.addEventListener("click", async () => {
+          try {
+            await this.handleUndoSnapshot(snapshot.id);
+          } catch (error) {
+            this.deps.logError("撤销操作失败", error, { snapshotId: snapshot.id });
+            this.deps.showErrorNotice(safeErrorMessage(error, this.deps.t("workbench.notifications.undoFailed")));
+          }
+        });
+
+        const viewBtn = item.createEl("button", {
+          text: this.deps.t("workbench.recentOps.viewSnapshot"),
+          cls: "cr-view-snapshot-btn cr-btn-small",
+          attr: {
+            "aria-label": `${this.deps.t("workbench.recentOps.viewSnapshot")}: ${description}`,
+            "data-tooltip-position": "top"
+          }
+        });
+        viewBtn.addEventListener("click", async () => {
+          try {
+            await this.handleViewSnapshotDiff(snapshot);
+          } catch (error) {
+            this.deps.logError("查看快照失败", error, { snapshotId: snapshot.id });
+            this.deps.showErrorNotice(safeErrorMessage(error, this.deps.t("workbench.notifications.undoFailed")));
+          }
+        });
       });
-      undoBtn.addEventListener("click", async () => {
-        await this.handleUndoSnapshot(snapshot.id);
-      });
 
-      const viewBtn = item.createEl("button", {
-        text: this.deps.t("workbench.recentOps.viewSnapshot"),
-        cls: "cr-view-snapshot-btn cr-btn-small",
-        attr: { "aria-label": `${this.deps.t("workbench.recentOps.viewSnapshot")}: ${description}` }
-      });
-      viewBtn.addEventListener("click", async () => {
-        await this.handleViewSnapshotDiff(snapshot);
-      });
-    });
-
-    if (snapshots.length > 10) {
-      const moreHint = this.container.createDiv({ cls: "cr-more-hint" });
-      const moreCount = snapshots.length - 10;
-      moreHint.textContent = this.deps.t("workbench.recentOps.moreSnapshots").replace("{count}", String(moreCount));
+      if (snapshots.length > 10) {
+        const moreHint = this.container.createDiv({ cls: "cr-more-hint" });
+        const moreCount = snapshots.length - 10;
+        moreHint.textContent = this.deps.t("workbench.recentOps.moreSnapshots").replace("{count}", String(moreCount));
+      }
+    } catch (error) {
+      this.deps.logError("刷新历史记录失败", error);
+      // 不显示错误通知，避免频繁刷新时打扰用户
     }
   }
 
   showUndoToast(message: string, snapshotId: string, filePath: string): void {
-    const plugin = this.deps.getPlugin();
-    if (!plugin) return;
-
     const notification = new UndoNotification({
       message,
       snapshotId,
@@ -115,12 +153,6 @@ export class RecentOpsSection {
   }
 
   async clearAllSnapshots(): Promise<void> {
-    const plugin = this.deps.getPlugin();
-    if (!plugin) {
-      this.deps.showErrorNotice(this.deps.t("workbench.notifications.pluginNotInitialized"));
-      return;
-    }
-
     const confirmed = await this.showConfirmDialog(
       this.deps.t("workbench.recentOps.clearAllConfirmTitle"),
       this.deps.t("workbench.recentOps.clearAllConfirmMessage")
@@ -128,8 +160,7 @@ export class RecentOpsSection {
 
     if (!confirmed) return;
 
-    const undoManager = plugin.getComponents().undoManager;
-    const result = await undoManager.clearAllSnapshots();
+    const result = await this.deps.undoManager.clearAllSnapshots();
 
     if (result.ok) {
       new Notice(`${this.deps.t("workbench.notifications.clearComplete")} (${result.value})`);
@@ -150,12 +181,12 @@ export class RecentOpsSection {
 
   private getOperationDisplayName(taskId: string): string {
     const operationNames: Record<string, string> = {
-      enrich: "标记",
-      merge: "合并",
-      amend: "修订",
-      "manual-edit": "手动编辑",
-      standardize: "定义",
-      create: "创建笔记",
+      enrich: this.deps.t("workbench.recentOps.operationLabels.enrich"),
+      merge: this.deps.t("workbench.recentOps.operationLabels.merge"),
+      amend: this.deps.t("workbench.recentOps.operationLabels.amend"),
+      "manual-edit": this.deps.t("workbench.recentOps.operationLabels.manualEdit"),
+      standardize: this.deps.t("workbench.recentOps.operationLabels.standardize"),
+      create: this.deps.t("workbench.recentOps.operationLabels.create"),
     };
 
     for (const [key, name] of Object.entries(operationNames)) {
@@ -164,20 +195,12 @@ export class RecentOpsSection {
       }
     }
 
-    return "操作";
+    return this.deps.t("workbench.recentOps.operationLabels.fallback");
   }
 
   private async handleUndoSnapshot(snapshotId: string): Promise<void> {
-    const plugin = this.deps.getPlugin();
-    if (!plugin) {
-      this.deps.showErrorNotice(this.deps.t("workbench.notifications.pluginNotInitialized"));
-      return;
-    }
-
-    const undoManager = plugin.getComponents().undoManager;
-
     try {
-      const restoreResult = await undoManager.restoreSnapshot(snapshotId);
+      const restoreResult = await this.deps.undoManager.restoreSnapshot(snapshotId);
       if (!restoreResult.ok) {
         this.deps.showErrorNotice(`${this.deps.t("workbench.notifications.undoFailed")}: ${restoreResult.error.message}`);
         return;
@@ -185,33 +208,27 @@ export class RecentOpsSection {
 
       const snapshot = restoreResult.value;
 
+      // 需求 22.2：后台文件修改使用 Vault.process() 原子操作
       const file = this.deps.app.vault.getAbstractFileByPath(snapshot.path);
       if (file && file instanceof TFile) {
-        await this.deps.app.vault.modify(file, snapshot.content);
+        await this.deps.app.vault.process(file, () => snapshot.content);
         new Notice(this.deps.t("workbench.notifications.undoSuccess"));
       } else {
         await this.deps.app.vault.create(snapshot.path, snapshot.content);
         new Notice(this.deps.t("workbench.notifications.undoSuccessRestored"));
       }
 
-      await undoManager.deleteSnapshot(snapshotId);
+      await this.deps.undoManager.deleteSnapshot(snapshotId);
       await this.refresh();
     } catch (error) {
       this.deps.logError("撤销操作失败", error, { snapshotId });
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = safeErrorMessage(error, this.deps.t("workbench.notifications.undoFailed"));
       this.deps.showErrorNotice(`${this.deps.t("workbench.notifications.undoFailed")}: ${errorMessage}`);
     }
   }
 
   private async handleViewSnapshotDiff(snapshot: SnapshotMetadata): Promise<void> {
-    const plugin = this.deps.getPlugin();
-    if (!plugin) {
-      this.deps.showErrorNotice(this.deps.t("workbench.notifications.pluginNotInitialized"));
-      return;
-    }
-
-    const undoManager = plugin.getComponents().undoManager;
-    const snapshotResult = await undoManager.restoreSnapshot(snapshot.id);
+    const snapshotResult = await this.deps.undoManager.restoreSnapshot(snapshot.id);
     if (!snapshotResult.ok) {
       this.deps.showErrorNotice(`${this.deps.t("workbench.notifications.undoFailed")}: ${snapshotResult.error.message}`);
       return;
@@ -221,7 +238,7 @@ export class RecentOpsSection {
     let currentContent = snapshotContent;
     const file = this.deps.app.vault.getAbstractFileByPath(snapshot.path);
     if (file && file instanceof TFile) {
-      currentContent = await this.deps.app.vault.read(file);
+      currentContent = await this.deps.app.vault.cachedRead(file);
     }
 
     const modal = new SnapshotDiffModal(this.deps.app, {
@@ -229,29 +246,22 @@ export class RecentOpsSection {
       snapshotContent,
       currentContent,
       onRestore: async () => {
-        const restoreResult = await undoManager.restoreSnapshotToFile(snapshot.id);
+        const restoreResult = await this.deps.undoManager.restoreSnapshotToFile(snapshot.id);
         if (!restoreResult.ok) {
           this.deps.showErrorNotice(`${this.deps.t("workbench.notifications.undoFailed")}: ${restoreResult.error.message}`);
           return;
         }
         new Notice(this.deps.t("workbench.notifications.undoSuccess"));
         await this.refresh();
-      }
+      },
+      t: this.deps.t
     });
     modal.open();
   }
 
   private async handleUndoFromToast(snapshotId: string): Promise<void> {
-    const plugin = this.deps.getPlugin();
-    if (!plugin) {
-      this.deps.showErrorNotice(this.deps.t("workbench.notifications.pluginNotInitialized"));
-      return;
-    }
-
-    const undoManager = plugin.getComponents().undoManager;
-
     try {
-      const restoreResult = await undoManager.restoreSnapshot(snapshotId);
+      const restoreResult = await this.deps.undoManager.restoreSnapshot(snapshotId);
       if (!restoreResult.ok) {
         this.deps.showErrorNotice(`${this.deps.t("workbench.notifications.undoFailed")}: ${restoreResult.error.message}`);
         return;
@@ -259,27 +269,28 @@ export class RecentOpsSection {
 
       const snapshot = restoreResult.value;
 
+      // 需求 22.2：后台文件修改使用 Vault.process() 原子操作
       const file = this.deps.app.vault.getAbstractFileByPath(snapshot.path);
       if (file && file instanceof TFile) {
-        await this.deps.app.vault.modify(file, snapshot.content);
+        await this.deps.app.vault.process(file, () => snapshot.content);
         new Notice(this.deps.t("workbench.notifications.undoSuccess"));
       } else {
         await this.deps.app.vault.create(snapshot.path, snapshot.content);
         new Notice(this.deps.t("workbench.notifications.undoSuccessRestored"));
       }
 
-      await undoManager.deleteSnapshot(snapshotId);
+      await this.deps.undoManager.deleteSnapshot(snapshotId);
       await this.refresh();
     } catch (error) {
       this.deps.logError("撤销操作失败（Toast）", error, { snapshotId });
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = safeErrorMessage(error, this.deps.t("workbench.notifications.undoFailed"));
       this.deps.showErrorNotice(`${this.deps.t("workbench.notifications.undoFailed")}: ${errorMessage}`);
     }
   }
 
   private showConfirmDialog(title: string, message: string): Promise<boolean> {
     return new Promise((resolve) => {
-      const modal = new ConfirmDialog(this.deps.app, title, message, resolve);
+      const modal = new ConfirmDialog(this.deps.app, title, message, resolve, this.deps.t);
       modal.open();
     });
   }

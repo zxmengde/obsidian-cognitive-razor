@@ -3,6 +3,7 @@
 import {
   ILogger,
   TaskRecord,
+  TaskType,
   TaskResult,
   QueueStatus,
   QueueEventListener,
@@ -21,6 +22,68 @@ import type { FileStorage } from "../data/file-storage";
 import type { SettingsStore } from "../data/settings-store";
 import { TaskQueueStore } from "./task-queue-store";
 
+// ============================================================================
+// TaskRecord 反序列化校验
+// ============================================================================
+
+/** 所有合法的 TaskType 值集合 */
+const VALID_TASK_TYPES: ReadonlySet<string> = new Set<TaskType>([
+  "define", "tag", "write", "amend", "merge", "index", "verify", "image-generate",
+]);
+
+/**
+ * 各 TaskType 对应 payload 的必填字段映射
+ *
+ * 仅校验核心必填字段，可选字段不做强制要求。
+ * payload 接口中带 `[key: string]: unknown` 索引签名，
+ * 因此只需确认关键字段存在且类型正确即可。
+ */
+const PAYLOAD_REQUIRED_FIELDS: Record<TaskType, Array<{ field: string; type: string }>> = {
+  "define":          [{ field: "userInput", type: "string" }],
+  "tag":             [{ field: "userInput", type: "string" }, { field: "conceptType", type: "string" }],
+  "write":           [{ field: "conceptType", type: "string" }],
+  "amend":           [{ field: "currentContent", type: "string" }, { field: "instruction", type: "string" }, { field: "conceptType", type: "string" }],
+  "merge":           [{ field: "keepName", type: "string" }, { field: "deleteName", type: "string" }, { field: "keepContent", type: "string" }, { field: "deleteContent", type: "string" }, { field: "conceptType", type: "string" }],
+  "index":           [], // 所有字段均为可选
+  "verify":          [{ field: "currentContent", type: "string" }],
+  "image-generate":  [{ field: "userPrompt", type: "string" }, { field: "filePath", type: "string" }],
+};
+
+/**
+ * 校验反序列化的 TaskRecord 的 payload 是否与 taskType 一致
+ *
+ * @returns 校验失败时返回错误描述字符串，成功返回 null
+ */
+export function validateTaskRecordPayload(
+  taskType: string,
+  payload: unknown,
+): string | null {
+  // 1. 校验 taskType 是否合法
+  if (!VALID_TASK_TYPES.has(taskType)) {
+    return `未知的 taskType: "${taskType}"`;
+  }
+
+  // 2. 校验 payload 是否为对象
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return `payload 不是有效对象（taskType="${taskType}"）`;
+  }
+
+  // 3. 校验必填字段
+  const requiredFields = PAYLOAD_REQUIRED_FIELDS[taskType as TaskType];
+  const payloadObj = payload as Record<string, unknown>;
+  for (const { field, type } of requiredFields) {
+    const value = payloadObj[field];
+    if (value === undefined || value === null) {
+      return `payload 缺少必填字段 "${field}"（taskType="${taskType}"）`;
+    }
+    if (typeof value !== type) {
+      return `payload 字段 "${field}" 类型错误：期望 ${type}，实际 ${typeof value}（taskType="${taskType}"）`;
+    }
+  }
+
+  return null;
+}
+
 export class TaskQueue {
   private lockManager: SimpleLockManager;
   private logger: ILogger;
@@ -36,6 +99,11 @@ export class TaskQueue {
   private isScheduling: boolean;
   private static readonly DEFAULT_TASK_TIMEOUT_MS = 3 * 60 * 1000;
   private static readonly DEFAULT_TASK_HISTORY_LIMIT = 300;
+
+  // 防抖批量写入（需求 17.1 ~ 17.4）
+  private pendingWrite: boolean = false;
+  private writeTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly writeIntervalMs: number = 2000; // 2 秒防抖窗口
 
   constructor(
     lockManager: SimpleLockManager,
@@ -145,8 +213,8 @@ export class TaskQueue {
       // 添加到队列
       this.tasks.set(taskId, fullTask);
 
-      // 持久化 - 入队成功后立即写入 queue-state.json (Requirements 2.2)
-      this.saveQueue();
+      // 持久化 - 防抖批量写入 (Requirements 17.1)
+      this.scheduleSave();
 
       // 发布事件
       this.publishEvent({
@@ -219,10 +287,8 @@ export class TaskQueue {
       task.state = "Cancelled";
       task.updated = formatCRTimestamp();
 
-      // 释放锁
-      if (task.lockKey) {
-        this.lockManager.release(task.lockKey);
-      }
+      // 释放锁（节点锁 + 类型锁）
+      this.releaseTaskLocks(task);
 
       // 从处理中集合移除
       this.processingTasks.delete(taskId);
@@ -257,7 +323,7 @@ export class TaskQueue {
   /** 暂停队列 */
   async pause(): Promise<void> {
     this.paused = true;
-    await this.saveQueue();
+    this.scheduleSave();
     
     this.publishEvent({
       type: "queue-paused",
@@ -270,7 +336,7 @@ export class TaskQueue {
   /** 恢复队列 */
   async resume(): Promise<void> {
     this.paused = false;
-    await this.saveQueue();
+    this.scheduleSave();
     
     this.publishEvent({
       type: "queue-resumed",
@@ -350,6 +416,21 @@ export class TaskQueue {
   /** 停止调度器（事件驱动模式，保留接口兼容性） */
   stop(): void {
     this.logger.debug("TaskQueue", "调度器停止（事件驱动模式）");
+  }
+
+  /**
+   * Plugin 卸载时强制刷新缓冲区（需求 17.3）
+   *
+   * 清除待执行的定时器，立即将缓冲区数据写入磁盘。
+   */
+  async dispose(): Promise<void> {
+    if (this.writeTimer !== null) {
+      clearTimeout(this.writeTimer);
+      this.writeTimer = null;
+    }
+    if (this.pendingWrite) {
+      await this.flushSave();
+    }
   }
 
   /** 获取所有任务 */
@@ -797,17 +878,44 @@ export class TaskQueue {
   }
 
   /**
-   * 保存队列状态
-   * 
-   * 遵循 Requirements 2.2：入队成功后立即写入 queue-state.json
-   * 
-   * Phase 2.2：仅持久化最小队列状态（pendingTasks + paused）
-   * 
-   * 注意：此方法是异步的，但在 enqueue 中被调用时不会阻塞返回。
-   * 这是为了保持同步 API，避免阻塞入队流程。
-   * 写入操作会立即开始，但可能在 enqueue 返回后完成。
+   * 防抖调度保存（需求 17.1, 17.2）
+   *
+   * 将写入请求合并到缓冲区，在 2 秒防抖窗口后批量写入一次。
+   * 若已有定时器在等待，则仅标记 pendingWrite，不重复创建定时器。
    */
-  private saveQueue(): Promise<void> {
+  private scheduleSave(): void {
+    this.pendingWrite = true;
+    if (this.writeTimer !== null) return; // 已有定时器
+    this.writeTimer = setTimeout(async () => {
+      this.writeTimer = null;
+      if (this.pendingWrite) {
+        await this.flushSave();
+      }
+    }, this.writeIntervalMs);
+  }
+
+  /**
+   * 立即刷新缓冲区到磁盘（需求 17.3, 17.4）
+   *
+   * I/O 错误时保留 pendingWrite 标记，下次触发时重试。
+   */
+  private async flushSave(): Promise<void> {
+    this.pendingWrite = false;
+    try {
+      await this.buildAndSave();
+    } catch {
+      // 写入失败，保留 pendingWrite 标记，下次触发时重试（需求 17.4）
+      this.pendingWrite = true;
+      this.logger.error("TaskQueue", "批量写入失败，将在下次触发时重试");
+    }
+  }
+
+  /**
+   * 构建队列状态并写入磁盘
+   *
+   * Phase 2.2：仅持久化最小队列状态（pendingTasks + paused）
+   */
+  private buildAndSave(): Promise<void> {
     const pendingTasks = Array.from(this.tasks.values())
       .filter((task) => task.state === "Pending" || task.state === "Running")
       .map((task) => ({
@@ -861,8 +969,51 @@ export class TaskQueue {
     this.paused = queueState.paused || queueState.pendingTasks.length > 0;
 
     const now = formatCRTimestamp();
+    let invalidCount = 0;
 
     for (const persisted of queueState.pendingTasks) {
+      // 反序列化校验：验证 payload 结构与 taskType 的一致性
+      const validationError = validateTaskRecordPayload(
+        persisted.taskType,
+        persisted.payload,
+      );
+
+      if (validationError) {
+        // 无效记录标记为 Failed 并记录日志
+        invalidCount++;
+        this.logger.warn("TaskQueue", "反序列化校验失败，任务标记为 Failed", {
+          taskId: persisted.id,
+          nodeId: persisted.nodeId,
+          taskType: persisted.taskType,
+          reason: validationError,
+        });
+
+        const failedTask: TaskRecord = {
+          id: persisted.id,
+          nodeId: persisted.nodeId,
+          taskType: persisted.taskType,
+          state: "Failed",
+          attempt: persisted.attempt,
+          maxAttempts: persisted.maxAttempts,
+          providerRef: persisted.providerRef,
+          promptRef: persisted.promptRef,
+          payload: (persisted.payload ?? {}) as TaskRecord["payload"],
+          created: persisted.created ?? now,
+          updated: now,
+          errors: [
+            ...(persisted.errors ?? []),
+            {
+              code: "E100_INVALID_INPUT",
+              message: validationError,
+              timestamp: now,
+              attempt: persisted.attempt,
+            },
+          ],
+        };
+        this.tasks.set(failedTask.id, failedTask);
+        continue;
+      }
+
       const restoredTask: TaskRecord = {
         id: persisted.id,
         nodeId: persisted.nodeId,
@@ -887,12 +1038,13 @@ export class TaskQueue {
     this.logger.info("TaskQueue", "队列状态恢复成功", {
       taskCount: this.tasks.size,
       paused: this.paused,
-      migrated
+      migrated,
+      invalidTasks: invalidCount,
     });
 
-    // 若检测到旧格式，立即落盘为最新结构以关闭分叉
-    if (migrated) {
-      await this.saveQueue();
+    // 若检测到旧格式或有无效记录，立即落盘为最新结构
+    if (migrated || invalidCount > 0) {
+      await this.flushSave();
     }
   }
 

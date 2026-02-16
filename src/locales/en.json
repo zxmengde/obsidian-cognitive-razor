@@ -1,0 +1,675 @@
+{
+  "common": {
+    "confirm": "Confirm",
+    "cancel": "Cancel",
+    "save": "Save",
+    "delete": "Delete",
+    "edit": "Edit",
+    "add": "Add",
+    "close": "Close",
+    "loading": "Loading...",
+    "success": "Success",
+    "error": "Error",
+    "warning": "Warning"
+  },
+  "commands": {
+    "openWorkbench": "Open Workbench",
+    "createConcept": "Create Concept",
+    "improveNote": "Improve Note",
+    "expandNote": "Expand Current Note",
+    "mergeDuplicates": "Merge Duplicates"
+  },
+  "workbench": {
+    "title": "Workbench",
+    "buttons": {
+      "improveNote": "Improve Current Note",
+      "expand": "Expand Current Note",
+      "insertImage": "Insert Image",
+      "verify": "Verify"
+    },
+    "createConcept": {
+      "title": "Create Concept",
+      "placeholder": "Enter concept description...",
+      "startButton": "Start",
+      "defining": "Defining...",
+      "selectType": "Please select concept type",
+      "create": "Create",
+      "clear": "Clear input"
+    },
+    "amendModal": {
+      "title": "Amend Note",
+      "placeholder": "Enter amend instructions (e.g., add examples, refine definition, add related theories)"
+    },
+    "duplicates": {
+      "title": "Duplicate Concepts",
+      "sortBy": "Sort by:",
+      "sortSimilarityDesc": "Similarity (High to Low)",
+      "sortSimilarityAsc": "Similarity (Low to High)",
+      "sortTimeDesc": "Time (New to Old)",
+      "sortTimeAsc": "Time (Old to New)",
+      "sortByType": "By Type",
+      "filterBy": "Type:",
+      "filterAll": "All",
+      "selectAll": "Select All",
+      "batchMerge": "Batch Merge",
+      "batchDismiss": "Batch Dismiss",
+      "viewHistory": "View History",
+      "empty": "No duplicate concepts",
+      "merge": "Merge",
+      "dismiss": "Dismiss",
+      "selectPair": "Select duplicate pair"
+    },
+    "queueStatus": {
+      "title": "Queue Status",
+      "active": "Active",
+      "paused": "Paused",
+      "pending": "Pending",
+      "running": "Running",
+      "completed": "Completed",
+      "failed": "Failed",
+      "cancelled": "Cancelled",
+      "clearPending": "Clear Pending",
+      "clearCompleted": "Clear Completed",
+      "clearFailed": "Clear Failed",
+      "retryFailed": "Retry Failed",
+      "pauseQueue": "Pause Queue",
+      "resumeQueue": "Resume Queue",
+      "viewDetails": "View Details",
+      "currentPipeline": "Current Pipeline",
+      "noPipeline": "No active pipeline",
+      "queuePaused": "Queue paused",
+      "queueRunning": "Queue running",
+      "queueResumed": "Queue resumed",
+      "cancel": "Cancel",
+      "retry": "Retry",
+      "taskId": "Task ID",
+      "type": "Type",
+      "status": "Status",
+      "progress": "Progress",
+      "actions": "Actions",
+      "noTasks": "No tasks in queue",
+      "noteName": "Note Name"
+    },
+    "recentOps": {
+      "title": "Operation History",
+      "empty": "No operations to undo",
+      "undo": "Undo",
+      "viewSnapshot": "View Snapshot",
+      "refresh": "Refresh",
+      "clearAll": "Clear All",
+      "clearAllConfirmTitle": "Confirm Clear",
+      "clearAllConfirmMessage": "Are you sure you want to clear all snapshots? This action cannot be undone.",
+      "moreSnapshots": "{count} more older snapshots",
+      "timeJustNow": "Just now",
+      "timeMinutesAgo": "{minutes} minutes ago",
+      "timeHoursAgo": "{hours} hours ago",
+      "timeDaysAgo": "{days} days ago",
+      "operationLabels": {
+        "enrich": "Tag",
+        "merge": "Merge",
+        "amend": "Amend",
+        "manualEdit": "Manual edit",
+        "standardize": "Define",
+        "create": "Create note",
+        "fallback": "Operation"
+      }
+    },
+    "pipeline": {
+      "id": "ID",
+      "type": "Type",
+      "stage": "Stage",
+      "view": "View",
+      "confirmCreate": "Confirm Create",
+      "previewWrite": "Preview Write",
+      "mergePreview": "Merge Preview",
+      "amendPreview": "Amend Preview",
+      "verificationResult": "Verification Result:",
+      "chineseName": "Chinese Name:",
+      "englishName": "English Name:",
+      "autoSelect": "Auto Select",
+      "saveEdit": "Save Edit",
+      "generatedContentPreview": "Generated Content Preview (before write)",
+      "progressTitle": "AI Progress",
+      "progressHint": "Live view of LLM stages and write status",
+      "empty": "No pipelines are currently running",
+      "kind": {
+        "create": "Create",
+        "amend": "Amend",
+        "merge": "Merge"
+      },
+      "stages": {
+        "idle": "Idle",
+        "defining": "Defining",
+        "tagging": "Tagging",
+        "indexing": "Indexing",
+        "review_draft": "Review Draft",
+        "writing": "Writing",
+        "verifying": "Verifying",
+        "review_changes": "Review Changes",
+        "saving": "Saving",
+        "checking_duplicates": "Checking Duplicates",
+        "completed": "Completed",
+        "failed": "Failed"
+      },
+      "stageMessages": {
+        "default": "AI is processing this stage",
+        "idle": "Waiting for a new task",
+        "defining": "Analyzing the input and finishing the definition",
+        "tagging": "Generating aliases, tags, and related context",
+        "indexing": "Creating semantic vectors for search",
+        "review_draft": "Waiting for draft confirmation",
+        "writing": "Generating or merging note content",
+        "verifying": "Running verification to ensure reliability",
+        "review_changes": "Waiting for confirmation before writing to disk",
+        "saving": "Writing to the vault and creating a snapshot",
+        "checking_duplicates": "Refreshing duplicate indices and cleaning up",
+        "completed": "Pipeline finished successfully. You can undo from history.",
+        "failed": "Pipeline failed. See the error for details."
+      }
+    },
+    "typeConfidenceTable": {
+      "type": "Type",
+      "standardName": "Standard Name",
+      "confidence": "Confidence",
+      "action": "Action"
+    },
+    "duplicatePreview": {
+      "title": "Duplicate Concept Preview",
+      "similarity": "Similarity:",
+      "type": "Type:",
+      "detectedAt": "Detected At:",
+      "sideBySide": "Side by side",
+      "diffHighlight": "Diff highlight",
+      "mergeAction": "🔀 Merge",
+      "dismissAction": "🚫 Dismiss",
+      "openA": "📄 Open A",
+      "openB": "📄 Open B",
+      "cancel": "Cancel"
+    },
+    "duplicateHistory": {
+      "title": "Duplicate Pair History",
+      "mergedTab": "Merged",
+      "dismissedTab": "Dismissed",
+      "emptyMerged": "No merged duplicates",
+      "emptyDismissed": "No dismissed duplicates",
+      "similarity": "Similarity",
+      "undoDismiss": "Undo dismiss",
+      "delete": "Delete",
+      "close": "Close"
+    },
+    "diffPreview": {
+      "accept": "Accept",
+      "reject": "Discard",
+      "acceptAria": "Accept changes",
+      "rejectAria": "Discard changes"
+    },
+    "snapshotDiff": {
+      "title": "Snapshot preview: {id}",
+      "createdAt": "Created at: {time}",
+      "snapshotVersion": "Snapshot",
+      "currentVersion": "Current",
+      "restore": "Restore snapshot",
+      "close": "Close"
+    },
+    "mergeSelection": {
+      "title": "Select merged note name",
+      "infoLabel": "The following notes will be merged:",
+      "similarity": "Similarity: {value}",
+      "keepSectionTitle": "1. Choose the note to keep",
+      "keepGroupLabel": "Choose the note to keep",
+      "keepCardAria": "Keep “{name}” as primary",
+      "keepRadioAria": "Keep “{name}”",
+      "keepCardTitle": "Keep \"{name}\"",
+      "keepCardDesc": "Use this note as the primary content",
+      "nameSectionTitle": "2. Choose the merged note name",
+      "nameGroupLabel": "Choose the merged note name",
+      "nameOptionAria": "Use name: {name}",
+      "nameRadioAria": "Name: {name}",
+      "customLabel": "Or enter a custom name:",
+      "customPlaceholder": "Enter a new note name (without .md)",
+      "customAria": "Enter custom note name",
+      "confirm": "Confirm merge",
+      "cancel": "Cancel",
+      "nameRequired": "Please select or enter a note name",
+      "invalidName": "File name cannot include: \\ / : * ? \" < > |",
+      "processing": "Processing..."
+    },
+    "notifications": {
+      "systemNotInitialized": "System not initialized",
+      "enterDescription": "Please enter concept description",
+      "standardizeFailed": "Definition failed",
+      "standardizeComplete": "Definition complete, please select type",
+      "pluginNotInitialized": "Plugin not initialized",
+      "openMarkdownFirst": "Please open a Markdown note first",
+      "createFailed": "Creation failed",
+      "conceptCreated": "Concept creation started",
+      "selectDuplicates": "Please select duplicates to merge first",
+      "batchMergeConfirm": "Confirm merging selected duplicate pairs?",
+      "batchMergeComplete": "Batch merge complete",
+      "batchDismissConfirm": "Confirm dismissing selected duplicate pairs?",
+      "batchDismissComplete": "Batch dismiss complete",
+      "fileNotFound": "File not found",
+      "previewFailed": "Failed to show preview",
+      "mergeTaskCreated": "Merge task created",
+      "duplicateManagerNotInitialized": "Duplicate manager not initialized",
+      "orchestratorNotInitialized": "Pipeline orchestrator not initialized",
+      "dismissFailed": "Dismiss failed",
+      "dismissSuccess": "Duplicate pair dismissed",
+      "queueResumed": "Queue resumed",
+      "queuePaused": "Queue paused",
+      "taskCancelled": "Task cancelled",
+      "cancelFailed": "Cancel failed",
+      "retryComplete": "Failed tasks retried",
+      "clearComplete": "Tasks cleared",
+      "undoFailed": "Undo failed",
+      "undoSuccess": "Undo successful",
+      "undoSuccessRestored": "Undo successful (file restored)",
+      "confirmCreateFailed": "Confirm create failed",
+      "confirmCreateWaiting": "Creation confirmed, waiting for content generation",
+      "standardizeUpdated": "Definition result updated",
+      "undoDismissSuccess": "Dismiss undone, duplicate pair restored to pending list",
+      "deletePairSuccess": "Duplicate pair record deleted",
+      "writeFailed": "Write failed",
+      "writeSuccess": "Written, undo available",
+      "writePreviewFailed": "Cannot generate write preview",
+      "amendCancelled": "Amend cancelled",
+      "writeCancelled": "Write cancelled",
+      "amendCompleted": "Amend completed",
+      "mergeCompleted": "Merge completed",
+      "mergeCancelled": "Merge cancelled",
+      "mergeStarted": "Merge task started. Please wait for AI to finish.",
+      "improveStarted": "Improvement task started. Please wait for AI to finish.",
+      "verifyStarted": "Verification started. Please wait for AI to finish.",
+      "imageTaskCreated": "Image generation task queued",
+      "imageGenerationFailed": "Failed to start image generation",
+      "featureDisabled": "Feature is disabled",
+      "workbenchNotInitialized": "Workbench not initialized, please try again later",
+      "startFailed": "Start failed: {message}",
+      "commandFailed": "Command failed: {message}",
+      "noPendingDuplicates": "No pending duplicates",
+      "pendingDuplicatesHint": "There are {count} pending duplicates. Please select which to merge in the workbench.",
+      "improveInstructionRequired": "Please enter an amend instruction",
+      "conceptLocked": "This concept is currently being processed. Please try again later."
+    }
+  },
+  "expand": {
+    "titlePrefix": "Expand: ",
+    "stats": {
+      "total": "Total",
+      "creatable": "Creatable",
+      "existing": "Existing",
+      "invalid": "Not creatable"
+    },
+    "selectAll": "Select All",
+    "deselectAll": "Deselect All",
+    "confirm": "Create Selected",
+    "empty": "No candidates",
+    "status": {
+      "existing": "Existing",
+      "invalid": "Not creatable"
+    },
+    "looseStructureHint": "No standard sections found. Fallback scan may miss items.",
+    "abstractTitlePrefix": "Abstract: ",
+    "abstractInstruction": "Pick at least one similar concept to generate a more abstract one with the current note.",
+    "abstractConfirm": "Generate",
+    "similarity": "Similarity",
+    "notInitialized": "Expand is not initialized",
+    "started": "Started {count} create tasks",
+    "startedWithFailures": "Started {started} tasks, {failed} failed to start"
+  },
+  "settings": {
+    "title": "Cognitive Razor Settings",
+    "tabs": {
+      "general": "General",
+      "providers": "AI Providers",
+      "knowledge": "Knowledge",
+      "system": "System"
+    },
+    "groups": {
+      "interface": "Interface",
+      "deduplication": "Deduplication",
+      "performance": "Performance",
+      "directory": "Directory Structure",
+      "typeDirectories": "Type Directories",
+      "vectorEmbedding": "Vector Embedding",
+      "taskModels": "Task Models",
+      "snapshots": "Snapshots & Undo",
+      "logging": "Logging",
+      "dataManagement": "Data Management"
+    },
+    "language": {
+      "name": "Language",
+      "desc": "Select interface language",
+      "zh": "中文",
+      "en": "English"
+    },
+    "similarityThreshold": {
+      "name": "Similarity Threshold",
+      "desc": "Similarity threshold for detecting duplicate concepts (0-1)"
+    },
+    "maxSnapshots": {
+      "name": "Max Snapshots",
+      "desc": "Maximum number of snapshots for undo operations"
+    },
+    "maxSnapshotAgeDays": {
+      "name": "Snapshot Retention Days",
+      "desc": "Snapshots older than this will be automatically cleaned up"
+    },
+    "concurrency": {
+      "name": "Concurrency",
+      "desc": "Maximum number of concurrent tasks"
+    },
+    "provider": {
+      "title": "AI Provider Configuration",
+      "addButton": "Add Provider",
+      "addDesc": "Configure AI service provider (supports OpenAI standard format, compatible with other services via custom endpoint)",
+      "noProvider": "No provider configured yet. Please add at least one provider to use plugin features.",
+      "addFirstProvider": "Click the button above to add your first AI Provider",
+      "defaultProvider": "Default Provider",
+      "defaultProviderDesc": "Select the default AI provider",
+      "testConnection": "Test Connection",
+      "setDefault": "Set as Default",
+      "status": "Status",
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "model": "Model"
+    },
+    "importExport": {
+      "title": "Import/Export",
+      "export": "Export",
+      "exportDesc": "Export current configuration as JSON file",
+      "import": "Import",
+      "importDesc": "Import configuration from JSON file",
+      "reset": "Reset",
+      "resetDesc": "Reset all settings to default values"
+    },
+    "advanced": {
+      "title": "Advanced Settings",
+      "namingTemplate": {
+        "name": "Naming Template",
+        "desc": "Note filename template. Supported placeholders: {{chinese}} (Chinese name), {{english}} (English name), {{type}} (type in English), {{type_cn}} (type in Chinese), {{uid}} (unique identifier)"
+      },
+      "directoryScheme": {
+        "title": "Directory Scheme",
+        "desc": "Configure storage directory for each knowledge type"
+      },
+      "taskModels": {
+        "title": "Task Model Configuration",
+        "desc": "Configure models and parameters for different task types",
+        "providerAndModel": "Provider and Model",
+        "useDefaultProvider": "Use Default Provider",
+        "configureProviderFirst": "Please configure Provider first",
+        "modelName": "Model Name",
+        "modelNamePlaceholder": "Model name",
+        "notSet": "Not Set",
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High",
+        "advancedParams": "Advanced Parameters"
+      },
+      "temperature": {
+        "name": "Temperature",
+        "desc": "Controls randomness of generated content (0-2), lower values are more deterministic, higher values are more creative"
+      },
+      "topP": {
+        "name": "Top P",
+        "desc": "Nucleus sampling parameter (0-1), controls diversity of generated content"
+      },
+      "reasoningEffort": {
+        "name": "Reasoning Effort",
+        "desc": "Reasoning intensity (for models that support reasoning, such as o1, o3)"
+      },
+      "embedding": {
+        "title": "Embedding Parameters",
+        "dimension": "Vector Dimension",
+        "dimensionDesc": "Embedding vector dimension (text-embedding-3-small supports 256-3072)",
+        "dimensionWarning": "Changing dimension requires rebuilding vector index, existing vector data will be invalidated"
+      },
+      "features": {
+        "title": "Feature Toggles",
+        "enableAutoVerify": "Enable Auto Verify",
+        "enableAutoVerifyDesc": "Run Verify after writing and append a report to the end of the note (adds one LLM call)"
+      },
+      "queue": {
+        "title": "Queue Parameters",
+        "autoRetry": "Auto Retry",
+        "autoRetryDesc": "Automatically retry failed tasks",
+        "maxRetryAttempts": "Max Retry Attempts",
+        "maxRetryAttemptsDesc": "Maximum number of retry attempts for failed tasks",
+        "taskTimeout": "Task Timeout",
+        "taskTimeoutDesc": "Maximum execution time for a single task (milliseconds, default 180000 = 3 minutes)",
+        "maxTaskHistory": "Max Task History",
+        "maxTaskHistoryDesc": "Maximum number of completed/failed/cancelled tasks to retain (default 300)",
+        "providerTimeout": "Provider Request Timeout",
+        "providerTimeoutDesc": "Timeout for API requests (milliseconds, default 1800000 = 30 minutes)"
+      },
+      "logging": {
+        "title": "Logging Settings",
+        "logLevel": "Log Level",
+        "logLevelDesc": "Set the verbosity of logging",
+        "clearLogs": "Clear Logs",
+        "clearLogsDesc": "Clear all log files",
+        "levels": {
+          "debug": "Debug",
+          "info": "Info",
+          "warn": "Warning",
+          "error": "Error"
+        }
+      }
+    }
+  },
+  "setupWizard": {
+    "title": "Configure AI Provider"
+  },
+  "modals": {
+    "addProvider": {
+      "title": "Add AI Provider"
+    },
+    "editProvider": {
+      "title": "Edit AI Provider"
+    }
+  },
+  "notices": {
+    "providerAdded": "Provider {id} added",
+    "providerUpdated": "Provider {id} updated",
+    "providerDeleted": "Provider {id} deleted",
+    "providerSetDefault": "Default provider set to: {id}",
+    "connectionSuccess": "Connection successful!\nChat: {chat}\nEmbedding: {embedding}\nAvailable models: {models}",
+    "connectionFailed": "Connection failed: {error}",
+    "settingsExported": "Settings exported",
+    "settingsImported": "Settings imported",
+    "settingsReset": "Settings reset",
+    "logsCleared": "Logs cleared",
+    "noLogsToClean": "No log files to clean",
+    "languageChanged": "Language changed to: {language}",
+    "logLevelChanged": "Log level set to: {level} (will take effect on next startup)",
+    "groundingEnabled": "Verification enabled",
+    "groundingDisabled": "Verification disabled",
+    "networkRestored": "Network restored, queue can continue",
+    "networkOffline": "AI service offline, queue paused"
+  },
+  "confirmDialogs": {
+    "deleteProvider": {
+      "title": "Delete Provider",
+      "message": "Are you sure you want to delete provider \"{id}\"? This action cannot be undone."
+    },
+    "resetSettings": {
+      "title": "Reset Settings",
+      "message": "Are you sure you want to reset all settings? This action cannot be undone."
+    },
+    "deleteDuplicatePair": {
+      "title": "Confirm Delete",
+      "message": "Are you sure you want to permanently delete this duplicate pair record? This action cannot be undone."
+    }
+  },
+  "taskTypes": {
+    "define": {
+      "name": "Define",
+      "desc": "Normalize the input and determine the concept type"
+    },
+    "tag": {
+      "name": "Tag",
+      "desc": "Generate aliases and tags"
+    },
+    "amend": {
+      "name": "Amend",
+      "desc": "Improve existing content incrementally"
+    },
+    "merge": {
+      "name": "Merge",
+      "desc": "Merge duplicate concepts"
+    },
+    "index": {
+      "name": "Index",
+      "desc": "Produce semantic vectors for retrieval"
+    },
+    "write": {
+      "name": "Write",
+      "desc": "Generate full content or merge results"
+    },
+    "verify": {
+      "name": "Verify",
+      "desc": "Check the accuracy of generated content"
+    },
+    "image-generate": {
+      "name": "Image",
+      "desc": "Generate images and insert into notes"
+    }
+  },
+  "crTypes": {
+    "Domain": "Domain",
+    "Issue": "Issue",
+    "Theory": "Theory",
+    "Entity": "Entity",
+    "Mechanism": "Mechanism"
+  },
+  "crTypeDirectories": {
+    "Domain": "Storage directory for knowledge domains. Default: 1-领域, supports relative paths like CR/1-领域",
+    "Issue": "Storage directory for issues. Default: 2-议题, supports relative paths like CR/2-议题",
+    "Theory": "Storage directory for theories. Default: 3-理论, supports relative paths like CR/3-理论",
+    "Entity": "Storage directory for entities. Default: 4-实体, supports relative paths like CR/4-实体",
+    "Mechanism": "Storage directory for mechanisms. Default: 5-机制, supports relative paths like CR/5-机制"
+  },
+  "taskModels": {
+    "title": "Task Model Configuration",
+    "resetAll": "Reset All",
+    "resetAllConfirm": "Are you sure you want to reset all task configurations to default values? This action cannot be undone.",
+    "reset": "Reset",
+    "resetConfirm": "Are you sure you want to reset this task configuration to default values?",
+    "isDefault": "Default",
+    "isCustom": "Custom",
+    "recommended": "Recommended",
+    "fields": {
+      "provider": "Provider",
+      "providerDesc": "Select AI Provider (leave empty to use default Provider)",
+      "useDefaultProvider": "Use Default Provider",
+      "model": "Model Name",
+      "modelDesc": "Specify the model to use (e.g., gemini-3-flash-preview)",
+      "temperature": "Temperature",
+      "temperatureDesc": "Controls randomness (0-2), lower values are more deterministic, higher values are more creative",
+      "topP": "Top P",
+      "topPDesc": "Nucleus sampling parameter (0-1), controls diversity",
+      "maxTokens": "Max output tokens",
+      "maxTokensDesc": "Limit output tokens (leave empty for no limit)",
+      "reasoningEffort": "Reasoning Effort",
+      "reasoningEffortDesc": "For models that support reasoning (e.g., o1, o3)",
+      "embeddingDimension": "Embedding Dimension",
+      "embeddingDimensionDesc": "Dimension size for vector embeddings"
+    },
+    "tasks": {
+      "define": {
+        "name": "Define",
+        "desc": "Analyze and define core concept meaning"
+      },
+      "tag": {
+        "name": "Tag",
+        "desc": "Tag and categorize concepts"
+      },
+      "write": {
+        "name": "Write",
+        "desc": "Write and expand concept content"
+      },
+      "amend": {
+        "name": "Amend",
+        "desc": "Improve existing content"
+      },
+      "merge": {
+        "name": "Merge",
+        "desc": "Merge duplicate concepts"
+      },
+      "index": {
+        "name": "Index",
+        "desc": "Generate semantic vectors and build index"
+      },
+      "verify": {
+        "name": "Verify",
+        "desc": "Validate and check concept quality"
+      },
+      "image-generate": {
+        "name": "Image",
+        "desc": "Generate images and insert into notes"
+      }
+    },
+    "reasoningEffortOptions": {
+      "notSet": "Not Set",
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High"
+    },
+    "validation": {
+      "temperature": "Temperature must be between 0 and 2",
+      "topP": "Top P must be between 0 and 1",
+      "maxTokens": "Max output tokens must be a positive integer"
+    }
+  },
+  "imageGeneration": {
+    "title": "Image Generation",
+    "enabled": {
+      "name": "Enable image generation",
+      "desc": "Allow inserting AI-generated images into notes"
+    },
+    "defaultSize": {
+      "name": "Default image size",
+      "desc": "Default canvas size when generating images",
+      "square": "Square (1024×1024)",
+      "landscape": "Landscape (1792×1024)",
+      "portrait": "Portrait (1024×1792)"
+    },
+    "defaultQuality": {
+      "name": "Image quality",
+      "desc": "standard: standard quality, hd: high quality (costs more tokens)",
+      "standard": "Standard",
+      "hd": "HD"
+    },
+    "defaultStyle": {
+      "name": "Image style",
+      "desc": "vivid: vibrant, natural: realistic",
+      "vivid": "Vivid",
+      "natural": "Natural"
+    },
+    "defaultAspectRatio": {
+      "name": "Aspect ratio",
+      "desc": "Deprecated. No longer used for image generation; use \"Default image size\" instead."
+    },
+    "defaultImageSize": {
+      "name": "Output resolution",
+      "desc": "Deprecated. No longer used for image generation; use \"Default image size\" instead."
+    },
+    "contextWindowSize": {
+      "name": "Context window size",
+      "desc": "Characters before/after cursor to include in prompt"
+    }
+  },
+  "statusBadge": {
+    "idle": "Idle",
+    "active": "{count} tasks",
+    "paused": "Paused",
+    "error": "{count} failed",
+    "offline": "Offline",
+    "ariaIdle": "Cognitive Razor - Idle",
+    "ariaActive": "Cognitive Razor - {count} tasks running",
+    "ariaPaused": "Cognitive Razor - Queue paused, {count} tasks",
+    "ariaError": "Cognitive Razor - {count} tasks failed",
+    "ariaOffline": "Cognitive Razor - Offline"
+  }
+}

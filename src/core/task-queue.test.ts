@@ -63,7 +63,7 @@ describe("TaskQueue 启动恢复安全策略", () => {
                 taskType: "write",
                 attempt: 0,
                 maxAttempts: 1,
-                payload: {},
+                payload: { conceptType: "Domain" },
               },
             ],
           },

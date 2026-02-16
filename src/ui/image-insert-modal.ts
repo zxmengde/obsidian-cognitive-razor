@@ -85,7 +85,11 @@ export class VisualizationModal extends AbstractModal {
       await this.options.onConfirm(value);
       this.close();
     } catch (error) {
-      new Notice(error instanceof Error ? error.message : String(error));
+      // 需求 23.4：不暴露原始错误堆栈或 API 响应
+      const safeMsg = error instanceof Error && error.message.length < 100
+        ? error.message
+        : "操作失败，请稍后重试";
+      new Notice(safeMsg);
       this.confirmBtn.disabled = false;
     }
   }

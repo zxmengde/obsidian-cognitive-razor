@@ -1,4 +1,4 @@
-import { App, TFile } from "obsidian";
+import { TFile } from "obsidian";
 import {
   CRType,
   ILogger,
@@ -6,13 +6,12 @@ import {
   ok,
   err,
   StandardizedConcept,
-  PluginSettings
 } from "../types";
 import { extractFrontmatter } from "./frontmatter-utils";
 import { schemaRegistry } from "./schema-registry";
 import { generateFilePath, sanitizeFileName } from "./naming-utils";
-import { PipelineOrchestrator } from "./pipeline-orchestrator";
-import type { VectorIndex } from "./vector-index";
+import type { OrchestratorDeps } from "./orchestrator-deps";
+import type { CreateOrchestrator, CreatePresetOptions } from "./create-orchestrator";
 import type { FileStorage } from "../data/file-storage";
 
 export type ExpandMode = "hierarchical" | "abstract";
@@ -53,13 +52,15 @@ export interface AbstractPlan {
 
 export type ExpandPlan = HierarchicalPlan | AbstractPlan;
 
-interface ExpandDependencies {
-  app: App;
-  logger: ILogger;
-  vectorIndex: VectorIndex;
+/**
+ * ExpandOrchestrator 额外依赖（OrchestratorDeps 之外）
+ *
+ * - createOrchestrator：用于为用户勾选的候选启动独立创建管线
+ * - fileStorage：用于读取向量文件（抽象拓展模式）
+ */
+interface ExpandExtraDeps {
+  createOrchestrator: CreateOrchestrator;
   fileStorage: FileStorage;
-  pipelineOrchestrator: PipelineOrchestrator;
-  getSettings: () => PluginSettings;
 }
 
 const HIERARCHICAL_FIELD_MAP: Record<CRType, Array<{ field: string; target: CRType }>> = {
@@ -83,20 +84,16 @@ const HIERARCHICAL_FIELD_MAP: Record<CRType, Array<{ field: string; target: CRTy
 const MAX_CREATABLE = 200;
 
 export class ExpandOrchestrator {
-  private app: App;
+  private deps: OrchestratorDeps;
   private logger: ILogger;
-  private vectorIndex: VectorIndex;
+  private createOrchestrator: CreateOrchestrator;
   private fileStorage: FileStorage;
-  private pipelineOrchestrator: PipelineOrchestrator;
-  private getSettings: () => PluginSettings;
 
-  constructor(deps: ExpandDependencies) {
-    this.app = deps.app;
+  constructor(deps: OrchestratorDeps, extra: ExpandExtraDeps) {
+    this.deps = deps;
     this.logger = deps.logger;
-    this.vectorIndex = deps.vectorIndex;
-    this.fileStorage = deps.fileStorage;
-    this.pipelineOrchestrator = deps.pipelineOrchestrator;
-    this.getSettings = deps.getSettings;
+    this.createOrchestrator = extra.createOrchestrator;
+    this.fileStorage = extra.fileStorage;
   }
 
   /**
@@ -104,7 +101,7 @@ export class ExpandOrchestrator {
    */
   async prepare(file: TFile): Promise<Result<ExpandPlan>> {
     try {
-      const content = await this.app.vault.read(file);
+      const content = await this.deps.app.vault.cachedRead(file);
       const extracted = extractFrontmatter(content);
       if (!extracted) {
         return err("E310_INVALID_STATE", "当前笔记缺少 frontmatter，无法执行拓展");
@@ -163,11 +160,12 @@ export class ExpandOrchestrator {
       if (candidate.status !== "creatable") continue;
       const sc = this.buildStandardizedConcept(candidate.name, candidate.targetType, candidate.description);
       const parentLink = this.wrapAsWikilink(plan.parentTitle);
-      const options = {
+      const options: CreatePresetOptions = {
         parents: [parentLink],
         targetPathOverride: candidate.targetPath
       };
-      const result = this.pipelineOrchestrator.startCreatePipelineWithPreset(
+      // 委托给 CreateOrchestrator 启动独立创建管线
+      const result = this.createOrchestrator.startCreatePipelineWithPreset(
         sc,
         candidate.targetType,
         options
@@ -202,21 +200,21 @@ export class ExpandOrchestrator {
     const sourceTitles: string[] = [];
     const sourceSections: string[] = [];
 
-      const currentFile = this.app.vault.getAbstractFileByPath(plan.currentPath);
+      const currentFile = this.deps.app.vault.getAbstractFileByPath(plan.currentPath);
       if (!(currentFile instanceof TFile)) {
         return err("E311_NOT_FOUND", "当前笔记不存在或已被移动");
       }
-      const currentContent = await this.app.vault.read(currentFile);
+      const currentContent = await this.deps.app.vault.cachedRead(currentFile);
       sourceTitles.push(plan.currentTitle);
       sourceSections.push(this.wrapSource(plan.currentTitle, currentFile.path, currentContent));
 
       for (const item of selected) {
-        const file = this.app.vault.getAbstractFileByPath(item.path);
+        const file = this.deps.app.vault.getAbstractFileByPath(item.path);
         if (!(file instanceof TFile)) {
           this.logger.warn("ExpandOrchestrator", "相似概念文件未找到，已跳过", { path: item.path });
           continue;
         }
-        const content = await this.app.vault.read(file);
+        const content = await this.deps.app.vault.cachedRead(file);
         const extracted = extractFrontmatter(content);
         const title = extracted?.frontmatter.name || item.name;
         sourceTitles.push(title);
@@ -225,7 +223,8 @@ export class ExpandOrchestrator {
 
       const sources = sourceSections.join("\n\n---\n\n");
       const abstractInput = `抽象以下${plan.currentType}：${sourceTitles.join("、")}，生成一个更高层的 ${plan.currentType} 概念。`;
-      const standardizeResult = await this.pipelineOrchestrator.defineDirect(abstractInput);
+      // 委托给 CreateOrchestrator 执行 Define
+      const standardizeResult = await this.createOrchestrator.defineDirect(abstractInput);
       if (!standardizeResult.ok) {
         return err(standardizeResult.error.code, standardizeResult.error.message);
       }
@@ -245,7 +244,7 @@ export class ExpandOrchestrator {
         return err("E310_INVALID_STATE", "标准化结果缺少目标名称");
       }
 
-      const settings = this.getSettings();
+      const settings = this.deps.settingsStore.getSettings();
       const targetPath = generateFilePath(
         targetName,
         settings.directoryScheme,
@@ -253,7 +252,8 @@ export class ExpandOrchestrator {
       );
 
       const parentLinks = sourceTitles.map((t) => this.wrapAsWikilink(t));
-      const startResult = this.pipelineOrchestrator.startCreatePipelineWithPreset(
+      // 委托给 CreateOrchestrator 启动独立创建管线
+      const startResult = this.createOrchestrator.startCreatePipelineWithPreset(
         standardized,
         plan.currentType,
         {
@@ -268,7 +268,7 @@ export class ExpandOrchestrator {
       }
 
       // 将 sources 写入上下文，确保 write 可用
-      const context = this.pipelineOrchestrator.getContext(startResult.value);
+      const context = this.createOrchestrator.getContext(startResult.value);
       if (context) {
         context.sources = sources;
       }
@@ -338,7 +338,7 @@ export class ExpandOrchestrator {
 
     const seen = new Set<string>();
     let creatableCount = 0;
-    const settings = this.getSettings();
+    const settings = this.deps.settingsStore.getSettings();
 
     for (const item of rawCandidates) {
       const normalizedName = this.normalizeLinkName(item.name);
@@ -364,7 +364,7 @@ export class ExpandOrchestrator {
       );
 
       if (status === "creatable") {
-        const exists = !!this.app.vault.getAbstractFileByPath(targetPath);
+        const exists = !!this.deps.app.vault.getAbstractFileByPath(targetPath);
         if (exists) {
           status = "existing";
           reason = "已存在";
@@ -415,7 +415,7 @@ export class ExpandOrchestrator {
         return err("E310_INVALID_STATE", "当前笔记嵌入为空，无法执行相似检索");
       }
 
-      const searchResult = await this.vectorIndex.search(
+      const searchResult = await this.deps.vectorIndex.search(
         input.currentType,
         vector.embedding,
         15

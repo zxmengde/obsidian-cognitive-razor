@@ -181,6 +181,19 @@ function frontmatterToYaml(frontmatter: CRFrontmatter): string {
     lines.push(`version: ${frontmatter.version}`);
   }
 
+  // 未知字段保留（需求 29.4：序列化时不丢弃未知字段）
+  const KNOWN_FIELDS = new Set<string>([
+    "cruid", "type", "name", "definition", "status",
+    "created", "updated", "aliases", "tags", "parents", "sourceUids", "version"
+  ]);
+  for (const [key, value] of Object.entries(frontmatter)) {
+    if (KNOWN_FIELDS.has(key)) continue;
+    if (value === undefined || value === null) continue;
+    // 使用 YAML 库序列化未知字段值，确保格式正确
+    const yamlValue = YAML.stringify(value).trimEnd();
+    lines.push(`${key}: ${yamlValue}`);
+  }
+
   return `${FRONTMATTER_DELIMITER}\n${lines.join('\n')}\n${FRONTMATTER_DELIMITER}\n\n`;
 }
 
@@ -242,6 +255,18 @@ function parseFrontmatter(yaml: string): CRFrontmatter | null {
       return null;
     }
 
+    // 收集未知字段（需求 29.4：保留未知字段不丢弃）
+    const KNOWN_FIELDS = new Set<string>([
+      "cruid", "crUid", "type", "name", "definition", "status",
+      "created", "updated", "aliases", "tags", "parents", "sourceUids", "version"
+    ]);
+    const extras: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(normalized)) {
+      if (!KNOWN_FIELDS.has(key)) {
+        extras[key] = value;
+      }
+    }
+
     return {
       cruid: rawCruid,
       type: normalized.type as CRType,
@@ -254,7 +279,8 @@ function parseFrontmatter(yaml: string): CRFrontmatter | null {
       tags,
       parents,
       sourceUids,
-      version
+      version,
+      ...extras,
     };
   } catch (error) {
     return null;

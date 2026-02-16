@@ -88,7 +88,7 @@
     border-radius: var(--radius-l);
     box-shadow: var(--cr-shadow-card);
     transition: all 0.2s ease;
-    padding: 4px;
+    padding: var(--size-4-1);
 }
 
 .cr-search-wrapper:focus-within {
@@ -101,9 +101,9 @@
     border: none;
     background: transparent;
     box-shadow: none;
-    font-size: 15px;
-    height: 48px;
-    padding: 0 16px;
+    font-size: var(--font-ui-medium);
+    height: var(--size-4-12);
+    padding: 0 var(--size-4-4);
     color: var(--text-normal);
 }
 
@@ -141,15 +141,15 @@
 
 /* Modal Simple Input Styles */
 .cr-simple-input-modal .modal-content {
-    padding: 30px;
+    padding: var(--size-4-8);
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: var(--size-4-5);
 }
 
 .cr-simple-input-title {
     text-align: center;
-    margin-bottom: 10px;
+    margin-bottom: var(--size-4-3);
     font-size: 1.4em;
     font-weight: 600;
 }
@@ -163,7 +163,7 @@
     border-radius: var(--radius-l);
     box-shadow: var(--cr-shadow-card);
     transition: all 0.2s ease;
-    padding: 4px;
+    padding: var(--size-4-1);
     /* Space for the button */
 }
 
@@ -218,7 +218,7 @@
 .cr-issues-list,
 .cr-recommendations-list {
     margin: 0;
-    padding-left: 20px;
+    padding-left: var(--size-4-5);
 }
 
 .cr-simple-input-modal .cr-simple-input {
@@ -227,8 +227,8 @@
     background: transparent;
     box-shadow: none;
     font-size: 1.2em;
-    height: 48px;
-    padding: 0 16px;
+    height: var(--size-4-12);
+    padding: 0 var(--size-4-4);
     width: 100%;
 }
 
@@ -238,8 +238,8 @@
 
 .cr-simple-input-submit {
     flex-shrink: 0;
-    width: 40px;
-    height: 40px;
+    width: var(--size-4-10);
+    height: var(--size-4-10);
     border-radius: var(--radius-m);
     border: none;
     background: var(--interactive-accent);
@@ -249,7 +249,7 @@
     justify-content: center;
     cursor: pointer;
     transition: all 0.2s ease;
-    margin-right: 4px;
+    margin-right: var(--size-4-1);
 }
 
 .cr-simple-input-submit:hover {
@@ -259,8 +259,8 @@
 
 .cr-search-action-btn {
     flex-shrink: 0;
-    width: 40px;
-    height: 40px;
+    width: var(--size-4-10);
+    height: var(--size-4-10);
     border-radius: var(--radius-m);
     border: none;
     background: var(--interactive-accent);
@@ -270,14 +270,14 @@
     justify-content: center;
     cursor: pointer;
     transition: all 0.2s ease;
-    margin-right: 4px;
+    margin-right: var(--size-4-1);
     position: relative;
 }
 
 .cr-search-clear-btn {
     flex-shrink: 0;
-    width: 32px;
-    height: 32px;
+    width: var(--size-4-8);
+    height: var(--size-4-8);
     border-radius: var(--radius-m);
     border: 1px solid var(--background-modifier-border);
     background: var(--background-primary);
@@ -287,7 +287,7 @@
     justify-content: center;
     cursor: pointer;
     transition: all 0.2s ease;
-    margin-right: 4px;
+    margin-right: var(--size-4-1);
 }
 
 .cr-search-clear-btn:hover {
@@ -301,13 +301,13 @@
 }
 
 .cr-search-clear-btn svg {
-    width: 16px;
-    height: 16px;
+    width: var(--size-4-4);
+    height: var(--size-4-4);
 }
 
 .cr-search-action-btn svg {
-    width: 18px;
-    height: 18px;
+    width: var(--icon-s);
+    height: var(--icon-s);
 }
 
 .cr-search-action-btn:hover {
@@ -337,8 +337,8 @@
 .cr-search-action-btn.is-loading::after {
     content: "";
     position: absolute;
-    width: 16px;
-    height: 16px;
+    width: var(--size-4-4);
+    height: var(--size-4-4);
     border-radius: 50%;
     border: 2px solid var(--text-on-accent);
     border-right-color: transparent;
@@ -379,12 +379,12 @@
     display: flex;
     align-items: center;
     gap: var(--cr-gap-sm);
-    min-width: 140px;
+    min-width: var(--size-4-10);
 }
 
 .cr-queue-toggle-btn {
-    width: 32px;
-    height: 32px;
+    width: var(--size-4-8);
+    height: var(--size-4-8);
     border-radius: 50%;
     border: none;
     display: flex;
@@ -417,9 +417,9 @@
 
 .cr-progress-bar {
     flex: 1;
-    height: 8px;
+    height: var(--size-4-2);
     background: var(--background-modifier-border);
-    border-radius: 4px;
+    border-radius: var(--size-4-1);
     overflow: hidden;
 }
 
@@ -432,7 +432,7 @@
 .cr-progress-text {
     font-family: var(--font-monospace);
     font-size: 0.85em;
-    width: 40px;
+    width: var(--size-4-10);
     text-align: right;
 }
 
@@ -455,7 +455,7 @@
     align-items: center;
     justify-content: center;
     transition: all 0.15s ease;
-    min-height: 80px;
+    min-height: var(--size-4-10);
 }
 
 .cr-stat-card:hover {
@@ -480,8 +480,8 @@
 }
 
 .cr-stat-status-dot {
-    width: 8px;
-    height: 8px;
+    width: var(--size-4-2);
+    height: var(--size-4-2);
     border-radius: 50%;
     margin-bottom: var(--cr-gap-sm);
     background: var(--background-modifier-border);
@@ -583,7 +583,7 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: var(--size-4-1);
 }
 
 /* Collapsible Header Layout */
@@ -613,23 +613,23 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        width: 120px;
+        width: var(--size-4-10);
         padding: 0 var(--cr-gap-md);
     }
 
     .cr-similarity-bar-bg {
         width: 100%;
-        height: 4px;
+        height: var(--size-4-1);
         background: var(--background-modifier-border);
-        border-radius: 2px;
+        border-radius: var(--size-4-1);
         overflow: hidden;
-        margin-top: 4px;
+        margin-top: var(--size-4-1);
     }
 
     .cr-similarity-fill {
         height: 100%;
-        border-radius: 2px;
-        /* Gradient set dynamically via JS usually, or specific classes */
+        border-radius: var(--size-4-1);
+        /* 渐变色使用 CSS 变量 */
         background: linear-gradient(90deg, var(--cr-status-warning), var(--cr-status-success));
     }
 
@@ -655,7 +655,7 @@
     .cr-icon-btn {
         background: transparent;
         border: none;
-        padding: 4px;
+        padding: var(--size-4-1);
         color: var(--cr-text-muted);
         cursor: pointer;
         border-radius: var(--cr-radius-btn);
@@ -793,8 +793,8 @@
 }
 
 .cr-provider-icon {
-    width: 24px;
-    height: 24px;
+    width: var(--size-4-6);
+    height: var(--size-4-6);
     color: var(--cr-text-muted);
     /* Placeholder icon color */
 }
@@ -805,8 +805,8 @@
 }
 
 .cr-provider-status {
-    width: 8px;
-    height: 8px;
+    width: var(--size-4-2);
+    height: var(--size-4-2);
     border-radius: 50%;
     background: var(--cr-text-muted);
 }
@@ -859,7 +859,7 @@
 }
 
 .cr-minimal-modal .modal-content {
-    padding: 20px;
+    padding: var(--size-4-5);
 }
 
 .cr-minimal-input-wrapper {
@@ -883,7 +883,7 @@
     border: none;
     box-shadow: none;
     background: transparent;
-    padding: 8px 0;
+    padding: var(--size-4-2) 0;
     font-size: 1.2em;
     flex: 1;
     width: 100%;
@@ -921,8 +921,8 @@
     border: 2px solid var(--background-modifier-border);
     border-top: 2px solid var(--interactive-accent);
     border-radius: 50%;
-    width: 16px;
-    height: 16px;
+    width: var(--size-4-4);
+    height: var(--size-4-4);
     animation: spin 0.8s linear infinite;
 }
 
@@ -1030,8 +1030,8 @@
 }
 
 .cr-icon-btn svg {
-    width: 16px;
-    height: 16px;
+    width: var(--size-4-4);
+    height: var(--size-4-4);
 }
 
 .cr-icon-btn:hover {
@@ -1175,9 +1175,9 @@
 
 .cr-confidence-bar {
     flex: 1;
-    height: 8px;
+    height: var(--size-4-2);
     background: var(--background-modifier-border);
-    border-radius: 4px;
+    border-radius: var(--size-4-1);
     overflow: hidden;
     min-width: 80px;
 }
@@ -1186,7 +1186,7 @@
     height: 100%;
     background: var(--interactive-accent);
     transition: width 0.3s ease;
-    border-radius: 4px;
+    border-radius: var(--size-4-1);
 }
 
 .cr-confidence-fill.cr-confidence-high {
@@ -1244,7 +1244,7 @@
 }
 
 .cr-collapse-icon {
-    font-size: 12px;
+    font-size: var(--font-ui-smaller);
     color: var(--text-muted);
     transition: transform 0.15s ease;
     display: inline-flex;
@@ -1252,8 +1252,8 @@
 }
 
 .cr-collapse-icon svg {
-    width: 12px;
-    height: 12px;
+    width: var(--size-4-3);
+    height: var(--size-4-3);
 }
 
 .cr-collapse-icon.is-expanded {
@@ -1277,7 +1277,7 @@
 .cr-badge {
     background: var(--background-modifier-border);
     color: var(--text-muted);
-    padding: 2px 8px;
+    padding: var(--size-4-1) var(--size-4-2);
     border-radius: var(--radius-s);
     font-size: var(--font-ui-smaller);
     font-weight: 600;
@@ -1307,8 +1307,8 @@
 }
 
 .cr-status-icon {
-    width: 16px;
-    height: 16px;
+    width: var(--size-4-4);
+    height: var(--size-4-4);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1316,8 +1316,8 @@
 }
 
 .cr-status-icon svg {
-    width: 14px;
-    height: 14px;
+    width: var(--icon-xs);
+    height: var(--icon-xs);
     stroke-width: 2px;
 }
 
@@ -1339,6 +1339,12 @@
 .cr-status-badge.cr-status-failed .cr-status-text,
 .cr-status-badge.cr-status-failed .cr-status-icon {
     color: var(--text-error);
+    font-weight: var(--font-semibold);
+}
+
+.cr-status-badge.cr-status-failed {
+    background: color-mix(in srgb, var(--text-error) 10%, transparent);
+    border-radius: var(--radius-s);
 }
 
 .cr-status-badge.cr-status-offline .cr-status-text,
@@ -1366,8 +1372,8 @@
     }
 
     .cr-hero-input {
-        font-size: 14px;
-        height: 44px;
+        font-size: var(--font-ui-small);
+        height: var(--size-4-11);
     }
 
     .cr-settings-nav {
@@ -1384,23 +1390,92 @@
    11. Accessibility Enhancements
    ======================================== */
 
+/* --- 11.1 焦点样式（:focus-visible） --- */
+
 .cr-clickable {
     cursor: pointer;
 }
 
-.cr-clickable:focus-visible {
+/* 统一焦点样式：所有 .cr-scope 内的交互元素 */
+.cr-scope *:focus-visible {
     outline: 2px solid var(--interactive-accent);
     outline-offset: 2px;
 }
 
-button:focus-visible,
-.cr-icon-btn:focus-visible,
-.cr-header-btn:focus-visible {
-    outline: 2px solid var(--interactive-accent);
-    outline-offset: 2px;
+/* 输入框焦点：使用内嵌 outline 避免布局偏移 */
+.cr-scope input:focus-visible,
+.cr-scope textarea:focus-visible,
+.cr-scope select:focus-visible {
+    outline-offset: -2px;
 }
 
-/* High contrast mode support */
+/* 折叠面板头部焦点 */
+.cr-scope .cr-collapsible-header:focus-visible,
+.cr-scope .cr-section-header:focus-visible,
+.cr-scope .cr-setting-group-header:focus-visible {
+    outline-offset: -2px;
+    border-radius: var(--radius-s);
+}
+
+/* 设置页导航项焦点 */
+.cr-scope .cr-nav-item:focus-visible {
+    outline-offset: -2px;
+}
+
+/* Provider 卡片头部焦点 */
+.cr-scope .cr-provider-header:focus-visible {
+    outline-offset: -2px;
+}
+
+/* --- 11.2 减少动画支持（prefers-reduced-motion） --- */
+
+@media (prefers-reduced-motion: reduce) {
+    /* 全局：禁用所有动画和过渡 */
+    .cr-scope *,
+    .cr-scope *::before,
+    .cr-scope *::after,
+    .cr-workbench-panel *,
+    .cr-settings-container *,
+    .cr-minimal-modal *,
+    .cr-simple-input-modal * {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+
+    /* 折叠面板：直接切换，无过渡 */
+    .cr-section-content,
+    .cr-setting-group-content,
+    .cr-collapsible-section .cr-section-content,
+    .cr-task-model-card-content {
+        transition: none !important;
+    }
+
+    /* 加载旋转：静态替代（显示静止边框） */
+    .cr-loading-spinner,
+    .cr-search-action-btn.is-loading::after {
+        animation: none !important;
+        border-color: var(--interactive-accent);
+        border-right-color: transparent;
+    }
+
+    /* 脉冲动画：静态替代（保持可见但不闪烁） */
+    .cr-stat-running .cr-stat-status-dot,
+    .cr-status-dot.is-running {
+        animation: none !important;
+        opacity: 1;
+    }
+
+    /* 悬停变换：禁用 scale/translate 效果 */
+    .cr-stat-card:hover,
+    .cr-search-action-btn:hover,
+    .cr-simple-input-submit:hover {
+        transform: none !important;
+    }
+}
+
+/* --- 11.3 高对比度模式支持 --- */
+
 @media (prefers-contrast: high) {
     .cr-stat-card,
     .cr-duplicate-item,
@@ -1413,20 +1488,45 @@ button:focus-visible,
     }
 }
 
-/* Reduced motion support */
-@media (prefers-reduced-motion: reduce) {
-    .cr-scope *,
-    .cr-workbench-panel *,
-    .cr-settings-container *,
-    .cr-minimal-modal * {
-        animation-duration: 0.01ms;
-        animation-iteration-count: 1;
-        transition-duration: 0.01ms;
-    }
+/* --- 11.4 交互目标最小尺寸（桌面端 24×24px，按钮推荐 32px） --- */
 
-    .cr-section-content {
-        transition: none;
-    }
+/* 图标按钮：最小 24×24px */
+.cr-scope .cr-icon-btn {
+    min-width: 24px;
+    min-height: 24px;
+}
+
+/* 通用按钮：推荐最小高度 32px */
+.cr-scope .cr-btn-small,
+.cr-scope .cr-btn-secondary,
+.cr-scope .cr-header-btn,
+.cr-scope .cr-queue-control-btn,
+.cr-scope .cr-toggle-btn,
+.cr-scope .cr-create-btn {
+    min-height: 32px;
+}
+
+/* 折叠面板头部：确保可点击区域足够大 */
+.cr-scope .cr-collapsible-header,
+.cr-scope .cr-section-header,
+.cr-scope .cr-setting-group-header {
+    min-height: 32px;
+}
+
+/* 导航项：确保可点击区域足够大 */
+.cr-scope .cr-nav-item {
+    min-height: 32px;
+}
+
+/* 清空按钮：已有 32×32px，确保最小值 */
+.cr-scope .cr-search-clear-btn {
+    min-width: 24px;
+    min-height: 24px;
+}
+
+/* Diff 模式切换 Tab：确保可点击区域足够大 */
+.cr-scope .cr-diff-mode-tab {
+    min-height: 32px;
 }
 
 /* ========================================
@@ -1471,8 +1571,8 @@ button:focus-visible,
 }
 
 .cr-status-dot {
-    width: 12px;
-    height: 12px;
+    width: var(--size-4-3);
+    height: var(--size-4-3);
     border-radius: 50%;
     transition: all 0.3s ease;
 }
@@ -1575,8 +1675,8 @@ button:focus-visible,
 }
 
 .cr-expand-icon svg {
-    width: 12px;
-    height: 12px;
+    width: var(--size-4-3);
+    height: var(--size-4-3);
 }
 
 .cr-expand-icon.is-expanded {
@@ -1585,8 +1685,8 @@ button:focus-visible,
 
 /* 暂停/恢复按钮 */
 .cr-queue-control-btn {
-    width: 32px;
-    height: 32px;
+    width: var(--size-4-8);
+    height: var(--size-4-8);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1595,13 +1695,13 @@ button:focus-visible,
     background: var(--background-modifier-hover);
     color: var(--text-normal);
     cursor: pointer;
-    font-size: 14px;
+    font-size: var(--font-ui-small);
     transition: all 0.15s ease;
 }
 
 .cr-queue-control-btn svg {
-    width: 16px;
-    height: 16px;
+    width: var(--size-4-4);
+    height: var(--size-4-4);
 }
 
 .cr-queue-control-btn:hover {
@@ -1657,7 +1757,7 @@ button:focus-visible,
 
 .cr-status-badge {
     display: inline-block;
-    padding: 2px 8px;
+    padding: var(--size-4-1) var(--size-4-2);
     border-radius: var(--radius-s);
     font-size: var(--font-ui-smaller);
     font-weight: 500;
@@ -1746,20 +1846,20 @@ button:focus-visible,
 }
 
 .cr-collapsible-section .cr-collapse-icon {
-    font-size: 10px;
+    font-size: var(--font-ui-smaller);
     color: var(--text-muted);
     transition: transform 0.2s ease;
 }
 
 .cr-collapsible-section .cr-collapse-icon svg {
-    width: 10px;
-    height: 10px;
+    width: var(--size-4-3);
+    height: var(--size-4-3);
 }
 
 .cr-collapsible-section .cr-badge {
     background: var(--interactive-accent);
     color: var(--text-on-accent);
-    padding: 2px 8px;
+    padding: var(--size-4-1) var(--size-4-2);
     border-radius: var(--radius-s);
     font-size: var(--font-ui-smaller);
     font-weight: 600;
@@ -1816,13 +1916,13 @@ button:focus-visible,
 }
 
 .cr-setting-group-header .cr-collapse-icon {
-    font-size: 10px;
+    font-size: var(--font-ui-smaller);
     color: var(--text-muted);
 }
 
 .cr-setting-group-header .cr-collapse-icon svg {
-    width: 10px;
-    height: 10px;
+    width: var(--size-4-3);
+    height: var(--size-4-3);
 }
 
 .cr-setting-group-header .cr-setting-group-title {
@@ -1870,8 +1970,8 @@ button:focus-visible,
 }
 
 .cr-nav-icon svg {
-    width: 16px;
-    height: 16px;
+    width: var(--size-4-4);
+    height: var(--size-4-4);
 }
 
 .cr-nav-item:hover .cr-nav-icon,
@@ -1908,7 +2008,7 @@ button:focus-visible,
 }
 
 .cr-panel-title {
-  padding: 6px 8px;
+  padding: var(--size-4-2) var(--size-4-2);
   background-color: var(--cr-bg-surface);
   border-bottom: 1px solid var(--cr-border);
   color: var(--cr-text-muted);
@@ -1928,14 +2028,14 @@ button:focus-visible,
   background-color: var(--cr-bg-surface);
   border-right: 1px solid var(--cr-border);
   text-align: right;
-  padding: 4px 8px;
+  padding: var(--size-4-1) var(--size-4-2);
   color: var(--cr-text-muted);
   user-select: none;
 }
 
 .cr-content-lines {
   flex: 1;
-  padding: 4px 0;
+  padding: var(--size-4-1) 0;
 }
 
 .cr-line-number {
@@ -1943,7 +2043,7 @@ button:focus-visible,
 }
 
 .cr-content-line {
-  padding: 0 8px;
+  padding: 0 var(--size-4-2);
   min-height: 1.5em;
   white-space: pre;
 }
@@ -1961,8 +2061,8 @@ button:focus-visible,
 
 .cr-diff-row {
   display: flex;
-  gap: 8px;
-  padding: 0 8px;
+  gap: var(--size-4-2);
+  padding: 0 var(--size-4-2);
   min-height: 1.5em;
 }
 
@@ -2002,6 +2102,146 @@ button:focus-visible,
 .cr-diff-empty {
   background-color: var(--cr-bg-surface);
   opacity: 0.5;
+}
+
+/* ===================== Diff 模式切换 Tab 栏 ===================== */
+.cr-diff-mode-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: var(--size-4-3);
+  border: 1px solid var(--cr-border);
+  border-radius: var(--cr-radius-btn);
+  overflow: hidden;
+  width: fit-content;
+}
+
+.cr-diff-mode-tab {
+  padding: var(--size-4-1) var(--size-4-3);
+  border: none;
+  background: var(--cr-bg-base);
+  color: var(--cr-text-muted);
+  cursor: pointer;
+  font-size: var(--font-ui-small);
+  transition: background-color 0.15s ease, color 0.15s ease;
+  border-right: 1px solid var(--cr-border);
+}
+
+.cr-diff-mode-tab:last-child {
+  border-right: none;
+}
+
+.cr-diff-mode-tab:hover {
+  background: var(--cr-bg-hover);
+  color: var(--cr-text-normal);
+}
+
+.cr-diff-mode-tab-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.cr-diff-mode-tab-active:hover {
+  background: var(--interactive-accent-hover);
+  color: var(--text-on-accent);
+}
+
+.cr-diff-mode-tab:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
+}
+
+/* ===================== 统一 Diff 行号 ===================== */
+.cr-diff-line-num {
+  flex: 0 0 3em;
+  text-align: right;
+  padding-right: var(--size-4-1);
+  color: var(--cr-text-faint);
+  user-select: none;
+  font-size: var(--font-ui-smaller);
+}
+
+/* ===================== Side-by-Side Diff ===================== */
+.cr-sbs-diff {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  border: 1px solid var(--cr-border);
+  border-radius: var(--cr-radius-card);
+  overflow: hidden;
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  line-height: 1.5;
+}
+
+.cr-sbs-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.cr-sbs-left {
+  border-right: 1px solid var(--cr-border);
+}
+
+.cr-sbs-title {
+  padding: var(--size-4-2) var(--size-4-2);
+  background-color: var(--cr-bg-surface);
+  border-bottom: 1px solid var(--cr-border);
+  color: var(--cr-text-muted);
+  font-family: var(--font-interface);
+  font-size: var(--font-ui-small);
+  user-select: none;
+}
+
+.cr-sbs-scroll {
+  overflow: auto;
+  max-height: 60vh;
+  padding: var(--size-4-1) 0;
+}
+
+.cr-sbs-row {
+  display: flex;
+  min-height: 1.5em;
+  padding: 0 var(--size-4-1);
+}
+
+.cr-sbs-line-num {
+  flex: 0 0 3em;
+  text-align: right;
+  padding-right: var(--size-4-2);
+  color: var(--cr-text-faint);
+  user-select: none;
+}
+
+.cr-sbs-text {
+  flex: 1;
+  white-space: pre;
+  padding: 0 var(--size-4-1);
+}
+
+/* Side-by-Side 差异高亮 */
+.cr-sbs-row.cr-diff-change {
+  background-color: color-mix(in srgb, var(--cr-status-warning) 12%, transparent);
+}
+
+.cr-sbs-row.cr-diff-add {
+  background-color: var(--cr-overlay-success-10);
+}
+
+.cr-sbs-row.cr-diff-remove {
+  background-color: var(--cr-overlay-error-10);
+  text-decoration: line-through;
+  color: var(--cr-text-muted);
+}
+
+.cr-sbs-row.cr-diff-empty {
+  background-color: var(--cr-bg-surface);
+  opacity: 0.5;
+}
+
+/* ===================== Diff 内容容器 ===================== */
+.cr-diff-content-container {
+  min-height: 100px;
 }
 
 .cr-merge-diff-badge {
@@ -2101,7 +2341,7 @@ button:focus-visible,
 
 
 .cr-diff-header {
-  padding: 8px;
+  padding: var(--size-4-2);
   background-color: var(--background-secondary);
   border-bottom: 1px solid var(--cr-border);
   font-weight: bold;
@@ -2168,8 +2408,8 @@ button:focus-visible,
 }
 
 .cr-task-model-card-title .collapse-icon {
-  width: 16px;
-  height: 16px;
+  width: var(--size-4-4);
+  height: var(--size-4-4);
   transition: transform 0.2s ease;
 }
 
@@ -2192,8 +2432,8 @@ button:focus-visible,
 }
 
 .cr-task-model-status-dot {
-  width: 8px;
-  height: 8px;
+  width: var(--size-4-2);
+  height: var(--size-4-2);
   border-radius: 50%;
 }
 
@@ -2266,9 +2506,72 @@ button:focus-visible,
   width: 100px;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .cr-task-model-card-title .collapse-icon,
-  .cr-task-model-card-content {
-    transition: none;
-  }
+/* 任务模型卡片折叠动画已由 §11.2 prefers-reduced-motion 统一处理 */
+
+/* ========================================
+   16. 审计补充样式（任务 24.1）
+   ======================================== */
+
+/* 重复对相似度颜色等级 */
+.cr-similarity-high {
+  background-color: var(--color-red);
+}
+
+.cr-similarity-medium {
+  background-color: var(--color-orange);
+}
+
+.cr-similarity-low {
+  background-color: var(--color-yellow);
+}
+
+/* 类型候选表格：首选类型高亮 */
+.cr-type-name-primary {
+  font-weight: 600;
+  color: var(--interactive-accent);
+}
+
+/* Modal 消息区域 */
+.cr-modal-message {
+  margin-bottom: var(--size-4-4);
+}
+
+/* Modal 描述区域 */
+.cr-modal-description {
+  margin-bottom: var(--size-4-6);
+  color: var(--text-muted);
+}
+
+/* Modal 错误提示 */
+.cr-modal-error {
+  color: var(--text-error);
+  margin-top: var(--size-4-4);
+}
+
+/* Provider 设置区域头部 */
+.cr-provider-section-header {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--size-4-4);
+}
+
+.cr-provider-section-header h2 {
+  margin: 0;
+}
+
+/* 重复对状态条 */
+.cr-duplicate-status-bar {
+  width: 100%;
+  height: var(--size-4-1);
+  background: var(--background-modifier-border);
+  border-radius: var(--size-4-1);
+  overflow: hidden;
+}
+
+.cr-duplicate-status-bar .cr-status-fill {
+  height: 100%;
+  border-radius: var(--size-4-1);
+  transition: width 0.3s ease;
 }

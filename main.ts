@@ -1,7 +1,7 @@
 /** Cognitive Razor - 公理化知识管理插件主入口 */
 
 import { Plugin, Notice } from 'obsidian';
-import { PluginSettings } from './src/types';
+import type { PluginSettings } from './src/types';
 
 // 数据层组件
 import { SettingsStore, DEFAULT_SETTINGS } from './src/data/settings-store';
@@ -23,10 +23,20 @@ import { DuplicateManager } from './src/core/duplicate-manager';
 import { TaskQueue } from './src/core/task-queue';
 import { TaskRunner } from './src/core/task-runner';
 
-import { PipelineOrchestrator } from './src/core/pipeline-orchestrator';
 import { PipelineStateStore } from './src/core/pipeline-state-store';
+import { CreateOrchestrator } from './src/core/create-orchestrator';
+import { AmendOrchestrator } from './src/core/amend-orchestrator';
+import { MergeOrchestrator } from './src/core/merge-orchestrator';
+import { VerifyOrchestrator } from './src/core/verify-orchestrator';
 import { ExpandOrchestrator } from './src/core/expand-orchestrator';
 import { ImageInsertOrchestrator } from './src/core/image-insert-orchestrator';
+
+// ServiceContainer
+import { ServiceContainer } from './src/core/service-container';
+import { NoteRepository } from './src/core/note-repository';
+import { ContentRenderer } from './src/core/content-renderer';
+import { schemaRegistry } from './src/core/schema-registry';
+import type { OrchestratorDeps } from './src/core/orchestrator-deps';
 
 // UI 层组件
 import { WorkbenchPanel, WORKBENCH_VIEW_TYPE } from './src/ui/workbench-panel';
@@ -34,113 +44,77 @@ import { StatusBadge } from './src/ui/status-badge';
 import { CommandDispatcher } from './src/ui/command-dispatcher';
 import { CognitiveRazorSettingTab } from './src/ui/settings-tab';
 import { SetupWizard } from './src/ui/setup-wizard';
+import { ModalManager } from './src/ui/modal-manager';
+
+// ============================================================================
+// 服务 Token 定义
+// ============================================================================
+
+/** 服务标识符，用于 ServiceContainer 注册与解析 */
+export const SERVICE_TOKENS = {
+	// Data 层
+	fileStorage: Symbol('FileStorage'),
+	logger: Symbol('Logger'),
+	settingsStore: Symbol('SettingsStore'),
+	validator: Symbol('Validator'),
+
+	// Core 层
+	i18n: Symbol('I18n'),
+	cruidCache: Symbol('CruidCache'),
+	vectorIndex: Symbol('VectorIndex'),
+	lockManager: Symbol('LockManager'),
+	undoManager: Symbol('UndoManager'),
+	providerManager: Symbol('ProviderManager'),
+	promptManager: Symbol('PromptManager'),
+	duplicateManager: Symbol('DuplicateManager'),
+	taskRunner: Symbol('TaskRunner'),
+	taskQueue: Symbol('TaskQueue'),
+	pipelineStateStore: Symbol('PipelineStateStore'),
+	createOrchestrator: Symbol('CreateOrchestrator'),
+	amendOrchestrator: Symbol('AmendOrchestrator'),
+	mergeOrchestrator: Symbol('MergeOrchestrator'),
+	verifyOrchestrator: Symbol('VerifyOrchestrator'),
+	expandOrchestrator: Symbol('ExpandOrchestrator'),
+	imageInsertOrchestrator: Symbol('ImageInsertOrchestrator'),
+
+	// UI 层
+	modalManager: Symbol('ModalManager'),
+	statusBadge: Symbol('StatusBadge'),
+	commandDispatcher: Symbol('CommandDispatcher'),
+} as const;
+
+// ============================================================================
+// 插件主类
+// ============================================================================
 
 /** Cognitive Razor 插件主类 */
 export default class CognitiveRazorPlugin extends Plugin {
-	// 设置
+	/** 服务容器 */
+	private container!: ServiceContainer;
+
+	// 设置（保留公开属性，供 SettingsTab 等 UI 组件访问）
 	settings!: PluginSettings;
 	settingsStore!: SettingsStore;
 
-	// 国际化
-	private i18n!: I18n;
-
-	// 数据层组件
-	private fileStorage!: FileStorage;
-	private logger!: Logger;
-	private validator!: Validator;
-
-	// 应用层组件
-	private cruidCache!: CruidCache;
-	private vectorIndex!: VectorIndex;
-	private lockManager!: SimpleLockManager;
-	private undoManager!: UndoManager;
-	private providerManager!: ProviderManager;
-	private promptManager!: PromptManager;
-	private duplicateManager!: DuplicateManager;
-	private taskQueue!: TaskQueue;
-	private taskRunner!: TaskRunner;
-	private pipelineOrchestrator!: PipelineOrchestrator;
-	private expandOrchestrator!: ExpandOrchestrator;
-	private imageInsertOrchestrator!: ImageInsertOrchestrator;
-
-	// UI 组件
-	private statusBadge!: StatusBadge;
-	private commandDispatcher!: CommandDispatcher;
+	// 事件取消订阅列表
 	private unsubscribers: Array<() => void> = [];
 
-	// 数据目录路径
-	private dataDir!: string;
+	// 网络离线状态
 	private isOffline = false;
 
-	/** 插件加载 */
+	/** 插件加载 — 仅负责组装、启动和错误边界 */
 	async onload() {
 		try {
-			// 1. 初始化数据目录
-			await this.initializeDataDirectory();
+			this.container = new ServiceContainer();
+			// 仅初始化 Data 层和加载设置（轻量同步操作）
+			// 耗时的 Core/UI 层初始化延迟到 workspace.onLayoutReady() 之后
+			await this.initializeDataLayerOnly();
 
-			// 2. 初始化数据层组件
-			await this.initializeDataLayer();
-
-			// Requirements 8.5: 输出初始化日志确认日志系统正常工作
-			this.logger.info('CognitiveRazorPlugin', 'Cognitive Razor 插件初始化开始', {
-				event: 'PLUGIN_INIT',
-				version: this.manifest.version,
-				minAppVersion: this.manifest.minAppVersion
-			});
-
-			// 3. 加载设置
-			await this.loadSettings();
-
-			// 4. 初始化国际化
-			this.i18n = new I18n(this.settings.language);
-			this.logger.debug('CognitiveRazorPlugin', 'i18n 初始化完成', {
-				language: this.settings.language
-			});
-
-			// 5. 检查是否需要首次配置向导
-			const needsSetup = await this.checkNeedsSetup();
-			if (needsSetup) {
-				// 延迟显示配置向导，等待 workspace 准备就绪
-				this.app.workspace.onLayoutReady(() => {
-					this.showSetupWizard();
-				});
-			}
-
-			// 6. 初始化应用层组件
-			await this.initializeApplicationLayer();
-
-			// 7. 注册视图
-			this.registerViews();
-
-			// 8. 初始化 UI 组件
-			this.initializeUIComponents();
-
-			// 9. 注册命令
-			this.registerCommands();
-
-			// 10. 添加设置面板
-			this.addSettingTab(new CognitiveRazorSettingTab(this.app, this));
-
-			// 11. 订阅事件，更新 UI
-			this.subscribeToEvents();
-
-			// Requirements 8.5: 输出初始化完成日志确认日志系统正常工作
-			this.logger.info('CognitiveRazorPlugin', 'Cognitive Razor 插件初始化完成', {
-				event: 'PLUGIN_INIT_COMPLETE',
-				version: this.manifest.version,
-				logLevel: this.settings.logLevel
+			this.app.workspace.onLayoutReady(() => {
+				void this.initializeAfterLayout();
 			});
 		} catch (error) {
-			console.error('Cognitive Razor 插件加载失败:', error);
-			const errorMessage = error instanceof Error ? error.message : String(error);
-			new Notice(`插件加载失败: ${errorMessage}`);
-			
-			// 记录错误日志
-			if (this.logger) {
-				this.logger.error('CognitiveRazorPlugin', '插件加载失败', error as Error, {
-					event: 'PLUGIN_INIT_ERROR'
-				});
-			}
+			this.showSafeMode(error);
 		}
 	}
 
@@ -149,107 +123,494 @@ export default class CognitiveRazorPlugin extends Plugin {
 	 * 当 data.json 被外部修改时触发（如 Obsidian Sync）
 	 */
 	async onExternalSettingsChange(): Promise<void> {
-		this.logger?.info('CognitiveRazorPlugin', '检测到外部设置变更，重新加载设置');
-		
+		const logger = this.tryResolve<Logger>(SERVICE_TOKENS.logger);
+		logger?.info('CognitiveRazorPlugin', '检测到外部设置变更，重新加载设置');
+
 		try {
 			const loadResult = await this.settingsStore.loadSettings();
 			if (loadResult.ok) {
 				this.settings = this.settingsStore.getSettings();
-				this.logger?.debug('CognitiveRazorPlugin', '外部设置变更已加载');
+				logger?.debug('CognitiveRazorPlugin', '外部设置变更已加载');
 			}
 		} catch (error) {
-			this.logger?.error('CognitiveRazorPlugin', '重新加载设置失败', error as Error);
+			logger?.error('CognitiveRazorPlugin', '重新加载设置失败', error as Error);
 		}
 	}
 
 	/**
-	 * 插件卸载
-	 * 
-	 * 清理顺序：
-	 * 1. 暂停任务队列
-	 * 2. 停止增量改进处理器
-	 * 3. 保存设置
-	 * 4. 清理 UI 组件
-	 * 5. 卸载视图
+	 * 插件卸载 — 委托 ServiceContainer 逆序释放资源
 	 */
 	async onunload() {
-		this.logger?.info('CognitiveRazorPlugin', '开始卸载插件');
+		const logger = this.tryResolve<Logger>(SERVICE_TOKENS.logger);
+		logger?.info('CognitiveRazorPlugin', '开始卸载插件');
 
 		try {
 			// 1. 暂停任务队列
-			if (this.taskQueue) {
-				await this.taskQueue.pause();
-				this.taskQueue.stop();
-				this.logger?.debug('CognitiveRazorPlugin', '任务队列已暂停并停止调度器');
+			const taskQueue = this.tryResolve<TaskQueue>(SERVICE_TOKENS.taskQueue);
+			if (taskQueue) {
+				await taskQueue.pause();
+				taskQueue.stop();
+				await taskQueue.dispose();
+				logger?.debug('CognitiveRazorPlugin', '任务队列已暂停并停止调度器');
 			}
 
-			// 2. 停止管线编排器和索引自愈
-			this.pipelineOrchestrator?.dispose();
-			this.cruidCache?.dispose();
+			// 2. 停止管线编排器和缓存
+			this.tryResolve<CreateOrchestrator>(SERVICE_TOKENS.createOrchestrator)?.dispose();
+			this.tryResolve<AmendOrchestrator>(SERVICE_TOKENS.amendOrchestrator)?.dispose();
+			this.tryResolve<MergeOrchestrator>(SERVICE_TOKENS.mergeOrchestrator)?.dispose();
+			this.tryResolve<VerifyOrchestrator>(SERVICE_TOKENS.verifyOrchestrator)?.dispose();
+			this.tryResolve<CruidCache>(SERVICE_TOKENS.cruidCache)?.dispose();
 
-			// 3. 保存设置（SettingsStore 使用 Obsidian 的 saveData，在 updateSettings 时自动保存）
-			this.logger?.debug('CognitiveRazorPlugin', '设置已通过 Obsidian 自动保存');
-
-			// 4. 清理 UI 组件
-			if (this.statusBadge) {
-				this.statusBadge.destroy();
-				this.logger?.debug('CognitiveRazorPlugin', '状态栏徽章已清理');
+			// 3. 清理 UI 组件
+			const statusBadge = this.tryResolve<StatusBadge>(SERVICE_TOKENS.statusBadge);
+			if (statusBadge) {
+				statusBadge.destroy();
+				logger?.debug('CognitiveRazorPlugin', '状态栏徽章已清理');
 			}
 
-			// 5. 卸载视图
+			// 4. 卸载视图
 			this.app.workspace.detachLeavesOfType(WORKBENCH_VIEW_TYPE);
-			this.logger?.debug('CognitiveRazorPlugin', '视图已卸载');
+			logger?.debug('CognitiveRazorPlugin', '视图已卸载');
 
-			// 6. 解除所有订阅
+			// 5. 解除所有订阅
 			for (const unsub of this.unsubscribers) {
 				try {
 					unsub();
 				} catch (e) {
-					this.logger?.warn('CognitiveRazorPlugin', '取消订阅时出错', { error: e });
+					logger?.warn('CognitiveRazorPlugin', '取消订阅时出错', { error: e });
 				}
 			}
 			this.unsubscribers = [];
 
-			this.logger?.info('CognitiveRazorPlugin', '插件卸载完成');
+			// 6. 释放 ServiceContainer 中所有服务
+			this.container?.disposeAll();
+
+			logger?.info('CognitiveRazorPlugin', '插件卸载完成');
 		} catch (error) {
-			console.error('Cognitive Razor 插件卸载失败:', error);
-			
-			if (this.logger) {
-				this.logger.error('CognitiveRazorPlugin', '插件卸载失败', error as Error);
-			}
+			// 卸载阶段不使用 console.error，通过 Logger 记录（如果可用）
+			logger?.error('CognitiveRazorPlugin', '插件卸载失败', error as Error);
+		}
+	}
+
+	// ========================================================================
+	// 初始化流程（委托给 ServiceContainer）
+	// ========================================================================
+
+	/**
+	 * Data 层初始化（onload 中执行，轻量且必要）
+	 * 仅初始化 Data 层和加载设置，不执行耗时操作
+	 */
+	private async initializeDataLayerOnly(): Promise<void> {
+		// ---- Data 层 ----
+		await this.registerDataLayer();
+
+		// 加载设置
+		await this.loadSettings();
+	}
+
+	/**
+	 * Layout Ready 后的完整初始化（Core + UI + 事件订阅）
+	 * 耗时操作（向量加载、缓存构建等）在此阶段执行，不阻塞 Obsidian 启动
+	 */
+	private async initializeAfterLayout(): Promise<void> {
+		try {
+			const logger = this.container.resolve<Logger>(SERVICE_TOKENS.logger);
+
+			logger.info('CognitiveRazorPlugin', 'Cognitive Razor 插件初始化开始（Layout Ready）', {
+				event: 'PLUGIN_INIT',
+				version: this.manifest.version,
+				minAppVersion: this.manifest.minAppVersion
+			});
+
+			// ---- Core 层 ----
+			await this.registerCoreLayer();
+
+			// ---- UI 层 ----
+			this.registerUILayer();
+
+			// ---- 事件订阅 ----
+			this.subscribeToEvents();
+
+			logger.info('CognitiveRazorPlugin', 'Cognitive Razor 插件初始化完成', {
+				event: 'PLUGIN_INIT_COMPLETE',
+				version: this.manifest.version,
+				logLevel: this.settings.logLevel
+			});
+		} catch (error) {
+			this.showSafeMode(error);
 		}
 	}
 
 	/**
-	 * 初始化数据目录
-	 * 
-	 * 遵循设计文档 A-FUNC-07 本地优先存储：
-	 * - data.json           插件配置（由 Obsidian loadData/saveData 管理）
-	 * - data/               运行时数据根目录
-	 *   - queue-state.json  队列状态
-	 *   - app.log           循环日志（1MB）
-	 *   - vector-index.json 向量索引
-	 *   - duplicate-pairs.json 重复对列表
-	 *   - snapshots/        快照目录（因文件数量多而使用子目录）
-	 *     - index.json      快照索引
-	 *     - *.json          快照文件
+	 * 完整初始化流程：Data → Core → UI
+	 * 将所有服务注册到 ServiceContainer，然后按层级顺序初始化
+	 * @deprecated 已拆分为 initializeDataLayerOnly + initializeAfterLayout
+	 */
+	private async initializeServices(): Promise<void> {
+		// ---- Data 层 ----
+		await this.registerDataLayer();
+
+		const logger = this.container.resolve<Logger>(SERVICE_TOKENS.logger);
+
+		logger.info('CognitiveRazorPlugin', 'Cognitive Razor 插件初始化开始', {
+			event: 'PLUGIN_INIT',
+			version: this.manifest.version,
+			minAppVersion: this.manifest.minAppVersion
+		});
+
+		// 加载设置
+		await this.loadSettings();
+
+		// ---- Core 层 ----
+		await this.registerCoreLayer();
+
+		// ---- UI 层 ----
+		this.registerUILayer();
+
+		// ---- 事件订阅 ----
+		this.subscribeToEvents();
+
+		logger.info('CognitiveRazorPlugin', 'Cognitive Razor 插件初始化完成', {
+			event: 'PLUGIN_INIT_COMPLETE',
+			version: this.manifest.version,
+			logLevel: this.settings.logLevel
+		});
+	}
+
+	/**
+	 * 注册并初始化 Data 层服务
+	 * 如果此层失败，将抛出异常触发安全模式
+	 */
+	private async registerDataLayer(): Promise<void> {
+		// 1. 初始化数据目录
+		await this.initializeDataDirectory();
+
+		// 2. FileStorage
+		const pluginDir = `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
+		const fileStorage = new FileStorage(this.app.vault, pluginDir);
+		const initResult = await fileStorage.initialize();
+		if (!initResult.ok) {
+			throw new Error(`FileStorage 初始化失败: ${initResult.error.message}`);
+		}
+		this.container.registerInstance(SERVICE_TOKENS.fileStorage, fileStorage, 'data');
+
+		// 3. Logger
+		const logFilePath = 'data/app.log';
+		const initialLogLevel = this.settings?.logLevel || DEFAULT_SETTINGS.logLevel;
+		const logger = new Logger(
+			logFilePath,
+			{
+				write: async (path: string, content: string) => {
+					const result = await fileStorage.write(path, content);
+					if (!result.ok) {
+						throw new Error(`写入日志文件失败: ${result.error.message}`);
+					}
+				},
+				read: async (path: string) => {
+					const result = await fileStorage.read(path);
+					if (!result.ok) {
+						if (result.error.code === 'E300') return '';
+						throw new Error(`读取日志文件失败: ${result.error.message}`);
+					}
+					return result.value;
+				},
+				exists: async (path: string) => {
+					return await fileStorage.exists(path);
+				}
+			},
+			initialLogLevel
+		);
+		await logger.initialize();
+		this.container.registerInstance(SERVICE_TOKENS.logger, logger, 'data');
+
+		logger.info('CognitiveRazorPlugin', '数据层组件初始化完成');
+	}
+
+	/**
+	 * 注册并初始化 Core 层服务
+	 */
+	private async registerCoreLayer(): Promise<void> {
+		const logger = this.container.resolve<Logger>(SERVICE_TOKENS.logger);
+		const fileStorage = this.container.resolve<FileStorage>(SERVICE_TOKENS.fileStorage);
+
+		logger.info('CognitiveRazorPlugin', '应用层组件初始化开始');
+
+		// 国际化
+		const i18n = new I18n(this.settings.language);
+		i18n.setLogger(logger);
+		this.container.registerInstance(SERVICE_TOKENS.i18n, i18n, 'core');
+		logger.debug('CognitiveRazorPlugin', 'i18n 初始化完成', { language: this.settings.language });
+
+		// CruidCache
+		const cruidCache = new CruidCache(this.app, logger, (ref) => this.registerEvent(ref));
+		cruidCache.start({ fallbackToRead: false });
+		this.container.registerInstance(SERVICE_TOKENS.cruidCache, cruidCache, 'core');
+		logger.debug('CognitiveRazorPlugin', 'CruidCache 已启动');
+
+		// VectorIndex
+		const embeddingModel = this.settings.taskModels?.index?.model || 'text-embedding-3-small';
+		const embeddingDimension = this.settings.taskModels?.index?.embeddingDimension
+			?? this.settings.embeddingDimension
+			?? 1536;
+		const vectorIndex = new VectorIndex(
+			fileStorage, embeddingModel, embeddingDimension, logger, cruidCache,
+			(cb, ms) => this.registerInterval(window.setInterval(cb, ms))
+		);
+		const loadResult = await vectorIndex.load();
+		if (!loadResult.ok) {
+			logger.error('CognitiveRazorPlugin', 'VectorIndex 加载失败', undefined, { error: loadResult.error });
+		}
+		this.container.registerInstance(SERVICE_TOKENS.vectorIndex, vectorIndex, 'core');
+		logger.debug('CognitiveRazorPlugin', 'VectorIndex 初始化完成', { stats: vectorIndex.getStats() });
+
+		// Validator
+		const validator = new Validator();
+		this.container.registerInstance(SERVICE_TOKENS.validator, validator, 'core');
+
+		// LockManager
+		const lockManager = new SimpleLockManager();
+		this.container.registerInstance(SERVICE_TOKENS.lockManager, lockManager, 'core');
+
+		// UndoManager
+		const undoManager = new UndoManager(
+			fileStorage, logger, 'data/snapshots',
+			this.settings.maxSnapshots,
+			this.settings.maxSnapshotAgeDays ?? 30
+		);
+		const undoInitResult = await undoManager.initialize();
+		if (!undoInitResult.ok) {
+			logger.error('CognitiveRazorPlugin', 'UndoManager 初始化失败', undefined, { error: undoInitResult.error });
+		}
+		this.container.registerInstance(SERVICE_TOKENS.undoManager, undoManager, 'core');
+
+		// 清理过期快照
+		const maxAgeDays = this.settings.maxSnapshotAgeDays ?? 30;
+		const maxAgeMs = maxAgeDays * 24 * 60 * 60 * 1000;
+		const cleanupResult = await undoManager.cleanupExpiredSnapshots(maxAgeMs);
+		if (cleanupResult.ok && cleanupResult.value > 0) {
+			logger.info('CognitiveRazorPlugin', `清理了 ${cleanupResult.value} 个过期快照`, {
+				maxAgeDays, cleanedCount: cleanupResult.value
+			});
+		}
+
+		// ProviderManager
+		const providerManager = new ProviderManager(this.settingsStore, logger);
+		const unsubNetwork = providerManager.subscribeNetworkStatus((online, error) => {
+			this.handleNetworkStatusChange(online, error?.error?.message);
+		});
+		this.unsubscribers.push(unsubNetwork);
+		this.container.registerInstance(SERVICE_TOKENS.providerManager, providerManager, 'core');
+		logger.debug('CognitiveRazorPlugin', 'ProviderManager 初始化完成', {
+			providersCount: providerManager.getConfiguredProviders().length
+		});
+
+		// PromptManager
+		const promptsDir = 'prompts';
+		const promptManager = new PromptManager(fileStorage, logger, promptsDir);
+		const baseComponentsResult = await promptManager.preloadAllBaseComponents();
+		if (!baseComponentsResult.ok) {
+			logger.warn('CognitiveRazorPlugin', '基础组件加载失败（非致命错误）', { error: baseComponentsResult.error });
+		}
+		const preloadResult = await promptManager.preloadAllTemplates();
+		if (!preloadResult.ok) {
+			logger.error('CognitiveRazorPlugin', 'PromptManager 模板加载失败', undefined, { error: preloadResult.error, promptsDir });
+		}
+		this.container.registerInstance(SERVICE_TOKENS.promptManager, promptManager, 'core');
+
+		// DuplicateManager
+		const duplicateManager = new DuplicateManager(
+			vectorIndex, fileStorage, logger, this.settingsStore, lockManager, 'data/duplicate-pairs.json'
+		);
+		const dupInitResult = await duplicateManager.initialize();
+		if (!dupInitResult.ok) {
+			logger.error('CognitiveRazorPlugin', 'DuplicateManager 初始化失败', undefined, { error: dupInitResult.error });
+		}
+		this.container.registerInstance(SERVICE_TOKENS.duplicateManager, duplicateManager, 'core');
+		logger.debug('CognitiveRazorPlugin', 'DuplicateManager 初始化完成', {
+			pendingPairs: duplicateManager.getPendingPairs().length
+		});
+
+		// 订阅删除事件：清理向量索引与重复对
+		cruidCache.onDelete(({ cruid, path }) => {
+			void this.cleanupAfterNoteDeleted(cruid, path);
+		});
+
+		// TaskRunner
+		const taskRunner = new TaskRunner({
+			providerManager, promptManager, validator, undoManager,
+			logger, vectorIndex, settingsStore: this.settingsStore, app: this.app
+		});
+		this.container.registerInstance(SERVICE_TOKENS.taskRunner, taskRunner, 'core');
+
+		// TaskQueue
+		const taskQueue = new TaskQueue(lockManager, fileStorage, logger, this.settingsStore, 'data/queue-state.json');
+		const queueInitResult = await taskQueue.initialize();
+		if (!queueInitResult.ok) {
+			logger.error('CognitiveRazorPlugin', 'TaskQueue 初始化失败', undefined, { error: queueInitResult.error });
+		}
+		taskQueue.setTaskRunner(taskRunner);
+		this.container.registerInstance(SERVICE_TOKENS.taskQueue, taskQueue, 'core');
+		logger.debug('CognitiveRazorPlugin', 'TaskQueue 初始化完成', { status: taskQueue.getStatus() });
+
+		// PipelineStateStore
+		const pipelineStateStore = new PipelineStateStore(fileStorage, logger);
+		this.container.registerInstance(SERVICE_TOKENS.pipelineStateStore, pipelineStateStore, 'core');
+
+		// NoteRepository + ContentRenderer（Orchestrator 共享依赖）
+		const noteRepository = new NoteRepository(this.app, logger);
+		const contentRenderer = new ContentRenderer();
+
+		// OrchestratorDeps：所有独立编排器共享的依赖对象
+		const orchestratorDeps: OrchestratorDeps = {
+			app: this.app, noteRepository, taskQueue, taskRunner, vectorIndex,
+			duplicateManager, undoManager, lockManager, promptManager,
+			contentRenderer, schemaRegistry, settingsStore: this.settingsStore,
+			cruidCache, logger, i18n, pipelineStateStore, providerManager,
+		};
+
+		// CreateOrchestrator
+		const createOrchestrator = new CreateOrchestrator(orchestratorDeps);
+		this.container.registerInstance(SERVICE_TOKENS.createOrchestrator, createOrchestrator, 'core');
+
+		// AmendOrchestrator
+		const amendOrchestrator = new AmendOrchestrator(orchestratorDeps);
+		this.container.registerInstance(SERVICE_TOKENS.amendOrchestrator, amendOrchestrator, 'core');
+
+		// MergeOrchestrator
+		const mergeOrchestrator = new MergeOrchestrator(orchestratorDeps);
+		this.container.registerInstance(SERVICE_TOKENS.mergeOrchestrator, mergeOrchestrator, 'core');
+
+		// VerifyOrchestrator
+		const verifyOrchestrator = new VerifyOrchestrator(orchestratorDeps);
+		this.container.registerInstance(SERVICE_TOKENS.verifyOrchestrator, verifyOrchestrator, 'core');
+
+		// ExpandOrchestrator
+		const expandOrchestrator = new ExpandOrchestrator(orchestratorDeps, {
+			createOrchestrator, fileStorage
+		});
+		this.container.registerInstance(SERVICE_TOKENS.expandOrchestrator, expandOrchestrator, 'core');
+
+		// ImageInsertOrchestrator
+		const imageInsertOrchestrator = new ImageInsertOrchestrator(orchestratorDeps);
+		this.container.registerInstance(SERVICE_TOKENS.imageInsertOrchestrator, imageInsertOrchestrator, 'core');
+
+		// 恢复持久化的管线状态（需求 33.2：Plugin 重启时恢复处于确认阶段的管线上下文）
+		const restoreResult = await pipelineStateStore.restoreToOrchestrators([
+			createOrchestrator,
+			amendOrchestrator,
+			mergeOrchestrator,
+			verifyOrchestrator,
+		]);
+		if (restoreResult.ok && restoreResult.value > 0) {
+			logger.info('CognitiveRazorPlugin', `已恢复 ${restoreResult.value} 条管线状态`);
+		}
+
+		logger.info('CognitiveRazorPlugin', '应用层组件初始化完成');
+	}
+
+	/**
+	 * 注册 UI 层服务
+	 */
+	private registerUILayer(): void {
+		const logger = this.container.resolve<Logger>(SERVICE_TOKENS.logger);
+		const taskQueue = this.container.resolve<TaskQueue>(SERVICE_TOKENS.taskQueue);
+
+		logger.debug('CognitiveRazorPlugin', '开始初始化 UI 层');
+
+		// 检查是否需要首次配置向导
+		const needsSetup = this.checkNeedsSetup();
+		if (needsSetup) {
+			this.app.workspace.onLayoutReady(() => {
+				this.showSetupWizard();
+			});
+		}
+
+		// 注册视图
+		this.registerViews();
+
+		// ModalManager（需在其他 UI 组件之前初始化，供它们注入使用）
+		const modalManager = new ModalManager({ logger });
+		this.container.registerInstance(SERVICE_TOKENS.modalManager, modalManager, 'ui');
+		logger.debug('CognitiveRazorPlugin', 'ModalManager 初始化完成');
+
+		// StatusBadge
+		const i18nForBadge = this.container.resolve<I18n>(SERVICE_TOKENS.i18n);
+		const statusBadge = new StatusBadge({ plugin: this, i18n: i18nForBadge });
+		const status = taskQueue.getStatus();
+		statusBadge.updateStatus(status);
+		this.container.registerInstance(SERVICE_TOKENS.statusBadge, statusBadge, 'ui');
+		logger.debug('CognitiveRazorPlugin', 'StatusBadge 初始化完成', { status });
+
+		// CommandDispatcher
+		const commandDispatcher = new CommandDispatcher(this, taskQueue);
+		commandDispatcher.registerAllCommands();
+		this.container.registerInstance(SERVICE_TOKENS.commandDispatcher, commandDispatcher, 'ui');
+		logger.debug('CognitiveRazorPlugin', '命令注册完成');
+
+		// 设置面板
+		this.addSettingTab(new CognitiveRazorSettingTab(this.app, this));
+
+		logger.info('CognitiveRazorPlugin', 'UI 层初始化完成');
+	}
+
+	// ========================================================================
+	// 安全模式
+	// ========================================================================
+
+	/**
+	 * 安全模式：Data 层初始化失败时仅显示错误信息和设置入口
+	 * 不加载 Core 和 UI 层
+	 *
+	 * @see 需求 20.2, 20.3
+	 */
+	private showSafeMode(error: unknown): void {
+		const errorMessage = error instanceof Error ? error.message : String(error);
+
+		// 通过 Logger 记录（如果 Logger 已初始化）
+		const logger = this.tryResolve<Logger>(SERVICE_TOKENS.logger);
+		if (logger) {
+			logger.error('CognitiveRazorPlugin', '插件进入安全模式', error as Error, {
+				event: 'SAFE_MODE'
+			});
+		}
+
+		// 显示用户友好的错误通知
+		new Notice(`Cognitive Razor 初始化失败，已进入安全模式: ${errorMessage}`, 10000);
+
+		// 仅注册设置面板，允许用户修改配置
+		this.addSettingTab(new CognitiveRazorSettingTab(this.app, this));
+	}
+
+	// ========================================================================
+	// 辅助方法
+	// ========================================================================
+
+	/**
+	 * 安全解析服务（容器未初始化或服务未注册时返回 undefined）
+	 */
+	private tryResolve<T>(token: symbol): T | undefined {
+		try {
+			return this.container?.resolve<T>(token);
+		} catch {
+			return undefined;
+		}
+	}
+
+	/**
+	 * 初始化数据目录结构
 	 */
 	private async initializeDataDirectory(): Promise<void> {
-		// 数据目录路径
-		this.dataDir = `${this.manifest.dir}/data`;
-
-		// 确保数据目录及子目录存在
-		// 遵循设计文档：单文件直接放在 data/ 下，快照和向量使用子目录
+		const dataDir = `${this.manifest.dir}/data`;
 		const adapter = this.app.vault.adapter;
 		const directories = [
-			this.dataDir,
-			`${this.dataDir}/snapshots`,
-			`${this.dataDir}/vectors`,
-			`${this.dataDir}/vectors/Domain`,
-			`${this.dataDir}/vectors/Issue`,
-			`${this.dataDir}/vectors/Theory`,
-			`${this.dataDir}/vectors/Entity`,
-			`${this.dataDir}/vectors/Mechanism`
+			dataDir,
+			`${dataDir}/snapshots`,
+			`${dataDir}/vectors`,
+			`${dataDir}/vectors/Domain`,
+			`${dataDir}/vectors/Issue`,
+			`${dataDir}/vectors/Theory`,
+			`${dataDir}/vectors/Entity`,
+			`${dataDir}/vectors/Mechanism`
 		];
 
 		for (const dir of directories) {
@@ -261,482 +622,111 @@ export default class CognitiveRazorPlugin extends Plugin {
 	}
 
 	/**
-	 * 初始化数据层组件
-	 * 
-	 * 遵循设计文档 A-FUNC-07 存储结构：
-	 * - 日志文件：data/app.log（循环日志 1MB）
-	 * 
-	 * 初始化顺序：
-	 * 1. FileStorage - 文件存储（依赖：Obsidian Vault）
-	 * 2. Logger - 日志记录器（依赖：FileStorage）
-	 * 3. SettingsStore - 设置存储（依赖：Plugin）
-	 * 4. Validator - 验证器（依赖：VectorIndex，稍后注入）
-	 */
-	private async initializeDataLayer(): Promise<void> {
-		// 1. FileStorage（使用 Obsidian Vault）
-		// 使用 app.vault.configDir 获取 .obsidian 目录的相对路径
-		// 然后拼接插件 ID 得到插件目录的相对路径
-		const pluginDir = `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
-		this.fileStorage = new FileStorage(this.app.vault, pluginDir);
-		
-		// 初始化文件存储（创建目录结构和初始化数据文件）
-		const initResult = await this.fileStorage.initialize();
-		if (!initResult.ok) {
-			throw new Error(`FileStorage 初始化失败: ${initResult.error.message}`);
-		}
-
-		// 2. Logger（遵循设计文档 A-NF-03：日志级别从设置读取）
-		// 日志文件路径遵循 A-FUNC-07：data/app.log
-		// 注意：传入相对路径，FileStorage 会自动添加 basePath
-		const logFilePath = 'data/app.log';
-		// 初始化时使用默认日志级别，加载设置后会更新
-		const initialLogLevel = this.settings?.logLevel || DEFAULT_SETTINGS.logLevel;
-		this.logger = new Logger(
-			logFilePath,
-			{
-				write: async (path: string, content: string) => {
-					const result = await this.fileStorage.write(path, content);
-					if (!result.ok) {
-						throw new Error(`写入日志文件失败: ${result.error.message}`);
-					}
-				},
-				read: async (path: string) => {
-					const result = await this.fileStorage.read(path);
-					if (!result.ok) {
-						// 文件不存在时返回空字符串，而不是抛出异常
-						if (result.error.code === 'E300') {
-							return '';
-						}
-						throw new Error(`读取日志文件失败: ${result.error.message}`);
-					}
-					return result.value;
-				},
-				exists: async (path: string) => {
-					return await this.fileStorage.exists(path);
-				}
-			},
-			initialLogLevel // 使用默认日志级别，加载设置后会更新
-		);
-
-		// 初始化 Logger（读取既有日志文件）
-		await this.logger.initialize();
-
-		this.logger.info('CognitiveRazorPlugin', '数据层组件初始化开始');
-
-		// 3. SettingsStore（在 loadSettings 中初始化）
-		// 4. Validator（在 initializeApplicationLayer 中初始化，需要 VectorIndex）
-
-		this.logger.info('CognitiveRazorPlugin', '数据层组件初始化完成');
-	}
-
-	/**
 	 * 加载设置
-	 * 
-	 * 步骤：
-	 * 1. 创建 VersionChecker
-	 * 2. 创建 SettingsStore
-	 * 3. 加载设置（从 data.json）
-	 * 4. 检查版本兼容性（TA-07）
-	 * 5. 同步日志级别
 	 */
 	private async loadSettings(): Promise<void> {
-		this.logger.info('CognitiveRazorPlugin', '开始加载设置');
+		const logger = this.container.resolve<Logger>(SERVICE_TOKENS.logger);
+		logger.info('CognitiveRazorPlugin', '开始加载设置');
 
-		// 创建 SettingsStore（使用 Obsidian 标准 data.json）
 		this.settingsStore = new SettingsStore(this);
-
-		// 加载设置（版本检查已在 SettingsStore 内部处理）
 		const loadResult = await this.settingsStore.loadSettings();
 		if (!loadResult.ok) {
-			this.logger.error('CognitiveRazorPlugin', '加载设置失败', undefined, { 
-				error: loadResult.error 
-			});
-			// 使用默认设置
+			logger.error('CognitiveRazorPlugin', '加载设置失败', undefined, { error: loadResult.error });
 			this.settings = { ...DEFAULT_SETTINGS };
-			this.logger.warn('CognitiveRazorPlugin', '使用默认设置');
+			logger.warn('CognitiveRazorPlugin', '使用默认设置');
 		} else {
 			this.settings = this.settingsStore.getSettings();
-			
-			this.logger.info('CognitiveRazorPlugin', '设置加载成功', {
+			logger.info('CognitiveRazorPlugin', '设置加载成功', {
 				version: this.settings.version,
 				language: this.settings.language,
 				providersCount: Object.keys(this.settings.providers).length
 			});
 		}
 
-		// 5. 同步日志级别到 Logger
-		if (this.logger && this.settings.logLevel) {
-			this.logger.setLogLevel(this.settings.logLevel);
-			this.logger.debug('CognitiveRazorPlugin', '日志配置已同步', {
-				logLevel: this.settings.logLevel
-			});
+		// 注册 SettingsStore 到 ServiceContainer（Data 层）
+		this.container.registerInstance(SERVICE_TOKENS.settingsStore, this.settingsStore, 'data');
+
+		// 同步日志级别
+		if (this.settings.logLevel) {
+			logger.setLogLevel(this.settings.logLevel);
+			logger.debug('CognitiveRazorPlugin', '日志配置已同步', { logLevel: this.settings.logLevel });
 		}
 	}
 
 	/**
 	 * 检查是否需要首次配置
 	 */
-	private async checkNeedsSetup(): Promise<boolean> {
-		// 如果没有配置任何 Provider，需要首次配置
-		const providers = Object.keys(this.settings.providers);
-		return providers.length === 0;
+	private checkNeedsSetup(): boolean {
+		return Object.keys(this.settings.providers).length === 0;
 	}
 
 	/**
 	 * 显示配置向导
 	 */
 	private showSetupWizard(): void {
-		this.logger.info('CognitiveRazorPlugin', '显示首次配置向导');
-		
-		// 打开配置向导模态框
+		const logger = this.tryResolve<Logger>(SERVICE_TOKENS.logger);
+		logger?.info('CognitiveRazorPlugin', '显示首次配置向导');
 		const wizard = new SetupWizard(this.app, this);
 		wizard.open();
 	}
 
 	/**
-	 * 初始化应用层组件
-	 * 
-	 * 遵循设计文档 A-FUNC-07 存储结构：
-	 * - data/vector-index.json   向量索引
-	 * - data/queue-state.json    队列状态
-	 * - data/duplicate-pairs.json 重复对列表
-	 * - data/snapshots/          快照目录
-	 * 
-	 * 初始化顺序（按依赖关系）：
-	 * 1. VectorIndex - 向量索引（依赖：FileStorage）
-	 * 2. Validator - 验证器（依赖：VectorIndex）
-	 * 3. LockManager - 锁管理器（无依赖）
-	 * 4. UndoManager - 撤销管理器（依赖：FileStorage）
-	 * 5. ProviderManager - Provider 管理器（依赖：Settings）
-	 * 6. PromptManager - 提示词管理器（无依赖）
-	 * 7. DuplicateManager - 重复管理器（依赖：FileStorage）
-	 * 8. TaskRunner - 任务执行器（依赖：ProviderManager, PromptManager, Validator, UndoManager, Logger）
-	 * 9. TaskQueue - 任务队列（依赖：FileStorage, LockManager, TaskRunner）
-	 */
-	private async initializeApplicationLayer(): Promise<void> {
-		this.logger.info('CognitiveRazorPlugin', '应用层组件初始化开始');
-
-		// 0. CruidCache（SSOT：cruid → TFile）
-		this.cruidCache = new CruidCache(this.app, this.logger);
-		this.cruidCache.start({ fallbackToRead: false });
-		this.logger.debug('CognitiveRazorPlugin', 'CruidCache 已启动');
-
-		// 1. VectorIndex (新架构：data/vectors/)
-		// 从设置中读取嵌入模型与维度（支持用户自定义；VectorIndex 会在 load 时与索引元数据对齐）
-		const embeddingModel = this.settings.taskModels?.index?.model || 'text-embedding-3-small';
-		const embeddingDimension = this.settings.embeddingDimension || 1536;
-		this.vectorIndex = new VectorIndex(
-			this.fileStorage,
-			embeddingModel,
-			embeddingDimension,
-			this.logger,
-			this.cruidCache
-		);
-		const loadResult = await this.vectorIndex.load();
-		if (!loadResult.ok) {
-			this.logger.error('CognitiveRazorPlugin', 'VectorIndex 加载失败', undefined, {
-				error: loadResult.error
-			});
-		}
-		this.logger.debug('CognitiveRazorPlugin', 'VectorIndex 初始化完成', {
-			stats: this.vectorIndex.getStats()
-		});
-
-		// 2. Validator
-		this.validator = new Validator();
-		this.logger.debug('CognitiveRazorPlugin', 'Validator 初始化完成');
-
-		// 3. SimpleLockManager
-		this.lockManager = new SimpleLockManager();
-		this.logger.debug('CognitiveRazorPlugin', 'LockManager 初始化完成');
-
-		// 4. UndoManager (A-FUNC-07: data/snapshots/, A-FUNC-02: 可配置保留策略)
-		this.undoManager = new UndoManager(
-			this.fileStorage,
-			this.logger,
-			'data/snapshots',
-			this.settings.maxSnapshots,
-			this.settings.maxSnapshotAgeDays ?? 30
-		);
-		const undoInitResult = await this.undoManager.initialize();
-		if (!undoInitResult.ok) {
-			this.logger.error('CognitiveRazorPlugin', 'UndoManager 初始化失败', undefined, {
-				error: undoInitResult.error
-			});
-		}
-		this.logger.debug('CognitiveRazorPlugin', 'UndoManager 初始化完成');
-
-		// 清理过期快照（A-FUNC-02: 读取用户配置的保留天数）
-		const maxAgeDays = this.settings.maxSnapshotAgeDays ?? 30;
-		const maxAgeMs = maxAgeDays * 24 * 60 * 60 * 1000;
-		const cleanupResult = await this.undoManager.cleanupExpiredSnapshots(maxAgeMs);
-		if (cleanupResult.ok && cleanupResult.value > 0) {
-			this.logger.info('CognitiveRazorPlugin', `清理了 ${cleanupResult.value} 个过期快照`, {
-				maxAgeDays,
-				cleanedCount: cleanupResult.value
-			});
-		}
-
-		// 5. ProviderManager
-		this.providerManager = new ProviderManager(
-			this.settingsStore,
-			this.logger
-		);
-		const unsubNetwork = this.providerManager.subscribeNetworkStatus((online, error) => {
-			this.handleNetworkStatusChange(online, error?.error?.message);
-		});
-		this.unsubscribers.push(unsubNetwork);
-		this.logger.debug('CognitiveRazorPlugin', 'ProviderManager 初始化完成', {
-			providersCount: this.providerManager.getConfiguredProviders().length
-		});
-
-		// 6. PromptManager
-		// prompts 目录在插件目录下，使用相对路径（FileStorage 会自动添加 basePath）
-		const promptsDir = 'prompts';
-		this.promptManager = new PromptManager(
-			this.fileStorage,
-			this.logger,
-			promptsDir
-		);
-		// 加载基础组件
-		const baseComponentsResult = await this.promptManager.preloadAllBaseComponents();
-		if (!baseComponentsResult.ok) {
-			this.logger.warn('CognitiveRazorPlugin', '基础组件加载失败（非致命错误）', {
-				error: baseComponentsResult.error
-			});
-		}
-		// 加载提示词模板
-		const preloadResult = await this.promptManager.preloadAllTemplates();
-		if (!preloadResult.ok) {
-			this.logger.error('CognitiveRazorPlugin', 'PromptManager 模板加载失败', undefined, {
-				error: preloadResult.error,
-				promptsDir
-			});
-			// 不中断初始化，但记录错误
-		}
-		this.logger.debug('CognitiveRazorPlugin', 'PromptManager 初始化完成');
-
-		// 7. DuplicateManager (A-FUNC-07: data/duplicate-pairs.json)
-		this.duplicateManager = new DuplicateManager(
-			this.vectorIndex,
-			this.fileStorage,
-			this.logger,
-			this.settingsStore,
-			this.lockManager,
-			'data/duplicate-pairs.json'
-		);
-		const dupInitResult = await this.duplicateManager.initialize();
-		if (!dupInitResult.ok) {
-			this.logger.error('CognitiveRazorPlugin', 'DuplicateManager 初始化失败', undefined, {
-				error: dupInitResult.error
-			});
-		}
-		this.logger.debug('CognitiveRazorPlugin', 'DuplicateManager 初始化完成', {
-			pendingPairs: this.duplicateManager.getPendingPairs().length
-		});
-
-		// 订阅删除事件：清理向量索引与重复对（替代 IndexHealer 的 delete 逻辑）
-		this.cruidCache.onDelete(({ cruid, path }) => {
-			void this.cleanupAfterNoteDeleted(cruid, path);
-		});
-
-		// 8. TaskRunner（依赖注入所有必要组件）
-		this.taskRunner = new TaskRunner({
-			providerManager: this.providerManager,
-			promptManager: this.promptManager,
-			validator: this.validator,
-			undoManager: this.undoManager,
-			logger: this.logger,
-			vectorIndex: this.vectorIndex,
-			settingsStore: this.settingsStore,
-			app: this.app
-		});
-		this.logger.debug('CognitiveRazorPlugin', 'TaskRunner 初始化完成');
-
-		// 9. TaskQueue (A-FUNC-07: data/queue-state.json)
-		this.taskQueue = new TaskQueue(
-			this.lockManager,
-			this.fileStorage,
-			this.logger,
-			this.settingsStore,
-			'data/queue-state.json'
-		);
-		const queueInitResult = await this.taskQueue.initialize();
-		if (!queueInitResult.ok) {
-			this.logger.error('CognitiveRazorPlugin', 'TaskQueue 初始化失败', undefined, {
-				error: queueInitResult.error
-			});
-		}
-		
-		// 注入 TaskRunner 到 TaskQueue（解决循环依赖）
-		this.taskQueue.setTaskRunner(this.taskRunner);
-		
-		this.logger.debug('CognitiveRazorPlugin', 'TaskQueue 初始化完成', {
-			status: this.taskQueue.getStatus()
-		});
-
-		const pipelineStateStore = new PipelineStateStore(this.fileStorage, this.logger);
-
-		// 10. PipelineOrchestrator（任务管线编排器，遵循 A-FUNC-05, A-FUNC-03）
-		this.pipelineOrchestrator = new PipelineOrchestrator({
-			app: this.app,
-			taskQueue: this.taskQueue,
-			taskRunner: this.taskRunner,
-			duplicateManager: this.duplicateManager,
-			logger: this.logger,
-			fileStorage: this.fileStorage,
-			validator: this.validator,
-			vectorIndex: this.vectorIndex,
-			undoManager: this.undoManager,
-			promptManager: this.promptManager,  // A-FUNC-03: 用于模板前置校验
-			providerManager: this.providerManager,  // A-FUNC-03: 用于 Provider 前置校验
-			cruidCache: this.cruidCache,
-			pipelineStateStore,
-			getSettings: () => this.settings,
-		});
-		await this.pipelineOrchestrator.initialize();
-		this.logger.debug('CognitiveRazorPlugin', 'PipelineOrchestrator 初始化完成');
-
-		// ExpandOrchestrator（拓展编排器）
-		this.expandOrchestrator = new ExpandOrchestrator({
-			app: this.app,
-			logger: this.logger,
-			vectorIndex: this.vectorIndex,
-			fileStorage: this.fileStorage,
-			pipelineOrchestrator: this.pipelineOrchestrator,
-			getSettings: () => this.settings
-		});
-		this.logger.debug('CognitiveRazorPlugin', 'ExpandOrchestrator 初始化完成');
-
-		// ImageInsertOrchestrator（图片插入编排器）
-		this.imageInsertOrchestrator = new ImageInsertOrchestrator(
-			this.taskQueue,
-			this.settingsStore,
-			this.logger
-		);
-		this.logger.debug('CognitiveRazorPlugin', 'ImageInsertOrchestrator 初始化完成');
-
-		this.logger.info('CognitiveRazorPlugin', '应用层组件初始化完成');
-	}
-
-
-
-	/**
 	 * 注册视图
-	 * 
-	 * 重构说明：仅注册统一工作台视图
-	 * - WorkbenchPanel：集成所有功能的统一操作枢纽
-	 * - 已废除独立的 QueueView 和 UndoHistoryView
 	 */
 	private registerViews(): void {
-		this.logger.debug('CognitiveRazorPlugin', '开始注册视图');
+		const logger = this.container.resolve<Logger>(SERVICE_TOKENS.logger);
+		logger.debug('CognitiveRazorPlugin', '开始注册视图');
 
-		// 注册工作台视图（统一操作枢纽）
 		this.registerView(
 			WORKBENCH_VIEW_TYPE,
 			(leaf) => {
 				const panel = new WorkbenchPanel(leaf);
 				panel.setPlugin(this);
-				this.logger.debug('CognitiveRazorPlugin', 'WorkbenchPanel 视图已创建');
+				logger.debug('CognitiveRazorPlugin', 'WorkbenchPanel 视图已创建');
 				return panel;
 			}
 		);
 
-		this.logger.info('CognitiveRazorPlugin', '视图注册完成', {
-			views: [WORKBENCH_VIEW_TYPE]
-		});
-	}
-
-	/**
-	 * 初始化 UI 组件
-	 * 
-	 * 初始化的组件：
-	 * 1. StatusBadge - 状态栏徽章（显示队列状态）
-	 */
-	private initializeUIComponents(): void {
-		this.logger.debug('CognitiveRazorPlugin', '开始初始化 UI 组件');
-
-		// StatusBadge
-		this.statusBadge = new StatusBadge(this);
-		
-		// 初始化状态
-		const status = this.taskQueue.getStatus();
-		this.statusBadge.updateStatus(status);
-		this.logger.debug('CognitiveRazorPlugin', 'StatusBadge 初始化完成', {
-			status
-		});
-
-		this.logger.info('CognitiveRazorPlugin', 'UI 组件初始化完成');
-	}
-
-	/**
-	 * 注册命令
-	 * 
-	 * 通过 CommandDispatcher 注册所有命令：
-	 * - cognitive-razor:create-concept - 创建概念
-	 * - cognitive-razor:open-workbench - 打开工作台面板
-	 * - cognitive-razor:pause-queue - 暂停队列
-	 * - cognitive-razor:resume-queue - 恢复队列
-	 * - cognitive-razor:retry-failed - 重试失败任务
-	 * - 等等...
-	 */
-	private registerCommands(): void {
-		this.logger.debug('CognitiveRazorPlugin', '开始注册命令');
-
-		// CommandDispatcher
-		this.commandDispatcher = new CommandDispatcher(this, this.taskQueue);
-		this.commandDispatcher.registerAllCommands();
-
-		this.logger.info('CognitiveRazorPlugin', '命令注册完成');
+		logger.info('CognitiveRazorPlugin', '视图注册完成', { views: [WORKBENCH_VIEW_TYPE] });
 	}
 
 	/**
 	 * 订阅事件
-	 * 
-	 * 订阅的事件：
-	 * 1. 队列事件 - 更新 UI（状态栏、工作台、队列视图）
-	 * 2. 设置变更事件 - 同步配置（Provider、日志级别）
-	 * 3. 重复对变更事件 - 更新工作台面板
 	 */
 	private subscribeToEvents(): void {
-		this.logger.debug('CognitiveRazorPlugin', '开始订阅事件');
+		const logger = this.container.resolve<Logger>(SERVICE_TOKENS.logger);
+		const taskQueue = this.container.resolve<TaskQueue>(SERVICE_TOKENS.taskQueue);
+		const statusBadge = this.container.resolve<StatusBadge>(SERVICE_TOKENS.statusBadge);
+		const duplicateManager = this.container.resolve<DuplicateManager>(SERVICE_TOKENS.duplicateManager);
+		const i18n = this.container.resolve<I18n>(SERVICE_TOKENS.i18n);
 
-		// 1. 订阅队列事件
-		const unsubQueue = this.taskQueue.subscribe((event) => {
-			// 更新状态栏
-			const status = this.taskQueue.getStatus();
-			this.statusBadge.updateStatus(status);
+		logger.debug('CognitiveRazorPlugin', '开始订阅事件');
 
-			// 更新工作台面板
+		// 1. 队列事件
+		const unsubQueue = taskQueue.subscribe((event) => {
+			const status = taskQueue.getStatus();
+			statusBadge.updateStatus(status);
+
 			const workbenchLeaves = this.app.workspace.getLeavesOfType(WORKBENCH_VIEW_TYPE);
 			if (workbenchLeaves.length > 0) {
 				const workbench = workbenchLeaves[0].view as WorkbenchPanel;
 				workbench.updateQueueStatus(status);
 			}
 
-			// 队列视图已废除，功能已整合到工作台
-
-			// 记录事件
-			this.logger.debug('CognitiveRazorPlugin', '队列事件', { 
-				event,
-				status
-			});
+			logger.debug('CognitiveRazorPlugin', '队列事件', { event, status });
 		});
 		this.unsubscribers.push(unsubQueue);
 
-		// 2. 订阅设置变更事件
+		// 2. 设置变更事件
 		const unsubSettings = this.settingsStore.subscribe((newSettings) => {
 			this.settings = newSettings;
-			
-			// 同步语言设置到 i18n
-			if (this.i18n && newSettings.language !== this.i18n.getLanguage()) {
-				this.i18n.setLanguage(newSettings.language);
-				this.logger.debug('CognitiveRazorPlugin', '语言已切换', {
-					language: newSettings.language
-				});
+
+			if (i18n && newSettings.language !== i18n.getLanguage()) {
+				i18n.setLanguage(newSettings.language);
+				logger.debug('CognitiveRazorPlugin', '语言已切换', { language: newSettings.language });
 			}
-			
-			this.logger.debug('CognitiveRazorPlugin', '设置已更新', {
+
+			logger.debug('CognitiveRazorPlugin', '设置已更新', {
 				logLevel: newSettings.logLevel,
 				concurrency: newSettings.concurrency,
 				providersCount: Object.keys(newSettings.providers).length
@@ -744,130 +734,125 @@ export default class CognitiveRazorPlugin extends Plugin {
 		});
 		this.unsubscribers.push(unsubSettings);
 
-		// 3. 订阅重复对变更事件
-		const unsubDuplicates = this.duplicateManager.subscribe((pairs) => {
-			// 更新工作台面板
+		// 3. 重复对变更事件
+		const unsubDuplicates = duplicateManager.subscribe((pairs) => {
 			const workbenchLeaves = this.app.workspace.getLeavesOfType(WORKBENCH_VIEW_TYPE);
 			if (workbenchLeaves.length > 0) {
 				const workbench = workbenchLeaves[0].view as WorkbenchPanel;
 				workbench.updateDuplicates(pairs);
 			}
 
-			this.logger.debug('CognitiveRazorPlugin', '重复对变更', {
-				count: pairs.length
-			});
+			logger.debug('CognitiveRazorPlugin', '重复对变更', { count: pairs.length });
 		});
 		this.unsubscribers.push(unsubDuplicates);
 
-		this.logger.info('CognitiveRazorPlugin', '事件订阅完成');
+		logger.info('CognitiveRazorPlugin', '事件订阅完成');
 	}
 
 	/**
-	 * 处理网络状态变更：离线时暂停队列并更新状态栏，恢复时提示用户
+	 * 处理网络状态变更
 	 */
 	private handleNetworkStatusChange(online: boolean, reason?: string): void {
-		const t = this.i18n.t();
+		const i18n = this.tryResolve<I18n>(SERVICE_TOKENS.i18n);
+		const t = i18n?.t();
 
 		if (online) {
 			if (this.isOffline) {
 				this.isOffline = false;
-				if (this.statusBadge) {
-					this.statusBadge.setOffline(false);
-				}
-				new Notice(t.notices.networkRestored);
+				const statusBadge = this.tryResolve<StatusBadge>(SERVICE_TOKENS.statusBadge);
+				statusBadge?.setOffline(false);
+				if (t) new Notice(t.notices.networkRestored);
 			}
 			return;
 		}
 
 		if (!this.isOffline) {
 			this.isOffline = true;
-			if (this.taskQueue) {
-				void this.taskQueue.pause();
+			const taskQueue = this.tryResolve<TaskQueue>(SERVICE_TOKENS.taskQueue);
+			if (taskQueue) void taskQueue.pause();
+			const statusBadge = this.tryResolve<StatusBadge>(SERVICE_TOKENS.statusBadge);
+			statusBadge?.setOffline(true);
+			if (t) {
+				new Notice(reason ? `${t.notices.networkOffline}: ${reason}` : t.notices.networkOffline);
 			}
-			if (this.statusBadge) {
-				this.statusBadge.setOffline(true);
-			}
-			new Notice(reason ? `${t.notices.networkOffline}: ${reason}` : t.notices.networkOffline);
 		}
 	}
 
 	/**
-	 * 清理已删除笔记关联的数据（替代 IndexHealer）
+	 * 清理已删除笔记关联的数据
 	 */
 	private async cleanupAfterNoteDeleted(cruid: string, path: string): Promise<void> {
+		const logger = this.tryResolve<Logger>(SERVICE_TOKENS.logger);
+		const vectorIndex = this.tryResolve<VectorIndex>(SERVICE_TOKENS.vectorIndex);
+		const duplicateManager = this.tryResolve<DuplicateManager>(SERVICE_TOKENS.duplicateManager);
+
 		try {
-			// 1) 向量索引清理
-			if (this.vectorIndex) {
-				const result = await this.vectorIndex.delete(cruid);
+			if (vectorIndex) {
+				const result = await vectorIndex.delete(cruid);
 				if (!result.ok && result.error.code !== 'E004') {
-					this.logger.warn('CognitiveRazorPlugin', '删除笔记后清理向量索引失败', {
-						cruid,
-						path,
-						error: result.error
+					logger?.warn('CognitiveRazorPlugin', '删除笔记后清理向量索引失败', {
+						cruid, path, error: result.error
 					});
 				}
 			}
 
-			// 2) 重复对清理（清理所有相关重复对，保留 merging）
-			if (this.duplicateManager) {
-				const result = await this.duplicateManager.removePairsByNodeId(cruid);
+			if (duplicateManager) {
+				const result = await duplicateManager.removePairsByNodeId(cruid);
 				if (!result.ok) {
-					this.logger.warn('CognitiveRazorPlugin', '删除笔记后清理重复对失败', {
-						cruid,
-						path,
-						error: result.error
+					logger?.warn('CognitiveRazorPlugin', '删除笔记后清理重复对失败', {
+						cruid, path, error: result.error
 					});
 				}
 			}
 		} catch (error) {
-			this.logger.error('CognitiveRazorPlugin', '删除笔记后清理关联数据异常', error as Error, {
-				cruid,
-				path
+			logger?.error('CognitiveRazorPlugin', '删除笔记后清理关联数据异常', error as Error, {
+				cruid, path
 			});
 		}
 	}
 
-
+	// ========================================================================
+	// 公开 API（向后兼容，供 UI 组件访问）
+	// ========================================================================
 
 	/**
 	 * 获取 i18n 实例
 	 */
 	public getI18n(): I18n {
-		return this.i18n;
+		return this.container.resolve<I18n>(SERVICE_TOKENS.i18n);
 	}
 
 	/**
 	 * 获取组件（供其他模块使用）
-	 * 
-	 * 提供依赖注入接口，允许 UI 层和其他模块访问应用层和数据层组件
-	 * 
-	 * @returns 所有核心组件的引用
+	 * 所有服务通过 ServiceContainer 解析，UI 组件不直接依赖 Plugin 实例获取服务
+	 *
+	 * @see 需求 1.4, 1.5
 	 */
 	public getComponents() {
 		return {
-			// 设置
 			settings: this.settings,
-			settingsStore: this.settingsStore,
-			i18n: this.i18n,
-			
-			// 数据层
-			fileStorage: this.fileStorage,
-			logger: this.logger,
-			validator: this.validator,
-			
-			// 应用层
-			cruidCache: this.cruidCache,
-			vectorIndex: this.vectorIndex,
-			lockManager: this.lockManager,
-			undoManager: this.undoManager,
-			providerManager: this.providerManager,
-			promptManager: this.promptManager,
-			duplicateManager: this.duplicateManager,
-			taskQueue: this.taskQueue,
-			taskRunner: this.taskRunner,
-			pipelineOrchestrator: this.pipelineOrchestrator,
-			expandOrchestrator: this.expandOrchestrator,
-			imageInsertOrchestrator: this.imageInsertOrchestrator,
+			settingsStore: this.container.resolve<SettingsStore>(SERVICE_TOKENS.settingsStore),
+			i18n: this.container.resolve<I18n>(SERVICE_TOKENS.i18n),
+
+			fileStorage: this.container.resolve<FileStorage>(SERVICE_TOKENS.fileStorage),
+			logger: this.container.resolve<Logger>(SERVICE_TOKENS.logger),
+			validator: this.container.resolve<Validator>(SERVICE_TOKENS.validator),
+
+			cruidCache: this.container.resolve<CruidCache>(SERVICE_TOKENS.cruidCache),
+			vectorIndex: this.container.resolve<VectorIndex>(SERVICE_TOKENS.vectorIndex),
+			lockManager: this.container.resolve<SimpleLockManager>(SERVICE_TOKENS.lockManager),
+			undoManager: this.container.resolve<UndoManager>(SERVICE_TOKENS.undoManager),
+			providerManager: this.container.resolve<ProviderManager>(SERVICE_TOKENS.providerManager),
+			promptManager: this.container.resolve<PromptManager>(SERVICE_TOKENS.promptManager),
+			duplicateManager: this.container.resolve<DuplicateManager>(SERVICE_TOKENS.duplicateManager),
+			taskQueue: this.container.resolve<TaskQueue>(SERVICE_TOKENS.taskQueue),
+			taskRunner: this.container.resolve<TaskRunner>(SERVICE_TOKENS.taskRunner),
+			createOrchestrator: this.container.resolve<CreateOrchestrator>(SERVICE_TOKENS.createOrchestrator),
+			amendOrchestrator: this.container.resolve<AmendOrchestrator>(SERVICE_TOKENS.amendOrchestrator),
+			mergeOrchestrator: this.container.resolve<MergeOrchestrator>(SERVICE_TOKENS.mergeOrchestrator),
+			verifyOrchestrator: this.container.resolve<VerifyOrchestrator>(SERVICE_TOKENS.verifyOrchestrator),
+			expandOrchestrator: this.container.resolve<ExpandOrchestrator>(SERVICE_TOKENS.expandOrchestrator),
+			imageInsertOrchestrator: this.container.resolve<ImageInsertOrchestrator>(SERVICE_TOKENS.imageInsertOrchestrator),
 		};
 	}
 }

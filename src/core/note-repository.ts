@@ -15,7 +15,7 @@ export class NoteRepository {
     if (!(file instanceof TFile)) {
       throw new Error(`文件不存在: ${path}`);
     }
-    return this.app.vault.read(file);
+    return this.app.vault.cachedRead(file);
   }
 
   getFileByPath(path: string): TFile | null {
@@ -24,7 +24,7 @@ export class NoteRepository {
   }
 
   async read(file: TFile): Promise<string> {
-    return this.app.vault.read(file);
+    return this.app.vault.cachedRead(file);
   }
 
   listMarkdownFiles(): TFile[] {
@@ -32,7 +32,8 @@ export class NoteRepository {
   }
 
   async modify(file: TFile, content: string): Promise<void> {
-    await this.app.vault.modify(file, content);
+    // 需求 22.2：后台文件修改使用 Vault.process() 原子操作
+    await this.app.vault.process(file, () => content);
   }
 
   async readByPathIfExists(path: string): Promise<string | null> {
@@ -49,7 +50,8 @@ export class NoteRepository {
     if (!(file instanceof TFile)) {
       throw new Error(`文件不存在: ${path}`);
     }
-    await this.app.vault.delete(file);
+    // 需求 22.4：使用 fileManager.trashFile() 处理反向链接清理
+    await this.app.fileManager.trashFile(file);
   }
 
   async deleteByPathIfExists(path: string): Promise<boolean> {
@@ -57,7 +59,8 @@ export class NoteRepository {
     if (!(file instanceof TFile)) {
       return false;
     }
-    await this.app.vault.delete(file);
+    // 需求 22.4：使用 fileManager.trashFile() 处理反向链接清理
+    await this.app.fileManager.trashFile(file);
     return true;
   }
 
@@ -66,7 +69,8 @@ export class NoteRepository {
 
     const existingFile = this.app.vault.getAbstractFileByPath(path);
     if (existingFile && existingFile instanceof TFile) {
-      await this.app.vault.modify(existingFile, content);
+      // 需求 22.2：后台文件修改使用 Vault.process() 原子操作
+      await this.app.vault.process(existingFile, () => content);
       this.logger.debug("NoteRepository", "静默更新已存在文件", { path });
       return;
     }

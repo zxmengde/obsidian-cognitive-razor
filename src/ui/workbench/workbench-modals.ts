@@ -1,10 +1,12 @@
 import { App, Notice, TFile } from "obsidian";
 import type { DuplicatePair, SnapshotMetadata } from "../../types";
 import type CognitiveRazorPlugin from "../../../main";
+import { formatMessage } from "../../core/i18n";
 import { buildLineDiff, renderSideBySideDiff } from "../diff-view";
 import { AbstractModal } from "../abstract-modal";
 
 const ERROR_NOTICE_DURATION = 6000;
+type Translator = (path: string) => string;
 
 /**
  * 重复对预览模态框（改进版）
@@ -17,6 +19,7 @@ export class DuplicatePreviewModal extends AbstractModal {
   private resolvePath: (nodeId: string) => string | null;
   private onMerge: () => void;
   private onDismiss: () => void;
+  private t?: Translator;
 
   constructor(
     app: App,
@@ -28,7 +31,8 @@ export class DuplicatePreviewModal extends AbstractModal {
       resolvePath: (nodeId: string) => string | null;
     },
     onMerge: () => void,
-    onDismiss: () => void
+    onDismiss: () => void,
+    t?: Translator
   ) {
     super(app);
     this.pair = pair;
@@ -38,6 +42,7 @@ export class DuplicatePreviewModal extends AbstractModal {
     this.resolvePath = resolvers.resolvePath;
     this.onMerge = onMerge;
     this.onDismiss = onDismiss;
+    this.t = t;
   }
 
   protected renderContent(contentEl: HTMLElement): void {
@@ -46,7 +51,7 @@ export class DuplicatePreviewModal extends AbstractModal {
     // 标题栏
     const header = contentEl.createDiv({ cls: "cr-preview-header" });
     header.createEl("h2", {
-      text: "重复概念预览",
+      text: this.text("workbench.duplicatePreview.title", "重复概念预览"),
       cls: "cr-modal-title"
     });
 
@@ -54,7 +59,7 @@ export class DuplicatePreviewModal extends AbstractModal {
     const metaCard = contentEl.createDiv({ cls: "cr-preview-meta-card" });
 
     const similarityRow = metaCard.createDiv({ cls: "cr-meta-row" });
-    similarityRow.createEl("span", { text: "相似度:", cls: "cr-meta-label" });
+    similarityRow.createEl("span", { text: this.text("workbench.duplicatePreview.similarity", "相似度:"), cls: "cr-meta-label" });
     const similarityValue = similarityRow.createDiv({ cls: "cr-meta-value" });
     const similarityBar = similarityValue.createDiv({ cls: "cr-similarity-bar-large" });
     const similarityFill = similarityBar.createDiv({ cls: "cr-similarity-fill" });
@@ -65,27 +70,27 @@ export class DuplicatePreviewModal extends AbstractModal {
     });
 
     const typeRow = metaCard.createDiv({ cls: "cr-meta-row" });
-    typeRow.createEl("span", { text: "类型:", cls: "cr-meta-label" });
+    typeRow.createEl("span", { text: this.text("workbench.duplicatePreview.type", "类型:"), cls: "cr-meta-label" });
     typeRow.createEl("span", {
       text: this.pair.type,
       cls: "cr-type-tag-large"
     });
 
     const timeRow = metaCard.createDiv({ cls: "cr-meta-row" });
-    timeRow.createEl("span", { text: "检测时间:", cls: "cr-meta-label" });
+    timeRow.createEl("span", { text: this.text("workbench.duplicatePreview.detectedAt", "检测时间:"), cls: "cr-meta-label" });
     timeRow.createEl("span", {
-      text: new Date(this.pair.detectedAt).toLocaleString("zh-CN"),
+      text: new Date(this.pair.detectedAt).toLocaleString(),
       cls: "cr-meta-value"
     });
 
     // 标签页切换
     const tabContainer = contentEl.createDiv({ cls: "cr-preview-tabs" });
     const sideBySideTab = tabContainer.createEl("button", {
-      text: "并排对比",
+      text: this.text("workbench.duplicatePreview.sideBySide", "并排对比"),
       cls: "cr-tab-button cr-tab-active"
     });
     const diffTab = tabContainer.createEl("button", {
-      text: "差异高亮",
+      text: this.text("workbench.duplicatePreview.diffHighlight", "差异高亮"),
       cls: "cr-tab-button"
     });
 
@@ -158,7 +163,7 @@ export class DuplicatePreviewModal extends AbstractModal {
     const buttonContainer = contentEl.createDiv({ cls: "cr-modal-buttons" });
 
     const mergeBtn = buttonContainer.createEl("button", {
-      text: "🔀 合并",
+      text: this.text("workbench.duplicatePreview.mergeAction", "🔀 合并"),
       cls: "mod-cta"
     });
     mergeBtn.addEventListener("click", () => {
@@ -167,7 +172,7 @@ export class DuplicatePreviewModal extends AbstractModal {
     });
 
     const dismissBtn = buttonContainer.createEl("button", {
-      text: "🚫 忽略"
+      text: this.text("workbench.duplicatePreview.dismissAction", "🚫 忽略")
     });
     dismissBtn.addEventListener("click", () => {
       this.close();
@@ -175,29 +180,29 @@ export class DuplicatePreviewModal extends AbstractModal {
     });
 
     const openABtn = buttonContainer.createEl("button", {
-      text: "📄 打开 A"
+      text: this.text("workbench.duplicatePreview.openA", "📄 打开 A")
     });
     openABtn.addEventListener("click", () => {
       if (!pathA) {
-        new Notice(`文件不存在: ${this.pair.nodeIdA}`, ERROR_NOTICE_DURATION);
+        new Notice(`${this.text("workbench.notifications.fileNotFound", "文件不存在")}: ${this.pair.nodeIdA}`, ERROR_NOTICE_DURATION);
         return;
       }
       void this.openFile(pathA);
     });
 
     const openBBtn = buttonContainer.createEl("button", {
-      text: "📄 打开 B"
+      text: this.text("workbench.duplicatePreview.openB", "📄 打开 B")
     });
     openBBtn.addEventListener("click", () => {
       if (!pathB) {
-        new Notice(`文件不存在: ${this.pair.nodeIdB}`, ERROR_NOTICE_DURATION);
+        new Notice(`${this.text("workbench.notifications.fileNotFound", "文件不存在")}: ${this.pair.nodeIdB}`, ERROR_NOTICE_DURATION);
         return;
       }
       void this.openFile(pathB);
     });
 
     const cancelBtn = buttonContainer.createEl("button", {
-      text: "取消"
+      text: this.text("workbench.duplicatePreview.cancel", "取消")
     });
     cancelBtn.addEventListener("click", () => {
       this.close();
@@ -205,17 +210,27 @@ export class DuplicatePreviewModal extends AbstractModal {
   }
 
   private async openFile(path: string): Promise<void> {
-    const file = this.app.vault.getAbstractFileByPath(path);
-    if (file && file instanceof TFile) {
-      const leaf = this.app.workspace.getLeaf(false);
-      await leaf.openFile(file);
-    } else {
-      new Notice(`文件不存在: ${path}`, ERROR_NOTICE_DURATION);
+    try {
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (file && file instanceof TFile) {
+        const leaf = this.app.workspace.getLeaf(false);
+        await leaf.openFile(file);
+      } else {
+        new Notice(`${this.text("workbench.notifications.fileNotFound", "文件不存在")}: ${path}`, ERROR_NOTICE_DURATION);
+      }
+    } catch (error) {
+      new Notice(`${this.text("workbench.notifications.fileNotFound", "打开文件失败")}: ${path}`, ERROR_NOTICE_DURATION);
     }
   }
 
   onClose(): void {
     super.onClose();
+  }
+
+  private text(path: string, fallback: string): string {
+    if (!this.t) return fallback;
+    const value = this.t(path);
+    return value === path ? fallback : value;
   }
 }
 
@@ -226,12 +241,14 @@ export class ConfirmDialog extends AbstractModal {
   private title: string;
   private message: string;
   private onConfirm: (result: boolean) => void;
+  private t?: Translator;
 
-  constructor(app: App, title: string, message: string, onConfirm: (result: boolean) => void) {
+  constructor(app: App, title: string, message: string, onConfirm: (result: boolean) => void, t?: Translator) {
     super(app);
     this.title = title;
     this.message = message;
     this.onConfirm = onConfirm;
+    this.t = t;
   }
 
   protected renderContent(contentEl: HTMLElement): void {
@@ -243,7 +260,7 @@ export class ConfirmDialog extends AbstractModal {
     const buttonContainer = contentEl.createDiv({ cls: "cr-modal-buttons" });
 
     const confirmBtn = buttonContainer.createEl("button", {
-      text: "确定",
+      text: this.text("common.confirm", "确认"),
       cls: "mod-cta"
     });
     confirmBtn.addEventListener("click", () => {
@@ -252,7 +269,7 @@ export class ConfirmDialog extends AbstractModal {
     });
 
     const cancelBtn = buttonContainer.createEl("button", {
-      text: "取消"
+      text: this.text("common.cancel", "取消")
     });
     cancelBtn.addEventListener("click", () => {
       this.close();
@@ -262,6 +279,12 @@ export class ConfirmDialog extends AbstractModal {
 
   onClose(): void {
     super.onClose();
+  }
+
+  private text(path: string, fallback: string): string {
+    if (!this.t) return fallback;
+    const value = this.t(path);
+    return value === path ? fallback : value;
   }
 }
 
@@ -322,11 +345,11 @@ export class MergeHistoryModal extends AbstractModal {
     // 标签页
     const tabContainer = historyContainer.createDiv({ cls: "cr-history-tabs" });
     const mergedTab = tabContainer.createEl("button", {
-      text: "已合并",
+      text: this.t("workbench.duplicateHistory.mergedTab"),
       cls: "cr-tab-button cr-tab-active"
     });
     const dismissedTab = tabContainer.createEl("button", {
-      text: "已忽略",
+      text: this.t("workbench.duplicateHistory.dismissedTab"),
       cls: "cr-tab-button"
     });
 
@@ -353,7 +376,7 @@ export class MergeHistoryModal extends AbstractModal {
 
     const buttonContainer = contentEl.createDiv({ cls: "cr-modal-buttons" });
     const closeBtn = buttonContainer.createEl("button", {
-      text: "关闭"
+      text: this.t("workbench.duplicateHistory.close")
     });
     closeBtn.addEventListener("click", () => {
       this.close();
@@ -379,7 +402,9 @@ export class MergeHistoryModal extends AbstractModal {
 
     if (pairs.length === 0) {
       this.listContainer.createEl("p", {
-        text: this.currentTab === "merged" ? "暂无已合并的重复对" : "暂无已忽略的重复对",
+        text: this.currentTab === "merged"
+          ? this.t("workbench.duplicateHistory.emptyMerged")
+          : this.t("workbench.duplicateHistory.emptyDismissed"),
         cls: "cr-placeholder-text"
       });
       return;
@@ -399,7 +424,7 @@ export class MergeHistoryModal extends AbstractModal {
 
       const meta = info.createDiv({ cls: "cr-history-meta" });
       meta.createEl("span", {
-        text: `相似度: ${(pair.similarity * 100).toFixed(1)}%`,
+        text: `${this.t("workbench.duplicateHistory.similarity")}: ${(pair.similarity * 100).toFixed(1)}%`,
         cls: "cr-history-similarity"
       });
       meta.createEl("span", {
@@ -407,7 +432,7 @@ export class MergeHistoryModal extends AbstractModal {
         cls: "cr-history-type"
       });
       meta.createEl("span", {
-        text: new Date(pair.detectedAt).toLocaleString("zh-CN"),
+        text: new Date(pair.detectedAt).toLocaleString(),
         cls: "cr-history-time"
       });
 
@@ -417,7 +442,7 @@ export class MergeHistoryModal extends AbstractModal {
       if (this.currentTab === "dismissed") {
         // 已忽略的可以撤销
         const undoBtn = actions.createEl("button", {
-          text: "撤销忽略",
+          text: this.t("workbench.duplicateHistory.undoDismiss"),
           cls: "cr-btn-small mod-cta"
         });
         undoBtn.addEventListener("click", async () => {
@@ -426,7 +451,7 @@ export class MergeHistoryModal extends AbstractModal {
       }
 
       const deleteBtn = actions.createEl("button", {
-        text: "删除",
+        text: this.t("workbench.duplicateHistory.delete"),
         cls: "cr-btn-small"
       });
       deleteBtn.addEventListener("click", async () => {
@@ -436,50 +461,59 @@ export class MergeHistoryModal extends AbstractModal {
   }
 
   private async handleUndoDismiss(pairId: string): Promise<void> {
-    if (!this.plugin) return;
+    try {
+      if (!this.plugin) return;
 
-    const components = this.plugin.getComponents();
-    const duplicateManager = components.duplicateManager;
+      const components = this.plugin.getComponents();
+      const duplicateManager = components.duplicateManager;
 
-    if (!duplicateManager) return;
+      if (!duplicateManager) return;
 
-    const result = await duplicateManager.updateStatus(pairId, "pending");
+      const result = await duplicateManager.updateStatus(pairId, "pending");
 
-    if (result.ok) {
-      new Notice(this.t("workbench.notifications.undoDismissSuccess"));
-      await this.renderList();
-    } else {
-      new Notice(`${this.t("workbench.notifications.undoFailed")}: ${result.error.message}`, ERROR_NOTICE_DURATION);
+      if (result.ok) {
+        new Notice(this.t("workbench.notifications.undoDismissSuccess"));
+        await this.renderList();
+      } else {
+        new Notice(`${this.t("workbench.notifications.undoFailed")}: ${result.error.message}`, ERROR_NOTICE_DURATION);
+      }
+    } catch (error) {
+      new Notice(`${this.t("workbench.notifications.undoFailed")}`, ERROR_NOTICE_DURATION);
     }
   }
 
   private async handleDelete(pairId: string): Promise<void> {
-    if (!this.plugin) return;
+    try {
+      if (!this.plugin) return;
 
-    const confirmed = await new Promise<boolean>((resolve) => {
-      const modal = new ConfirmDialog(
-        this.app,
-        this.t("confirmDialogs.deleteDuplicatePair.title"),
-        this.t("confirmDialogs.deleteDuplicatePair.message"),
-        resolve
-      );
-      modal.open();
-    });
+      const confirmed = await new Promise<boolean>((resolve) => {
+        const modal = new ConfirmDialog(
+          this.app,
+          this.t("confirmDialogs.deleteDuplicatePair.title"),
+          this.t("confirmDialogs.deleteDuplicatePair.message"),
+          resolve,
+          this.t.bind(this)
+        );
+        modal.open();
+      });
 
-    if (!confirmed) return;
+      if (!confirmed) return;
 
-    const components = this.plugin.getComponents();
-    const duplicateManager = components.duplicateManager;
+      const components = this.plugin.getComponents();
+      const duplicateManager = components.duplicateManager;
 
-    if (!duplicateManager) return;
+      if (!duplicateManager) return;
 
-    const result = await duplicateManager.removePair(pairId);
+      const result = await duplicateManager.removePair(pairId);
 
-    if (result.ok) {
-      new Notice(this.t("workbench.notifications.deletePairSuccess"));
-      await this.renderList();
-    } else {
-      new Notice(`${this.t("common.error")}: ${result.error.message}`, ERROR_NOTICE_DURATION);
+      if (result.ok) {
+        new Notice(this.t("workbench.notifications.deletePairSuccess"));
+        await this.renderList();
+      } else {
+        new Notice(`${this.t("common.error")}: ${result.error.message}`, ERROR_NOTICE_DURATION);
+      }
+    } catch (error) {
+      new Notice(`${this.t("common.error")}`, ERROR_NOTICE_DURATION);
     }
   }
 
@@ -505,6 +539,7 @@ export class SnapshotDiffModal extends AbstractModal {
       snapshotContent: string;
       currentContent: string;
       onRestore: () => Promise<void>;
+      t?: Translator;
     }
   ) {
     super(app);
@@ -513,11 +548,14 @@ export class SnapshotDiffModal extends AbstractModal {
   protected renderContent(contentEl: HTMLElement): void {
     contentEl.addClass("cr-snapshot-diff");
 
+    const titleTemplate = this.text("workbench.snapshotDiff.title", "快照预览: {id}");
+    const createdTemplate = this.text("workbench.snapshotDiff.createdAt", "创建时间：{time}");
+
     contentEl.createEl("h2", {
-      text: `快照预览: ${this.options.snapshot.id}`
+      text: formatMessage(titleTemplate, { id: this.options.snapshot.id })
     });
     contentEl.createEl("p", {
-      text: `创建时间：${this.formatTime(this.options.snapshot.created)}`
+      text: formatMessage(createdTemplate, { time: this.formatTime(this.options.snapshot.created) })
     });
 
     const diffContainer = contentEl.createDiv({ cls: "cr-snapshot-diff-panel" });
@@ -525,14 +563,14 @@ export class SnapshotDiffModal extends AbstractModal {
       diffContainer,
       this.options.snapshotContent,
       this.options.currentContent,
-      "快照版本",
-      "当前版本"
+      this.text("workbench.snapshotDiff.snapshotVersion", "快照版本"),
+      this.text("workbench.snapshotDiff.currentVersion", "当前版本")
     );
 
     const actions = contentEl.createDiv({ cls: "cr-diff-actions" });
 
     const restoreBtn = actions.createEl("button", {
-      text: "恢复此快照",
+      text: this.text("workbench.snapshotDiff.restore", "恢复此快照"),
       cls: "mod-cta"
     });
     restoreBtn.addEventListener("click", async () => {
@@ -542,7 +580,7 @@ export class SnapshotDiffModal extends AbstractModal {
     });
 
     const closeBtn = actions.createEl("button", {
-      text: "关闭"
+      text: this.text("workbench.snapshotDiff.close", "关闭")
     });
     closeBtn.addEventListener("click", () => {
       this.close();
@@ -555,6 +593,12 @@ export class SnapshotDiffModal extends AbstractModal {
 
   private formatTime(timestamp: string): string {
     const date = new Date(timestamp);
-    return date.toLocaleString("zh-CN");
+    return date.toLocaleString();
+  }
+
+  private text(path: string, fallback: string): string {
+    if (!this.options.t) return fallback;
+    const value = this.options.t(path);
+    return value === path ? fallback : value;
   }
 }

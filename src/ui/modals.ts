@@ -10,6 +10,7 @@ import type {
   ConfirmModalOptions,
   ProviderConfigModalOptions
 } from "../types";
+import { safeErrorMessage } from "../types";
 import { AbstractModal } from "./abstract-modal";
 
 // ============================================================================
@@ -33,9 +34,8 @@ export class ConfirmModal extends AbstractModal {
 
     contentEl.createEl("h2", { text: this.options.title });
 
-    const messageEl = contentEl.createDiv({ cls: "modal-message" });
+    const messageEl = contentEl.createDiv({ cls: "cr-modal-message" });
     messageEl.textContent = this.options.message;
-    messageEl.style.marginBottom = "1em";
 
     const buttonContainer = contentEl.createDiv({ cls: "modal-button-container" });
 
@@ -94,10 +94,8 @@ export class ProviderConfigModal extends AbstractModal {
     contentEl.createEl("h2", { text: modalTitle });
 
     // 说明文字
-    const descEl = contentEl.createDiv({ cls: "modal-description" });
+    const descEl = contentEl.createDiv({ cls: "cr-modal-description" });
     descEl.textContent = "配置 OpenAI 兼容的 API 服务（如 Gemini、OpenAI、Azure OpenAI 等）。";
-    descEl.style.marginBottom = "1.5em";
-    descEl.style.color = "var(--text-muted)";
 
     const formEl = contentEl.createDiv({ cls: "modal-form" });
 
@@ -191,8 +189,7 @@ export class ProviderConfigModal extends AbstractModal {
     });
     this.embedModelInput.style.width = "100%";
 
-    this.errorEl = formEl.createDiv({ cls: "modal-error" });
-    this.errorEl.style.display = "none";
+    this.errorEl = formEl.createDiv({ cls: "cr-modal-error cr-hidden" });
 
     const buttonContainer = contentEl.createDiv({ cls: "modal-button-container" });
 
@@ -254,7 +251,7 @@ export class ProviderConfigModal extends AbstractModal {
       await this.options.onSave(providerId, config);
       this.close();
     } catch (error) {
-      this.showError(`保存失败: ${error instanceof Error ? error.message : String(error)}`);
+      this.showError(`保存失败: ${safeErrorMessage(error, "保存失败")}`);
     }
   }
 
@@ -273,9 +270,7 @@ export class ProviderConfigModal extends AbstractModal {
   private showError(message: string): void {
     if (this.errorEl) {
       this.errorEl.textContent = message;
-      this.errorEl.style.display = "block";
-      this.errorEl.style.color = "var(--text-error)";
-      this.errorEl.style.marginTop = "1em";
+      this.errorEl.removeClass("cr-hidden");
     }
   }
 

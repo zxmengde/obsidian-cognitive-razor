@@ -48,6 +48,8 @@ export interface CRFrontmatter {
   sourceUids?: string[];
   /** 版本号 */
   version?: string;
+  /** 未知字段保留（需求 29.4：解析时不丢弃未知字段） */
+  [key: string]: unknown;
 }
 
 // ============================================================================
@@ -91,16 +93,310 @@ export interface TaskError {
   attempt: number;
 }
 
+// ============================================================================
+// 类型安全的任务 Payload 定义
+// ============================================================================
+
 /**
- * 任务记录
+ * Define 任务载荷
  */
-export interface TaskRecord {
+export interface DefinePayload {
+  /** 用户输入文本 */
+  userInput: string;
+  /** 管线 ID */
+  pipelineId?: string;
+  /** 附加上下文 */
+  [key: string]: unknown;
+}
+
+/**
+ * Tag 任务载荷
+ */
+export interface TagPayload {
+  /** 管线 ID */
+  pipelineId?: string;
+  /** 标准化数据 */
+  standardizedData?: StandardizedConcept;
+  /** 概念类型 */
+  conceptType: CRType;
+  /** 用户输入 */
+  userInput: string;
+  /** 附加上下文 */
+  [key: string]: unknown;
+}
+
+/**
+ * Write 任务载荷
+ */
+export interface WritePayload {
+  /** 管线 ID */
+  pipelineId?: string;
+  /** 标准化数据 */
+  standardizedData?: StandardizedConcept;
+  /** 概念类型 */
+  conceptType: CRType;
+  /** 核心定义 */
+  coreDefinition?: string;
+  /** 丰富数据（别名/标签） */
+  enrichedData?: { aliases: string[]; tags: string[] };
+  /** 嵌入向量 */
+  embedding?: number[];
+  /** 文件路径 */
+  filePath?: string;
+  /** 是否跳过快照 */
+  skipSnapshot?: boolean;
+  /** 用户输入 */
+  userInput?: string;
+  /** 来源上下文 */
+  sources?: string;
+  /** 原始内容（用于快照） */
+  originalContent?: string;
+  /** 附加上下文 */
+  [key: string]: unknown;
+}
+
+/**
+ * Amend 任务载荷
+ */
+export interface AmendPayload {
+  /** 管线 ID */
+  pipelineId?: string;
+  /** 当前笔记内容 */
+  currentContent: string;
+  /** 修订指令 */
+  instruction: string;
+  /** 概念类型 */
+  conceptType: CRType;
+  /** 附加上下文 */
+  [key: string]: unknown;
+}
+
+/**
+ * Merge 任务载荷
+ */
+export interface MergePayload {
+  /** 管线 ID */
+  pipelineId?: string;
+  /** 保留概念名称 */
+  keepName: string;
+  /** 删除概念名称 */
+  deleteName: string;
+  /** 保留概念内容 */
+  keepContent: string;
+  /** 删除概念内容 */
+  deleteContent: string;
+  /** 概念类型 */
+  conceptType: CRType;
+  /** 最终文件名 */
+  finalFileName?: string;
+  /** 附加上下文 */
+  [key: string]: unknown;
+}
+
+/**
+ * Index 任务载荷
+ */
+export interface IndexPayload {
+  /** 嵌入文本（优先使用） */
+  text?: string;
+  /** 标准化数据（备选生成嵌入文本） */
+  standardizedData?: StandardizedConcept;
+  /** 概念类型 */
+  conceptType?: CRType;
+  /** 别名列表 */
+  aliases?: string[];
+  /** 命名模板 */
+  namingTemplate?: string;
+  /** 附加上下文 */
+  [key: string]: unknown;
+}
+
+/**
+ * Verify 任务载荷
+ */
+export interface VerifyPayload {
+  /** 管线 ID */
+  pipelineId?: string;
+  /** 文件路径 */
+  filePath?: string;
+  /** 当前笔记内容 */
+  currentContent: string;
+  /** 概念类型 */
+  conceptType?: CRType;
+  /** 笔记类型（兼容旧字段） */
+  noteType?: CRType;
+  /** 标准化数据 */
+  standardizedData?: StandardizedConcept;
+  /** 来源上下文 */
+  sources?: string;
+  /** 附加上下文 */
+  [key: string]: unknown;
+}
+
+// 注意：ImageGeneratePayload 已在下方定义（保持原有位置）
+
+// ============================================================================
+// 类型安全的任务 Result 定义
+// ============================================================================
+
+/**
+ * Define 任务结果
+ */
+export interface DefineResult {
+  /** 标准化概念数据（含类型置信度、标准名称等） */
+  [key: string]: unknown;
+}
+
+/**
+ * Tag 任务结果
+ */
+export interface TagResult {
+  /** 别名列表 */
+  aliases: string[];
+  /** 标签列表 */
+  tags: string[];
+  /** 附加字段 */
+  [key: string]: unknown;
+}
+
+/**
+ * Write 任务结果（LLM 生成的结构化内容） 
+ */
+export interface WriteResult {
+  /** 快照 ID */
+  snapshotId?: string;
+  /** 附加字段（按知识类型不同，字段结构不同） */
+  [key: string]: unknown;
+}
+
+/**
+ * Amend 任务结果
+ */
+export interface AmendResult {
+  /** 附加字段（修订后的结构化内容） */
+  [key: string]: unknown;
+}
+
+/**
+ * Merge 任务结果
+ */
+export interface MergeResult {
+  /** 合并后的名称 */
+  merged_name?: Record<string, unknown>;
+  /** 合并理由 */
+  merge_rationale?: string;
+  /** 合并后的内容 */
+  content?: Record<string, unknown>;
+  /** 从 A 保留的部分 */
+  preserved_from_a?: string[];
+  /** 从 B 保留的部分 */
+  preserved_from_b?: string[];
+  /** 附加字段 */
+  [key: string]: unknown;
+}
+
+/**
+ * Index 任务结果
+ */
+export interface IndexResult {
+  /** 嵌入向量 */
+  embedding: number[];
+  /** 使用的 token 数 */
+  tokensUsed?: number;
+  /** 嵌入文本 */
+  text?: string;
+  /** 附加字段 */
+  [key: string]: unknown;
+}
+
+/**
+ * Verify 任务结果
+ */
+export interface VerifyResult {
+  /** 总体评估 */
+  overall_assessment?: string;
+  /** 置信度分数 */
+  confidence_score?: number;
+  /** 问题列表 */
+  issues?: unknown[];
+  /** 已验证声明 */
+  verified_claims?: unknown[];
+  /** 建议 */
+  recommendations?: unknown[];
+  /** 是否需要人工审查 */
+  requires_human_review?: boolean;
+  /** 附加字段 */
+  [key: string]: unknown;
+}
+
+// 注意：ImageGenerateResult 已在下方定义（保持原有位置）
+
+// ============================================================================
+// 类型安全的 TaskRecord 可辨识联合类型
+// ============================================================================
+
+/**
+ * 所有任务类型的 Payload 联合类型
+ */
+export type TaskPayloadMap = {
+  "define": DefinePayload;
+  "tag": TagPayload;
+  "write": WritePayload;
+  "amend": AmendPayload;
+  "merge": MergePayload;
+  "index": IndexPayload;
+  "verify": VerifyPayload;
+  "image-generate": ImageGeneratePayload;
+};
+
+/**
+ * 所有任务类型的 Result 联合类型
+ */
+export type TaskResultMap = {
+  "define": DefineResult;
+  "tag": TagResult;
+  "write": WriteResult;
+  "amend": AmendResult;
+  "merge": MergeResult;
+  "index": IndexResult;
+  "verify": VerifyResult;
+  "image-generate": ImageGenerateResult;
+};
+
+/**
+ * 所有 Payload 类型的联合
+ */
+export type AnyTaskPayload = TaskPayloadMap[TaskType];
+
+/**
+ * 所有 Result 类型的联合
+ */
+export type AnyTaskResult = TaskResultMap[TaskType];
+
+/**
+ * TypedTaskRecord 可辨识联合类型（以 taskType 为判别式）
+ *
+ * 每个分支将 taskType 与对应的 payload/result 类型绑定，
+ * 通过 TypeScript 的 narrowing 机制实现编译期类型安全。
+ */
+export type TypedTaskRecord =
+  | (TaskRecordBase & { taskType: "define"; payload: DefinePayload; result?: DefineResult })
+  | (TaskRecordBase & { taskType: "tag"; payload: TagPayload; result?: TagResult })
+  | (TaskRecordBase & { taskType: "write"; payload: WritePayload; result?: WriteResult })
+  | (TaskRecordBase & { taskType: "amend"; payload: AmendPayload; result?: AmendResult })
+  | (TaskRecordBase & { taskType: "merge"; payload: MergePayload; result?: MergeResult })
+  | (TaskRecordBase & { taskType: "index"; payload: IndexPayload; result?: IndexResult })
+  | (TaskRecordBase & { taskType: "verify"; payload: VerifyPayload; result?: VerifyResult })
+  | (TaskRecordBase & { taskType: "image-generate"; payload: ImageGeneratePayload; result?: ImageGenerateResult });
+
+/**
+ * TaskRecord 基础字段（不含 taskType/payload/result）
+ */
+export interface TaskRecordBase {
   /** 任务 ID */
   id: string;
   /** 关联的节点 ID (UID) */
   nodeId: string;
-  /** 任务类型 */
-  taskType: TaskType;
   /** 任务状态 */
   state: TaskState;
   /** Provider 引用 */
@@ -111,10 +407,6 @@ export interface TaskRecord {
   attempt: number;
   /** 最大尝试次数 */
   maxAttempts: number;
-  /** 任务载荷数据 */
-  payload: Record<string, unknown>;
-  /** 任务结果 */
-  result?: Record<string, unknown>;
   /** 撤销指针 (快照 ID) */
   undoPointer?: string;
   /** 锁键 */
@@ -131,6 +423,21 @@ export interface TaskRecord {
   completedAt?: string;
   /** 错误历史 */
   errors?: TaskError[];
+}
+
+/**
+ * 任务记录（向后兼容接口）
+ *
+ * 保留宽松的 payload/result 类型以兼容现有代码。
+ * 新代码应优先使用 TypedTaskRecord 获得编译期类型安全。
+ */
+export interface TaskRecord extends TaskRecordBase {
+  /** 任务类型 */
+  taskType: TaskType;
+  /** 任务载荷数据 */
+  payload: AnyTaskPayload;
+  /** 任务结果 */
+  result?: AnyTaskResult;
 }
 
 // ============================================================================
@@ -333,6 +640,8 @@ export interface ImageGeneratePayload {
   frontmatter: CRFrontmatter;
   filePath: string;
   cursorPosition: { line: number; ch: number };
+  /** 附加上下文 */
+  [key: string]: unknown;
 }
 
 /**
@@ -343,6 +652,8 @@ export interface ImageGenerateResult {
   localPath: string;
   description: string;
   revisedPrompt?: string;
+  /** 附加字段 */
+  [key: string]: unknown;
 }
 
 /**
@@ -438,6 +749,28 @@ export const DEFAULT_ENDPOINTS: Record<ProviderType, string> = {
 };
 
 /**
+ * 工作台 UI 状态（持久化到 data.json）
+ * 需求: 11.1, 11.2, 11.3, 11.4
+ */
+export interface WorkbenchUIState {
+  /** 各区域折叠状态（true = 折叠，false = 展开） */
+  sectionCollapsed: Record<string, boolean>;
+  /** 排序偏好 */
+  sortPreferences: Record<string, { field: string; direction: 'asc' | 'desc' }>;
+}
+
+/** 默认 UI 状态 */
+export const DEFAULT_UI_STATE: WorkbenchUIState = {
+  sectionCollapsed: {
+    createConcept: false,
+    duplicates: false,
+    queueStatus: true,
+    recentOps: true,
+  },
+  sortPreferences: {},
+};
+
+/**
  * 插件设置
  */
 export interface PluginSettings {
@@ -499,6 +832,9 @@ export interface PluginSettings {
   
   /** Provider 请求超时（毫秒，默认 60000） */
   providerTimeoutMs: number;
+
+  /** 工作台 UI 状态（折叠/排序偏好持久化） */
+  uiState?: WorkbenchUIState;
 }
 
 /**
@@ -529,6 +865,8 @@ export interface VectorIndexMeta {
   embeddingModel?: string;
   /** embedding 向量维度（用于一致性检查） */
   dimensions?: number;
+  /** 是否需要重建索引（模型/维度不匹配时标记） */
+  needsRebuild?: boolean;
   /** 统计信息 */
   stats: {
     totalConcepts: number;
@@ -645,7 +983,7 @@ export interface QueueStateFile {
     maxAttempts: number;
     providerRef?: string;
     promptRef?: string;
-    payload?: Record<string, unknown>;
+    payload?: AnyTaskPayload | Record<string, unknown>;
     created?: string;
     updated?: string;
     errors?: TaskError[];
@@ -738,7 +1076,7 @@ export interface PipelineContext {
   newContent?: string;
   /** 文件路径 */
   filePath?: string;
-  /** Verify 结果（用于 UI 展示；落盘的报告由 PipelineOrchestrator 追加到笔记末尾） */
+  /** Verify 结果（用于 UI 展示；落盘的报告由 VerifyOrchestrator 追加到笔记末尾） */
   verificationResult?: Record<string, unknown>;
   /** 修订/合并特有字段 */
   mergePairId?: string;
@@ -1028,6 +1366,25 @@ export function toErr(
     return err(fallbackCode, error.message || fallbackMessage, { stack: error.stack });
   }
   return err(fallbackCode, fallbackMessage, error);
+}
+
+/**
+ * 从未知错误中提取安全的用户可见消息
+ * 需求 23.4：不暴露堆栈信息或 API 响应原文
+ *
+ * - CognitiveRazorError：返回 `[错误码] 消息`（已由代码控制，安全）
+ * - Err result：返回 `[错误码] 消息`
+ * - 其他 Error：返回通用提示，原始消息仅用于日志
+ */
+export function safeErrorMessage(error: unknown, fallback = "操作失败，请稍后重试"): string {
+  if (isErrResult(error)) {
+    return `[${error.error.code}] ${error.error.message}`;
+  }
+  if (error instanceof CognitiveRazorError) {
+    return `[${error.code}] ${error.message}`;
+  }
+  // 普通 Error 可能包含原始堆栈或 API 响应，不直接暴露
+  return fallback;
 }
 
 // ============================================================================

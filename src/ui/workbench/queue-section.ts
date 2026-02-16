@@ -1,21 +1,27 @@
+/**
+ * QueueSection — 队列区组件
+ *
+ * 负责显示任务队列状态、任务列表、暂停/恢复等操作。
+ * 通过 QueueSectionDeps 注入依赖，不直接依赖 Plugin 实例。
+ * 队列无任务时显示空状态提示文本。
+ *
+ * 需求: 6.1, 8.3
+ */
+
 import { Notice, setIcon } from "obsidian";
 import type { QueueStatus, TaskRecord, CRType, StandardizedConcept } from "../../types";
+import { safeErrorMessage } from "../../types";
 import { renderNamingTemplate } from "../../core/naming-utils";
-import type { WorkbenchSectionDeps } from "./workbench-section-deps";
+import type { QueueSectionDeps } from "./workbench-section-deps";
+import { WorkbenchSection } from "./workbench-section";
 
-export class QueueSection {
-  private deps: WorkbenchSectionDeps;
-
+export class QueueSection extends WorkbenchSection<QueueSectionDeps> {
   private queueStatusContainer: HTMLElement | null = null;
   private statusDot: HTMLElement | null = null;
   private statusText: HTMLElement | null = null;
   private expandIcon: HTMLElement | null = null;
   private pauseBtn: HTMLButtonElement | null = null;
   private detailsContainer: HTMLElement | null = null;
-
-  constructor(deps: WorkbenchSectionDeps) {
-    this.deps = deps;
-  }
 
   render(container: HTMLElement): void {
     const wrapper = container.createDiv({ cls: "cr-queue-wrapper" });
@@ -26,12 +32,14 @@ export class QueueSection {
     queueIndicator.setAttribute("role", "button");
     queueIndicator.setAttribute("tabindex", "0");
     queueIndicator.setAttribute("aria-expanded", "false");
-    queueIndicator.setAttribute("title", this.deps.t("workbench.queueStatus.viewDetails"));
+    queueIndicator.setAttribute("aria-label", this.deps.t("workbench.queueStatus.viewDetails"));
+    queueIndicator.setAttribute("data-tooltip-position", "top");
 
     this.statusDot = queueIndicator.createDiv({ cls: "cr-status-dot is-idle" });
     this.statusText = queueIndicator.createSpan({
       cls: "cr-status-text",
-      text: this.deps.t("workbench.queueStatus.noTasks")
+      text: this.deps.t("workbench.queueStatus.noTasks"),
+      attr: { "aria-live": "polite" }
     });
     this.expandIcon = queueIndicator.createEl("span", {
       cls: "cr-expand-icon",
@@ -40,13 +48,14 @@ export class QueueSection {
     setIcon(this.expandIcon, "chevron-right");
 
     const stats = statusBar.createDiv({ cls: "cr-quick-stats" });
+    stats.setAttribute("aria-live", "polite");
     this.queueStatusContainer = stats;
 
     this.pauseBtn = statusBar.createEl("button", {
       cls: "cr-queue-control-btn",
       attr: {
         "aria-label": this.deps.t("workbench.queueStatus.pauseQueue"),
-        "title": this.deps.t("workbench.queueStatus.pauseQueue")
+        "data-tooltip-position": "top"
       }
     });
     setIcon(this.pauseBtn, "pause");
@@ -76,7 +85,8 @@ export class QueueSection {
       }
     });
 
-    this.update({
+    // 初始化状态显示
+    this.renderStatus({
       paused: false,
       pending: 0,
       running: 0,
@@ -85,7 +95,46 @@ export class QueueSection {
     });
   }
 
-  update(status: QueueStatus): void {
+  /**
+   * 从 taskQueue 获取最新状态并更新 UI
+   */
+  update(): void {
+    const status = this.deps.taskQueue.getStatus();
+    this.renderStatus(status);
+  }
+
+  /**
+   * 释放所有 DOM 引用，防止内存泄漏
+   */
+  dispose(): void {
+    this.queueStatusContainer = null;
+    this.statusDot = null;
+    this.statusText = null;
+    this.expandIcon = null;
+    this.pauseBtn = null;
+    this.detailsContainer = null;
+  }
+
+  /**
+   * 兼容旧接口：WorkbenchPanel.onClose() 调用
+   */
+  onClose(): void {
+    this.dispose();
+  }
+
+  /**
+   * 刷新队列详情（如果已展开）
+   */
+  refreshDetailsIfVisible(): void {
+    if (this.detailsContainer && this.detailsContainer.style.display !== "none") {
+      this.renderQueueDetails(this.detailsContainer);
+    }
+  }
+
+  /**
+   * 渲染队列状态（紧凑版统计 + 状态指示器）
+   */
+  private renderStatus(status: QueueStatus): void {
     if (!this.queueStatusContainer) return;
 
     this.queueStatusContainer.empty();
@@ -106,6 +155,7 @@ export class QueueSection {
       }
     });
 
+    // 空状态：队列无任务时显示提示文本（需求 8.3）
     if (renderedCount === 0) {
       this.queueStatusContainer.createDiv({
         cls: "cr-empty-stat",
@@ -116,54 +166,41 @@ export class QueueSection {
     this.updateStatusIndicator(status);
   }
 
-  refreshDetailsIfVisible(): void {
-    if (this.detailsContainer && this.detailsContainer.style.display !== "none") {
-      this.renderQueueDetails(this.detailsContainer);
-    }
-  }
-
-  onClose(): void {
-    this.queueStatusContainer = null;
-    this.statusDot = null;
-    this.statusText = null;
-    this.expandIcon = null;
-    this.pauseBtn = null;
-    this.detailsContainer = null;
-  }
-
   private async handleTogglePause(): Promise<void> {
-    const plugin = this.deps.getPlugin();
-    if (!plugin) return;
+    try {
+      const taskQueue = this.deps.taskQueue;
+      const status = taskQueue.getStatus();
 
-    const taskQueue = plugin.getComponents().taskQueue;
-    const status = taskQueue.getStatus();
+      if (status.paused) {
+        await taskQueue.resume();
+        new Notice(this.deps.t("workbench.queueStatus.queueResumed"));
+      } else {
+        await taskQueue.pause();
+        new Notice(this.deps.t("workbench.queueStatus.queuePaused"));
+      }
 
-    if (status.paused) {
-      await taskQueue.resume();
-      new Notice(this.deps.t("workbench.queueStatus.queueResumed"));
-    } else {
-      await taskQueue.pause();
-      new Notice(this.deps.t("workbench.queueStatus.queuePaused"));
+      const nextStatus = taskQueue.getStatus();
+      this.renderStatus(nextStatus);
+      this.updatePauseButton(nextStatus.paused);
+    } catch (error) {
+      this.deps.logError("切换队列暂停状态失败", error);
+      this.deps.showErrorNotice(safeErrorMessage(error, this.deps.t("workbench.notifications.cancelFailed")));
     }
-
-    const nextStatus = taskQueue.getStatus();
-    this.update(nextStatus);
-    this.updatePauseButton(nextStatus.paused);
   }
 
   private updatePauseButton(isPaused: boolean): void {
     if (!this.pauseBtn) return;
 
-    this.pauseBtn.innerHTML = "";
+    this.pauseBtn.empty();
     if (isPaused) {
       setIcon(this.pauseBtn, "play");
       this.pauseBtn.setAttribute("aria-label", this.deps.t("workbench.queueStatus.resumeQueue"));
-      this.pauseBtn.setAttribute("title", this.deps.t("workbench.queueStatus.resumeQueue"));
+      this.pauseBtn.setAttribute("data-tooltip-position", "top");
       this.pauseBtn.addClass("is-paused");
     } else {
       setIcon(this.pauseBtn, "pause");
       this.pauseBtn.setAttribute("aria-label", this.deps.t("workbench.queueStatus.pauseQueue"));
-      this.pauseBtn.setAttribute("title", this.deps.t("workbench.queueStatus.pauseQueue"));
+      this.pauseBtn.setAttribute("data-tooltip-position", "top");
       this.pauseBtn.removeClass("is-paused");
     }
   }
@@ -191,9 +228,8 @@ export class QueueSection {
   }
 
   private getTaskDisplayName(task: TaskRecord): string {
-    const plugin = this.deps.getPlugin();
     const payload = task.payload as Record<string, unknown>;
-    const namingTemplate = plugin?.settings?.namingTemplate || "{{chinese}} ({{english}})";
+    const namingTemplate = this.deps.getSettings().namingTemplate || "{{chinese}} ({{english}})";
 
     const standardizedData = payload?.standardizedData as StandardizedConcept | undefined;
     const conceptType = (payload?.conceptType as CRType) || standardizedData?.primaryType;
@@ -226,12 +262,9 @@ export class QueueSection {
   }
 
   private renderQueueDetails(container: HTMLElement): void {
-    const plugin = this.deps.getPlugin();
-    if (!plugin) return;
-
     container.empty();
 
-    const taskQueue = plugin.getComponents().taskQueue;
+    const taskQueue = this.deps.taskQueue;
     const allTasks = taskQueue.getAllTasks();
 
     if (allTasks.length === 0) {
@@ -263,7 +296,10 @@ export class QueueSection {
       const nameCell = row.createEl("td", { cls: "cr-task-name" });
       nameCell.createSpan({
         text: this.getTaskDisplayName(task),
-        attr: { title: (task.payload as Record<string, unknown>)?.userInput as string || task.id }
+        attr: {
+          "aria-label": (task.payload as Record<string, unknown>)?.userInput as string || task.id,
+          "data-tooltip-position": "top"
+        }
       });
 
       row.createEl("td", {
@@ -283,7 +319,10 @@ export class QueueSection {
         const cancelBtn = actionCell.createEl("button", {
           text: this.deps.t("workbench.queueStatus.cancel"),
           cls: "cr-btn-small",
-          attr: { "aria-label": `${this.deps.t("workbench.queueStatus.cancel")}` }
+          attr: {
+            "aria-label": `${this.deps.t("workbench.queueStatus.cancel")}`,
+            "data-tooltip-position": "top"
+          }
         });
         cancelBtn.addEventListener("click", () => {
           this.handleCancelTask(task.id);
@@ -294,8 +333,8 @@ export class QueueSection {
           const errorIcon = actionCell.createSpan({
             cls: "cr-error-icon",
             attr: {
-              title: lastError.message,
-              "aria-hidden": "true"
+              "aria-label": lastError.message,
+              "data-tooltip-position": "top"
             }
           });
           setIcon(errorIcon, "alert-triangle");
@@ -314,7 +353,10 @@ export class QueueSection {
     const retryFailedBtn = batchActions.createEl("button", {
       text: this.deps.t("workbench.queueStatus.retryFailed"),
       cls: "cr-btn-small mod-cta",
-      attr: { "aria-label": this.deps.t("workbench.queueStatus.retryFailed") }
+      attr: {
+        "aria-label": this.deps.t("workbench.queueStatus.retryFailed"),
+        "data-tooltip-position": "top"
+      }
     });
     retryFailedBtn.addEventListener("click", () => {
       void this.handleRetryFailed();
@@ -323,7 +365,10 @@ export class QueueSection {
     const clearPendingBtn = batchActions.createEl("button", {
       text: this.deps.t("workbench.queueStatus.clearPending"),
       cls: "cr-btn-small",
-      attr: { "aria-label": this.deps.t("workbench.queueStatus.clearPending") }
+      attr: {
+        "aria-label": this.deps.t("workbench.queueStatus.clearPending"),
+        "data-tooltip-position": "top"
+      }
     });
     clearPendingBtn.addEventListener("click", () => {
       this.handleClearPending();
@@ -332,7 +377,10 @@ export class QueueSection {
     const clearCompletedBtn = batchActions.createEl("button", {
       text: this.deps.t("workbench.queueStatus.clearCompleted"),
       cls: "cr-btn-small",
-      attr: { "aria-label": this.deps.t("workbench.queueStatus.clearCompleted") }
+      attr: {
+        "aria-label": this.deps.t("workbench.queueStatus.clearCompleted"),
+        "data-tooltip-position": "top"
+      }
     });
     clearCompletedBtn.addEventListener("click", () => {
       void this.handleClearCompleted();
@@ -341,7 +389,10 @@ export class QueueSection {
     const clearFailedBtn = batchActions.createEl("button", {
       text: this.deps.t("workbench.queueStatus.clearFailed"),
       cls: "cr-btn-small",
-      attr: { "aria-label": this.deps.t("workbench.queueStatus.clearFailed") }
+      attr: {
+        "aria-label": this.deps.t("workbench.queueStatus.clearFailed"),
+        "data-tooltip-position": "top"
+      }
     });
     clearFailedBtn.addEventListener("click", () => {
       this.handleClearFailed();
@@ -360,58 +411,56 @@ export class QueueSection {
   }
 
   private handleCancelTask(taskId: string): void {
-    const plugin = this.deps.getPlugin();
-    if (!plugin) return;
-
-    const taskQueue = plugin.getComponents().taskQueue;
+    const taskQueue = this.deps.taskQueue;
     try {
       taskQueue.cancel(taskId);
       new Notice(this.deps.t("workbench.notifications.taskCancelled"));
       this.refreshDetailsIfVisible();
-      this.update(taskQueue.getStatus());
+      this.renderStatus(taskQueue.getStatus());
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = safeErrorMessage(error, this.deps.t("workbench.notifications.cancelFailed"));
       this.deps.showErrorNotice(`${this.deps.t("workbench.notifications.cancelFailed")}: ${message}`);
     }
   }
 
   private async handleRetryFailed(): Promise<void> {
-    const plugin = this.deps.getPlugin();
-    if (!plugin) return;
+    try {
+      const taskQueue = this.deps.taskQueue;
+      const result = await taskQueue.retryFailed();
 
-    const taskQueue = plugin.getComponents().taskQueue;
-    const result = await taskQueue.retryFailed();
-
-    if (result.ok) {
-      new Notice(`${this.deps.t("workbench.notifications.retryComplete")}: ${result.value}`);
-      this.refreshDetailsIfVisible();
-      this.update(taskQueue.getStatus());
-    } else {
-      this.deps.showErrorNotice(`${this.deps.t("workbench.notifications.cancelFailed")}: ${result.error.message}`);
+      if (result.ok) {
+        new Notice(`${this.deps.t("workbench.notifications.retryComplete")}: ${result.value}`);
+        this.refreshDetailsIfVisible();
+        this.renderStatus(taskQueue.getStatus());
+      } else {
+        this.deps.showErrorNotice(`${this.deps.t("workbench.notifications.cancelFailed")}: ${result.error.message}`);
+      }
+    } catch (error) {
+      this.deps.logError("重试失败任务异常", error);
+      this.deps.showErrorNotice(safeErrorMessage(error, this.deps.t("workbench.notifications.cancelFailed")));
     }
   }
 
   private async handleClearCompleted(): Promise<void> {
-    const plugin = this.deps.getPlugin();
-    if (!plugin) return;
+    try {
+      const taskQueue = this.deps.taskQueue;
+      const result = await taskQueue.clearCompleted();
 
-    const taskQueue = plugin.getComponents().taskQueue;
-    const result = await taskQueue.clearCompleted();
-
-    if (result.ok) {
-      new Notice(`${this.deps.t("workbench.notifications.clearComplete")}: ${result.value}`);
-      this.refreshDetailsIfVisible();
-      this.update(taskQueue.getStatus());
-    } else {
-      this.deps.showErrorNotice(`清除失败: ${result.error.message}`);
+      if (result.ok) {
+        new Notice(`${this.deps.t("workbench.notifications.clearComplete")}: ${result.value}`);
+        this.refreshDetailsIfVisible();
+        this.renderStatus(taskQueue.getStatus());
+      } else {
+        this.deps.showErrorNotice(`清除失败: ${result.error.message}`);
+      }
+    } catch (error) {
+      this.deps.logError("清除已完成任务异常", error);
+      this.deps.showErrorNotice(safeErrorMessage(error, "清除失败"));
     }
   }
 
   private handleClearFailed(): void {
-    const plugin = this.deps.getPlugin();
-    if (!plugin) return;
-
-    const taskQueue = plugin.getComponents().taskQueue;
+    const taskQueue = this.deps.taskQueue;
     const allTasks = taskQueue.getAllTasks();
 
     let clearedCount = 0;
@@ -429,14 +478,11 @@ export class QueueSection {
     new Notice(`${this.deps.t("workbench.notifications.clearComplete")} (${clearedCount})`);
 
     this.refreshDetailsIfVisible();
-    this.update(taskQueue.getStatus());
+    this.renderStatus(taskQueue.getStatus());
   }
 
   private handleClearPending(): void {
-    const plugin = this.deps.getPlugin();
-    if (!plugin) return;
-
-    const taskQueue = plugin.getComponents().taskQueue;
+    const taskQueue = this.deps.taskQueue;
     const allTasks = taskQueue.getAllTasks();
 
     let clearedCount = 0;
@@ -454,6 +500,6 @@ export class QueueSection {
     new Notice(`${this.deps.t("workbench.notifications.clearComplete")} (${clearedCount})`);
 
     this.refreshDetailsIfVisible();
-    this.update(taskQueue.getStatus());
+    this.renderStatus(taskQueue.getStatus());
   }
 }

@@ -11,6 +11,7 @@ import { App, Notice, Setting } from "obsidian";
 import type { DataAdapter } from "obsidian";
 import type CognitiveRazorPlugin from "../../main";
 import type { ProviderConfig, CRType } from "../types";
+import { safeErrorMessage } from "../types";
 import { validateUrl } from "../data/validators";
 import { COMMAND_IDS } from "./command-utils";
 import { AbstractModal } from "./abstract-modal";
@@ -161,9 +162,14 @@ export class SetupWizard extends AbstractModal {
     });
 
     const hint = contentEl.createDiv({ cls: "cr-config-hint" });
-    hint.innerHTML = isZh
-      ? '从 <a href="https://aistudio.google.com/apikey" target="_blank">Google AI Studio</a> 获取 API Key'
-      : 'Get API Key from <a href="https://aistudio.google.com/apikey" target="_blank">Google AI Studio</a>';
+    if (isZh) {
+      hint.appendText("从 ");
+      hint.createEl("a", { text: "Google AI Studio", href: "https://aistudio.google.com/apikey", attr: { target: "_blank" } });
+      hint.appendText(" 获取 API Key");
+    } else {
+      hint.appendText("Get API Key from ");
+      hint.createEl("a", { text: "Google AI Studio", href: "https://aistudio.google.com/apikey", attr: { target: "_blank" } });
+    }
 
     new Setting(contentEl)
       .setName("API Key")
@@ -437,7 +443,7 @@ export class SetupWizard extends AbstractModal {
         this.renderStep();
       }
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
+      const msg = safeErrorMessage(error, isZh ? "保存出错" : "Save error");
       new Notice(`${isZh ? "保存出错" : "Save error"}: ${msg}`);
       this.validation = { status: "error", message: msg, showSkipButton: true };
       this.renderValidation(statusBox);
@@ -466,7 +472,7 @@ export class SetupWizard extends AbstractModal {
       this.currentStep = WizardStep.Complete;
       this.renderStep();
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
+      const msg = safeErrorMessage(error, isZh ? "创建目录失败" : "Directory creation failed");
       this.directoryState = { status: "error", message: msg, showSkipButton: true };
       this.renderDirectoryStatus(statusBox);
       this.renderSkipButton(buttonsContainer, WizardStep.Complete);

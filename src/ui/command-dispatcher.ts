@@ -21,6 +21,8 @@ import { WorkbenchPanel, WORKBENCH_VIEW_TYPE } from "./workbench-panel";
 import { TaskQueue } from "../core/task-queue";
 import { COMMAND_IDS, getCoreCommandIds, isValidCommandId } from "./command-utils";
 import type CognitiveRazorPlugin from "../../main";
+import { formatMessage } from "../core/i18n";
+import { safeErrorMessage } from "../types";
 
 /**
  * 命令处理器类型
@@ -158,8 +160,8 @@ export class CommandDispatcher {
       icon: "check",
       editorRequired: true,
       handler: async () => {
-        const orchestrator = this.plugin.getComponents().pipelineOrchestrator;
-        if (!orchestrator) {
+        const verifyOrchestrator = this.plugin.getComponents().verifyOrchestrator;
+        if (!verifyOrchestrator) {
           new Notice(this.t("workbench.notifications.orchestratorNotInitialized"));
           return;
         }
@@ -170,9 +172,9 @@ export class CommandDispatcher {
           return;
         }
 
-        const result = orchestrator.startVerifyPipeline(activeFile.path);
+        const result = verifyOrchestrator.startVerifyPipeline(activeFile.path);
         if (!result.ok) {
-          new Notice(`启动失败: ${result.error.message}`);
+          new Notice(formatMessage(t.workbench.notifications.startFailed, { message: result.error.message }));
           return;
         }
 
@@ -204,7 +206,7 @@ export class CommandDispatcher {
           return;
         }
         await taskQueue.pause();
-        new Notice(t.workbench.queueStatus.pauseQueue);
+        new Notice(t.workbench.notifications.queuePaused);
       }
     });
 
@@ -250,7 +252,7 @@ export class CommandDispatcher {
     // 清空队列（取消所有 Pending 任务）
     this.registerCommand({
       id: COMMAND_IDS.CLEAR_QUEUE,
-      name: t.workbench.queueStatus.clearFailed || "清空任务队列",
+      name: t.workbench.queueStatus.clearPending || "清空队列",
       icon: "trash",
       handler: async () => {
         const taskQueue = this.taskQueue ?? this.plugin.getComponents().taskQueue;
@@ -268,7 +270,7 @@ export class CommandDispatcher {
             taskQueue.cancel(task.id);
             cancelled++;
           } catch (error) {
-            console.warn(`[Cognitive Razor] 取消任务失败`, task.id, error);
+            this.logError("取消任务失败", error, { taskId: task.id });
           }
         }
 
@@ -293,6 +295,7 @@ export class CommandDispatcher {
    * 注册文件菜单（右键菜单）
    */
   private registerFileMenu(): void {
+    const t = this.plugin.getI18n().t();
     // 使用 workspace.on 注册文件菜单事件
     const workspace = this.plugin.app.workspace as unknown as {
       on: (event: string, callback: (menu: Menu, file: TFile) => void) => { unload: () => void };
@@ -307,7 +310,7 @@ export class CommandDispatcher {
         // 添加改进菜单项
         menu.addItem((item) => {
           item
-            .setTitle("改进笔记")
+            .setTitle(t.commands.improveNote)
             .setIcon("sparkles")
             .onClick(async () => {
               await this.improveNote(file.path);
@@ -323,7 +326,7 @@ export class CommandDispatcher {
   private registerImproveCommands(): void {
     this.registerCommand({
       id: COMMAND_IDS.IMPROVE_NOTE,
-      name: "改进笔记",
+      name: this.t("commands.improveNote"),
       icon: "sparkles",
       handler: async () => {
         const activeFile = this.plugin.app.workspace.getActiveFile();
@@ -350,7 +353,7 @@ export class CommandDispatcher {
   private registerExpandCommands(): void {
     this.registerCommand({
       id: COMMAND_IDS.EXPAND_CURRENT_NOTE,
-      name: "拓展当前笔记",
+      name: this.t("commands.expandNote"),
       icon: "git-branch",
       handler: async () => {
         const activeFile = this.plugin.app.workspace.getActiveFile();
@@ -379,7 +382,7 @@ export class CommandDispatcher {
   private registerMergeCommands(): void {
     this.registerCommand({
       id: COMMAND_IDS.MERGE_DUPLICATES,
-      name: "合并",
+      name: this.t("commands.mergeDuplicates"),
       icon: "git-merge",
       handler: async () => {
         await this.openMergeFromWorkbench();
@@ -391,12 +394,18 @@ export class CommandDispatcher {
    * 从工作台启动拓展
    */
   private async runExpand(file: TFile): Promise<void> {
-    const workbench = await this.openWorkbench();
-    if (!workbench) {
-      new Notice("工作台未初始化，请稍后重试");
-      return;
+    try {
+      const workbench = await this.openWorkbench();
+      if (!workbench) {
+        new Notice(this.t("workbench.notifications.workbenchNotInitialized"));
+        return;
+      }
+      await workbench.handleStartExpand(file);
+    } catch (error) {
+      const logger = this.plugin.getComponents().logger;
+      logger?.error("CommandDispatcher", "拓展操作失败", error instanceof Error ? error : new Error(String(error)));
+      new Notice(safeErrorMessage(error, this.t("workbench.notifications.startFailed")));
     }
-    await workbench.handleStartExpand(file);
   }
 
   /**
@@ -406,7 +415,7 @@ export class CommandDispatcher {
     // 打开工作台
     const workbench = await this.openWorkbench();
     if (!workbench) {
-      new Notice("工作台未初始化，请稍后重试");
+      new Notice(this.t("workbench.notifications.workbenchNotInitialized"));
       return;
     }
 
@@ -416,12 +425,15 @@ export class CommandDispatcher {
     const pendingPairs = duplicateManager.getPendingPairs();
 
     if (pendingPairs.length === 0) {
-      new Notice("没有待处理的重复对");
+      new Notice(this.t("workbench.notifications.noPendingDuplicates"));
       return;
     }
 
     // 提示用户在工作台中选择重复对进行合并
-    new Notice(`有 ${pendingPairs.length} 个待处理的重复对，请在工作台中选择要合并的重复对`);
+    new Notice(formatMessage(
+      this.t("workbench.notifications.pendingDuplicatesHint"),
+      { count: pendingPairs.length }
+    ));
   }
 
   /**
@@ -433,7 +445,7 @@ export class CommandDispatcher {
   private registerWorkbenchCommands(): void {
     this.registerCommand({
       id: COMMAND_IDS.OPEN_WORKBENCH,
-      name: "打开工作台",
+      name: this.t("commands.openWorkbench"),
       icon: "brain",
       handler: async () => {
         await this.openWorkbench();
@@ -452,7 +464,7 @@ export class CommandDispatcher {
     // Requirements 9.2: ID = cognitive-razor:create-concept, 快捷键 = Ctrl/Cmd + Shift + N
     this.registerCommand({
       id: COMMAND_IDS.CREATE_CONCEPT,
-      name: "创建概念",
+      name: this.t("commands.createConcept"),
       icon: "plus",
       handler: async () => {
         await this.createConcept();
@@ -480,8 +492,8 @@ export class CommandDispatcher {
             await def.handler();
           } catch (error) {
             this.logError(`命令执行失败: ${def.id}`, error, { commandId: def.id });
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            new Notice(`命令执行失败: ${errorMessage}`);
+            const errorMessage = safeErrorMessage(error);
+            new Notice(formatMessage(this.t("workbench.notifications.commandFailed"), { message: errorMessage }));
           }
         },
         hotkeys: def.hotkeys
@@ -513,8 +525,8 @@ export class CommandDispatcher {
             await def.handler();
           } catch (error) {
             this.logError(`命令执行失败: ${def.id}`, error, { commandId: def.id });
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            new Notice(`命令执行失败: ${errorMessage}`);
+            const errorMessage = safeErrorMessage(error);
+            new Notice(formatMessage(this.t("workbench.notifications.commandFailed"), { message: errorMessage }));
           }
         },
         hotkeys: def.hotkeys
@@ -620,12 +632,12 @@ export class CommandDispatcher {
    */
   private async createConcept(): Promise<void> {
     const modal = new SimpleInputModal(this.plugin.app, {
-      title: "创建概念",
-      placeholder: "输入概念描述...",
+      title: this.t("workbench.createConcept.title"),
+      placeholder: this.t("workbench.createConcept.placeholder"),
       onSubmit: async (input) => {
         const workbench = await this.openWorkbench();
         if (!workbench) {
-          new Notice("工作台未初始化，请稍后重试");
+          new Notice(this.t("workbench.notifications.workbenchNotInitialized"));
           return;
         }
         await workbench.startQuickCreate(input);
@@ -647,43 +659,55 @@ export class CommandDispatcher {
    * - DiffView 确认后落盘
    */
   private async improveNote(filePath: string): Promise<void> {
-    const components = this.plugin.getComponents();
-    const orchestrator = components.pipelineOrchestrator;
+    try {
+      const components = this.plugin.getComponents();
+      const orchestrator = components.amendOrchestrator;
 
-    if (!orchestrator) {
-      new Notice(this.t("workbench.notifications.orchestratorNotInitialized"));
-      return;
-    }
-
-    // 显示输入框获取改进指令
-    const modal = new SimpleInputModal(this.plugin.app, {
-      title: "修订笔记",
-      placeholder: "输入修订指令，例如：补充更多例子、深化定义、添加引用...",
-      onSubmit: async (instruction) => {
-        if (!instruction.trim()) {
-          new Notice("请输入修订指令");
-          return;
-        }
-
-        // 启动修订管线
-        const result = orchestrator.startAmendPipeline(filePath, instruction);
-        
-        if (!result.ok) {
-          new Notice(`启动修订失败: ${result.error.message}`);
-          return;
-        }
-
-        new Notice(this.t("workbench.notifications.improveStarted"));
-        
-        // 打开工作台以便查看进度
-        await this.openWorkbench();
-      },
-      onCancel: () => {
-        // 用户取消
+      if (!orchestrator) {
+        new Notice(this.t("workbench.notifications.orchestratorNotInitialized"));
+        return;
       }
-    });
 
-    modal.open();
+      // 显示输入框获取改进指令
+      const modal = new SimpleInputModal(this.plugin.app, {
+        title: this.t("workbench.amendModal.title"),
+        placeholder: this.t("workbench.amendModal.placeholder"),
+        onSubmit: async (instruction) => {
+          try {
+            if (!instruction.trim()) {
+              new Notice(this.t("workbench.notifications.improveInstructionRequired"));
+              return;
+            }
+
+            // 启动修订管线
+            const result = orchestrator.startAmendPipeline(filePath, instruction);
+            
+            if (!result.ok) {
+              new Notice(formatMessage(this.t("workbench.notifications.startFailed"), { message: result.error.message }));
+              return;
+            }
+
+            new Notice(this.t("workbench.notifications.improveStarted"));
+            
+            // 打开工作台以便查看进度
+            await this.openWorkbench();
+          } catch (error) {
+            const logger = this.plugin.getComponents().logger;
+            logger?.error("CommandDispatcher", "修订操作失败", error instanceof Error ? error : new Error(String(error)));
+            new Notice(safeErrorMessage(error, this.t("workbench.notifications.startFailed")));
+          }
+        },
+        onCancel: () => {
+          // 用户取消
+        }
+      });
+
+      modal.open();
+    } catch (error) {
+      const logger = this.plugin.getComponents().logger;
+      logger?.error("CommandDispatcher", "打开修订对话框失败", error instanceof Error ? error : new Error(String(error)));
+      new Notice(safeErrorMessage(error, this.t("workbench.notifications.startFailed")));
+    }
   }
 
   // 已移除的命令实现方法：

@@ -220,12 +220,12 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
       },
       {
         name: t.settings.advanced.queue.taskTimeout || "任务超时时间",
-        desc: t.settings.advanced.queue.taskTimeoutDesc || "单个任务的最大执行时长（毫秒，默认 1800000 = 30分钟）",
+        desc: t.settings.advanced.queue.taskTimeoutDesc || "单个任务的最大执行时长（毫秒，默认 180000 = 3分钟）",
         control: (setting) => {
           setting.addText(text => {
             text
-              .setValue((this.plugin.settings.taskTimeoutMs || 1800000).toString())
-              .setPlaceholder("1800000")
+              .setValue((this.plugin.settings.taskTimeoutMs ?? 180000).toString())
+              .setPlaceholder("180000")
               .onChange(async (val) => {
                 const num = parseInt(val);
                 if (!isNaN(num) && num >= 1000) {
@@ -345,11 +345,8 @@ export class CognitiveRazorSettingTab extends PluginSettingTab {
     const t = i18n.t();
 
     // Header with Add Button
-    const header = container.createDiv({ cls: "cr-flex-row" });
-    header.style.justifyContent = "space-between";
-    header.style.alignItems = "center";
-    header.style.marginBottom = "var(--size-4-4)";
-    header.createEl("h2", { text: t.settings.provider.title, attr: { style: "margin: 0" } });
+    const header = container.createDiv({ cls: "cr-provider-section-header" });
+    header.createEl("h2", { text: t.settings.provider.title });
 
     const addBtn = header.createEl("button", { text: t.settings.provider.addButton, cls: "mod-cta" });
     addBtn.onclick = () => this.showAddProviderModal();

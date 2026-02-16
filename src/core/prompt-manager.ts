@@ -550,10 +550,12 @@ export class PromptManager {
           processedContent = processedContent.split(placeholder).join(componentResult.value);
           this.logger.debug("PromptManager", `已注入基础组件: ${componentName}`);
         } else {
-          // 如果基础组件加载失败，保留占位符（向后兼容）
-          this.logger.warn("PromptManager", `跳过基础组件注入: ${componentName}`, {
+          // 基础组件加载失败时返回错误，不保留未解析占位符（需求 32.4）
+          this.logger.error("PromptManager", `基础组件缺失: ${componentName}`, undefined, {
+            placeholder,
             error: componentResult.error
           });
+          return err("E404_TEMPLATE_NOT_FOUND", `基础组件文件缺失: ${componentName}，模板无法完整构建`);
         }
       }
     }

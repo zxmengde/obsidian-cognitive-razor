@@ -14,7 +14,17 @@ import {
   err,
   CognitiveRazorError,
   toErr,
-  ImageGeneratePayload
+  ChatRequest,
+  DefinePayload,
+  TagPayload,
+  WritePayload,
+  AmendPayload as TypedAmendPayload,
+  MergePayload as TypedMergePayload,
+  IndexPayload,
+  VerifyPayload,
+  ImageGeneratePayload,
+  AnyTaskPayload,
+  TypedTaskRecord
 } from "../types";
 import { schemaRegistry, SchemaRegistry } from "./schema-registry";
 import { createConceptSignature, generateSignatureText } from "./naming-utils";
@@ -39,20 +49,9 @@ const TASK_PIPELINE_ORDER: TaskType[] = [
   "verify"
 ];
 
-interface AmendPayload {
-  currentContent: string;
-  instruction: string;
-  conceptType: CRType;
-}
-
-interface MergePayload {
-  keepName: string;
-  deleteName: string;
-  keepContent: string;
-  deleteContent: string;
-  conceptType: CRType;
-  finalFileName: string;
-}
+// 本地 AmendPayload / MergePayload 已移除，使用 types.ts 中的类型安全定义
+// TypedAmendPayload = AmendPayload from types.ts
+// TypedMergePayload = MergePayload from types.ts
 
 
 /** 类型必填字段定义 */
@@ -175,6 +174,15 @@ interface WriteContext {
 interface TaskHandler {
   taskType: TaskType;
   run: (task: TaskRecord, signal: AbortSignal) => Promise<Result<TaskResult>>;
+}
+
+/**
+ * 将 TaskRecord 按 taskType 窄化为 TypedTaskRecord
+ * 由于 TaskRecord 的 payload 已是 AnyTaskPayload 联合类型，
+ * 通过 taskType 判别式可安全窄化。
+ */
+function narrowTask(task: TaskRecord): TypedTaskRecord {
+  return task as TypedTaskRecord;
 }
 
 export class TaskRunner {
@@ -523,8 +531,13 @@ export class TaskRunner {
     signal: AbortSignal
   ): Promise<Result<TaskResult>> {
     try {
-      const userInput = task.payload.userInput as string;
-      const sanitizedInput = this.inputValidator.validate(userInput);
+      // 通过 taskType 判别式窄化，安全访问 DefinePayload 字段
+      const typed = narrowTask(task);
+      if (typed.taskType !== "define") {
+        return this.createTaskError(task, { code: "E310_INVALID_STATE", message: "任务类型不匹配: 期望 define" });
+      }
+      const payload = typed.payload;
+      const sanitizedInput = this.inputValidator.validate(payload.userInput);
 
       // 构建 prompt（CTX_INPUT）
       const slots = {
@@ -538,7 +551,7 @@ export class TaskRunner {
       const modelConfig = this.getTaskModelConfig("define", task.providerRef);
 
       // 调用 LLM（使用用户配置的模型）
-      const chatRequest: any = {
+      const chatRequest: ChatRequest = {
         providerId: task.providerRef || modelConfig.providerId,
         model: modelConfig.model,
         messages: [
@@ -546,13 +559,9 @@ export class TaskRunner {
         ],
         temperature: modelConfig.temperature,
         topP: modelConfig.topP,
-        maxTokens: modelConfig.maxTokens
+        maxTokens: modelConfig.maxTokens,
+        reasoning_effort: modelConfig.reasoning_effort
       };
-      
-      // 如果配置了 reasoning_effort，添加到请求中（用于 o1/o3 等推理模型）
-      if (modelConfig.reasoning_effort) {
-        chatRequest.reasoning_effort = modelConfig.reasoning_effort;
-      }
       
       const chatResult = await this.providerManager.chat(chatRequest, signal);
 
@@ -573,7 +582,7 @@ export class TaskRunner {
       }
 
       // 解析结果并标准化键名
-      const data = (validationResult.data as Record<string, any>) || JSON.parse(chatResult.value.content);
+      const data = (validationResult.data as Record<string, unknown>) || JSON.parse(chatResult.value.content);
       const parsed = mapStandardizeOutput(data);
 
       return ok({
@@ -595,7 +604,13 @@ export class TaskRunner {
     signal: AbortSignal
   ): Promise<Result<TaskResult>> {
     try {
-      const metaContext = this.buildMetaContext(task.payload);
+      // 通过 taskType 判别式窄化，安全访问 TagPayload 字段
+      const typed = narrowTask(task);
+      if (typed.taskType !== "tag") {
+        return this.createTaskError(task, { code: "E310_INVALID_STATE", message: "任务类型不匹配: 期望 tag" });
+      }
+      const payload = typed.payload;
+      const metaContext = this.buildMetaContext(payload);
       const slots = {
         CTX_META: metaContext,
         CTX_LANGUAGE: this.getLanguage()
@@ -607,7 +622,7 @@ export class TaskRunner {
       const modelConfig = this.getTaskModelConfig("tag", task.providerRef);
 
       // 调用 LLM（使用用户配置的模型）
-      const chatRequest: any = {
+      const chatRequest: ChatRequest = {
         providerId: task.providerRef || modelConfig.providerId,
         model: modelConfig.model,
         messages: [
@@ -615,13 +630,9 @@ export class TaskRunner {
         ],
         temperature: modelConfig.temperature,
         topP: modelConfig.topP,
-        maxTokens: modelConfig.maxTokens
+        maxTokens: modelConfig.maxTokens,
+        reasoning_effort: modelConfig.reasoning_effort
       };
-      
-      // 如果配置了 reasoning_effort，添加到请求中
-      if (modelConfig.reasoning_effort) {
-        chatRequest.reasoning_effort = modelConfig.reasoning_effort;
-      }
       
       const chatResult = await this.providerManager.chat(chatRequest, signal);
 
@@ -650,7 +661,7 @@ export class TaskRunner {
       }
 
       // 解析结果
-      const data = (validationResult.data as Record<string, any>) || JSON.parse(chatResult.value.content);
+      const data = (validationResult.data as Record<string, unknown>) || JSON.parse(chatResult.value.content);
       const parsed = {
         aliases: Array.isArray(data.aliases) ? data.aliases : [],
         tags: Array.isArray(data.tags) ? data.tags : []
@@ -676,16 +687,23 @@ export class TaskRunner {
     signal: AbortSignal
   ): Promise<Result<TaskResult>> {
     try {
+      // 通过 taskType 判别式窄化，安全访问 IndexPayload 字段
+      const typed = narrowTask(task);
+      if (typed.taskType !== "index") {
+        return this.createTaskError(task, { code: "E310_INVALID_STATE", message: "任务类型不匹配: 期望 index" });
+      }
+      const payload = typed.payload;
+
       // 优先使用上游生成的签名文本；否则基于标准化结果构建
-      let text = task.payload.text as string | undefined;
+      let text = payload.text;
 
       if (!text) {
-        const standardized = task.payload.standardizedData as StandardizedConcept | undefined;
+        const standardized = payload.standardizedData;
         if (!standardized) {
           return this.createTaskError(task, { code: "E310_INVALID_STATE", message: "缺少标准化数据，无法生成嵌入文本" });
         }
 
-        const primaryType = (standardized.primaryType || task.payload.conceptType || "Entity") as CRType;
+        const primaryType = (standardized.primaryType || payload.conceptType || "Entity") as CRType;
         const currentName = standardized.standardNames?.[primaryType];
         if (!currentName) {
           return this.createTaskError(task, { code: "E310_INVALID_STATE", message: "标准化名称缺失，无法生成嵌入文本" });
@@ -694,11 +712,11 @@ export class TaskRunner {
         const signature = createConceptSignature(
           {
             standardName: currentName,
-            aliases: Array.isArray((task.payload as any).aliases) ? (task.payload as any).aliases : [],
+            aliases: Array.isArray(payload.aliases) ? payload.aliases : [],
             coreDefinition: standardized.coreDefinition
           },
           primaryType,
-          (task.payload.namingTemplate as string) || "{{chinese}} ({{english}})"
+          payload.namingTemplate || "{{chinese}} ({{english}})"
         );
         text = generateSignatureText(signature);
       }
@@ -708,6 +726,7 @@ export class TaskRunner {
 
       // 调用 Embedding API（使用用户配置的模型和向量维度）
       const embeddingDimension = this.vectorIndex?.getEmbeddingDimension()
+        ?? modelConfig.embeddingDimension
         ?? this.settingsStore?.getSettings().embeddingDimension
         ?? 1536;
       const embeddingModel = this.vectorIndex?.getEmbeddingModel() ?? modelConfig.model;
@@ -745,12 +764,18 @@ export class TaskRunner {
     signal: AbortSignal
   ): Promise<Result<TaskResult>> {
     try {
-      const conceptType = (task.payload.conceptType as CRType) || "Entity";
+      // 通过 taskType 判别式窄化，安全访问 WritePayload 字段
+      const typed = narrowTask(task);
+      if (typed.taskType !== "write") {
+        return this.createTaskError(task, { code: "E310_INVALID_STATE", message: "任务类型不匹配: 期望 write" });
+      }
+      const payload = typed.payload;
+      const conceptType = payload.conceptType || "Entity";
       const schema = this.getSchema(conceptType);
-      const sources = typeof task.payload.sources === "string" ? task.payload.sources : "";
+      const sources = typeof payload.sources === "string" ? payload.sources : "";
 
       const slots = {
-        CTX_META: this.buildMetaContext(task.payload),
+        CTX_META: this.buildMetaContext(payload),
         CTX_SOURCES: sources,
         CTX_LANGUAGE: this.getLanguage()
       };
@@ -762,7 +787,7 @@ export class TaskRunner {
       const modelConfig = this.getTaskModelConfig("write", task.providerRef);
 
       // 调用 LLM（使用用户配置的模型）
-      const chatRequest: any = {
+      const chatRequest: ChatRequest = {
         providerId: task.providerRef || modelConfig.providerId,
         model: modelConfig.model,
         messages: [
@@ -770,13 +795,9 @@ export class TaskRunner {
         ],
         temperature: modelConfig.temperature,
         topP: modelConfig.topP,
-        maxTokens: modelConfig.maxTokens
+        maxTokens: modelConfig.maxTokens,
+        reasoning_effort: modelConfig.reasoning_effort
       };
-      
-      // 如果配置了 reasoning_effort，添加到请求中
-      if (modelConfig.reasoning_effort) {
-        chatRequest.reasoning_effort = modelConfig.reasoning_effort;
-      }
       
       const chatResult = await this.providerManager.chat(chatRequest, signal);
 
@@ -800,15 +821,15 @@ export class TaskRunner {
       // 解析结果
       const data = (validationResult.data as Record<string, unknown>) || JSON.parse(chatResult.value.content);
 
-      // Property 10: 创建快照（写入前）
-      const skipSnapshot = task.payload.skipSnapshot === true;
-      if (task.payload.filePath && !skipSnapshot) {
+      // 创建快照（写入前）
+      const skipSnapshot = payload.skipSnapshot === true;
+      if (payload.filePath && !skipSnapshot) {
         const snapshotResult = await this.createSnapshotBeforeWrite({
-          filePath: task.payload.filePath as string,
+          filePath: payload.filePath,
           content: "", // 新文件，原始内容为空
           nodeId: task.nodeId,
           taskId: task.id,
-          originalContent: task.payload.originalContent as string || ""
+          originalContent: payload.originalContent || ""
         });
 
         if (snapshotResult.ok) {
@@ -836,12 +857,17 @@ export class TaskRunner {
     signal: AbortSignal
   ): Promise<Result<TaskResult>> {
     try {
-      const payload = task.payload as unknown as Partial<AmendPayload>;
-      if (!payload?.currentContent || !payload.instruction) {
+      // 通过 taskType 判别式窄化，安全访问 AmendPayload 字段
+      const typed = narrowTask(task);
+      if (typed.taskType !== "amend") {
+        return this.createTaskError(task, { code: "E310_INVALID_STATE", message: "任务类型不匹配: 期望 amend" });
+      }
+      const payload = typed.payload;
+      if (!payload.currentContent || !payload.instruction) {
         return this.createTaskError(task, { code: "E102_MISSING_FIELD", message: "修订任务载荷缺失必要字段" });
       }
 
-      const conceptType = (payload.conceptType as CRType) || "Entity";
+      const conceptType = payload.conceptType || "Entity";
       const slots = {
         CTX_CURRENT: payload.currentContent,
         USER_INSTRUCTION: payload.instruction,
@@ -852,18 +878,15 @@ export class TaskRunner {
       const prompt = this.promptManager.build("amend", slots, conceptType);
       const modelConfig = this.getTaskModelConfig("amend", task.providerRef);
 
-      const chatRequest: any = {
+      const chatRequest: ChatRequest = {
         providerId: task.providerRef || modelConfig.providerId,
         model: modelConfig.model,
         messages: [{ role: "user", content: prompt }],
         temperature: modelConfig.temperature,
         topP: modelConfig.topP,
-        maxTokens: modelConfig.maxTokens
+        maxTokens: modelConfig.maxTokens,
+        reasoning_effort: modelConfig.reasoning_effort
       };
-
-      if (modelConfig.reasoning_effort) {
-        chatRequest.reasoning_effort = modelConfig.reasoning_effort;
-      }
 
       const chatResult = await this.providerManager.chat(chatRequest, signal);
       if (!chatResult.ok) {
@@ -929,12 +952,17 @@ export class TaskRunner {
     signal: AbortSignal
   ): Promise<Result<TaskResult>> {
     try {
-      const payload = task.payload as unknown as Partial<MergePayload>;
-      if (!payload?.keepContent || !payload.deleteContent || !payload.keepName || !payload.deleteName) {
+      // 通过 taskType 判别式窄化，安全访问 MergePayload 字段
+      const typed = narrowTask(task);
+      if (typed.taskType !== "merge") {
+        return this.createTaskError(task, { code: "E310_INVALID_STATE", message: "任务类型不匹配: 期望 merge" });
+      }
+      const payload = typed.payload;
+      if (!payload.keepContent || !payload.deleteContent || !payload.keepName || !payload.deleteName) {
         return this.createTaskError(task, { code: "E102_MISSING_FIELD", message: "合并任务载荷缺失必要字段" });
       }
 
-      const conceptType = (payload.conceptType as CRType) || "Entity";
+      const conceptType = payload.conceptType || "Entity";
       const instruction = payload.finalFileName
         ? `合并这两个 ${conceptType} 类型的概念笔记，最终文件名为 "${payload.finalFileName}"`
         : `合并这两个 ${conceptType} 类型的概念笔记`;
@@ -952,18 +980,15 @@ export class TaskRunner {
       const prompt = this.promptManager.build("merge", slots, conceptType);
       const modelConfig = this.getTaskModelConfig("merge", task.providerRef);
 
-      const chatRequest: any = {
+      const chatRequest: ChatRequest = {
         providerId: task.providerRef || modelConfig.providerId,
         model: modelConfig.model,
         messages: [{ role: "user", content: prompt }],
         temperature: modelConfig.temperature,
         topP: modelConfig.topP,
-        maxTokens: modelConfig.maxTokens
+        maxTokens: modelConfig.maxTokens,
+        reasoning_effort: modelConfig.reasoning_effort
       };
-
-      if (modelConfig.reasoning_effort) {
-        chatRequest.reasoning_effort = modelConfig.reasoning_effort;
-      }
 
       const chatResult = await this.providerManager.chat(chatRequest, signal);
       if (!chatResult.ok) {
@@ -1038,18 +1063,23 @@ export class TaskRunner {
     signal: AbortSignal
   ): Promise<Result<TaskResult>> {
     try {
-      const currentContent = task.payload.currentContent as string;
-      if (!currentContent) {
+      // 通过 taskType 判别式窄化，安全访问 VerifyPayload 字段
+      const typed = narrowTask(task);
+      if (typed.taskType !== "verify") {
+        return this.createTaskError(task, { code: "E310_INVALID_STATE", message: "任务类型不匹配: 期望 verify" });
+      }
+      const payload = typed.payload;
+      if (!payload.currentContent) {
         return this.createTaskError(task, { code: "E102_MISSING_FIELD", message: "缺少待验证内容 (currentContent)" });
       }
 
-      const conceptType = (task.payload.conceptType as CRType) || (task.payload.noteType as CRType) || "Entity";
+      const conceptType = payload.conceptType || payload.noteType || "Entity";
 
       // 构建上下文槽位
       const slots = {
-        CTX_META: this.buildMetaContext(task.payload),
-        CTX_CURRENT: currentContent,
-        CTX_SOURCES: task.payload.sources as string || "",
+        CTX_META: this.buildMetaContext(payload),
+        CTX_CURRENT: payload.currentContent,
+        CTX_SOURCES: payload.sources || "",
         CTX_LANGUAGE: this.getLanguage()
       };
 
@@ -1059,7 +1089,7 @@ export class TaskRunner {
       const modelConfig = this.getTaskModelConfig("verify", task.providerRef);
 
       // 调用 LLM（使用用户配置的模型）
-      const chatRequest: any = {
+      const chatRequest: ChatRequest = {
         providerId: task.providerRef || modelConfig.providerId,
         model: modelConfig.model,
         messages: [
@@ -1067,13 +1097,9 @@ export class TaskRunner {
         ],
         temperature: modelConfig.temperature,
         topP: modelConfig.topP,
-        maxTokens: modelConfig.maxTokens
+        maxTokens: modelConfig.maxTokens,
+        reasoning_effort: modelConfig.reasoning_effort
       };
-      
-      // 如果配置了 reasoning_effort，添加到请求中
-      if (modelConfig.reasoning_effort) {
-        chatRequest.reasoning_effort = modelConfig.reasoning_effort;
-      }
       
       const chatResult = await this.providerManager.chat(chatRequest, signal);
 
@@ -1140,8 +1166,13 @@ export class TaskRunner {
       if (!this.settingsStore) {
         return this.createTaskError(task, { code: "E310_INVALID_STATE", message: "设置未初始化" });
       }
-      const payload = task.payload as unknown as ImageGeneratePayload;
-      if (!payload || !payload.userPrompt || !payload.filePath) {
+      // 通过 taskType 判别式窄化，安全访问 ImageGeneratePayload 字段
+      const typed = narrowTask(task);
+      if (typed.taskType !== "image-generate") {
+        return this.createTaskError(task, { code: "E310_INVALID_STATE", message: "任务类型不匹配: 期望 image-generate" });
+      }
+      const payload = typed.payload;
+      if (!payload.userPrompt || !payload.filePath) {
         return this.createTaskError(task, { code: "E102_MISSING_FIELD", message: "图片生成任务载荷缺失必要字段" });
       }
 
@@ -1167,17 +1198,15 @@ export class TaskRunner {
         return this.createTaskError(task, { code: "E401_PROVIDER_NOT_CONFIGURED", message: "请先配置 Provider" });
       }
 
-      const promptRequest: any = {
+      const promptRequest: ChatRequest = {
         providerId: task.providerRef || promptModelConfig.providerId,
         model: promptModelConfig.model,
         messages: [{ role: "user", content: promptTemplate }],
         temperature: promptModelConfig.temperature,
         topP: promptModelConfig.topP,
-        maxTokens: promptModelConfig.maxTokens
+        maxTokens: promptModelConfig.maxTokens,
+        reasoning_effort: promptModelConfig.reasoning_effort
       };
-      if (promptModelConfig.reasoning_effort) {
-        promptRequest.reasoning_effort = promptModelConfig.reasoning_effort;
-      }
 
       const promptResult = await this.providerManager.chat(promptRequest, signal);
       if (!promptResult.ok) {
@@ -1315,6 +1344,7 @@ export class TaskRunner {
     topP?: number;
     maxTokens?: number;
     reasoning_effort?: "low" | "medium" | "high";
+    embeddingDimension?: number;
   } {
     const settings = this.settingsStore?.getSettings();
     const taskConfig = settings?.taskModels?.[taskType];
@@ -1339,14 +1369,15 @@ export class TaskRunner {
       temperature: taskConfig?.temperature ?? defaultConfig.temperature,
       topP: taskConfig?.topP,
       maxTokens: taskConfig?.maxTokens,
-      reasoning_effort: taskConfig?.reasoning_effort
+      reasoning_effort: taskConfig?.reasoning_effort,
+      embeddingDimension: taskConfig?.embeddingDimension
     };
   }
 
   /** 构建 CTX_META 上下文字符串 */
-  private buildMetaContext(payload: Record<string, unknown>): string {
-    const standardized = payload.standardizedData as StandardizedConcept | undefined;
-    const primaryType = (standardized?.primaryType || payload.conceptType) as CRType | undefined;
+  private buildMetaContext(payload: AnyTaskPayload): string {
+    const standardized = ("standardizedData" in payload) ? payload.standardizedData as StandardizedConcept | undefined : undefined;
+    const primaryType = (standardized?.primaryType || (("conceptType" in payload) ? payload.conceptType : undefined)) as CRType | undefined;
     const standardNames = standardized?.standardNames;
     const selectedName = primaryType && standardNames ? standardNames[primaryType] : undefined;
 

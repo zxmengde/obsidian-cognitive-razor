@@ -140,7 +140,7 @@ const ISSUE_SCHEMA: JSONSchema = {
     core_tension: {
       type: "string",
       description: "核心张力",
-      pattern: "^.+\\s+(vs\\.?|VS\\.?|versus|与|对)\\s+.+$"
+      minLength: 10
     },
     significance: {
       type: "string",
@@ -725,7 +725,7 @@ export class SchemaRegistry {
       },
       Issue: {
         definition: "测量问题是量子力学中最核心的认识论危机...",
-        core_tension: "确定性演化 vs 非确定性坍缩",
+        core_tension: "确定性演化 vs 非确定性坍缩；观察者角色；退相干解释",
         significance: "理论本身无法解释这种从'可能性'到'确定性'的突变机制..."
       },
       Theory: {

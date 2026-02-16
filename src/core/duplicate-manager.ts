@@ -25,6 +25,8 @@ export class DuplicateManager {
   private storePath: string;
   private store: DuplicatePairsStore | null;
   private listeners: Array<(pairs: DuplicatePair[]) => void>;
+  /** 分页检测每页比较的概念数量 */
+  private readonly pageSize: number = 50;
 
   constructor(
     vectorIndex: VectorIndex,
@@ -107,7 +109,7 @@ export class DuplicateManager {
     }
   }
 
-  /** 检测重复概念 */
+  /** 检测重复概念（分页计算 + 让出事件循环） */
   async detect(
     nodeId: string,
     type: CRType,
@@ -142,70 +144,67 @@ export class DuplicateManager {
         threshold
       });
 
-      // 在同类型桶内检索相似概念
-      const searchResult = await this.vectorIndex.searchAboveThreshold(type, embedding, threshold);
-
-      if (!searchResult.ok) {
-        this.logger.error("DuplicateManager", "向量检索失败", undefined, {
-          error: searchResult.error
+      // 获取同类型所有向量（增量检测：仅新概念 vs 已有概念）
+      const vectorsResult = await this.vectorIndex.getVectorsByType(type);
+      if (!vectorsResult.ok) {
+        this.logger.error("DuplicateManager", "获取同类型向量失败", undefined, {
+          error: vectorsResult.error
         });
-        return searchResult as Result<DuplicatePair[]>;
+        return vectorsResult as Result<DuplicatePair[]>;
       }
 
-      const similarConcepts = searchResult.value;
+      // 排除自身，仅保留候选概念
+      const candidates = vectorsResult.value.filter(v => v.id !== nodeId);
 
-      // searchAboveThreshold 已按阈值过滤，这里只排除自身
-      const duplicates = similarConcepts.filter((result) => result.uid !== nodeId);
-
-      if (duplicates.length === 0) {
-        this.logger.debug("DuplicateManager", "未检测到重复", {
+      if (candidates.length === 0) {
+        this.logger.debug("DuplicateManager", "无同类型候选概念", {
           nodeId,
           type
         });
         return ok([]);
       }
 
-      // 创建重复对
+      // 归一化新概念的向量
+      const normalizedNew = this.normalizeVector(embedding);
+
+      // 分页计算相似度，每页 pageSize 个概念
       const newPairs: DuplicatePair[] = [];
 
-      for (const duplicate of duplicates) {
-        // 检查是否已存在或已被标记为非重复
-        const pairId = this.generatePairId(nodeId, duplicate.uid);
-        
-        if (dismissedSet.has(pairId)) {
-          this.logger.debug("DuplicateManager", "跳过已标记为非重复的对", {
-            pairId
-          });
-          continue;
+      for (let i = 0; i < candidates.length; i += this.pageSize) {
+        const page = candidates.slice(i, i + this.pageSize);
+
+        for (const candidate of page) {
+          const normalizedCandidate = this.normalizeVector(candidate.embedding);
+          const similarity = this.dotProduct(normalizedNew, normalizedCandidate);
+
+          if (similarity >= threshold) {
+            const pairId = this.generatePairId(nodeId, candidate.id);
+
+            // 跳过已标记为非重复或已存在的对
+            if (dismissedSet.has(pairId) || existingPairIds.has(pairId)) {
+              continue;
+            }
+
+            const pair: DuplicatePair = {
+              id: pairId,
+              nodeIdA: nodeId,
+              nodeIdB: candidate.id,
+              type,
+              similarity,
+              detectedAt: formatCRTimestamp(),
+              status: "pending"
+            };
+
+            newPairs.push(pair);
+            this.store.pairs.push(pair);
+            existingPairIds.add(pairId);
+          }
         }
 
-        if (existingPairIds.has(pairId)) {
-          this.logger.debug("DuplicateManager", "重复对已存在", {
-            pairId
-          });
-          continue;
+        // 分页之间让出事件循环，避免阻塞 UI 线程
+        if (i + this.pageSize < candidates.length) {
+          await new Promise<void>(resolve => setTimeout(resolve, 0));
         }
-
-        this.logger.debug("DuplicateManager", "创建重复对", {
-          pairId,
-          nodeIdA: nodeId,
-          nodeIdB: duplicate.uid
-        });
-
-        // 创建新的重复对
-        const pair: DuplicatePair = {
-          id: pairId,
-          nodeIdA: nodeId,
-          nodeIdB: duplicate.uid,
-          type,
-          similarity: duplicate.similarity,
-          detectedAt: formatCRTimestamp(),
-          status: "pending"
-        };
-
-        newPairs.push(pair);
-        this.store.pairs.push(pair);
-        existingPairIds.add(pairId);
       }
 
       if (newPairs.length > 0) {
@@ -622,6 +621,36 @@ export class DuplicateManager {
       });
       return err("E500_INTERNAL_ERROR", "清理 Pending 重复对失败", error);
     }
+  }
+
+  /** 归一化向量（用于余弦相似度计算） */
+  private normalizeVector(vector: number[]): number[] {
+    let norm = 0;
+    for (let i = 0; i < vector.length; i++) {
+      norm += vector[i] * vector[i];
+    }
+    norm = Math.sqrt(norm);
+
+    // 零向量直接返回
+    if (norm === 0) {
+      return vector;
+    }
+
+    const normalized = new Array(vector.length);
+    for (let i = 0; i < vector.length; i++) {
+      normalized[i] = vector[i] / norm;
+    }
+    return normalized;
+  }
+
+  /** 向量点积（归一化后等价于余弦相似度） */
+  private dotProduct(a: number[], b: number[]): number {
+    let product = 0;
+    const len = Math.min(a.length, b.length);
+    for (let i = 0; i < len; i++) {
+      product += a[i] * b[i];
+    }
+    return product;
   }
 
   /** 创建空存储 */

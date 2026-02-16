@@ -36,8 +36,8 @@
                 * *EN Style*: `[Discipline]` (e.g., Philosophy) OR `The [Scope] System`.
             * **Issue (The Tension)**: 
                 * *Paradigm*: Focus on the conflict, gap, or paradox.
-                * *CN Style*: `[核心词]+(悖论/困境/危机/问题)` OR `[A]与[B]的张力`.
-                * *EN Style*: `The [Adjective] Paradox/Dilemma/Crisis` OR `The [A]-[B] Problem`.
+                * *CN Style*: `[核心词]+(悖论/困境/危机/问题)` OR `[A]与[B]的张力` OR `[核心词]+的多维困境`.
+                * *EN Style*: `The [Adjective] Paradox/Dilemma/Crisis` OR `The [A]-[B] Problem` OR `The [Topic] Trilemma/Polylemma`.
             * **Theory (The Explanation)**: 
                 * *Paradigm*: Focus on the explanatory framework.
                 * *CN Style*: `[核心词]+(论/主义/假说/框架)`.

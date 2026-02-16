@@ -75,6 +75,57 @@ function formatDateTime(isoString: string): string {
   return `${month}-${day} ${hours}:${minutes}:${seconds}`;
 }
 
+/** 敏感字段键名列表（小写匹配） */
+const SENSITIVE_KEYS = ['apikey', 'token', 'secret', 'authorization', 'password', 'api_key'];
+
+/**
+ * 对上下文对象进行递归脱敏，将敏感字段值替换为 [REDACTED]
+ * @param context 待脱敏的上下文对象
+ * @returns 脱敏后的新对象（不修改原对象）
+ */
+export function sanitizeContext(context: Record<string, unknown>): Record<string, unknown> {
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(context)) {
+    if (SENSITIVE_KEYS.some(sk => key.toLowerCase().includes(sk))) {
+      sanitized[key] = '[REDACTED]';
+    } else if (Array.isArray(value)) {
+      // 递归处理数组中的对象元素
+      sanitized[key] = value.map(item =>
+        typeof item === 'object' && item !== null
+          ? sanitizeContext(item as Record<string, unknown>)
+          : item
+      );
+    } else if (typeof value === 'object' && value !== null) {
+      sanitized[key] = sanitizeContext(value as Record<string, unknown>);
+    } else {
+      sanitized[key] = value;
+    }
+  }
+  return sanitized;
+}
+
+/**
+ * 对错误堆栈中可能包含的敏感信息进行脱敏
+ * @param stack 错误堆栈字符串
+ * @returns 脱敏后的堆栈字符串
+ */
+function sanitizeStack(stack: string): string {
+  // 匹配常见的敏感值模式：key=value、key: value、key="value"
+  let result = stack;
+  for (const sk of SENSITIVE_KEYS) {
+    // 匹配 key=value 或 key: value 模式（不区分大小写）
+    const patterns = [
+      new RegExp(`(${sk})\\s*[=:]\\s*["']?[^\\s"',}\\]]+["']?`, 'gi'),
+      new RegExp(`(${sk})\\s*[=:]\\s*"[^"]*"`, 'gi'),
+    ];
+    for (const pattern of patterns) {
+      result = result.replace(pattern, `$1=[REDACTED]`);
+    }
+  }
+  return result;
+}
+
+
 /** Logger 实现类 */
 export class Logger implements ILogger {
   private logBuffer: string[] = [];
@@ -404,15 +455,16 @@ export class Logger implements ILogger {
       entry.traceId = this.currentTraceId;
     }
 
+    // 脱敏上下文中的敏感字段
     if (cleanContext && Object.keys(cleanContext).length > 0) {
-      entry.context = cleanContext;
+      entry.context = sanitizeContext(cleanContext);
     }
 
     if (error) {
       entry.error = {
         name: error.name,
         message: error.message,
-        stack: error.stack,
+        stack: error.stack ? sanitizeStack(error.stack) : undefined,
       };
     }
 
@@ -475,14 +527,15 @@ export class Logger implements ILogger {
       entry.traceId = this.currentTraceId;
     }
 
+    // 脱敏上下文中的敏感字段
     if (cleanContext && Object.keys(cleanContext).length > 0) {
-      entry.context = cleanContext;
+      entry.context = sanitizeContext(cleanContext);
     }
 
     entry.error = {
       name: error?.name || codeInfo?.name || "Error",
       message: error?.message || message,
-      stack: error?.stack,
+      stack: error?.stack ? sanitizeStack(error.stack) : undefined,
       code: errorCode,
       codeName: codeInfo?.name,
       fixSuggestion: codeInfo?.fixSuggestion,

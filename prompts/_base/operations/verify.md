@@ -18,7 +18,7 @@
             *   *Check*: Do the issues represent the "Emergent" problems of this field?
 
         2.  **IF Type == Issue (张力)**:
-            *   *Check*: Is the core tension explicitly **A vs B** (Binary/Dialectical)? It must NOT be a simple "How-to" question.
+            *   *Check*: Does the core tension express a genuine conflict — binary (A vs B), multi-polar, or a layered paradox? It must NOT be a simple "How-to" question.
             *   *Check*: Is the 'epistemic_barrier' identified (Why is it unsolved)?
             *   *Check*: Do 'theories' represent attempts to resolve this specific tension?
 

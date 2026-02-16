@@ -239,3 +239,97 @@ export function isRetryableErrorCode(code: string): boolean {
 export function getFixSuggestion(code: string): string | undefined {
   return getErrorCodeInfo(code)?.fixSuggestion;
 }
+
+/**
+ * 集中式错误码注册中心
+ *
+ * 提供错误码的注册、查询、重试判断和消息模板插值能力。
+ * `description` 字段支持 `{param}` 占位符，通过 `formatMessage()` 替换为实际值。
+ */
+export class ErrorRegistry {
+  private definitions: Map<string, ErrorCodeInfo> = new Map();
+
+  /**
+   * 注册一个错误码定义。若已存在则覆盖。
+   */
+  register(def: ErrorCodeInfo): void {
+    this.definitions.set(def.code, def);
+  }
+
+  /**
+   * 批量注册错误码定义。
+   */
+  registerAll(defs: Iterable<ErrorCodeInfo>): void {
+    for (const def of defs) {
+      this.register(def);
+    }
+  }
+
+  /**
+   * 获取错误码定义，不存在时返回 undefined。
+   */
+  get(code: string): ErrorCodeInfo | undefined {
+    return this.definitions.get(code);
+  }
+
+  /**
+   * 判断错误码是否可重试。未注册的错误码返回 false。
+   */
+  isRetryable(code: string): boolean {
+    return this.definitions.get(code)?.retryable ?? false;
+  }
+
+  /**
+   * 格式化错误消息：将 description 模板中的 `{param}` 占位符替换为 params 中的实际值。
+   * - 未提供 params 或 params 中缺少对应 key 时，该占位符替换为空字符串
+   * - 确保输出不含未解析的 `{param}` 占位符
+   * - 错误码未注册时返回 "Unknown error: <code>"
+   */
+  formatMessage(code: string, params?: Record<string, string>): string {
+    const def = this.definitions.get(code);
+    if (!def) {
+      return `Unknown error: ${code}`;
+    }
+    let message = def.description;
+    if (params) {
+      for (const [key, value] of Object.entries(params)) {
+        message = message.replaceAll(`{${key}}`, value);
+      }
+    }
+    // 清除所有未解析的占位符
+    message = message.replace(/\{[a-zA-Z_][a-zA-Z0-9_]*\}/g, "");
+    return message;
+  }
+
+  /**
+   * 获取所有已注册的错误码列表。
+   */
+  getAllCodes(): string[] {
+    return Array.from(this.definitions.keys());
+  }
+
+  /**
+   * 获取已注册错误码数量。
+   */
+  get size(): number {
+    return this.definitions.size;
+  }
+}
+
+/**
+ * 从 ERROR_CODE_INFO 常量构建默认 ErrorRegistry 实例。
+ * 插件运行时使用此实例作为全局错误码注册中心。
+ */
+export function createDefaultErrorRegistry(): ErrorRegistry {
+  const registry = new ErrorRegistry();
+  for (const def of Object.values(ERROR_CODE_INFO)) {
+    registry.register(def);
+  }
+  return registry;
+}
+
+/**
+ * 默认全局 ErrorRegistry 实例（基于 ERROR_CODE_INFO 构建）。
+ */
+export const defaultErrorRegistry = createDefaultErrorRegistry();
+

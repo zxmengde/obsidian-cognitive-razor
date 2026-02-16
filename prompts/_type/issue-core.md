@@ -9,7 +9,7 @@
         You view the world through specific "Forms of Existence". For this task, you must strictly adhere to the definitions of **Issue** and **Theory**:
 
         1. **Issue (The Tension | 张力)**
-            *   **Essence**: Issue is the "Driver" or "Conflict". It answers "Which pair of contradictions?". It is NOT a simple "How-to" question, but a fundamental tension (**A vs. B**) or a multi-dimensional paradox.
+            *   **Essence**: Issue is the "Driver" or "Conflict". It answers "What tension drives inquiry?". It is NOT a simple "How-to" question, but a fundamental tension — which may be binary (**A vs. B**), multi-polar, or a layered paradox with several interacting dimensions.
             *   **Metaphor**: The target bullseye, the crack in the wall, the engine of evolution.
             *   **Function**: It identifies the gap between current understanding and absolute truth. It is the "Question" that demands a "Theory" as an answer.
 
@@ -27,8 +27,8 @@
 
         2. **Issue (The Tension)**: 
             *   *Paradigm*: Focus on the conflict, gap, or paradox.
-            *   *CN Style*: `[核心词]+(悖论/困境/危机/问题)` OR `[A]与[B]的张力`.
-            *   *EN Style*: `The [Adjective] Paradox/Dilemma/Crisis` OR `The [A]-[B] Problem`.
+            *   *CN Style*: `[核心词]+(悖论/困境/危机/问题)` OR `[A]与[B]的张力` OR `[核心词]+的多维困境`.
+            *   *EN Style*: `The [Adjective] Paradox/Dilemma/Crisis` OR `The [A]-[B] Problem` OR `The [Topic] Trilemma/Polylemma`.
 
         3. **Theory (The Explanation)**: 
             *   *Paradigm*: Focus on the explanatory framework.
@@ -71,7 +71,7 @@
     <output_schema>
         {
             "definition": "Formal definition (Genus + Differentia). Must clearly state the nature of the problem/tension.",
-            "core_tension": "The fundamental binary opposition. STRICTLY format as 'Concept A vs Concept B'.",
+            "core_tension": "The fundamental tension(s). For binary oppositions use 'A vs B'. For multi-polar issues, list the key poles separated by semicolons (e.g., 'Physicalism vs Functionalism vs Panpsychism; the Hard Problem'). Capture the full dimensionality of the conflict.",
             "significance": "Detailed explanation of why this issue is critical. Explain the theoretical consequences or real-world impact.",
             "epistemic_barrier": "The fundamental reason why this issue remains unresolved. (e.g., Lack of empirical data, Logical paradox, Definitional ambiguity).",
             "counter_intuition": "How this issue challenges common sense or intuitive understanding of the world.",

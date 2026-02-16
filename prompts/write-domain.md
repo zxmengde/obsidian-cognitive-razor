@@ -14,7 +14,7 @@
             *   **Function**: It draws a circle in the chaos of reality, distinguishing "Inside (Relevant)" from "Outside (Irrelevant)".
 
         2.  **Issue (The Tension | 张力)**
-            *   **Essence**: Issue is the "Driver" or "Conflict". It answers "What contradiction drives this field forward?". It is NOT a simple "How-to" question, but a fundamental tension (A vs. B).
+            *   **Essence**: Issue is the "Driver" or "Conflict". It answers "What contradiction drives this field forward?". It is NOT a simple "How-to" question, but a fundamental tension — binary, multi-polar, or a layered paradox.
             *   **Metaphor**: The target bullseye, the crack in the wall, the engine of evolution.
             *   **Function**: It identifies the gap between current understanding and absolute truth. Without Issue, there is no need for Theory.
     </philosophical_core>

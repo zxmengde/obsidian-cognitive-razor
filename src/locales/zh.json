@@ -1,0 +1,675 @@
+{
+  "common": {
+    "confirm": "确认",
+    "cancel": "取消",
+    "save": "保存",
+    "delete": "删除",
+    "edit": "编辑",
+    "add": "添加",
+    "close": "关闭",
+    "loading": "加载中...",
+    "success": "成功",
+    "error": "错误",
+    "warning": "警告"
+  },
+  "commands": {
+    "openWorkbench": "打开工作台",
+    "createConcept": "创建概念",
+    "improveNote": "改进笔记",
+    "expandNote": "拓展当前笔记",
+    "mergeDuplicates": "合并重复对"
+  },
+  "workbench": {
+    "title": "工作台",
+    "buttons": {
+      "improveNote": "改进当前笔记",
+      "expand": "拓展当前笔记",
+      "insertImage": "插入图片",
+      "verify": "事实核查"
+    },
+    "createConcept": {
+      "title": "创建概念",
+      "placeholder": "输入概念描述...",
+      "startButton": "开始",
+      "defining": "定义中...",
+      "selectType": "请选择概念类型",
+      "create": "创建",
+      "clear": "清空输入"
+    },
+    "amendModal": {
+      "title": "修订笔记",
+      "placeholder": "请输入修订指令（例如：补充更多示例、优化定义、添加相关理论）"
+    },
+    "duplicates": {
+      "title": "重复概念",
+      "sortBy": "排序:",
+      "sortSimilarityDesc": "相似度 (高到低)",
+      "sortSimilarityAsc": "相似度 (低到高)",
+      "sortTimeDesc": "时间 (新到旧)",
+      "sortTimeAsc": "时间 (旧到新)",
+      "sortByType": "按类型",
+      "filterBy": "类型:",
+      "filterAll": "全部",
+      "selectAll": "全选",
+      "batchMerge": "批量合并",
+      "batchDismiss": "批量忽略",
+      "viewHistory": "查看历史",
+      "empty": "暂无重复概念",
+      "merge": "合并",
+      "dismiss": "忽略",
+      "selectPair": "选择重复对"
+    },
+    "queueStatus": {
+      "title": "队列状态",
+      "active": "运行中",
+      "paused": "已暂停",
+      "pending": "待处理",
+      "running": "执行中",
+      "completed": "已完成",
+      "failed": "失败",
+      "cancelled": "已取消",
+      "clearPending": "清除待处理",
+      "clearCompleted": "清除已完成",
+      "clearFailed": "清除失败",
+      "retryFailed": "重试失败",
+      "pauseQueue": "暂停队列",
+      "resumeQueue": "恢复队列",
+      "viewDetails": "查看详情",
+      "currentPipeline": "当前管线",
+      "noPipeline": "暂无活动管线",
+      "queuePaused": "队列已暂停",
+      "queueRunning": "队列运行中",
+      "queueResumed": "队列已恢复运行",
+      "cancel": "取消",
+      "retry": "重试",
+      "taskId": "任务 ID",
+      "type": "类型",
+      "status": "状态",
+      "progress": "进度",
+      "actions": "操作",
+      "noTasks": "队列中暂无任务",
+      "noteName": "笔记名"
+    },
+    "recentOps": {
+      "title": "操作历史",
+      "empty": "暂无可撤销的操作",
+      "undo": "撤销",
+      "viewSnapshot": "查看快照",
+      "refresh": "刷新",
+      "clearAll": "清空全部",
+      "clearAllConfirmTitle": "确认清空",
+      "clearAllConfirmMessage": "确定要清空所有快照吗？此操作不可撤销。",
+      "moreSnapshots": "还有 {count} 个更早的快照",
+      "timeJustNow": "刚刚",
+      "timeMinutesAgo": "{minutes} 分钟前",
+      "timeHoursAgo": "{hours} 小时前",
+      "timeDaysAgo": "{days} 天前",
+      "operationLabels": {
+        "enrich": "标记",
+        "merge": "合并",
+        "amend": "修订",
+        "manualEdit": "手动编辑",
+        "standardize": "定义",
+        "create": "创建笔记",
+        "fallback": "操作"
+      }
+    },
+    "pipeline": {
+      "id": "ID",
+      "type": "类型",
+      "stage": "阶段",
+      "view": "查看",
+      "confirmCreate": "确认创建",
+      "previewWrite": "预览写入",
+      "mergePreview": "合并预览",
+      "amendPreview": "修订预览",
+      "verificationResult": "校验结果：",
+      "chineseName": "中文名称：",
+      "englishName": "英文名称：",
+      "autoSelect": "自动选择",
+      "saveEdit": "保存编辑",
+      "generatedContentPreview": "生成内容预览（写入前）",
+      "progressTitle": "AI 阶段进度",
+      "progressHint": "实时显示 LLM 调用阶段与写入状态",
+      "empty": "当前没有进行中的管线",
+      "kind": {
+        "create": "创建",
+        "amend": "修订",
+        "merge": "合并"
+      },
+      "stages": {
+        "idle": "空闲",
+        "defining": "定义中",
+        "tagging": "标记中",
+        "indexing": "索引中",
+        "review_draft": "确认草稿",
+        "writing": "撰写中",
+        "verifying": "校验中",
+        "review_changes": "确认修改",
+        "saving": "写入中",
+        "checking_duplicates": "查重中",
+        "completed": "已完成",
+        "failed": "失败"
+      },
+      "stageMessages": {
+        "default": "AI 正在处理该步骤",
+        "idle": "等待新任务开始",
+        "defining": "分析输入并完成概念定义",
+        "tagging": "扩展别名、标签等上下文",
+        "indexing": "生成语义向量以便搜索",
+        "review_draft": "等待确认创建草稿",
+        "writing": "生成正文或合并内容",
+        "verifying": "AI 校验中，确保输出可靠",
+        "review_changes": "等待用户确认写入",
+        "saving": "写入文件并生成快照",
+        "checking_duplicates": "刷新查重索引，清理历史记录",
+        "completed": "流程已完成，可在历史中撤销",
+        "failed": "流程失败，请查看错误信息或重试"
+      }
+    },
+    "typeConfidenceTable": {
+      "type": "类型",
+      "standardName": "标准名称",
+      "confidence": "置信度",
+      "action": "操作"
+    },
+    "duplicatePreview": {
+      "title": "重复概念预览",
+      "similarity": "相似度:",
+      "type": "类型:",
+      "detectedAt": "检测时间:",
+      "sideBySide": "并排对比",
+      "diffHighlight": "差异高亮",
+      "mergeAction": "🔀 合并",
+      "dismissAction": "🚫 忽略",
+      "openA": "📄 打开 A",
+      "openB": "📄 打开 B",
+      "cancel": "取消"
+    },
+    "duplicateHistory": {
+      "title": "重复对历史",
+      "mergedTab": "已合并",
+      "dismissedTab": "已忽略",
+      "emptyMerged": "暂无已合并的重复对",
+      "emptyDismissed": "暂无已忽略的重复对",
+      "similarity": "相似度",
+      "undoDismiss": "撤销忽略",
+      "delete": "删除",
+      "close": "关闭"
+    },
+    "diffPreview": {
+      "accept": "接受",
+      "reject": "放弃",
+      "acceptAria": "接受更改",
+      "rejectAria": "放弃更改"
+    },
+    "snapshotDiff": {
+      "title": "快照预览: {id}",
+      "createdAt": "创建时间：{time}",
+      "snapshotVersion": "快照版本",
+      "currentVersion": "当前版本",
+      "restore": "恢复此快照",
+      "close": "关闭"
+    },
+    "mergeSelection": {
+      "title": "选择合并后的笔记名称",
+      "infoLabel": "将合并以下两个笔记：",
+      "similarity": "相似度: {value}",
+      "keepSectionTitle": "1. 选择保留哪个笔记",
+      "keepGroupLabel": "选择保留哪个笔记",
+      "keepCardAria": "保留“{name}”作为主体",
+      "keepRadioAria": "保留“{name}”",
+      "keepCardTitle": "保留 \"{name}\"",
+      "keepCardDesc": "以此笔记的内容为主体",
+      "nameSectionTitle": "2. 选择合并后的名称",
+      "nameGroupLabel": "选择合并后的名称",
+      "nameOptionAria": "使用名称：{name}",
+      "nameRadioAria": "名称：{name}",
+      "customLabel": "或输入自定义名称:",
+      "customPlaceholder": "输入新笔记名称（不含 .md 扩展名）",
+      "customAria": "输入自定义笔记名称",
+      "confirm": "确认合并",
+      "cancel": "取消",
+      "nameRequired": "请选择或输入笔记名称",
+      "invalidName": "文件名不能包含以下字符: \\ / : * ? \" < > |",
+      "processing": "处理中..."
+    },
+    "notifications": {
+      "systemNotInitialized": "系统未初始化",
+      "enterDescription": "请输入概念描述",
+      "standardizeFailed": "定义失败",
+      "standardizeComplete": "定义完成，请选择类型",
+      "pluginNotInitialized": "插件未初始化",
+      "openMarkdownFirst": "请先打开一个 Markdown 笔记",
+      "createFailed": "创建失败",
+      "conceptCreated": "概念创建已启动",
+      "selectDuplicates": "请先选择要合并的重复对",
+      "batchMergeConfirm": "确定要合并选中的重复对吗？",
+      "batchMergeComplete": "批量合并完成",
+      "batchDismissConfirm": "确定要忽略选中的重复对吗？",
+      "batchDismissComplete": "批量忽略完成",
+      "fileNotFound": "文件不存在",
+      "previewFailed": "显示预览失败",
+      "mergeTaskCreated": "合并任务已创建",
+      "duplicateManagerNotInitialized": "重复管理器未初始化",
+      "orchestratorNotInitialized": "管线编排器未初始化",
+      "dismissFailed": "忽略失败",
+      "dismissSuccess": "已忽略重复对",
+      "queueResumed": "队列已恢复运行",
+      "queuePaused": "队列已暂停",
+      "taskCancelled": "任务已取消",
+      "cancelFailed": "取消失败",
+      "retryComplete": "已重试失败任务",
+      "clearComplete": "已清除任务",
+      "undoFailed": "撤销失败",
+      "undoSuccess": "撤销成功",
+      "undoSuccessRestored": "撤销成功（文件已恢复）",
+      "confirmCreateFailed": "确认创建失败",
+      "confirmCreateWaiting": "已确认创建，等待内容生成",
+      "standardizeUpdated": "已更新定义结果",
+      "undoDismissSuccess": "已撤销忽略，重复对已恢复到待处理列表",
+      "deletePairSuccess": "已删除重复对记录",
+      "writeFailed": "写入失败",
+      "writeSuccess": "已写入，支持撤销",
+      "writePreviewFailed": "无法生成写入预览",
+      "amendCancelled": "已取消修订",
+      "writeCancelled": "已取消写入",
+      "amendCompleted": "修订完成",
+      "mergeCompleted": "合并完成",
+      "mergeCancelled": "已取消合并",
+      "mergeStarted": "合并任务已启动，请等待 AI 生成合并内容...",
+      "improveStarted": "改进任务已启动，请等待 AI 生成改进内容...",
+      "verifyStarted": "核查任务已启动，请等待 AI 生成核查报告...",
+      "imageTaskCreated": "图片生成任务已创建",
+      "imageGenerationFailed": "图片生成任务创建失败",
+      "featureDisabled": "功能已关闭",
+      "workbenchNotInitialized": "工作台未初始化，请稍后重试",
+      "startFailed": "启动失败: {message}",
+      "commandFailed": "命令执行失败: {message}",
+      "noPendingDuplicates": "没有待处理的重复对",
+      "pendingDuplicatesHint": "有 {count} 个待处理的重复对，请在工作台中选择要合并的重复对",
+      "improveInstructionRequired": "请输入修订指令",
+      "conceptLocked": "该概念正在被处理中，请稍后再试"
+    }
+  },
+  "expand": {
+    "titlePrefix": "拓展：",
+    "stats": {
+      "total": "候选总数",
+      "creatable": "可创建",
+      "existing": "已存在",
+      "invalid": "不可创建"
+    },
+    "selectAll": "全选",
+    "deselectAll": "全不选",
+    "confirm": "创建已选",
+    "empty": "暂无候选项",
+    "status": {
+      "existing": "已存在",
+      "invalid": "不可创建"
+    },
+    "looseStructureHint": "未找到标准章节，已回退全局扫描，结果可能不完整",
+    "abstractTitlePrefix": "抽象：",
+    "abstractInstruction": "选择至少 1 个相似概念，与当前笔记一起生成更高层概念。",
+    "abstractConfirm": "生成",
+    "similarity": "相似度",
+    "notInitialized": "拓展功能未初始化",
+    "started": "已启动 {count} 个创建任务",
+    "startedWithFailures": "已启动 {started} 个任务，{failed} 个未能启动"
+  },
+  "settings": {
+    "title": "Cognitive Razor 设置",
+    "tabs": {
+      "general": "通用",
+      "providers": "AI Providers",
+      "knowledge": "知识库",
+      "system": "系统"
+    },
+    "groups": {
+      "interface": "界面",
+      "deduplication": "去重",
+      "performance": "性能",
+      "directory": "目录结构",
+      "typeDirectories": "类型目录",
+      "vectorEmbedding": "向量嵌入",
+      "taskModels": "任务模型配置",
+      "snapshots": "快照与撤销",
+      "logging": "日志",
+      "dataManagement": "数据管理"
+    },
+    "language": {
+      "name": "语言",
+      "desc": "选择界面语言",
+      "zh": "中文",
+      "en": "English"
+    },
+    "similarityThreshold": {
+      "name": "相似度阈值",
+      "desc": "用于检测重复概念的相似度阈值 (0-1)"
+    },
+    "maxSnapshots": {
+      "name": "最大快照数量",
+      "desc": "用于撤销操作的最大快照数量"
+    },
+    "maxSnapshotAgeDays": {
+      "name": "快照保留天数",
+      "desc": "超过此天数的快照将被自动清理"
+    },
+    "concurrency": {
+      "name": "并发任务数",
+      "desc": "同时执行的最大任务数"
+    },
+    "provider": {
+      "title": "AI Provider 配置",
+      "addButton": "添加 Provider",
+      "addDesc": "配置 AI 服务提供商（支持 OpenAI 标准格式，可通过自定义端点兼容其他服务）",
+      "noProvider": "尚未配置任何 Provider。请添加至少一个 Provider 以使用插件功能。",
+      "addFirstProvider": "点击上方按钮添加您的第一个 AI Provider",
+      "defaultProvider": "默认 Provider",
+      "defaultProviderDesc": "选择默认使用的 AI Provider",
+      "testConnection": "测试连接",
+      "setDefault": "设为默认",
+      "status": "状态",
+      "enabled": "启用",
+      "disabled": "禁用",
+      "model": "模型"
+    },
+    "importExport": {
+      "title": "导入导出",
+      "export": "导出",
+      "exportDesc": "导出当前配置为 JSON 文件",
+      "import": "导入",
+      "importDesc": "从 JSON 文件导入配置",
+      "reset": "重置",
+      "resetDesc": "将所有设置重置为默认值"
+    },
+    "advanced": {
+      "title": "高级设置",
+      "namingTemplate": {
+        "name": "命名模板",
+        "desc": "笔记文件名模板。支持的占位符：{{chinese}} (中文名), {{english}} (英文名), {{type}} (类型英文), {{type_cn}} (类型中文), {{uid}} (唯一标识符)"
+      },
+      "directoryScheme": {
+        "title": "目录方案",
+        "desc": "为每种知识类型配置存储目录"
+      },
+      "taskModels": {
+        "title": "任务模型配置",
+        "desc": "为不同任务类型配置使用的模型和参数",
+        "providerAndModel": "Provider 和模型",
+        "useDefaultProvider": "使用默认 Provider",
+        "configureProviderFirst": "请先配置 Provider",
+        "modelName": "模型名称",
+        "modelNamePlaceholder": "模型名称",
+        "notSet": "不设置",
+        "low": "低",
+        "medium": "中",
+        "high": "高",
+        "advancedParams": "高级参数配置"
+      },
+      "temperature": {
+        "name": "Temperature",
+        "desc": "控制生成内容的随机性 (0-2)，较低值更确定，较高值更创意"
+      },
+      "topP": {
+        "name": "Top P",
+        "desc": "核采样参数 (0-1)，控制生成内容的多样性"
+      },
+      "reasoningEffort": {
+        "name": "Reasoning Effort",
+        "desc": "推理强度（用于支持推理的模型，如 o1, o3）"
+      },
+      "embedding": {
+        "title": "嵌入参数",
+        "dimension": "向量维度",
+        "dimensionDesc": "嵌入向量的维度（text-embedding-3-small 支持 256-3072）",
+        "dimensionWarning": "修改维度后需要重建向量索引，现有的向量数据将失效"
+      },
+      "features": {
+        "title": "功能开关",
+        "enableAutoVerify": "启用自动校验（Verify）",
+        "enableAutoVerifyDesc": "在写入落盘后自动执行 Verify，并将报告追加到笔记末尾（会增加一次 LLM 调用）"
+      },
+      "queue": {
+        "title": "队列参数",
+        "autoRetry": "自动重试",
+        "autoRetryDesc": "任务失败时自动重试",
+        "maxRetryAttempts": "最大重试次数",
+        "maxRetryAttemptsDesc": "任务失败时的最大重试次数",
+        "taskTimeout": "任务超时时间",
+        "taskTimeoutDesc": "单个任务的最大执行时长（毫秒，默认 180000 = 3分钟）",
+        "maxTaskHistory": "任务历史上限",
+        "maxTaskHistoryDesc": "保留的已完成/失败/取消任务数量上限（默认 300）",
+        "providerTimeout": "Provider 请求超时",
+        "providerTimeoutDesc": "API 请求的超时时间（毫秒，默认 1800000 = 30分钟）"
+      },
+      "logging": {
+        "title": "日志设置",
+        "logLevel": "日志级别",
+        "logLevelDesc": "设置日志记录的详细程度",
+        "clearLogs": "清除日志",
+        "clearLogsDesc": "清空所有日志文件",
+        "levels": {
+          "debug": "调试",
+          "info": "信息",
+          "warn": "警告",
+          "error": "错误"
+        }
+      }
+    }
+  },
+  "setupWizard": {
+    "title": "配置 AI Provider"
+  },
+  "modals": {
+    "addProvider": {
+      "title": "添加 AI Provider"
+    },
+    "editProvider": {
+      "title": "编辑 AI Provider"
+    }
+  },
+  "notices": {
+    "providerAdded": "Provider {id} 已添加",
+    "providerUpdated": "Provider {id} 已更新",
+    "providerDeleted": "Provider {id} 已删除",
+    "providerSetDefault": "默认 Provider 已设置为: {id}",
+    "connectionSuccess": "连接成功！\n聊天: {chat}\n嵌入: {embedding}\n可用模型: {models} 个",
+    "connectionFailed": "连接失败: {error}",
+    "settingsExported": "配置已导出",
+    "settingsImported": "配置已导入",
+    "settingsReset": "配置已重置",
+    "logsCleared": "日志已清除",
+    "noLogsToClean": "没有日志文件需要清除",
+    "languageChanged": "语言已切换为: {language}",
+    "logLevelChanged": "日志级别已设置为: {level}（将在下次启动时生效）",
+    "groundingEnabled": "校验已启用",
+    "groundingDisabled": "校验已禁用",
+    "networkRestored": "网络已恢复，队列可继续运行",
+    "networkOffline": "AI 服务离线，队列已暂停"
+  },
+  "confirmDialogs": {
+    "deleteProvider": {
+      "title": "删除 Provider",
+      "message": "确定要删除 Provider \"{id}\" 吗？此操作不可撤销。"
+    },
+    "resetSettings": {
+      "title": "重置设置",
+      "message": "确定要重置所有设置吗？此操作不可撤销。"
+    },
+    "deleteDuplicatePair": {
+      "title": "确认删除",
+      "message": "确定要永久删除这个重复对记录吗？此操作不可撤销。"
+    }
+  },
+  "taskTypes": {
+    "define": {
+      "name": "定义",
+      "desc": "标准化输入并确定知识类型"
+    },
+    "tag": {
+      "name": "标记",
+      "desc": "生成别名与标签"
+    },
+    "amend": {
+      "name": "修订",
+      "desc": "对现有内容进行增量优化"
+    },
+    "merge": {
+      "name": "合并",
+      "desc": "融合语义重复的概念"
+    },
+    "index": {
+      "name": "索引",
+      "desc": "生成语义向量以便检索"
+    },
+    "write": {
+      "name": "撰写",
+      "desc": "生成完整正文或合并内容"
+    },
+    "verify": {
+      "name": "校验",
+      "desc": "验证生成内容的准确性"
+    },
+    "image-generate": {
+      "name": "图像生成",
+      "desc": "生成图片并插入笔记"
+    }
+  },
+  "crTypes": {
+    "Domain": "领域",
+    "Issue": "议题",
+    "Theory": "理论",
+    "Entity": "实体",
+    "Mechanism": "机制"
+  },
+  "crTypeDirectories": {
+    "Domain": "知识领域的存储目录。默认: 1-领域，支持相对路径如 CR/1-领域",
+    "Issue": "问题议题的存储目录。默认: 2-议题，支持相对路径如 CR/2-议题",
+    "Theory": "理论学说的存储目录。默认: 3-理论，支持相对路径如 CR/3-理论",
+    "Entity": "实体对象的存储目录。默认: 4-实体，支持相对路径如 CR/4-实体",
+    "Mechanism": "机制原理的存储目录。默认: 5-机制，支持相对路径如 CR/5-机制"
+  },
+  "taskModels": {
+    "title": "任务模型配置",
+    "resetAll": "重置全部",
+    "resetAllConfirm": "确定要将所有任务配置重置为默认值吗？此操作不可撤销。",
+    "reset": "重置",
+    "resetConfirm": "确定要将此任务配置重置为默认值吗？",
+    "isDefault": "默认值",
+    "isCustom": "自定义",
+    "recommended": "推荐",
+    "fields": {
+      "provider": "Provider",
+      "providerDesc": "选择 AI Provider（留空则使用默认 Provider）",
+      "useDefaultProvider": "使用默认 Provider",
+      "model": "模型名称",
+      "modelDesc": "指定使用的模型（如 gemini-3-flash-preview）",
+      "temperature": "Temperature",
+      "temperatureDesc": "控制生成内容的随机性 (0-2)，较低值更确定，较高值更创意",
+      "topP": "Top P",
+      "topPDesc": "核采样参数 (0-1)，控制生成内容的多样性",
+      "maxTokens": "最大输出 Tokens",
+      "maxTokensDesc": "限制模型输出 token 上限（留空表示不限制）",
+      "reasoningEffort": "推理强度",
+      "reasoningEffortDesc": "用于支持推理的模型（如 o1, o3）",
+      "embeddingDimension": "嵌入维度",
+      "embeddingDimensionDesc": "向量嵌入的维度大小"
+    },
+    "tasks": {
+      "define": {
+        "name": "Define (定义)",
+        "desc": "分析和定义概念的核心含义"
+      },
+      "tag": {
+        "name": "Tag (标记)",
+        "desc": "标记和分类概念"
+      },
+      "write": {
+        "name": "Write (撰写)",
+        "desc": "撰写和扩展概念内容"
+      },
+      "amend": {
+        "name": "Amend (修订)",
+        "desc": "对已有概念进行增量优化"
+      },
+      "merge": {
+        "name": "Merge (合并)",
+        "desc": "融合重复概念并生成合并内容"
+      },
+      "index": {
+        "name": "Index (索引)",
+        "desc": "生成语义向量并建立索引"
+      },
+      "verify": {
+        "name": "Verify (校验)",
+        "desc": "验证和检查概念质量"
+      },
+      "image-generate": {
+        "name": "Image (图像)",
+        "desc": "生成图片并插入笔记"
+      }
+    },
+    "reasoningEffortOptions": {
+      "notSet": "不设置",
+      "low": "低",
+      "medium": "中",
+      "high": "高"
+    },
+    "validation": {
+      "temperature": "Temperature 需在 0-2 之间",
+      "topP": "Top P 需在 0-1 之间",
+      "maxTokens": "最大输出 Tokens 需为正整数"
+    }
+  },
+  "imageGeneration": {
+    "title": "图片生成设置",
+    "enabled": {
+      "name": "启用图片生成",
+      "desc": "允许在笔记中插入 AI 生成的图片"
+    },
+    "defaultSize": {
+      "name": "默认图片尺寸",
+      "desc": "生成图片的默认尺寸",
+      "square": "正方形 (1024×1024)",
+      "landscape": "横向 (1792×1024)",
+      "portrait": "纵向 (1024×1792)"
+    },
+    "defaultQuality": {
+      "name": "图片质量",
+      "desc": "standard: 标准质量，hd: 高清质量（消耗更多 token）",
+      "standard": "标准",
+      "hd": "高清"
+    },
+    "defaultStyle": {
+      "name": "图片风格",
+      "desc": "vivid: 鲜艳生动，natural: 自然真实",
+      "vivid": "鲜艳",
+      "natural": "自然"
+    },
+    "defaultAspectRatio": {
+      "name": "宽高比",
+      "desc": "（已废弃）旧字段，不再用于图片生成；请使用「默认图片尺寸」"
+    },
+    "defaultImageSize": {
+      "name": "输出分辨率",
+      "desc": "（已废弃）旧字段，不再用于图片生成；请使用「默认图片尺寸」"
+    },
+    "contextWindowSize": {
+      "name": "上下文窗口大小",
+      "desc": "读取光标前后用于提示词的字符数"
+    }
+  },
+  "statusBadge": {
+    "idle": "空闲",
+    "active": "{count} 个任务",
+    "paused": "已暂停",
+    "error": "{count} 个失败",
+    "offline": "离线",
+    "ariaIdle": "Cognitive Razor - 空闲",
+    "ariaActive": "Cognitive Razor - {count} 个任务执行中",
+    "ariaPaused": "Cognitive Razor - 队列已暂停，{count} 个任务",
+    "ariaError": "Cognitive Razor - {count} 个任务失败",
+    "ariaOffline": "Cognitive Razor - 离线"
+  }
+}

@@ -7,9 +7,12 @@
  */
 
 import { App, Notice, Setting, setIcon } from "obsidian";
+import { formatMessage } from "../core/i18n";
 import { renderSideBySideDiff } from "./diff-view";
 import type { DuplicatePair } from "../types";
 import { AbstractModal } from "./abstract-modal";
+
+type Translator = (path: string) => string;
 
 /**
  * 名称选择 Modal
@@ -30,6 +33,7 @@ export class MergeNameSelectionModal extends AbstractModal {
       onConfirm: (finalFileName: string, keepNodeId: string) => Promise<void>;
       onCancel: () => void;
       resolveName?: (nodeId: string) => string;
+      t?: Translator;
     }
   ) {
     super(app);
@@ -38,18 +42,19 @@ export class MergeNameSelectionModal extends AbstractModal {
 
   protected renderContent(contentEl: HTMLElement): void {
     contentEl.addClass("cr-merge-modal");
-    contentEl.setAttr("role", "dialog");
-    contentEl.setAttr("aria-modal", "true");
 
     // 标题
-    const titleEl = contentEl.createEl("h2", { text: "选择合并后的笔记名称", cls: "cr-modal-title" });
+    const titleEl = contentEl.createEl("h2", {
+      text: this.text("workbench.mergeSelection.title", "选择合并后的笔记名称"),
+      cls: "cr-modal-title"
+    });
     titleEl.id = `cr-merge-title-${this.pair.id}`;
     contentEl.setAttr("aria-labelledby", titleEl.id);
 
     // 信息提示
     const infoEl = contentEl.createDiv({ cls: "cr-merge-info" });
     infoEl.createEl("p", {
-      text: `将合并以下两个笔记：`,
+      text: this.text("workbench.mergeSelection.infoLabel", "将合并以下两个笔记："),
       cls: "cr-info-label"
     });
     
@@ -60,13 +65,16 @@ export class MergeNameSelectionModal extends AbstractModal {
     notesList.createDiv({ text: nameB, cls: "cr-note-item" });
     
     const similarityBadge = infoEl.createDiv({ cls: "cr-similarity-badge" });
-    similarityBadge.textContent = `相似度: ${(this.pair.similarity * 100).toFixed(1)}%`;
+    similarityBadge.textContent = formatMessage(
+      this.text("workbench.mergeSelection.similarity", "相似度: {value}"),
+      { value: `${(this.pair.similarity * 100).toFixed(1)}%` }
+    );
 
     // 选择保留哪个笔记
-    contentEl.createEl("h3", { text: "1. 选择保留哪个笔记", cls: "cr-section-title" });
+    contentEl.createEl("h3", { text: this.text("workbench.mergeSelection.keepSectionTitle", "1. 选择保留哪个笔记"), cls: "cr-section-title" });
     const keepNoteSection = contentEl.createDiv({ cls: "cr-radio-group" });
     keepNoteSection.setAttr("role", "radiogroup");
-    keepNoteSection.setAttr("aria-label", "选择保留哪个笔记");
+    keepNoteSection.setAttr("aria-label", this.text("workbench.mergeSelection.keepGroupLabel", "选择保留哪个笔记"));
 
     let keepNodeId = this.pair.nodeIdA;
 
@@ -91,13 +99,19 @@ export class MergeNameSelectionModal extends AbstractModal {
       label.setAttr("tabindex", "0");
       label.setAttr("role", "radio");
       label.setAttr("aria-checked", String(isChecked));
-      label.setAttr("aria-label", `保留“${name}”作为主体`);
+      label.setAttr("aria-label", formatMessage(
+        this.text("workbench.mergeSelection.keepCardAria", "保留“{name}”作为主体"),
+        { name }
+      ));
 
       const radio = label.createEl("input", { type: "radio", value });
       radio.name = groupName;
       radio.checked = isChecked;
       radio.setAttr("tabindex", "-1");
-      radio.setAttr("aria-label", `保留“${name}”`);
+      radio.setAttr("aria-label", formatMessage(
+        this.text("workbench.mergeSelection.keepRadioAria", "保留“{name}”"),
+        { name }
+      ));
       radio.addEventListener("change", () => {
         onChange();
         updateRadioCardAria(container, groupName);
@@ -125,8 +139,14 @@ export class MergeNameSelectionModal extends AbstractModal {
       });
       
       const content = label.createDiv({ cls: "cr-radio-content" });
-      content.createDiv({ text: `保留 "${name}"`, cls: "cr-radio-title" });
-      content.createDiv({ text: "以此笔记的内容为主体", cls: "cr-radio-desc" });
+      content.createDiv({
+        text: formatMessage(this.text("workbench.mergeSelection.keepCardTitle", "保留 \"{name}\""), { name }),
+        cls: "cr-radio-title"
+      });
+      content.createDiv({
+        text: this.text("workbench.mergeSelection.keepCardDesc", "以此笔记的内容为主体"),
+        cls: "cr-radio-desc"
+      });
       
       return radio;
     };
@@ -161,10 +181,13 @@ export class MergeNameSelectionModal extends AbstractModal {
     );
 
     // 选择名称
-    contentEl.createEl("h3", { text: "2. 选择合并后的名称", cls: "cr-section-title" });
+    contentEl.createEl("h3", {
+      text: this.text("workbench.mergeSelection.nameSectionTitle", "2. 选择合并后的名称"),
+      cls: "cr-section-title"
+    });
     const nameOptionsSection = contentEl.createDiv({ cls: "cr-radio-group-vertical" });
     nameOptionsSection.setAttr("role", "radiogroup");
-    nameOptionsSection.setAttr("aria-label", "选择合并后的名称");
+    nameOptionsSection.setAttr("aria-label", this.text("workbench.mergeSelection.nameGroupLabel", "选择合并后的名称"));
 
     const createNameRadio = (
       container: HTMLElement,
@@ -176,12 +199,18 @@ export class MergeNameSelectionModal extends AbstractModal {
       label.setAttr("tabindex", "0");
       label.setAttr("role", "radio");
       label.setAttr("aria-checked", String(isChecked));
-      label.setAttr("aria-label", `使用名称：${name}`);
+      label.setAttr("aria-label", formatMessage(
+        this.text("workbench.mergeSelection.nameOptionAria", "使用名称：{name}"),
+        { name }
+      ));
       const radio = label.createEl("input", { type: "radio", value: name });
       radio.name = "merge-name";
       radio.checked = isChecked;
       radio.setAttr("tabindex", "-1");
-      radio.setAttr("aria-label", `名称：${name}`);
+      radio.setAttr("aria-label", formatMessage(
+        this.text("workbench.mergeSelection.nameRadioAria", "名称：{name}"),
+        { name }
+      ));
       radio.addEventListener("change", () => {
         onChange();
         const rows = Array.from(container.querySelectorAll("label.cr-radio-row"));
@@ -241,13 +270,16 @@ export class MergeNameSelectionModal extends AbstractModal {
 
     // 选项 3: 自定义名称
     const customSection = contentEl.createDiv({ cls: "cr-custom-name-section" });
-    customSection.createEl("label", { text: "或输入自定义名称:", cls: "cr-input-label" });
+    customSection.createEl("label", {
+      text: this.text("workbench.mergeSelection.customLabel", "或输入自定义名称:"),
+      cls: "cr-input-label"
+    });
 
     this.customInput = customSection.createEl("input", {
       type: "text",
-      placeholder: "输入新笔记名称（不含 .md 扩展名）",
+      placeholder: this.text("workbench.mergeSelection.customPlaceholder", "输入新笔记名称（不含 .md 扩展名）"),
       cls: "cr-input-full",
-      attr: { "aria-label": "输入自定义笔记名称" }
+      attr: { "aria-label": this.text("workbench.mergeSelection.customAria", "输入自定义笔记名称") }
     });
 
     this.customInput.oninput = () => {
@@ -263,38 +295,41 @@ export class MergeNameSelectionModal extends AbstractModal {
     const buttonContainer = contentEl.createDiv({ cls: "cr-modal-buttons" });
 
     const confirmBtn = buttonContainer.createEl("button", {
-      text: "确认合并",
+      text: this.text("workbench.mergeSelection.confirm", "确认合并"),
       cls: "mod-cta"
     });
     confirmBtn.onclick = async () => {
       const finalName = this.selectedValue.trim();
       if (!finalName) {
-        new Notice("请选择或输入笔记名称");
+        new Notice(this.text("workbench.mergeSelection.nameRequired", "请选择或输入笔记名称"));
         return;
       }
 
       // 验证文件名（不能包含非法字符）
       const invalidChars = /[\\/:*?"<>|]/;
       if (invalidChars.test(finalName)) {
-        new Notice("文件名不能包含以下字符: \\ / : * ? \" < > |");
+        new Notice(this.text("workbench.mergeSelection.invalidName", "文件名不能包含以下字符: \\ / : * ? \" < > |"));
         return;
       }
 
       confirmBtn.disabled = true;
-      confirmBtn.textContent = "处理中...";
+      confirmBtn.textContent = this.text("workbench.mergeSelection.processing", "处理中...");
 
       try {
         await this.options.onConfirm(finalName, keepNodeId);
         this.close();
       } catch (error) {
-        new Notice(`启动合并失败: ${String(error)}`);
+        new Notice(formatMessage(
+          this.text("workbench.notifications.startFailed", "启动失败: {message}"),
+          { message: String(error) }
+        ));
         confirmBtn.disabled = false;
-        confirmBtn.textContent = "确认合并";
+        confirmBtn.textContent = this.text("workbench.mergeSelection.confirm", "确认合并");
       }
     };
 
     const cancelBtn = buttonContainer.createEl("button", {
-      text: "取消"
+      text: this.text("workbench.mergeSelection.cancel", "取消")
     });
     cancelBtn.onclick = () => {
       this.options.onCancel();
@@ -313,6 +348,12 @@ export class MergeNameSelectionModal extends AbstractModal {
     } catch {
       return nodeId;
     }
+  }
+
+  private text(path: string, fallback: string): string {
+    if (!this.options.t) return fallback;
+    const value = this.options.t(path);
+    return value === path ? fallback : value;
   }
 }
 
@@ -340,13 +381,18 @@ export class MergeDiffModal extends AbstractModal {
     }
   ) {
     super(app);
+    this.isDestructive = true;
+  }
+
+  /** 破坏性 Escape：触发取消操作 */
+  protected onEscapeDestructive(): void {
+    this.options.onCancel();
+    this.close();
   }
 
   protected renderContent(contentEl: HTMLElement): void {
     contentEl.addClass("cr-merge-diff-modal");
     this.modalEl.addClass("cr-merge-diff-modal");
-    contentEl.setAttr("role", "dialog");
-    contentEl.setAttr("aria-modal", "true");
 
     contentEl.createEl("h2", { text: this.options.title });
 
