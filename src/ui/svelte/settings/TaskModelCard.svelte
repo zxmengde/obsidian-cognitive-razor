@@ -39,14 +39,22 @@
         onReset: (taskType: TaskType) => void;
     } = $props();
 
-    /** 是否为嵌入类任务（index 不需要温度参数） */
+    /** 是否为嵌入类任务（index 不需要温度/topP/推理参数） */
     let isEmbeddingTask = $derived(taskType === 'index');
 
-    /** 是否为图片生成任务（不需要温度参数） */
+    /** 是否为图片生成任务（不需要温度/topP/推理参数） */
     let isImageTask = $derived(taskType === 'image-generate');
 
-    /** 是否显示温度滑块 */
-    let showTemperature = $derived(!isEmbeddingTask && !isImageTask);
+    /** 是否显示聊天模型参数（温度、topP、推理强度） */
+    let showChatParams = $derived(!isEmbeddingTask && !isImageTask);
+
+    /** 推理强度下拉选项 */
+    let reasoningOptions = $derived(() => [
+        { value: '', label: i18n.t('taskModels.reasoningEffortOptions.notSet') },
+        { value: 'low', label: i18n.t('taskModels.reasoningEffortOptions.low') },
+        { value: 'medium', label: i18n.t('taskModels.reasoningEffortOptions.medium') },
+        { value: 'high', label: i18n.t('taskModels.reasoningEffortOptions.high') },
+    ]);
 
     /** Provider 下拉选项 */
     let providerOptions = $derived(() => {
@@ -72,6 +80,16 @@
 
     function handleTemperatureChange(value: number) {
         onUpdate(taskType, { temperature: value });
+    }
+
+    function handleTopPChange(value: number) {
+        onUpdate(taskType, { topP: value });
+    }
+
+    function handleReasoningEffortChange(value: string) {
+        // 空字符串表示不设置
+        const effort = value === '' ? undefined : value as "low" | "medium" | "high";
+        onUpdate(taskType, { reasoning_effort: effort });
     }
 </script>
 
@@ -126,7 +144,7 @@
             />
         </div>
 
-        {#if showTemperature}
+        {#if showChatParams}
             <div class="cr-task-model-card__field">
                 <label class="cr-task-model-card__label">
                     {i18n.t('taskModels.fields.temperature')}
@@ -137,6 +155,30 @@
                     max={2}
                     step={0.1}
                     onchange={handleTemperatureChange}
+                />
+            </div>
+
+            <div class="cr-task-model-card__field">
+                <label class="cr-task-model-card__label">
+                    {i18n.t('taskModels.fields.topP')}
+                </label>
+                <Slider
+                    value={config.topP ?? 1}
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    onchange={handleTopPChange}
+                />
+            </div>
+
+            <div class="cr-task-model-card__field">
+                <label class="cr-task-model-card__label">
+                    {i18n.t('taskModels.fields.reasoningEffort')}
+                </label>
+                <Select
+                    value={config.reasoning_effort ?? ''}
+                    options={reasoningOptions()}
+                    onchange={handleReasoningEffortChange}
                 />
             </div>
         {/if}

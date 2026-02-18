@@ -118,15 +118,6 @@ export function showError(error: unknown, fallback?: string): void {
 }
 
 /**
- * 显示信息级反馈
- * info 级别不使用 Notice 弹窗，返回消息文本供组件内联显示
- * 调用方负责将返回值渲染到 UI 中
- */
-export function formatInfo(message: string): string {
-    return message;
-}
-
-/**
  * 显示 Undo Toast（底部浮层，8s 超时）
  * 用于写入操作后提供撤销入口
  *

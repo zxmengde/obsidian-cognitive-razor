@@ -41,8 +41,10 @@ export const REQUIRED_SETTINGS_FIELDS: (keyof PluginSettings)[] = [
   "providerTimeoutMs",
 ];
 
-const DEFAULT_TASK_TIMEOUT_MS = 3 * 60 * 1000;
-const DEFAULT_TASK_HISTORY = 300;
+/** 默认任务超时时间（毫秒） */
+export const DEFAULT_TASK_TIMEOUT_MS = 3 * 60 * 1000;
+/** 默认任务历史记录上限 */
+export const DEFAULT_TASK_HISTORY = 300;
 
 type ScalarSettingsKey = keyof Pick<
   PluginSettings,
@@ -1282,13 +1284,6 @@ export class SettingsStore {
     return typeof value === "object" && value !== null && !Array.isArray(value);
   }
 
-  // 便捷方法
-
-  /** 更新部分设置 */
-  async update(partial: Partial<PluginSettings>): Promise<Result<void>> {
-    return this.updateSettings(partial);
-  }
-
   /**
    * 重置指定任务模型配置到默认值
    */
@@ -1397,30 +1392,5 @@ export class SettingsStore {
     }
     
     return this.updateSettings(updates);
-  }
-
-  /**
-   * 导出设置（返回 Result）
-   */
-  async export(): Promise<Result<string>> {
-    try {
-      return ok(this.exportSettings());
-    } catch (error) {
-      return err("E500_INTERNAL_ERROR", "导出设置失败", error);
-    }
-  }
-
-  /**
-   * 导入设置（importSettings 的别名）
-   */
-  async import(json: string): Promise<Result<void>> {
-    return this.importSettings(json);
-  }
-
-  /**
-   * 重置设置（resetToDefaults 的别名）
-   */
-  async reset(): Promise<Result<void>> {
-    return this.resetToDefaults();
   }
 }

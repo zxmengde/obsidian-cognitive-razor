@@ -14,7 +14,6 @@ import {
     showWarning,
     showError,
     showUndoToast,
-    formatInfo,
     resetDedupeState,
 } from "./feedback";
 
@@ -148,12 +147,6 @@ describe("feedback 统一反馈服务", () => {
             showError({ code: "E201", message: "超时" });
             expect(mockNoticeInstances).toHaveLength(1);
             expect(mockNoticeInstances[0].message).toBe("[E201] 超时");
-        });
-    });
-
-    describe("formatInfo", () => {
-        it("应返回原始消息文本供内联显示", () => {
-            expect(formatInfo("提示信息")).toBe("提示信息");
         });
     });
 

@@ -44,27 +44,3 @@ export const COMMAND_IDS = {
   // 队列管理（已整合到工作台）
   PAUSE_QUEUE: `${COMMAND_PREFIX}:pause-queue`,
 } as const;
-
-/**
- * 获取核心命令 ID 列表
- * 
- * 遵循设计文档第 12 章：命令系统
- */
-export function getCoreCommandIds(): string[] {
-  return [
-    COMMAND_IDS.OPEN_WORKBENCH,
-    COMMAND_IDS.CREATE_CONCEPT,
-    COMMAND_IDS.IMPROVE_NOTE,
-    COMMAND_IDS.MERGE_DUPLICATES,
-    COMMAND_IDS.EXPAND_CURRENT_NOTE,
-  ];
-}
-
-/**
- * 验证命令 ID 格式
- * 遵循 Requirements 9.1：命令 ID 格式为 cognitive-razor:<action>-<target>
- */
-export function isValidCommandId(commandId: string): boolean {
-  const pattern = /^cognitive-razor:[a-z]+(-[a-z]+)*$/;
-  return pattern.test(commandId);
-}

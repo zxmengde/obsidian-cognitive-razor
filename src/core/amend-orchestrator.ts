@@ -10,7 +10,7 @@
  */
 
 import type { TFile } from "obsidian";
-import type { OrchestratorDeps } from "./orchestrator-deps";
+import type { AmendOrchestratorDeps } from "./orchestrator-deps";
 import {
     type ILogger,
     type TaskRecord,
@@ -21,7 +21,6 @@ import {
     type PipelineContext,
     type PipelineStage,
     type Result,
-    CognitiveRazorError,
     ok,
     err,
     toErr,
@@ -30,7 +29,28 @@ import { extractFrontmatter, generateMarkdownContent } from "./frontmatter-utils
 import { TaskFactory } from "./task-factory";
 import { generateUUID } from "../data/validators";
 import { formatCRTimestamp } from "../utils/date-utils";
-import { validatePrerequisites as sharedValidatePrerequisites, resolveProviderIdForTask, buildVerificationReportMarkdown } from "./orchestrator-utils";
+import {
+    validatePrerequisites as sharedValidatePrerequisites,
+    resolveProviderIdForTask,
+    buildVerificationReportMarkdown,
+    generatePipelineId as sharedGeneratePipelineId,
+    resolvePipelineIdFromTask,
+    markPipelineFailed,
+    markPipelineCompleted,
+    appendVerificationReport,
+    renderContentToMarkdown as sharedRenderContentToMarkdown,
+    maybeStartAutoVerifyOrComplete as sharedMaybeStartAutoVerifyOrComplete,
+    startVerifyTask as sharedStartVerifyTask,
+    publishEvent as sharedPublishEvent,
+    cancelPipelineTasks as sharedCancelPipelineTasks,
+    getActivePipelinesFrom,
+    savePipelineState as sharedSavePipelineState,
+    handleLockConflictError,
+    buildEmbeddingText,
+    refreshEmbeddingAndDuplicates as sharedRefreshEmbeddingAndDuplicates,
+    getActiveState as sharedGetActiveState,
+    restorePipelinesForKind,
+} from "./orchestrator-utils";
 
 // ============================================================================
 // 类型定义
@@ -62,7 +82,7 @@ type AmendPipelineEventListener = (event: AmendPipelineEvent) => void;
 // ============================================================================
 
 export class AmendOrchestrator {
-    private deps: OrchestratorDeps;
+    private deps: AmendOrchestratorDeps;
     private logger: ILogger;
 
     /** 活跃管线上下文 */
@@ -74,7 +94,7 @@ export class AmendOrchestrator {
     /** 队列事件取消订阅 */
     private unsubscribeQueue?: () => void;
 
-    constructor(deps: OrchestratorDeps) {
+    constructor(deps: AmendOrchestratorDeps) {
         this.deps = deps;
         this.logger = deps.logger;
 
@@ -203,19 +223,7 @@ export class AmendOrchestrator {
         }
 
         // 取消所有关联的任务
-        for (const [taskId, pid] of this.taskToPipeline.entries()) {
-            if (pid === pipelineId) {
-                try {
-                    this.deps.taskQueue.cancel(taskId);
-                } catch (error) {
-                    this.logger.warn("AmendOrchestrator", `取消任务失败: ${taskId}`, {
-                        pipelineId,
-                        error: error instanceof Error ? error.message : String(error),
-                    });
-                }
-                this.taskToPipeline.delete(taskId);
-            }
-        }
+        sharedCancelPipelineTasks(pipelineId, this.taskToPipeline, this.deps.taskQueue, this.logger, "AmendOrchestrator");
 
         context.stage = "failed";
         context.error = { code: "E310_INVALID_STATE", message: "用户取消" };
@@ -237,12 +245,10 @@ export class AmendOrchestrator {
     }
 
     /**
-     * 获取所有活跃管线
+     * 获取所有活跃管线（委托共享实现）
      */
     getActivePipelines(): PipelineContext[] {
-        return Array.from(this.pipelines.values()).filter(
-            (ctx) => ctx.stage !== "completed" && ctx.stage !== "failed",
-        );
+        return getActivePipelinesFrom(this.pipelines);
     }
 
     /**
@@ -259,44 +265,23 @@ export class AmendOrchestrator {
     }
 
     /**
-     * 恢复持久化的管线状态
+     * 恢复持久化的管线状态（委托共享实现）
      */
     restorePipelines(
         pipelines: Map<string, PipelineContext>,
         taskToPipeline: Map<string, string>,
     ): void {
-        for (const [id, ctx] of pipelines) {
-            if (ctx.kind === "amend") {
-                this.pipelines.set(id, ctx);
-            }
-        }
-        for (const [taskId, pipelineId] of taskToPipeline) {
-            if (this.pipelines.has(pipelineId)) {
-                this.taskToPipeline.set(taskId, pipelineId);
-            }
-        }
+        restorePipelinesForKind("amend", this.pipelines, this.taskToPipeline, pipelines, taskToPipeline);
     }
 
     /**
-     * 获取活跃管线和任务映射（用于持久化）
+     * 获取活跃管线和任务映射（委托共享实现）
      */
     getActiveState(): {
         pipelines: Map<string, PipelineContext>;
         taskToPipeline: Map<string, string>;
     } {
-        const activePipelines = new Map<string, PipelineContext>();
-        for (const [id, ctx] of this.pipelines) {
-            if (ctx.stage !== "completed" && ctx.stage !== "failed") {
-                activePipelines.set(id, ctx);
-            }
-        }
-        const activeTaskMap = new Map<string, string>();
-        for (const [taskId, pipelineId] of this.taskToPipeline) {
-            if (activePipelines.has(pipelineId)) {
-                activeTaskMap.set(taskId, pipelineId);
-            }
-        }
-        return { pipelines: activePipelines, taskToPipeline: activeTaskMap };
+        return sharedGetActiveState(this.pipelines, this.taskToPipeline);
     }
 
     /**
@@ -331,22 +316,13 @@ export class AmendOrchestrator {
      * 处理任务完成事件
      */
     private async handleTaskCompleted(taskId: string): Promise<void> {
-        const task = this.deps.taskQueue.getTask(taskId);
-        if (!task) return;
-
-        const pipelineId =
-            this.taskToPipeline.get(taskId) ||
-            (typeof (task.payload as Record<string, unknown>)?.pipelineId === "string"
-                ? ((task.payload as Record<string, unknown>).pipelineId as string)
-                : undefined);
+        const pipelineId = resolvePipelineIdFromTask(taskId, this.taskToPipeline, this.deps.taskQueue);
         if (!pipelineId) return;
-
-        if (!this.taskToPipeline.has(taskId)) {
-            this.taskToPipeline.set(taskId, pipelineId);
-        }
 
         const context = this.pipelines.get(pipelineId);
         if (!context) return;
+
+        const task = this.deps.taskQueue.getTask(taskId)!;
 
         this.logger.debug("AmendOrchestrator", `任务完成: ${taskId}`, {
             pipelineId,
@@ -368,40 +344,22 @@ export class AmendOrchestrator {
      * 处理任务失败事件
      */
     private handleTaskFailed(taskId: string): void {
-        const task = this.deps.taskQueue.getTask(taskId);
-        const pipelineId =
-            this.taskToPipeline.get(taskId) ||
-            (typeof (task?.payload as Record<string, unknown>)?.pipelineId === "string"
-                ? ((task!.payload as Record<string, unknown>).pipelineId as string)
-                : undefined);
+        const pipelineId = resolvePipelineIdFromTask(taskId, this.taskToPipeline, this.deps.taskQueue);
         if (!pipelineId) return;
-
-        if (!this.taskToPipeline.has(taskId)) {
-            this.taskToPipeline.set(taskId, pipelineId);
-        }
 
         const context = this.pipelines.get(pipelineId);
         if (!context) return;
 
-        context.stage = "failed";
-        context.error = {
-            code: task?.errors?.[0]?.code || "E500_INTERNAL_ERROR",
-            message: task?.errors?.[0]?.message || "任务执行失败",
-        };
-        context.updatedAt = formatCRTimestamp();
-
-        this.publishEvent({
-            type: "pipeline_failed",
-            pipelineId,
-            stage: "failed",
+        const task = this.deps.taskQueue.getTask(taskId);
+        markPipelineFailed(
             context,
-            timestamp: context.updatedAt,
-        });
-
-        this.logger.error("AmendOrchestrator", `管线失败: ${pipelineId}`, undefined, {
-            taskId,
-            error: context.error,
-        });
+            task?.errors?.[0]?.code || "E500_INTERNAL_ERROR",
+            task?.errors?.[0]?.message || "任务执行失败",
+            (e) => this.publishEvent(e as AmendPipelineEvent),
+            this.logger,
+            "AmendOrchestrator",
+            { taskId },
+        );
     }
 
     // ========================================================================
@@ -624,10 +582,10 @@ export class AmendOrchestrator {
                 );
             } catch (error) {
                 context.stage = "failed";
-                // 需求 34.3：锁冲突时使用用户友好的 i18n 提示
-                if (error instanceof CognitiveRazorError && error.code === "E320_TASK_CONFLICT") {
-                    const msg = this.deps.i18n.t("workbench.notifications.conceptLocked");
-                    context.error = { code: "E320_TASK_CONFLICT", message: msg };
+                // 需求 34.3：锁冲突时使用用户友好的 i18n 提示（委托共享实现）
+                const lockMsg = handleLockConflictError(error, this.deps.i18n);
+                if (lockMsg) {
+                    context.error = { code: "E320_TASK_CONFLICT", message: lockMsg };
                 } else {
                     context.error = { code: "E500_INTERNAL_ERROR", message: "创建修订任务失败" };
                 }
@@ -745,202 +703,65 @@ export class AmendOrchestrator {
     }
 
     /**
-     * 重算 Embedding 并触发去重检测
+     * 重算 Embedding 并触发去重检测（委托共享实现）
      */
     private async refreshEmbeddingAndDuplicates(context: PipelineContext, newContent: string): Promise<void> {
         const extracted = extractFrontmatter(newContent);
-        const embeddingText = extracted
-            ? this.buildEmbeddingTextFromFrontmatter(extracted.frontmatter)
-            : newContent;
+        const embeddingText = extracted ? buildEmbeddingText(extracted.frontmatter) : newContent;
 
         const settings = this.getSettings();
         const taskConfig = settings.taskModels["index"];
         const providerId = taskConfig?.providerId || this.getProviderIdForTask("index");
-        const embeddingModel = this.deps.vectorIndex.getEmbeddingModel();
-        const embeddingDimension = this.deps.vectorIndex.getEmbeddingDimension();
 
-        const embedResult = await this.deps.providerManager.embed({
-            providerId,
-            model: embeddingModel,
-            input: embeddingText,
-            dimensions: embeddingDimension,
-        });
-
-        if (!embedResult.ok) {
-            this.logger.warn("AmendOrchestrator", "Embedding 重算失败，已移除旧向量避免陈旧结果", {
-                pipelineId: context.pipelineId,
-                nodeId: context.nodeId,
-                error: embedResult.error,
-            });
-
-            // 移除旧向量
-            const deleteResult = await this.deps.vectorIndex.delete(context.nodeId);
-            if (!deleteResult.ok && deleteResult.error.code !== "E311_NOT_FOUND") {
-                this.logger.warn("AmendOrchestrator", "移除旧向量失败", {
-                    pipelineId: context.pipelineId,
-                    nodeId: context.nodeId,
-                    error: deleteResult.error,
-                });
-            }
-
-            // 清理旧重复对
-            const clearResult = await this.deps.duplicateManager.clearPendingPairsByNodeId(context.nodeId);
-            if (!clearResult.ok) {
-                this.logger.warn("AmendOrchestrator", "清理旧重复对失败", {
-                    pipelineId: context.pipelineId,
-                    nodeId: context.nodeId,
-                    error: clearResult.error,
-                });
-            }
-
-            context.embedding = undefined;
-            return;
-        }
-
-        context.embedding = embedResult.value.embedding;
-        context.updatedAt = formatCRTimestamp();
-
-        // 清理旧重复对
-        const clearResult = await this.deps.duplicateManager.clearPendingPairsByNodeId(context.nodeId);
-        if (!clearResult.ok) {
-            this.logger.warn("AmendOrchestrator", "清理旧重复对失败", {
-                pipelineId: context.pipelineId,
-                nodeId: context.nodeId,
-                error: clearResult.error,
-            });
-        }
-
-        // 更新向量索引
-        const upsertResult = await this.deps.vectorIndex.upsert({
-            uid: context.nodeId,
-            type: context.type,
-            embedding: context.embedding,
-            updated: context.updatedAt,
-        });
-        if (!upsertResult.ok) {
-            this.logger.warn("AmendOrchestrator", "更新向量索引失败", {
-                pipelineId: context.pipelineId,
-                nodeId: context.nodeId,
-                error: upsertResult.error,
-            });
-        }
-
-        // 去重检测
-        const detectResult = await this.deps.duplicateManager.detect(context.nodeId, context.type, context.embedding);
-        if (!detectResult.ok) {
-            this.logger.warn("AmendOrchestrator", "去重检测失败", {
-                pipelineId: context.pipelineId,
-                nodeId: context.nodeId,
-                error: detectResult.error,
-            });
-        }
+        await sharedRefreshEmbeddingAndDuplicates(
+            context, embeddingText, providerId,
+            { vectorIndex: this.deps.vectorIndex, providerManager: this.deps.providerManager, duplicateManager: this.deps.duplicateManager },
+            this.logger, "AmendOrchestrator",
+        );
     }
 
     /**
-     * 根据设置决定是否自动 Verify 或直接完成
+     * 根据设置决定是否自动 Verify 或直接完成（委托共享实现）
      */
     private async maybeStartAutoVerifyOrComplete(context: PipelineContext): Promise<void> {
-        const settings = this.getSettings();
-        if (!settings.enableAutoVerify) {
-            this.completePipeline(context);
-            return;
-        }
-
-        const prereqResult = this.validatePrerequisites("verify", context.type);
-        if (!prereqResult.ok) {
-            this.logger.warn("AmendOrchestrator", "Verify 前置校验失败，跳过自动校验并结束管线", {
-                pipelineId: context.pipelineId,
-                error: prereqResult.error,
-            });
-            this.completePipeline(context);
-            return;
-        }
-
-        const startResult = await this.startVerifyTask(context);
-        if (!startResult.ok) {
-            this.logger.warn("AmendOrchestrator", "启动 Verify 失败，跳过自动校验并结束管线", {
-                pipelineId: context.pipelineId,
-                error: startResult.error,
-            });
-            this.completePipeline(context);
-        }
+        return sharedMaybeStartAutoVerifyOrComplete(
+            context,
+            { noteRepository: this.deps.noteRepository, taskQueue: this.deps.taskQueue, i18n: this.deps.i18n },
+            (e) => this.publishEvent(e as AmendPipelineEvent),
+            this.taskToPipeline,
+            (t) => this.validatePrerequisites(t, context.type),
+            (t) => this.getProviderIdForTask(t),
+            (ctx) => this.completePipeline(ctx),
+            this.getSettings(),
+            this.logger,
+            "AmendOrchestrator",
+        );
     }
 
     /**
-     * 启动 Verify 任务
+     * 启动 Verify 任务（委托共享实现）
      */
     private async startVerifyTask(context: PipelineContext): Promise<Result<void>> {
-        const filePath = context.filePath;
-        if (!filePath) {
-            return err("E310_INVALID_STATE", "缺少文件路径，无法执行 Verify");
-        }
-
-        const currentContent = await this.deps.noteRepository.readByPathIfExists(filePath);
-        if (currentContent === null) {
-            return err("E301_FILE_NOT_FOUND", `文件不存在: ${filePath}`, { filePath });
-        }
-
-        context.stage = "verifying";
-        context.updatedAt = formatCRTimestamp();
-
-        this.publishEvent({
-            type: "stage_changed",
-            pipelineId: context.pipelineId,
-            stage: "verifying",
+        return sharedStartVerifyTask(
             context,
-            timestamp: context.updatedAt,
-        });
-
-        this.logger.info("AmendOrchestrator", `启动 Verify 任务: ${context.pipelineId}`, {
-            filePath,
-        });
-
-        const settings = this.getSettings();
-        try {
-            const taskId = this.deps.taskQueue.enqueue(
-                TaskFactory.create({
-                    nodeId: context.nodeId,
-                    taskType: "verify",
-                    maxAttempts: settings.maxRetryAttempts,
-                    providerRef: this.getProviderIdForTask("verify"),
-                    payload: {
-                        pipelineId: context.pipelineId,
-                        filePath,
-                        currentContent,
-                        conceptType: context.type,
-                        standardizedData: context.standardizedData,
-                    },
-                }),
-            );
-            this.taskToPipeline.set(taskId, context.pipelineId);
-            return ok(undefined);
-        } catch (error) {
-            // 需求 34.3：锁冲突时使用用户友好的 i18n 提示
-            if (error instanceof CognitiveRazorError && error.code === "E320_TASK_CONFLICT") {
-                const msg = this.deps.i18n.t("workbench.notifications.conceptLocked");
-                return err("E320_TASK_CONFLICT", msg);
-            }
-            return toErr(error, "E500_INTERNAL_ERROR", "Verify 任务创建失败");
-        }
+            { noteRepository: this.deps.noteRepository, taskQueue: this.deps.taskQueue, i18n: this.deps.i18n },
+            (e) => this.publishEvent(e as AmendPipelineEvent),
+            this.taskToPipeline,
+            (t) => this.getProviderIdForTask(t),
+            this.getSettings().maxRetryAttempts,
+            this.logger,
+            "AmendOrchestrator",
+        );
     }
 
     /**
      * 完成管线
      */
     private completePipeline(context: PipelineContext): void {
-        context.stage = "completed";
-        context.updatedAt = formatCRTimestamp();
+        markPipelineCompleted(context, (e) => this.publishEvent(e as AmendPipelineEvent));
 
         // 管线完成时移除持久化记录（需求 33.4）
         void this.savePipelineState();
-
-        this.publishEvent({
-            type: "pipeline_completed",
-            pipelineId: context.pipelineId,
-            stage: "completed",
-            context,
-            timestamp: context.updatedAt,
-        });
     }
 
     // ========================================================================
@@ -948,20 +769,10 @@ export class AmendOrchestrator {
     // ========================================================================
 
     /**
-     * 持久化管线状态到文件
-     *
-     * 收集当前 Orchestrator 的活跃管线状态并通过 PipelineStateStore 保存。
-     * 仅保存处于 review_changes 阶段的管线（需求 33.1）。
-     * 管线完成或取消后，因不再处于 review_changes，自动从文件中移除（需求 33.4）。
+     * 持久化管线状态到文件（委托共享实现）
      */
     private async savePipelineState(): Promise<void> {
-        try {
-            await this.deps.pipelineStateStore.persistFromOrchestrators([this]);
-        } catch (error) {
-            this.logger.warn("AmendOrchestrator", "持久化管线状态失败", {
-                error: error instanceof Error ? error.message : String(error),
-            });
-        }
+        await sharedSavePipelineState(this, this.deps.pipelineStateStore, this.logger, "AmendOrchestrator");
     }
 
     /**
@@ -991,49 +802,20 @@ export class AmendOrchestrator {
     }
 
     /**
-     * 渲染内容为 Markdown
+     * 渲染内容为 Markdown（委托共享实现）
      */
     private renderContentToMarkdown(context: PipelineContext, standardName: string): string {
         const settings = this.getSettings();
-        const language = settings.language || "zh";
-
-        const title = language === "en"
-            ? (context.standardizedData?.standardNames[context.type].english || standardName)
-            : standardName;
-
-        return this.deps.contentRenderer.renderNoteMarkdown({
-            title,
-            type: context.type,
-            content: context.generatedContent,
-            language,
-        });
+        return sharedRenderContentToMarkdown(
+            context, standardName, this.deps.contentRenderer, settings.language || "zh",
+        );
     }
 
     /**
-     * 从 Frontmatter 构建嵌入文本
+     * 从 Frontmatter 构建嵌入文本（委托共享实现）
      */
     private buildEmbeddingTextFromFrontmatter(frontmatter: CRFrontmatter): string {
-        const parts: string[] = [];
-
-        if (frontmatter.name) {
-            parts.push(frontmatter.name);
-        }
-
-        if (frontmatter.aliases && frontmatter.aliases.length > 0) {
-            parts.push(...frontmatter.aliases);
-        }
-
-        if (frontmatter.definition) {
-            parts.push(frontmatter.definition);
-        }
-
-        parts.push(`类型: ${frontmatter.type}`);
-
-        if (frontmatter.tags && frontmatter.tags.length > 0) {
-            parts.push(`标签: ${frontmatter.tags.join(", ")}`);
-        }
-
-        return parts.join("\n");
+        return buildEmbeddingText(frontmatter);
     }
 
     /**
@@ -1044,41 +826,23 @@ export class AmendOrchestrator {
         filePath: string,
         result: Record<string, unknown>,
     ): Promise<void> {
-        try {
-            const currentContent = await this.deps.noteRepository.readByPathIfExists(filePath);
-            if (currentContent === null) {
-                this.logger.warn("AmendOrchestrator", "文件不存在，无法追加报告", { filePath });
-                return;
-            }
-
-            const report = buildVerificationReportMarkdown(result);
-            const separator = currentContent.endsWith("\n") ? "\n" : "\n\n";
-            const newContent = `${currentContent}${separator}${report}`;
-            await this.deps.noteRepository.writeAtomic(filePath, newContent);
-
-            this.logger.info("AmendOrchestrator", `验证报告已追加: ${filePath}`);
-        } catch (error) {
-            this.logger.error("AmendOrchestrator", "追加验证报告失败", error as Error, { filePath });
-        }
+        await appendVerificationReport(
+            this.deps.noteRepository, filePath, result,
+            this.logger, "AmendOrchestrator",
+        );
     }
 
     /**
      * 生成管线 ID
      */
     private generatePipelineId(): string {
-        return `pipeline-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+        return sharedGeneratePipelineId();
     }
 
     /**
      * 发布事件
      */
     private publishEvent(event: AmendPipelineEvent): void {
-        for (const listener of this.listeners) {
-            try {
-                listener(event);
-            } catch (error) {
-                this.logger.error("AmendOrchestrator", "事件监听器执行失败", error as Error);
-            }
-        }
+        sharedPublishEvent(this.listeners, event, this.logger, "AmendOrchestrator");
     }
 }

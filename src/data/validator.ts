@@ -6,6 +6,20 @@ import type {
   ValidationContext,
 } from "../types";
 
+/**
+ * 从 AI 响应中提取 JSON（支持 markdown 代码块包裹）
+ *
+ * 优先匹配 ```json ... ```，其次匹配 ``` ... ```，
+ * 若无代码块则直接尝试解析原始内容。
+ */
+export function extractJsonFromResponse<T = Record<string, unknown>>(raw: string): T {
+    const trimmed = raw.trim();
+    const jsonMatch = trimmed.match(/```json\s*([\s\S]*?)\s*```/)
+        || trimmed.match(/```\s*([\s\S]*?)\s*```/);
+    const jsonStr = jsonMatch ? jsonMatch[1] : trimmed;
+    return JSON.parse(jsonStr) as T;
+}
+
 /** Validator 实现类 */
 export class Validator {
   /** 验证输出 */

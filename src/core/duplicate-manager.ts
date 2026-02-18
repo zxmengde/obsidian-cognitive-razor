@@ -17,6 +17,7 @@ import type { VectorIndex } from "./vector-index";
 import type { FileStorage } from "../data/file-storage";
 import type { SettingsStore } from "../data/settings-store";
 import type { SimpleLockManager } from "./lock-manager";
+import { normalizeVector, dotProduct } from "./vector-math";
 
 export class DuplicateManager {
   private vectorIndex: VectorIndex;
@@ -167,7 +168,7 @@ export class DuplicateManager {
       }
 
       // 归一化新概念的向量
-      const normalizedNew = this.normalizeVector(embedding);
+      const normalizedNew = normalizeVector(embedding);
 
       // 分页计算相似度，每页 pageSize 个概念
       const newPairs: DuplicatePair[] = [];
@@ -176,8 +177,8 @@ export class DuplicateManager {
         const page = candidates.slice(i, i + this.pageSize);
 
         for (const candidate of page) {
-          const normalizedCandidate = this.normalizeVector(candidate.embedding);
-          const similarity = this.dotProduct(normalizedNew, normalizedCandidate);
+          const normalizedCandidate = normalizeVector(candidate.embedding);
+          const similarity = dotProduct(normalizedNew, normalizedCandidate);
 
           if (similarity >= threshold) {
             const pairId = this.generatePairId(nodeId, candidate.id);
@@ -287,46 +288,6 @@ export class DuplicateManager {
     }
   }
 
-  /** 开始合并 */
-  async startMerge(pairId: string): Promise<Result<string>> {
-    try {
-      if (!this.store) {
-        return err("E310_INVALID_STATE", "重复管理器未初始化");
-      }
-
-      const pairIndex = this.store.pairs.findIndex(p => p.id === pairId);
-      if (pairIndex === -1) {
-        this.logger.warn("DuplicateManager", "重复对不存在", { pairId });
-        return err("E311_NOT_FOUND", `重复对不存在: ${pairId}`);
-      }
-
-      // 更新状态
-      this.store.pairs[pairIndex].status = "merging";
-
-      // 保存存储
-      const saveResult = await this.saveStore();
-      if (!saveResult.ok) {
-        return saveResult as Result<string>;
-      }
-
-      // 通知监听器
-      this.notifyListeners();
-
-      // 生成合并任务 ID（实际应该由 TaskQueue 生成）
-      const mergeTaskId = `merge-${pairId}-${Date.now()}`;
-
-      this.logger.info("DuplicateManager", `开始合并重复对: ${pairId}`, {
-        mergeTaskId
-      });
-
-      return ok(mergeTaskId);
-    } catch (error) {
-      this.logger.error("DuplicateManager", "开始合并失败", error as Error, {
-        pairId
-      });
-      return err("E500_INTERNAL_ERROR", "开始合并失败", error);
-    }
-  }
 
   /** 完成合并 */
   async completeMerge(pairId: string, keepNodeId: string): Promise<Result<void>> {
@@ -623,36 +584,6 @@ export class DuplicateManager {
       });
       return err("E500_INTERNAL_ERROR", "清理 Pending 重复对失败", error);
     }
-  }
-
-  /** 归一化向量（用于余弦相似度计算） */
-  private normalizeVector(vector: number[]): number[] {
-    let norm = 0;
-    for (let i = 0; i < vector.length; i++) {
-      norm += vector[i] * vector[i];
-    }
-    norm = Math.sqrt(norm);
-
-    // 零向量直接返回
-    if (norm === 0) {
-      return vector;
-    }
-
-    const normalized = new Array(vector.length);
-    for (let i = 0; i < vector.length; i++) {
-      normalized[i] = vector[i] / norm;
-    }
-    return normalized;
-  }
-
-  /** 向量点积（归一化后等价于余弦相似度） */
-  private dotProduct(a: number[], b: number[]): number {
-    let product = 0;
-    const len = Math.min(a.length, b.length);
-    for (let i = 0; i < len; i++) {
-      product += a[i] * b[i];
-    }
-    return product;
   }
 
   /** 创建空存储 */

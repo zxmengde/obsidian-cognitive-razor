@@ -22,6 +22,7 @@ import type { SimpleLockManager } from "./lock-manager";
 import type { TaskRunner } from "./task-runner";
 import type { FileStorage } from "../data/file-storage";
 import type { SettingsStore } from "../data/settings-store";
+import { DEFAULT_TASK_TIMEOUT_MS, DEFAULT_TASK_HISTORY } from "../data/settings-store";
 import { TaskQueueStore } from "./task-queue-store";
 
 // ============================================================================
@@ -99,8 +100,6 @@ export class TaskQueue {
   private listeners: QueueEventListener[];
   private processingTasks: Set<string>;
   private isScheduling: boolean;
-  private static readonly DEFAULT_TASK_TIMEOUT_MS = 3 * 60 * 1000;
-  private static readonly DEFAULT_TASK_HISTORY_LIMIT = 300;
 
   // 防抖批量写入（需求 17.1 ~ 17.4）
   private pendingWrite: boolean = false;
@@ -637,7 +636,7 @@ export class TaskQueue {
         nodeId: task.nodeId
       });
 
-      const timeoutMs = this.settingsStore.getSettings().taskTimeoutMs || TaskQueue.DEFAULT_TASK_TIMEOUT_MS;
+      const timeoutMs = this.settingsStore.getSettings().taskTimeoutMs || DEFAULT_TASK_TIMEOUT_MS;
       let timedOut = false;
       timeoutHandle = setTimeout(() => {
         timedOut = true;
@@ -1069,7 +1068,7 @@ export class TaskQueue {
    * 限制历史任务数量，避免 queue-state.json 无限增长
    */
   private trimHistory(): void {
-    const limit = this.settingsStore.getSettings().maxTaskHistory || TaskQueue.DEFAULT_TASK_HISTORY_LIMIT;
+    const limit = this.settingsStore.getSettings().maxTaskHistory || DEFAULT_TASK_HISTORY;
     const removableStates = new Set(["Completed", "Failed", "Cancelled"]);
     const candidates = Array.from(this.tasks.values()).filter((task) => removableStates.has(task.state));
 

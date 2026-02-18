@@ -1,14 +1,6 @@
 import { err, ok } from "../types";
 import type { Result } from "../types";
 
-const DATA_URL_REGEX = /data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/;
-
-/** 从 Markdown 图片引用中提取 data URL */
-export function extractMarkdownDataUrl(markdown: string): string | null {
-  const match = markdown.match(DATA_URL_REGEX);
-  return match ? match[0] : null;
-}
-
 /** 将 data URL 解码为 ArrayBuffer */
 export function dataUrlToArrayBuffer(dataUrl: string): Result<ArrayBuffer> {
   try {

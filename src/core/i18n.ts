@@ -78,6 +78,10 @@ export class I18n {
      *
      * 键缺失时回退到英文；英文也缺失则返回键路径本身并记录警告。
      */
+    /**
+     * @deprecated 无参调用返回完整翻译对象，类型为 any，不利于重构安全。
+     * 请迁移到 t("a.b.c") 键路径模式。
+     */
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     t(): any;
     t(key: string): string;

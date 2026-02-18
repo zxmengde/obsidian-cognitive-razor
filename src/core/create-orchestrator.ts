@@ -8,7 +8,7 @@
  */
 
 import type { App, TFile } from "obsidian";
-import type { OrchestratorDeps } from "./orchestrator-deps";
+import type { CreateOrchestratorDeps } from "./orchestrator-deps";
 import {
     type ILogger,
     type TaskRecord,
@@ -20,7 +20,6 @@ import {
     type PipelineStage,
     type StandardizedConcept,
     type Result,
-    CognitiveRazorError,
     ok,
     err,
     toErr,
@@ -28,9 +27,28 @@ import {
 import { extractFrontmatter, generateFrontmatter, generateMarkdownContent } from "./frontmatter-utils";
 import { createConceptSignature, generateFilePath, sanitizeFileName } from "./naming-utils";
 import { mapStandardizeOutput } from "./standardize-mapper";
-import { validatePrerequisites as sharedValidatePrerequisites, resolveProviderIdForTask, buildVerificationReportMarkdown } from "./orchestrator-utils";
+import {
+    validatePrerequisites as sharedValidatePrerequisites,
+    resolveProviderIdForTask,
+    buildVerificationReportMarkdown,
+    generatePipelineId as sharedGeneratePipelineId,
+    resolvePipelineIdFromTask,
+    markPipelineFailed,
+    markPipelineCompleted,
+    appendVerificationReport,
+    renderContentToMarkdown as sharedRenderContentToMarkdown,
+    maybeStartAutoVerifyOrComplete as sharedMaybeStartAutoVerifyOrComplete,
+    startVerifyTask as sharedStartVerifyTask,
+    publishEvent as sharedPublishEvent,
+    cancelPipelineTasks as sharedCancelPipelineTasks,
+    getActivePipelinesFrom,
+    handleLockConflictError,
+    getActiveState as sharedGetActiveState,
+    restorePipelinesForKind,
+} from "./orchestrator-utils";
 import { TaskFactory } from "./task-factory";
 import { generateUUID } from "../data/validators";
+import { extractJsonFromResponse } from "../data/validator";
 import { formatCRTimestamp } from "../utils/date-utils";
 
 // ============================================================================
@@ -70,7 +88,7 @@ export interface CreatePresetOptions {
 // ============================================================================
 
 export class CreateOrchestrator {
-    private deps: OrchestratorDeps;
+    private deps: CreateOrchestratorDeps;
     private logger: ILogger;
 
     /** 活跃管线上下文 */
@@ -82,7 +100,7 @@ export class CreateOrchestrator {
     /** 队列事件取消订阅 */
     private unsubscribeQueue?: () => void;
 
-    constructor(deps: OrchestratorDeps) {
+    constructor(deps: CreateOrchestratorDeps) {
         this.deps = deps;
         this.logger = deps.logger;
 
@@ -175,9 +193,7 @@ export class CreateOrchestrator {
             try {
                 const content = chatResult.value.content.trim();
                 // 尝试提取 JSON（可能被 markdown 代码块包裹）
-                const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/) || content.match(/```\s*([\s\S]*?)\s*```/);
-                const jsonStr = jsonMatch ? jsonMatch[1] : content;
-                const rawParsed = JSON.parse(jsonStr);
+                const rawParsed = extractJsonFromResponse(content);
 
                 // 转换字段名：API 返回下划线命名，需要转换为驼峰式
                 const parsed: StandardizedConcept = mapStandardizeOutput(rawParsed);
@@ -199,13 +215,6 @@ export class CreateOrchestrator {
             this.logger.error("CreateOrchestrator", "直接标准化失败", error as Error);
             return err("E500_INTERNAL_ERROR", "直接标准化失败", error);
         }
-    }
-
-    /**
-     * standardizeDirect 的别名（向后兼容）
-     */
-    async standardizeDirect(userInput: string): Promise<Result<StandardizedConcept>> {
-        return this.defineDirect(userInput);
     }
 
     /**
@@ -300,9 +309,9 @@ export class CreateOrchestrator {
             } catch (error) {
                 this.pipelines.delete(pipelineId);
                 // 需求 34.3：锁冲突时使用用户友好的 i18n 提示
-                if (error instanceof CognitiveRazorError && error.code === "E320_TASK_CONFLICT") {
-                    const msg = this.deps.i18n.t("workbench.notifications.conceptLocked");
-                    return err("E320_TASK_CONFLICT", msg) as Result<string>;
+                const lockMsg = handleLockConflictError(error, this.deps.i18n);
+                if (lockMsg) {
+                    return err("E320_TASK_CONFLICT", lockMsg) as Result<string>;
                 }
                 return toErr(error, "E500_INTERNAL_ERROR", "创建任务失败") as Result<string>;
             }
@@ -404,10 +413,10 @@ export class CreateOrchestrator {
             } catch (error) {
                 context.stage = "failed";
                 // 需求 34.3：锁冲突时使用用户友好的 i18n 提示
-                if (error instanceof CognitiveRazorError && error.code === "E320_TASK_CONFLICT") {
-                    const msg = this.deps.i18n.t("workbench.notifications.conceptLocked");
-                    context.error = { code: "E320_TASK_CONFLICT", message: msg };
-                    return err("E320_TASK_CONFLICT", msg) as Result<void>;
+                const lockMsg = handleLockConflictError(error, this.deps.i18n);
+                if (lockMsg) {
+                    context.error = { code: "E320_TASK_CONFLICT", message: lockMsg };
+                    return err("E320_TASK_CONFLICT", lockMsg) as Result<void>;
                 }
                 const converted = toErr(error, "E500_INTERNAL_ERROR", "创建任务失败");
                 context.error = { code: converted.error.code, message: converted.error.message };
@@ -547,19 +556,7 @@ export class CreateOrchestrator {
         }
 
         // 取消所有关联的任务
-        for (const [taskId, pid] of this.taskToPipeline.entries()) {
-            if (pid === pipelineId) {
-                try {
-                    this.deps.taskQueue.cancel(taskId);
-                } catch (error) {
-                    this.logger.warn("CreateOrchestrator", `取消任务失败: ${taskId}`, {
-                        pipelineId,
-                        error: error instanceof Error ? error.message : String(error),
-                    });
-                }
-                this.taskToPipeline.delete(taskId);
-            }
-        }
+        sharedCancelPipelineTasks(pipelineId, this.taskToPipeline, this.deps.taskQueue, this.logger, "CreateOrchestrator");
 
         // 更新状态
         context.stage = "failed";
@@ -582,9 +579,7 @@ export class CreateOrchestrator {
      * 获取所有活跃管线
      */
     getActivePipelines(): PipelineContext[] {
-        return Array.from(this.pipelines.values()).filter(
-            (ctx) => ctx.stage !== "completed" && ctx.stage !== "failed",
-        );
+        return getActivePipelinesFrom(this.pipelines);
     }
 
     /**
@@ -601,44 +596,23 @@ export class CreateOrchestrator {
     }
 
     /**
-     * 恢复持久化的管线状态
+     * 恢复持久化的管线状态（委托共享实现）
      */
     restorePipelines(
         pipelines: Map<string, PipelineContext>,
         taskToPipeline: Map<string, string>,
     ): void {
-        for (const [id, ctx] of pipelines) {
-            if (ctx.kind === "create") {
-                this.pipelines.set(id, ctx);
-            }
-        }
-        for (const [taskId, pipelineId] of taskToPipeline) {
-            if (this.pipelines.has(pipelineId)) {
-                this.taskToPipeline.set(taskId, pipelineId);
-            }
-        }
+        restorePipelinesForKind("create", this.pipelines, this.taskToPipeline, pipelines, taskToPipeline);
     }
 
     /**
-     * 获取活跃管线和任务映射（用于持久化）
+     * 获取活跃管线和任务映射（委托共享实现）
      */
     getActiveState(): {
         pipelines: Map<string, PipelineContext>;
         taskToPipeline: Map<string, string>;
     } {
-        const activePipelines = new Map<string, PipelineContext>();
-        for (const [id, ctx] of this.pipelines) {
-            if (ctx.stage !== "completed" && ctx.stage !== "failed") {
-                activePipelines.set(id, ctx);
-            }
-        }
-        const activeTaskMap = new Map<string, string>();
-        for (const [taskId, pipelineId] of this.taskToPipeline) {
-            if (activePipelines.has(pipelineId)) {
-                activeTaskMap.set(taskId, pipelineId);
-            }
-        }
-        return { pipelines: activePipelines, taskToPipeline: activeTaskMap };
+        return sharedGetActiveState(this.pipelines, this.taskToPipeline);
     }
 
     /**
@@ -673,22 +647,13 @@ export class CreateOrchestrator {
      * 处理任务完成事件
      */
     private async handleTaskCompleted(taskId: string): Promise<void> {
-        const task = this.deps.taskQueue.getTask(taskId);
-        if (!task) return;
-
-        const pipelineId =
-            this.taskToPipeline.get(taskId) ||
-            (typeof (task.payload as Record<string, unknown>)?.pipelineId === "string"
-                ? ((task.payload as Record<string, unknown>).pipelineId as string)
-                : undefined);
+        const pipelineId = resolvePipelineIdFromTask(taskId, this.taskToPipeline, this.deps.taskQueue);
         if (!pipelineId) return;
-
-        if (!this.taskToPipeline.has(taskId)) {
-            this.taskToPipeline.set(taskId, pipelineId);
-        }
 
         const context = this.pipelines.get(pipelineId);
         if (!context) return;
+
+        const task = this.deps.taskQueue.getTask(taskId)!;
 
         this.logger.debug("CreateOrchestrator", `任务完成: ${taskId}`, {
             pipelineId,
@@ -713,40 +678,22 @@ export class CreateOrchestrator {
      * 处理任务失败事件
      */
     private handleTaskFailed(taskId: string): void {
-        const task = this.deps.taskQueue.getTask(taskId);
-        const pipelineId =
-            this.taskToPipeline.get(taskId) ||
-            (typeof (task?.payload as Record<string, unknown>)?.pipelineId === "string"
-                ? ((task!.payload as Record<string, unknown>).pipelineId as string)
-                : undefined);
+        const pipelineId = resolvePipelineIdFromTask(taskId, this.taskToPipeline, this.deps.taskQueue);
         if (!pipelineId) return;
-
-        if (!this.taskToPipeline.has(taskId)) {
-            this.taskToPipeline.set(taskId, pipelineId);
-        }
 
         const context = this.pipelines.get(pipelineId);
         if (!context) return;
 
-        context.stage = "failed";
-        context.error = {
-            code: task?.errors?.[0]?.code || "E500_INTERNAL_ERROR",
-            message: task?.errors?.[0]?.message || "任务执行失败",
-        };
-        context.updatedAt = formatCRTimestamp();
-
-        this.publishEvent({
-            type: "pipeline_failed",
-            pipelineId,
-            stage: "failed",
+        const task = this.deps.taskQueue.getTask(taskId);
+        markPipelineFailed(
             context,
-            timestamp: context.updatedAt,
-        });
-
-        this.logger.error("CreateOrchestrator", `管线失败: ${pipelineId}`, undefined, {
-            taskId,
-            error: context.error,
-        });
+            task?.errors?.[0]?.code || "E500_INTERNAL_ERROR",
+            task?.errors?.[0]?.message || "任务执行失败",
+            (e) => this.publishEvent(e as CreatePipelineEvent),
+            this.logger,
+            "CreateOrchestrator",
+            { taskId },
+        );
     }
 
     // ========================================================================
@@ -996,101 +943,44 @@ export class CreateOrchestrator {
     }
 
     /**
-     * 根据设置决定是否自动 Verify 或直接完成
+     * 根据设置决定是否自动 Verify 或直接完成（委托共享实现）
      */
     private async maybeStartAutoVerifyOrComplete(context: PipelineContext): Promise<void> {
-        const settings = this.getSettings();
-        if (!settings.enableAutoVerify) {
-            this.completePipeline(context);
-            return;
-        }
-
-        const prereqResult = this.validatePrerequisites("verify", context.type);
-        if (!prereqResult.ok) {
-            this.logger.warn("CreateOrchestrator", "Verify 前置校验失败，跳过自动校验并结束管线", {
-                pipelineId: context.pipelineId,
-                error: prereqResult.error,
-            });
-            this.completePipeline(context);
-            return;
-        }
-
-        const startResult = await this.startVerifyTask(context);
-        if (!startResult.ok) {
-            this.logger.warn("CreateOrchestrator", "启动 Verify 失败，跳过自动校验并结束管线", {
-                pipelineId: context.pipelineId,
-                error: startResult.error,
-            });
-            this.completePipeline(context);
-        }
+        return sharedMaybeStartAutoVerifyOrComplete(
+            context,
+            { noteRepository: this.deps.noteRepository, taskQueue: this.deps.taskQueue, i18n: this.deps.i18n },
+            (e) => this.publishEvent(e as CreatePipelineEvent),
+            this.taskToPipeline,
+            (t) => this.validatePrerequisites(t, context.type),
+            (t) => this.getProviderIdForTask(t),
+            (ctx) => this.completePipeline(ctx),
+            this.getSettings(),
+            this.logger,
+            "CreateOrchestrator",
+        );
     }
 
     /**
-     * 启动 Verify 任务
+     * 启动 Verify 任务（委托共享实现，修复 E320 行为漂移）
      */
     private async startVerifyTask(context: PipelineContext): Promise<Result<void>> {
-        const filePath = context.filePath;
-        if (!filePath) {
-            return err("E310_INVALID_STATE", "缺少文件路径，无法执行 Verify");
-        }
-
-        const currentContent = await this.deps.noteRepository.readByPathIfExists(filePath);
-        if (currentContent === null) {
-            return err("E301_FILE_NOT_FOUND", `文件不存在: ${filePath}`, { filePath });
-        }
-
-        context.stage = "verifying";
-        context.updatedAt = formatCRTimestamp();
-
-        this.publishEvent({
-            type: "stage_changed",
-            pipelineId: context.pipelineId,
-            stage: "verifying",
+        return sharedStartVerifyTask(
             context,
-            timestamp: context.updatedAt,
-        });
-
-        this.logger.info("CreateOrchestrator", `启动 Verify 任务: ${context.pipelineId}`, {
-            filePath,
-        });
-
-        const settings = this.getSettings();
-        try {
-            const taskId = this.deps.taskQueue.enqueue(
-                TaskFactory.create({
-                    nodeId: context.nodeId,
-                    taskType: "verify",
-                    maxAttempts: settings.maxRetryAttempts,
-                    providerRef: this.getProviderIdForTask("verify"),
-                    payload: {
-                        pipelineId: context.pipelineId,
-                        filePath,
-                        currentContent,
-                        conceptType: context.type,
-                        standardizedData: context.standardizedData,
-                    },
-                }),
-            );
-            this.taskToPipeline.set(taskId, context.pipelineId);
-            return ok(undefined);
-        } catch (error) {
-            return toErr(error, "E500_INTERNAL_ERROR", "Verify 任务创建失败");
-        }
+            { noteRepository: this.deps.noteRepository, taskQueue: this.deps.taskQueue, i18n: this.deps.i18n },
+            (e) => this.publishEvent(e as CreatePipelineEvent),
+            this.taskToPipeline,
+            (t) => this.getProviderIdForTask(t),
+            this.getSettings().maxRetryAttempts,
+            this.logger,
+            "CreateOrchestrator",
+        );
     }
 
     /**
      * 完成管线
      */
     private completePipeline(context: PipelineContext): void {
-        context.stage = "completed";
-        context.updatedAt = formatCRTimestamp();
-        this.publishEvent({
-            type: "pipeline_completed",
-            pipelineId: context.pipelineId,
-            stage: "completed",
-            context,
-            timestamp: context.updatedAt,
-        });
+        markPipelineCompleted(context, (e) => this.publishEvent(e as CreatePipelineEvent));
     }
 
     // ========================================================================
@@ -1317,23 +1207,13 @@ export class CreateOrchestrator {
     }
 
     /**
-     * 渲染内容为 Markdown
+     * 渲染内容为 Markdown（委托共享实现）
      */
     private renderContentToMarkdown(context: PipelineContext, standardName: string): string {
         const settings = this.getSettings();
-        const language = settings.language || "zh";
-
-        const title =
-            language === "en"
-                ? context.standardizedData?.standardNames[context.type].english || standardName
-                : standardName;
-
-        return this.deps.contentRenderer.renderNoteMarkdown({
-            title,
-            type: context.type,
-            content: context.generatedContent,
-            language,
-        });
+        return sharedRenderContentToMarkdown(
+            context, standardName, this.deps.contentRenderer, settings.language || "zh",
+        );
     }
 
     /**
@@ -1368,29 +1248,17 @@ export class CreateOrchestrator {
         filePath: string,
         result: Record<string, unknown>,
     ): Promise<void> {
-        try {
-            const currentContent = await this.deps.noteRepository.readByPathIfExists(filePath);
-            if (currentContent === null) {
-                this.logger.warn("CreateOrchestrator", "文件不存在，无法追加报告", { filePath });
-                return;
-            }
-
-            const report = buildVerificationReportMarkdown(result);
-            const separator = currentContent.endsWith("\n") ? "\n" : "\n\n";
-            const newContent = `${currentContent}${separator}${report}`;
-            await this.deps.noteRepository.writeAtomic(filePath, newContent);
-
-            this.logger.info("CreateOrchestrator", `验证报告已追加: ${filePath}`);
-        } catch (error) {
-            this.logger.error("CreateOrchestrator", "追加验证报告失败", error as Error, { filePath });
-        }
+        await appendVerificationReport(
+            this.deps.noteRepository, filePath, result,
+            this.logger, "CreateOrchestrator",
+        );
     }
 
     /**
      * 生成管线 ID
      */
     private generatePipelineId(): string {
-        return `pipeline-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+        return sharedGeneratePipelineId();
     }
 
     /**
@@ -1404,12 +1272,6 @@ export class CreateOrchestrator {
      * 发布事件
      */
     private publishEvent(event: CreatePipelineEvent): void {
-        for (const listener of this.listeners) {
-            try {
-                listener(event);
-            } catch (error) {
-                this.logger.error("CreateOrchestrator", "事件监听器执行失败", error as Error);
-            }
-        }
+        sharedPublishEvent(this.listeners, event, this.logger, "CreateOrchestrator");
     }
 }

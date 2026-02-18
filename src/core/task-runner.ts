@@ -38,6 +38,7 @@ import type { VectorIndex } from "./vector-index";
 import type { SettingsStore } from "../data/settings-store";
 import { DEFAULT_TASK_MODEL_CONFIGS } from "../data/settings-store";
 import type { Validator } from "../data/validator";
+import { extractJsonFromResponse } from "../data/validator";
 import { App, MarkdownView, TFile } from "obsidian";
 import { dataUrlToArrayBuffer, inferImageExtension } from "../utils/image";
 import { formatCRTimestamp } from "../utils/date-utils";
@@ -550,21 +551,8 @@ export class TaskRunner {
 
       const prompt = this.promptManager.build(task.taskType, slots);
 
-      // 获取任务模型配置
-      const modelConfig = this.getTaskModelConfig("define", task.providerRef);
-
       // 调用 LLM（使用用户配置的模型）
-      const chatRequest: ChatRequest = {
-        providerId: task.providerRef || modelConfig.providerId,
-        model: modelConfig.model,
-        messages: [
-          { role: "user", content: prompt }
-        ],
-        temperature: modelConfig.temperature,
-        topP: modelConfig.topP,
-        maxTokens: modelConfig.maxTokens,
-        reasoning_effort: modelConfig.reasoning_effort
-      };
+      const chatRequest = this.buildChatRequest("define", prompt, task.providerRef);
       
       const chatResult = await this.providerManager.chat(chatRequest, signal);
 
@@ -621,23 +609,10 @@ export class TaskRunner {
 
       const prompt = this.promptManager.build(task.taskType, slots);
 
-      // 获取任务模型配置
-      const modelConfig = this.getTaskModelConfig("tag", task.providerRef);
-
       // 调用 LLM（使用用户配置的模型）
-      const chatRequest: ChatRequest = {
-        providerId: task.providerRef || modelConfig.providerId,
-        model: modelConfig.model,
-        messages: [
-          { role: "user", content: prompt }
-        ],
-        temperature: modelConfig.temperature,
-        topP: modelConfig.topP,
-        maxTokens: modelConfig.maxTokens,
-        reasoning_effort: modelConfig.reasoning_effort
-      };
-      
-      const chatResult = await this.providerManager.chat(chatRequest, signal);
+      const chatResult = await this.providerManager.chat(
+        this.buildChatRequest("tag", prompt, task.providerRef), signal
+      );
 
       if (!chatResult.ok) {
         return this.createTaskError(task, chatResult.error!);
@@ -786,9 +761,6 @@ export class TaskRunner {
         return this.executeWriteLegacy(task, signal);
       }
 
-      // 获取任务模型配置
-      const modelConfig = this.getTaskModelConfig("write", task.providerRef);
-
       // 累积已生成的字段
       const accumulated: Record<string, unknown> = {};
 
@@ -826,15 +798,9 @@ export class TaskRunner {
         });
 
         // 调用 LLM
-        const chatResult = await this.providerManager.chat({
-          providerId: task.providerRef || modelConfig.providerId,
-          model: modelConfig.model,
-          messages: [{ role: "user", content: prompt }],
-          temperature: modelConfig.temperature,
-          topP: modelConfig.topP,
-          maxTokens: modelConfig.maxTokens,
-          reasoning_effort: modelConfig.reasoning_effort
-        }, signal);
+        const chatResult = await this.providerManager.chat(
+          this.buildChatRequest("write", prompt, task.providerRef), signal
+        );
 
         if (!chatResult.ok) {
           return this.createTaskError(task, chatResult.error!);
@@ -857,9 +823,7 @@ export class TaskRunner {
           // 尝试直接解析 JSON
           try {
             const content = chatResult.value.content.trim();
-            const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/) || content.match(/```\s*([\s\S]*?)\s*```/);
-            const jsonStr = jsonMatch ? jsonMatch[1] : content;
-            const parsed = JSON.parse(jsonStr);
+            const parsed = extractJsonFromResponse(content);
             // 仅提取本阶段的字段
             for (const field of phase.fields) {
               if (parsed[field] !== undefined) {
@@ -937,17 +901,10 @@ export class TaskRunner {
     };
 
     const prompt = this.promptManager.build(task.taskType, slots, conceptType);
-    const modelConfig = this.getTaskModelConfig("write", task.providerRef);
 
-    const chatResult = await this.providerManager.chat({
-      providerId: task.providerRef || modelConfig.providerId,
-      model: modelConfig.model,
-      messages: [{ role: "user", content: prompt }],
-      temperature: modelConfig.temperature,
-      topP: modelConfig.topP,
-      maxTokens: modelConfig.maxTokens,
-      reasoning_effort: modelConfig.reasoning_effort
-    }, signal);
+    const chatResult = await this.providerManager.chat(
+      this.buildChatRequest("write", prompt, task.providerRef), signal
+    );
 
     if (!chatResult.ok) {
       return this.createTaskError(task, chatResult.error!);
@@ -1069,19 +1026,10 @@ export class TaskRunner {
       };
 
       const prompt = this.promptManager.build("amend", slots, conceptType);
-      const modelConfig = this.getTaskModelConfig("amend", task.providerRef);
 
-      const chatRequest: ChatRequest = {
-        providerId: task.providerRef || modelConfig.providerId,
-        model: modelConfig.model,
-        messages: [{ role: "user", content: prompt }],
-        temperature: modelConfig.temperature,
-        topP: modelConfig.topP,
-        maxTokens: modelConfig.maxTokens,
-        reasoning_effort: modelConfig.reasoning_effort
-      };
-
-      const chatResult = await this.providerManager.chat(chatRequest, signal);
+      const chatResult = await this.providerManager.chat(
+        this.buildChatRequest("amend", prompt, task.providerRef), signal
+      );
       if (!chatResult.ok) {
         return this.createTaskError(task, chatResult.error!);
       }
@@ -1171,19 +1119,10 @@ export class TaskRunner {
       };
 
       const prompt = this.promptManager.build("merge", slots, conceptType);
-      const modelConfig = this.getTaskModelConfig("merge", task.providerRef);
 
-      const chatRequest: ChatRequest = {
-        providerId: task.providerRef || modelConfig.providerId,
-        model: modelConfig.model,
-        messages: [{ role: "user", content: prompt }],
-        temperature: modelConfig.temperature,
-        topP: modelConfig.topP,
-        maxTokens: modelConfig.maxTokens,
-        reasoning_effort: modelConfig.reasoning_effort
-      };
-
-      const chatResult = await this.providerManager.chat(chatRequest, signal);
+      const chatResult = await this.providerManager.chat(
+        this.buildChatRequest("merge", prompt, task.providerRef), signal
+      );
       if (!chatResult.ok) {
         return this.createTaskError(task, chatResult.error!);
       }
@@ -1278,23 +1217,10 @@ export class TaskRunner {
 
       const prompt = this.promptManager.build(task.taskType, slots, conceptType);
 
-      // 获取任务模型配置
-      const modelConfig = this.getTaskModelConfig("verify", task.providerRef);
-
       // 调用 LLM（使用用户配置的模型）
-      const chatRequest: ChatRequest = {
-        providerId: task.providerRef || modelConfig.providerId,
-        model: modelConfig.model,
-        messages: [
-          { role: "user", content: prompt }
-        ],
-        temperature: modelConfig.temperature,
-        topP: modelConfig.topP,
-        maxTokens: modelConfig.maxTokens,
-        reasoning_effort: modelConfig.reasoning_effort
-      };
-      
-      const chatResult = await this.providerManager.chat(chatRequest, signal);
+      const chatResult = await this.providerManager.chat(
+        this.buildChatRequest("verify", prompt, task.providerRef), signal
+      );
 
       if (!chatResult.ok) {
         return this.createTaskError(task, chatResult.error!);
@@ -1391,17 +1317,9 @@ export class TaskRunner {
         return this.createTaskError(task, { code: "E401_PROVIDER_NOT_CONFIGURED", message: "请先配置 Provider" });
       }
 
-      const promptRequest: ChatRequest = {
-        providerId: task.providerRef || promptModelConfig.providerId,
-        model: promptModelConfig.model,
-        messages: [{ role: "user", content: promptTemplate }],
-        temperature: promptModelConfig.temperature,
-        topP: promptModelConfig.topP,
-        maxTokens: promptModelConfig.maxTokens,
-        reasoning_effort: promptModelConfig.reasoning_effort
-      };
-
-      const promptResult = await this.providerManager.chat(promptRequest, signal);
+      const promptResult = await this.providerManager.chat(
+        this.buildChatRequest("write", promptTemplate, task.providerRef), signal
+      );
       if (!promptResult.ok) {
         return this.createTaskError(task, promptResult.error!);
       }
@@ -1529,7 +1447,25 @@ export class TaskRunner {
 
   // 辅助方法
 
-  /** 获取任务模型配置 */
+  /** 构建 ChatRequest（DRY：消除 7 处重复的请求构建） */
+  private buildChatRequest(
+    taskType: TaskType,
+    prompt: string,
+    providerRef?: string,
+  ): ChatRequest {
+    const modelConfig = this.getTaskModelConfig(taskType, providerRef);
+    return {
+      providerId: providerRef || modelConfig.providerId,
+      model: modelConfig.model,
+      messages: [{ role: "user", content: prompt }],
+      temperature: modelConfig.temperature,
+      topP: modelConfig.topP,
+      maxTokens: modelConfig.maxTokens,
+      reasoning_effort: modelConfig.reasoning_effort,
+    };
+  }
+
+  /** 获取任务模型配置（内部） */
   private getTaskModelConfig(taskType: TaskType, providerRef?: string): {
     providerId: string;
     model: string;

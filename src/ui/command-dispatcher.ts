@@ -15,7 +15,7 @@
 import { Notice, TFile, Menu } from "obsidian";
 import { VIEW_TYPE_CR_WORKBENCH } from "./svelte/workbench-view";
 import { TaskQueue } from "../core/task-queue";
-import { COMMAND_IDS, getCoreCommandIds, isValidCommandId } from "./command-utils";
+import { COMMAND_IDS } from "./command-utils";
 import type CognitiveRazorPlugin from "../../main";
 import { formatMessage } from "../core/i18n";
 import { safeErrorMessage } from "../types";
@@ -91,6 +91,39 @@ export class CommandDispatcher {
     }
 
     /**
+     * 获取当前活动的 Markdown 文件，不存在时显示警告
+     * @returns TFile 或 null（已显示警告）
+     */
+    private getActiveMarkdownFile(): TFile | null {
+        const activeFile = this.plugin.app.workspace.getActiveFile();
+        if (!activeFile || activeFile.extension !== "md") {
+            showWarning(this.t("workbench.notifications.openMarkdownFirst"));
+            return null;
+        }
+        return activeFile;
+    }
+
+    /**
+     * 构建需要活动 Markdown 文件的命令定义片段（handler + checkCallback）
+     *
+     * 消除 getActiveFile + extension 检查的重复模式（DRY）。
+     */
+    private withActiveMarkdownFile(action: (file: TFile) => void | Promise<void>): Pick<CommandDefinition, "handler" | "checkCallback"> {
+        return {
+            handler: async () => {
+                const file = this.getActiveMarkdownFile();
+                if (file) await action(file);
+            },
+            checkCallback: (checking) => {
+                const activeFile = this.plugin.app.workspace.getActiveFile();
+                if (!activeFile || activeFile.extension !== "md") return false;
+                if (!checking) void action(activeFile);
+                return true;
+            },
+        };
+    }
+
+    /**
      * 记录错误日志
      */
     private logError(context: string, error: unknown, extra?: Record<string, unknown>): void {
@@ -150,11 +183,8 @@ export class CommandDispatcher {
                     return;
                 }
 
-                const activeFile = this.plugin.app.workspace.getActiveFile();
-                if (!activeFile || activeFile.extension !== "md") {
-                    showWarning(this.t("workbench.notifications.openMarkdownFirst"));
-                    return;
-                }
+                const activeFile = this.getActiveMarkdownFile();
+                if (!activeFile) return;
 
                 const result = verifyOrchestrator.startVerifyPipeline(activeFile.path);
                 if (!result.ok) {
@@ -305,22 +335,7 @@ export class CommandDispatcher {
             id: COMMAND_IDS.IMPROVE_NOTE,
             name: this.t("commands.improveNote"),
             icon: "sparkles",
-            handler: async () => {
-                const activeFile = this.plugin.app.workspace.getActiveFile();
-                if (activeFile && activeFile.extension === "md") {
-                    await this.improveNote(activeFile.path);
-                }
-            },
-            checkCallback: (checking) => {
-                const activeFile = this.plugin.app.workspace.getActiveFile();
-                if (!activeFile || activeFile.extension !== "md") {
-                    return false;
-                }
-                if (!checking) {
-                    void this.improveNote(activeFile.path);
-                }
-                return true;
-            }
+            ...this.withActiveMarkdownFile((file) => this.improveNote(file.path)),
         });
     }
 
@@ -333,22 +348,7 @@ export class CommandDispatcher {
             id: COMMAND_IDS.EXPAND_CURRENT_NOTE,
             name: this.t("commands.expandNote"),
             icon: "git-branch",
-            handler: async () => {
-                const activeFile = this.plugin.app.workspace.getActiveFile();
-                if (activeFile && activeFile.extension === "md") {
-                    await this.openWorkbench();
-                }
-            },
-            checkCallback: (checking) => {
-                const activeFile = this.plugin.app.workspace.getActiveFile();
-                if (!activeFile || activeFile.extension !== "md") {
-                    return false;
-                }
-                if (!checking) {
-                    void this.openWorkbench();
-                }
-                return true;
-            }
+            ...this.withActiveMarkdownFile(() => this.openWorkbench()),
         });
     }
 
@@ -504,20 +504,6 @@ export class CommandDispatcher {
      */
     public hasCommand(commandId: string): boolean {
         return this.commands.has(commandId);
-    }
-
-    /**
-     * 获取核心命令 ID 列表
-     */
-    public static getCoreCommandIds(): string[] {
-        return getCoreCommandIds();
-    }
-
-    /**
-     * 验证命令 ID 格式
-     */
-    public static isValidCommandId(commandId: string): boolean {
-        return isValidCommandId(commandId);
     }
 
     // ========================================================================

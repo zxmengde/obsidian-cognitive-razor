@@ -10,7 +10,7 @@
  */
 
 import type { TFile } from "obsidian";
-import type { OrchestratorDeps } from "./orchestrator-deps";
+import type { VerifyOrchestratorDeps } from "./orchestrator-deps";
 import {
     type ILogger,
     type TaskRecord,
@@ -20,16 +20,29 @@ import {
     type PipelineContext,
     type PipelineStage,
     type Result,
-    CognitiveRazorError,
     ok,
     err,
     toErr,
 } from "../types";
 import { extractFrontmatter } from "./frontmatter-utils";
-import { TaskFactory } from "./task-factory";
 import { generateUUID } from "../data/validators";
 import { formatCRTimestamp } from "../utils/date-utils";
-import { validatePrerequisites as sharedValidatePrerequisites, resolveProviderIdForTask, buildVerificationReportMarkdown } from "./orchestrator-utils";
+import {
+    validatePrerequisites as sharedValidatePrerequisites,
+    resolveProviderIdForTask,
+    buildVerificationReportMarkdown,
+    generatePipelineId as sharedGeneratePipelineId,
+    resolvePipelineIdFromTask,
+    markPipelineFailed,
+    markPipelineCompleted,
+    appendVerificationReport,
+    startVerifyTask as sharedStartVerifyTask,
+    publishEvent as sharedPublishEvent,
+    cancelPipelineTasks as sharedCancelPipelineTasks,
+    getActivePipelinesFrom,
+    getActiveState as sharedGetActiveState,
+    restorePipelinesForKind,
+} from "./orchestrator-utils";
 
 // ============================================================================
 // 类型定义
@@ -60,7 +73,7 @@ type VerifyPipelineEventListener = (event: VerifyPipelineEvent) => void;
 // ============================================================================
 
 export class VerifyOrchestrator {
-    private deps: OrchestratorDeps;
+    private deps: VerifyOrchestratorDeps;
     private logger: ILogger;
 
     /** 活跃管线上下文 */
@@ -72,7 +85,7 @@ export class VerifyOrchestrator {
     /** 队列事件取消订阅 */
     private unsubscribeQueue?: () => void;
 
-    constructor(deps: OrchestratorDeps) {
+    constructor(deps: VerifyOrchestratorDeps) {
         this.deps = deps;
         this.logger = deps.logger;
 
@@ -141,20 +154,8 @@ export class VerifyOrchestrator {
             return err("E311_NOT_FOUND", `管线不存在: ${pipelineId}`);
         }
 
-        // 取消所有关联的任务
-        for (const [taskId, pid] of this.taskToPipeline.entries()) {
-            if (pid === pipelineId) {
-                try {
-                    this.deps.taskQueue.cancel(taskId);
-                } catch (error) {
-                    this.logger.warn("VerifyOrchestrator", `取消任务失败: ${taskId}`, {
-                        pipelineId,
-                        error: error instanceof Error ? error.message : String(error),
-                    });
-                }
-                this.taskToPipeline.delete(taskId);
-            }
-        }
+        // 取消所有关联的任务（委托共享实现）
+        sharedCancelPipelineTasks(pipelineId, this.taskToPipeline, this.deps.taskQueue, this.logger, "VerifyOrchestrator");
 
         context.stage = "failed";
         context.error = { code: "E310_INVALID_STATE", message: "用户取消" };
@@ -173,12 +174,10 @@ export class VerifyOrchestrator {
     }
 
     /**
-     * 获取所有活跃管线
+     * 获取所有活跃管线（委托共享实现）
      */
     getActivePipelines(): PipelineContext[] {
-        return Array.from(this.pipelines.values()).filter(
-            (ctx) => ctx.stage !== "completed" && ctx.stage !== "failed",
-        );
+        return getActivePipelinesFrom(this.pipelines);
     }
 
     /**
@@ -195,44 +194,23 @@ export class VerifyOrchestrator {
     }
 
     /**
-     * 恢复持久化的管线状态
+     * 恢复持久化的管线状态（委托共享实现）
      */
     restorePipelines(
         pipelines: Map<string, PipelineContext>,
         taskToPipeline: Map<string, string>,
     ): void {
-        for (const [id, ctx] of pipelines) {
-            if (ctx.kind === "verify") {
-                this.pipelines.set(id, ctx);
-            }
-        }
-        for (const [taskId, pipelineId] of taskToPipeline) {
-            if (this.pipelines.has(pipelineId)) {
-                this.taskToPipeline.set(taskId, pipelineId);
-            }
-        }
+        restorePipelinesForKind("verify", this.pipelines, this.taskToPipeline, pipelines, taskToPipeline);
     }
 
     /**
-     * 获取活跃管线和任务映射（用于持久化）
+     * 获取活跃管线和任务映射（委托共享实现）
      */
     getActiveState(): {
         pipelines: Map<string, PipelineContext>;
         taskToPipeline: Map<string, string>;
     } {
-        const activePipelines = new Map<string, PipelineContext>();
-        for (const [id, ctx] of this.pipelines) {
-            if (ctx.stage !== "completed" && ctx.stage !== "failed") {
-                activePipelines.set(id, ctx);
-            }
-        }
-        const activeTaskMap = new Map<string, string>();
-        for (const [taskId, pipelineId] of this.taskToPipeline) {
-            if (activePipelines.has(pipelineId)) {
-                activeTaskMap.set(taskId, pipelineId);
-            }
-        }
-        return { pipelines: activePipelines, taskToPipeline: activeTaskMap };
+        return sharedGetActiveState(this.pipelines, this.taskToPipeline);
     }
 
     /**
@@ -264,26 +242,16 @@ export class VerifyOrchestrator {
     }
 
     /**
-     * 处理任务完成事件
+     * 处理任务完成事件（委托 resolvePipelineIdFromTask 消除重复）
      */
     private async handleTaskCompleted(taskId: string): Promise<void> {
-        const task = this.deps.taskQueue.getTask(taskId);
-        if (!task) return;
-
-        const pipelineId =
-            this.taskToPipeline.get(taskId) ||
-            (typeof (task.payload as Record<string, unknown>)?.pipelineId === "string"
-                ? ((task.payload as Record<string, unknown>).pipelineId as string)
-                : undefined);
+        const pipelineId = resolvePipelineIdFromTask(taskId, this.taskToPipeline, this.deps.taskQueue);
         if (!pipelineId) return;
-
-        if (!this.taskToPipeline.has(taskId)) {
-            this.taskToPipeline.set(taskId, pipelineId);
-        }
 
         const context = this.pipelines.get(pipelineId);
         if (!context) return;
 
+        const task = this.deps.taskQueue.getTask(taskId)!;
         this.logger.debug("VerifyOrchestrator", `任务完成: ${taskId}`, {
             pipelineId,
             taskType: task.taskType,
@@ -296,43 +264,25 @@ export class VerifyOrchestrator {
     }
 
     /**
-     * 处理任务失败事件
+     * 处理任务失败事件（委托 markPipelineFailed 消除重复）
      */
     private handleTaskFailed(taskId: string): void {
-        const task = this.deps.taskQueue.getTask(taskId);
-        const pipelineId =
-            this.taskToPipeline.get(taskId) ||
-            (typeof (task?.payload as Record<string, unknown>)?.pipelineId === "string"
-                ? ((task!.payload as Record<string, unknown>).pipelineId as string)
-                : undefined);
+        const pipelineId = resolvePipelineIdFromTask(taskId, this.taskToPipeline, this.deps.taskQueue);
         if (!pipelineId) return;
-
-        if (!this.taskToPipeline.has(taskId)) {
-            this.taskToPipeline.set(taskId, pipelineId);
-        }
 
         const context = this.pipelines.get(pipelineId);
         if (!context) return;
 
-        context.stage = "failed";
-        context.error = {
-            code: task?.errors?.[0]?.code || "E500_INTERNAL_ERROR",
-            message: task?.errors?.[0]?.message || "任务执行失败",
-        };
-        context.updatedAt = formatCRTimestamp();
+        const task = this.deps.taskQueue.getTask(taskId);
+        const errorCode = task?.errors?.[0]?.code || "E500_INTERNAL_ERROR";
+        const errorMessage = task?.errors?.[0]?.message || "任务执行失败";
 
-        this.publishEvent({
-            type: "pipeline_failed",
-            pipelineId,
-            stage: "failed",
-            context,
-            timestamp: context.updatedAt,
-        });
-
-        this.logger.error("VerifyOrchestrator", `管线失败: ${pipelineId}`, undefined, {
-            taskId,
-            error: context.error,
-        });
+        markPipelineFailed(
+            context, errorCode, errorMessage,
+            (e) => this.publishEvent(e as VerifyPipelineEvent),
+            this.logger, "VerifyOrchestrator",
+            { taskId },
+        );
     }
 
     // ========================================================================
@@ -490,76 +440,29 @@ export class VerifyOrchestrator {
     }
 
     /**
-     * 入队 Verify 任务
+     * 入队 Verify 任务（委托共享实现）
      */
     private async startVerifyTask(context: PipelineContext): Promise<Result<void>> {
-        const filePath = context.filePath;
-        if (!filePath) {
-            return err("E310_INVALID_STATE", "缺少文件路径，无法执行 Verify");
-        }
-
-        const currentContent = await this.deps.noteRepository.readByPathIfExists(filePath);
-        if (currentContent === null) {
-            return err("E301_FILE_NOT_FOUND", `文件不存在: ${filePath}`, { filePath });
-        }
-
-        context.stage = "verifying";
-        context.updatedAt = formatCRTimestamp();
-
-        this.publishEvent({
-            type: "stage_changed",
-            pipelineId: context.pipelineId,
-            stage: "verifying",
+        return sharedStartVerifyTask(
             context,
-            timestamp: context.updatedAt,
-        });
-
-        this.logger.info("VerifyOrchestrator", `启动 Verify 任务: ${context.pipelineId}`, {
-            filePath,
-        });
-
-        const settings = this.getSettings();
-        try {
-            const taskId = this.deps.taskQueue.enqueue(
-                TaskFactory.create({
-                    nodeId: context.nodeId,
-                    taskType: "verify",
-                    maxAttempts: settings.maxRetryAttempts,
-                    providerRef: this.getProviderIdForTask("verify"),
-                    payload: {
-                        pipelineId: context.pipelineId,
-                        filePath,
-                        currentContent,
-                        conceptType: context.type,
-                        standardizedData: context.standardizedData,
-                    },
-                }),
-            );
-            this.taskToPipeline.set(taskId, context.pipelineId);
-            return ok(undefined);
-        } catch (error) {
-            // 需求 34.3：锁冲突时使用用户友好的 i18n 提示
-            if (error instanceof CognitiveRazorError && error.code === "E320_TASK_CONFLICT") {
-                const msg = this.deps.i18n.t("workbench.notifications.conceptLocked");
-                return err("E320_TASK_CONFLICT", msg);
-            }
-            return toErr(error, "E500_INTERNAL_ERROR", "Verify 任务创建失败");
-        }
+            { noteRepository: this.deps.noteRepository, taskQueue: this.deps.taskQueue, i18n: this.deps.i18n },
+            (e) => this.publishEvent(e as VerifyPipelineEvent),
+            this.taskToPipeline,
+            (t) => this.getProviderIdForTask(t),
+            this.getSettings().maxRetryAttempts,
+            this.logger,
+            "VerifyOrchestrator",
+        );
     }
 
     /**
-     * 完成管线
+     * 完成管线（委托 markPipelineCompleted 消除重复）
      */
     private completePipeline(context: PipelineContext): void {
-        context.stage = "completed";
-        context.updatedAt = formatCRTimestamp();
-        this.publishEvent({
-            type: "pipeline_completed",
-            pipelineId: context.pipelineId,
-            stage: "completed",
+        markPipelineCompleted(
             context,
-            timestamp: context.updatedAt,
-        });
+            (e) => this.publishEvent(e as VerifyPipelineEvent),
+        );
     }
 
     // ========================================================================
@@ -634,22 +537,16 @@ export class VerifyOrchestrator {
     }
 
     /**
-     * 生成管线 ID
+     * 生成管线 ID（委托共享实现）
      */
     private generatePipelineId(): string {
-        return `pipeline-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+        return sharedGeneratePipelineId();
     }
 
     /**
-     * 发布事件
+     * 发布事件（委托共享实现）
      */
     private publishEvent(event: VerifyPipelineEvent): void {
-        for (const listener of this.listeners) {
-            try {
-                listener(event);
-            } catch (error) {
-                this.logger.error("VerifyOrchestrator", "事件监听器执行失败", error as Error);
-            }
-        }
+        sharedPublishEvent(this.listeners, event, this.logger, "VerifyOrchestrator");
     }
 }

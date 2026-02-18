@@ -12,7 +12,7 @@ import type {
 import { extractFrontmatter } from "./frontmatter-utils";
 import { schemaRegistry } from "./schema-registry";
 import { generateFilePath, sanitizeFileName } from "./naming-utils";
-import type { OrchestratorDeps } from "./orchestrator-deps";
+import type { ExpandOrchestratorDeps } from "./orchestrator-deps";
 import type { CreateOrchestrator, CreatePresetOptions } from "./create-orchestrator";
 import type { FileStorage } from "../data/file-storage";
 
@@ -86,12 +86,12 @@ const HIERARCHICAL_FIELD_MAP: Record<CRType, Array<{ field: string; target: CRTy
 const MAX_CREATABLE = 200;
 
 export class ExpandOrchestrator {
-  private deps: OrchestratorDeps;
+  private deps: ExpandOrchestratorDeps;
   private logger: ILogger;
   private createOrchestrator: CreateOrchestrator;
   private fileStorage: FileStorage;
 
-  constructor(deps: OrchestratorDeps, extra: ExpandExtraDeps) {
+  constructor(deps: ExpandOrchestratorDeps, extra: ExpandExtraDeps) {
     this.deps = deps;
     this.logger = deps.logger;
     this.createOrchestrator = extra.createOrchestrator;

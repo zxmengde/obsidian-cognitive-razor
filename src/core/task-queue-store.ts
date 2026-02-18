@@ -105,57 +105,42 @@ export class TaskQueueStore {
     const paused = typeof obj.paused === "boolean" ? obj.paused : false;
     const version = obj.version === "2.0.0" || obj.version === "1.0.0" ? obj.version : "1.0.0";
 
-    if (Array.isArray(obj.pendingTasks)) {
-      const pendingTasks = obj.pendingTasks
+    /** 将原始任务数组映射为标准化的 PendingTask 格式 */
+    const mapTasks = (tasks: Record<string, unknown>[]) =>
+      tasks.map((t) => ({
+        id: String(t.id),
+        nodeId: String(t.nodeId),
+        taskType: t.taskType as any,
+        attempt: typeof t.attempt === "number" ? t.attempt : 0,
+        maxAttempts: typeof t.maxAttempts === "number" ? t.maxAttempts : 1,
+        providerRef: typeof t.providerRef === "string" ? t.providerRef : undefined,
+        promptRef: typeof t.promptRef === "string" ? t.promptRef : undefined,
+        payload: t.payload && typeof t.payload === "object" && !Array.isArray(t.payload)
+          ? (t.payload as Record<string, unknown>)
+          : undefined,
+        created: typeof t.created === "string" ? t.created : undefined,
+        updated: typeof t.updated === "string" ? t.updated : undefined,
+        errors: Array.isArray(t.errors) ? (t.errors as any) : undefined,
+      }));
+
+    const filterValidTasks = (arr: unknown[]) =>
+      arr
         .filter((t) => t && typeof t === "object")
         .map((t) => t as Record<string, unknown>)
-        .filter((t) => typeof t.id === "string" && typeof t.nodeId === "string" && typeof t.taskType === "string")
-        .map((t) => ({
-          id: String(t.id),
-          nodeId: String(t.nodeId),
-          taskType: t.taskType as any,
-          attempt: typeof t.attempt === "number" ? t.attempt : 0,
-          maxAttempts: typeof t.maxAttempts === "number" ? t.maxAttempts : 1,
-          providerRef: typeof t.providerRef === "string" ? t.providerRef : undefined,
-          promptRef: typeof t.promptRef === "string" ? t.promptRef : undefined,
-          payload: t.payload && typeof t.payload === "object" && !Array.isArray(t.payload)
-            ? (t.payload as Record<string, unknown>)
-            : undefined,
-          created: typeof t.created === "string" ? t.created : undefined,
-          updated: typeof t.updated === "string" ? t.updated : undefined,
-          errors: Array.isArray(t.errors) ? (t.errors as any) : undefined,
-        }));
+        .filter((t) => typeof t.id === "string" && typeof t.nodeId === "string" && typeof t.taskType === "string");
 
+    if (Array.isArray(obj.pendingTasks)) {
       return {
-        state: { version, pendingTasks, paused },
+        state: { version, pendingTasks: mapTasks(filterValidTasks(obj.pendingTasks)), paused },
         migrated: false,
       };
     }
 
     if (Array.isArray(obj.tasks)) {
-      const pendingTasks = obj.tasks
-        .filter((t) => t && typeof t === "object")
-        .map((t) => t as Record<string, unknown>)
-        .filter((t) => t.state === "Pending" || t.state === "Running")
-        .filter((t) => typeof t.id === "string" && typeof t.nodeId === "string" && typeof t.taskType === "string")
-        .map((t) => ({
-          id: String(t.id),
-          nodeId: String(t.nodeId),
-          taskType: t.taskType as any,
-          attempt: typeof t.attempt === "number" ? t.attempt : 0,
-          maxAttempts: typeof t.maxAttempts === "number" ? t.maxAttempts : 1,
-          providerRef: typeof t.providerRef === "string" ? t.providerRef : undefined,
-          promptRef: typeof t.promptRef === "string" ? t.promptRef : undefined,
-          payload: t.payload && typeof t.payload === "object" && !Array.isArray(t.payload)
-            ? (t.payload as Record<string, unknown>)
-            : {},
-          created: typeof t.created === "string" ? t.created : undefined,
-          updated: typeof t.updated === "string" ? t.updated : undefined,
-          errors: Array.isArray(t.errors) ? (t.errors as any) : undefined,
-        }));
-
+      const validTasks = filterValidTasks(obj.tasks)
+        .filter((t) => t.state === "Pending" || t.state === "Running");
       return {
-        state: { version: "2.0.0", pendingTasks, paused },
+        state: { version: "2.0.0", pendingTasks: mapTasks(validTasks), paused },
         migrated: true,
       };
     }

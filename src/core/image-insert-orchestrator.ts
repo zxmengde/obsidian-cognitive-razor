@@ -16,7 +16,7 @@
  * @see 需求 2.7, 2.8, 27.2
  */
 
-import type { OrchestratorDeps } from "./orchestrator-deps";
+import type { ImageOrchestratorDeps } from "./orchestrator-deps";
 import {
     type ILogger,
     type TaskRecord,
@@ -24,7 +24,6 @@ import {
     type CRFrontmatter,
     type PluginSettings,
     type Result,
-    CognitiveRazorError,
     ok,
     err,
     toErr,
@@ -32,6 +31,11 @@ import {
 import { TaskFactory } from "./task-factory";
 import { generateUUID } from "../data/validators";
 import { formatCRTimestamp } from "../utils/date-utils";
+import {
+    publishEvent as sharedPublishEvent,
+    getActivePipelinesFrom,
+    handleLockConflictError,
+} from "./orchestrator-utils";
 
 // ============================================================================
 // 类型定义
@@ -97,7 +101,7 @@ export interface ImagePipelineOptions {
 // ============================================================================
 
 export class ImageInsertOrchestrator {
-    private deps: OrchestratorDeps;
+    private deps: ImageOrchestratorDeps;
     private logger: ILogger;
 
     /** 活跃管线上下文 */
@@ -109,7 +113,7 @@ export class ImageInsertOrchestrator {
     /** 队列事件取消订阅 */
     private unsubscribeQueue?: () => void;
 
-    constructor(deps: OrchestratorDeps) {
+    constructor(deps: ImageOrchestratorDeps) {
         this.deps = deps;
         this.logger = deps.logger;
 
@@ -208,10 +212,10 @@ export class ImageInsertOrchestrator {
             return ok(pipelineId);
         } catch (error) {
             this.logger.error("ImageInsertOrchestrator", "启动图片插入管线失败", error as Error);
-            // 需求 34.3：锁冲突时使用用户友好的 i18n 提示
-            if (error instanceof CognitiveRazorError && error.code === "E320_TASK_CONFLICT") {
-                const msg = this.deps.i18n.t("workbench.notifications.conceptLocked");
-                return err("E320_TASK_CONFLICT", msg);
+            // 需求 34.3：锁冲突时使用用户友好的 i18n 提示（委托共享实现）
+            const lockMsg = handleLockConflictError(error, this.deps.i18n);
+            if (lockMsg) {
+                return err("E320_TASK_CONFLICT", lockMsg);
             }
             return toErr(error, "E500_INTERNAL_ERROR", "启动图片插入管线失败");
         }
@@ -271,12 +275,10 @@ export class ImageInsertOrchestrator {
     }
 
     /**
-     * 获取所有活跃管线
+     * 获取所有活跃管线（委托共享实现）
      */
     getActivePipelines(): ImagePipelineContext[] {
-        return Array.from(this.pipelines.values()).filter(
-            (ctx) => ctx.stage !== "completed" && ctx.stage !== "failed"
-        );
+        return getActivePipelinesFrom(this.pipelines);
     }
 
     /**
@@ -447,22 +449,16 @@ export class ImageInsertOrchestrator {
     }
 
     /**
-     * 生成管线 ID
+     * 生成管线 ID（图片管线使用独立格式）
      */
     private generatePipelineId(): string {
         return `img-${generateUUID().slice(0, 8)}`;
     }
 
     /**
-     * 发布管线事件
+     * 发布管线事件（委托共享实现）
      */
     private publishEvent(event: ImagePipelineEvent): void {
-        for (const listener of this.listeners) {
-            try {
-                listener(event);
-            } catch (error) {
-                this.logger.error("ImageInsertOrchestrator", "事件监听器执行失败", error as Error);
-            }
-        }
+        sharedPublishEvent(this.listeners, event, this.logger, "ImageInsertOrchestrator");
     }
 }

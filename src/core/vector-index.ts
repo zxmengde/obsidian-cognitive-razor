@@ -28,6 +28,7 @@ import type {
 import { VECTORS_DIR, DEFAULT_VECTOR_INDEX_META } from "../data/file-storage";
 import type { FileStorage } from "../data/file-storage";
 import { formatCRTimestamp } from "../utils/date-utils";
+import { normalizeVector as normalize, dotProduct } from "./vector-math";
 import type { CruidCache } from "./cruid-cache";
 
 // ============================================================================
@@ -397,7 +398,7 @@ export class VectorIndex {
       const isUpdate = entry.uid in this.indexMeta.concepts;
 
       // 归一化向量（预先归一化，计算相似度时只需点积）
-      const normalizedEmbedding = this.normalize(entry.embedding);
+      const normalizedEmbedding = normalize(entry.embedding);
 
       // 构建概念向量数据
       const conceptVector: ConceptVector = {
@@ -547,7 +548,7 @@ export class VectorIndex {
       }
 
       // 归一化查询向量
-      const normalizedQuery = this.normalize(embedding);
+      const normalizedQuery = normalize(embedding);
 
       // 按需加载该类型的向量桶
       const bucketResult = await this.ensureBucketLoaded(type);
@@ -561,7 +562,7 @@ export class VectorIndex {
       const topResults: Array<{ vector: ConceptVector; similarity: number }> = [];
 
       for (const vector of vectors) {
-        const similarity = this.dotProduct(normalizedQuery, vector.embedding);
+        const similarity = dotProduct(normalizedQuery, vector.embedding);
 
         if (topResults.length < topK) {
           topResults.push({ vector, similarity });
@@ -618,7 +619,7 @@ export class VectorIndex {
       }
 
       // 归一化查询向量
-      const normalizedQuery = this.normalize(embedding);
+      const normalizedQuery = normalize(embedding);
 
       // 按需加载该类型的向量桶
       const bucketResult = await this.ensureBucketLoaded(type);
@@ -630,7 +631,7 @@ export class VectorIndex {
 
       const matched: Array<{ vector: ConceptVector; similarity: number }> = [];
       for (const vector of vectors) {
-        const similarity = this.dotProduct(normalizedQuery, vector.embedding);
+        const similarity = dotProduct(normalizedQuery, vector.embedding);
         if (similarity > threshold) {
           matched.push({ vector, similarity });
         }
@@ -801,48 +802,6 @@ export class VectorIndex {
   }
 
   /**
-   * 归一化向量
-   * @param vector 原始向量
-   * @returns 归一化后的向量（模长为 1）
-   */
-  private normalize(vector: number[]): number[] {
-    let norm = 0;
-    for (let i = 0; i < vector.length; i++) {
-      norm += vector[i] * vector[i];
-    }
-    norm = Math.sqrt(norm);
-
-    // 零向量直接返回
-    if (norm === 0) {
-      return vector;
-    }
-
-    // 归一化
-    const normalized = new Array(vector.length);
-    for (let i = 0; i < vector.length; i++) {
-      normalized[i] = vector[i] / norm;
-    }
-
-    return normalized;
-  }
-
-  /**
-   * 计算点积（用于归一化向量的相似度计算）
-   * 对于归一化向量，点积等于余弦相似度
-   */
-  private dotProduct(a: number[], b: number[]): number {
-    if (a.length !== b.length) {
-      throw new Error("Vectors must have the same dimension");
-    }
-
-    let product = 0;
-    for (let i = 0; i < a.length; i++) {
-      product += a[i] * b[i];
-    }
-
-    return product;
-  }
-
   /** 释放资源：清除定时器和缓存 */
   dispose(): void {
     if (this.evictionTimer !== null) {

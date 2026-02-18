@@ -279,36 +279,9 @@ export class PromptManager {
         }
       }
 
-      // 替换变量
-      let prompt = template.content;
-
-      // 替换所有槽位
-      for (const [key, value] of Object.entries(slots)) {
-        prompt = replaceVariable(prompt, key, value);
-      }
-
-      // 可选槽位未提供时按空字符串处理（避免模板中出现可选占位符导致构建失败）
-      const slotMapping = TASK_SLOT_MAPPING[taskType];
-      if (slotMapping) {
-        for (const optionalKey of slotMapping.optional) {
-          if (!(optionalKey in slots)) {
-            prompt = replaceVariable(prompt, optionalKey, "");
-          }
-        }
-      }
-
-      // A-PDD-02: 验证是否还有未替换的变量
-      const unreplacedVars = findUnreplacedVariables(prompt);
-      if (unreplacedVars.length > 0) {
-        this.logger.error("PromptManager", "存在未替换的变量", undefined, {
-          taskType,
-          unreplacedVars
-        });
-        throw new CognitiveRazorError("E405_TEMPLATE_INVALID", `存在未替换的变量: ${unreplacedVars.join(", ")}`, {
-          taskType,
-          unreplacedVars
-        });
-      }
+      // 委托共享渲染管线（M-01 DRY）
+      const optionalKeys = TASK_SLOT_MAPPING[taskType]?.optional ?? [];
+      const prompt = this.renderTemplate(template.content, slots, optionalKeys, `build:${taskType}`);
 
       this.logger.debug("PromptManager", "Prompt 构建成功", {
         taskType,
@@ -444,31 +417,8 @@ export class PromptManager {
         throw new CognitiveRazorError("E405_TEMPLATE_INVALID", `模板存在未声明的槽位: ${unknownTemplateSlots.join(", ")}`);
       }
 
-      // 替换变量
-      let prompt = template.content;
-      for (const [key, value] of Object.entries(slots)) {
-        prompt = replaceVariable(prompt, key, value);
-      }
-
-      // 可选槽位未提供时按空字符串处理
-      for (const optionalKey of slotMapping.optional) {
-        if (!(optionalKey in slots)) {
-          prompt = replaceVariable(prompt, optionalKey, "");
-        }
-      }
-
-      // 验证是否还有未替换的变量
-      const unreplacedVars = findUnreplacedVariables(prompt);
-      if (unreplacedVars.length > 0) {
-        this.logger.error("PromptManager", "操作存在未替换的变量", undefined, {
-          operation,
-          unreplacedVars
-        });
-        throw new CognitiveRazorError("E405_TEMPLATE_INVALID", `存在未替换的占位符: ${unreplacedVars[0]}`, {
-          operation,
-          unreplacedVars
-        });
-      }
+      // 委托共享渲染管线（M-01 DRY）
+      const prompt = this.renderTemplate(template.content, slots, slotMapping.optional, `buildOperation:${operation}`);
 
       this.logger.debug("PromptManager", "操作 Prompt 构建成功", {
         operation,
@@ -771,31 +721,9 @@ export class PromptManager {
       const templateId = "_base/operations/write-phased";
       const template = this.loadTemplate(templateId);
 
-      let prompt = template.content;
-
-      // 替换所有槽位
-      for (const [key, value] of Object.entries(slots)) {
-        prompt = replaceVariable(prompt, key, value);
-      }
-
-      // 可选槽位未提供时按空字符串处理
+      // 委托共享渲染管线（M-01 DRY）
       const optionalSlots = ["CTX_PREVIOUS", "CTX_SOURCES"];
-      for (const optionalKey of optionalSlots) {
-        if (!(optionalKey in slots)) {
-          prompt = replaceVariable(prompt, optionalKey, "");
-        }
-      }
-
-      // 验证是否还有未替换的变量
-      const unreplacedVars = findUnreplacedVariables(prompt);
-      if (unreplacedVars.length > 0) {
-        this.logger.error("PromptManager", "分阶段 prompt 存在未替换的变量", undefined, {
-          unreplacedVars
-        });
-        throw new CognitiveRazorError("E405_TEMPLATE_INVALID", `存在未替换的变量: ${unreplacedVars.join(", ")}`, {
-          unreplacedVars
-        });
-      }
+      const prompt = this.renderTemplate(template.content, slots, optionalSlots, "buildPhasedWrite");
 
       this.logger.debug("PromptManager", "分阶段 Write Prompt 构建成功", {
         promptLength: prompt.length
@@ -816,6 +744,48 @@ export class PromptManager {
     this.templateCache.clear();
     this.baseComponentsCache.clear();
   }
+  /**
+   * 共享模板渲染管线：变量替换 → 可选槽位清理 → 未替换变量校验
+   *
+   * 提取自 build / buildOperation / buildPhasedWrite 的公共逻辑（M-01 DRY）。
+   */
+  private renderTemplate(
+    templateContent: string,
+    slots: Record<string, string>,
+    optionalSlots: string[],
+    context: string
+  ): string {
+    let prompt = templateContent;
+
+    // 替换所有传入的槽位
+    for (const [key, value] of Object.entries(slots)) {
+      prompt = replaceVariable(prompt, key, value);
+    }
+
+    // 可选槽位未提供时按空字符串处理
+    for (const optionalKey of optionalSlots) {
+      if (!(optionalKey in slots)) {
+        prompt = replaceVariable(prompt, optionalKey, "");
+      }
+    }
+
+    // 验证是否还有未替换的变量
+    const unreplacedVars = findUnreplacedVariables(prompt);
+    if (unreplacedVars.length > 0) {
+      this.logger.error("PromptManager", "存在未替换的变量", undefined, {
+        context,
+        unreplacedVars
+      });
+      throw new CognitiveRazorError("E405_TEMPLATE_INVALID", `存在未替换的变量: ${unreplacedVars.join(", ")}`, {
+        context,
+        unreplacedVars
+      });
+    }
+
+    return prompt;
+  }
+
+
 
   /** 直接设置模板（用于测试） */
   setTemplate(templateId: string, template: PromptTemplate): void {
