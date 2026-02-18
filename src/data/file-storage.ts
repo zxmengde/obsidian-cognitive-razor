@@ -1,9 +1,11 @@
 /** FileStorage - 提供原子化文件操作，确保数据完整性 */
 
 import { 
-  Result, 
   ok, 
   err,
+} from "../types";
+import type {
+  Result, 
   Err,
   QueueStateFile,
   DuplicatePairsStore,

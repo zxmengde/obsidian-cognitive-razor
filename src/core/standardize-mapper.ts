@@ -1,4 +1,4 @@
-import { CRType, StandardizedConcept } from "../types";
+import type { CRType, StandardizedConcept } from "../types";
 
 const TYPES: CRType[] = ["Domain", "Issue", "Theory", "Entity", "Mechanism"];
 

@@ -1,7 +1,8 @@
 /** Logger - 结构化日志记录，支持循环日志、追踪 ID、分组和过滤 */
 
-import { ILogger } from "../types";
-import { ErrorCode, isValidErrorCode, getErrorCodeInfo } from "./error-codes";
+import type { ILogger } from "../types";
+import { isValidErrorCode, getErrorCodeInfo } from "./error-codes";
+import type { ErrorCode } from "./error-codes";
 
 /** 日志级别 */
 export type LogLevel = "debug" | "info" | "warn" | "error";

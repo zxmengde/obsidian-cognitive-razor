@@ -43,22 +43,11 @@
     },
     "duplicates": {
       "title": "Duplicate Concepts",
-      "sortBy": "Sort by:",
-      "sortSimilarityDesc": "Similarity (High to Low)",
-      "sortSimilarityAsc": "Similarity (Low to High)",
-      "sortTimeDesc": "Time (New to Old)",
-      "sortTimeAsc": "Time (Old to New)",
-      "sortByType": "By Type",
-      "filterBy": "Type:",
-      "filterAll": "All",
-      "selectAll": "Select All",
-      "batchMerge": "Batch Merge",
-      "batchDismiss": "Batch Dismiss",
-      "viewHistory": "View History",
       "empty": "No duplicate concepts",
-      "merge": "Merge",
       "dismiss": "Dismiss",
-      "selectPair": "Select duplicate pair"
+      "compare": "Compare",
+      "compareAria": "Compare and merge",
+      "dismissAria": "Dismiss this duplicate pair"
     },
     "queueStatus": {
       "title": "Queue Status",
@@ -66,47 +55,30 @@
       "paused": "Paused",
       "pending": "Pending",
       "running": "Running",
-      "completed": "Completed",
       "failed": "Failed",
-      "cancelled": "Cancelled",
       "clearPending": "Clear Pending",
-      "clearCompleted": "Clear Completed",
-      "clearFailed": "Clear Failed",
       "retryFailed": "Retry Failed",
       "pauseQueue": "Pause Queue",
       "resumeQueue": "Resume Queue",
-      "viewDetails": "View Details",
-      "currentPipeline": "Current Pipeline",
-      "noPipeline": "No active pipeline",
-      "queuePaused": "Queue paused",
-      "queueRunning": "Queue running",
       "queueResumed": "Queue resumed",
       "cancel": "Cancel",
-      "retry": "Retry",
-      "taskId": "Task ID",
-      "type": "Type",
-      "status": "Status",
-      "progress": "Progress",
-      "actions": "Actions",
       "noTasks": "No tasks in queue",
-      "noteName": "Note Name",
       "clearPendingConfirmTitle": "Confirm Clear Pending",
-      "clearPendingConfirmMessage": "Cancel all pending tasks?",
-      "clearCompletedConfirmTitle": "Confirm Clear Completed",
-      "clearCompletedConfirmMessage": "Clear all completed task records?",
-      "clearFailedConfirmTitle": "Confirm Clear Failed",
-      "clearFailedConfirmMessage": "Cancel all failed tasks?"
+      "clearPendingConfirmMessage": "Cancel all pending tasks?"
     },
     "recentOps": {
       "title": "Operation History",
       "empty": "No operations to undo",
       "undo": "Undo",
-      "viewSnapshot": "View Snapshot",
-      "refresh": "Refresh",
+      "view": "View",
+      "viewAria": "View snapshot",
+      "undoAria": "Undo this operation",
       "clearAll": "Clear All",
       "clearAllConfirmTitle": "Confirm Clear",
       "clearAllConfirmMessage": "Are you sure you want to clear all snapshots? This action cannot be undone.",
       "moreSnapshots": "{count} more older snapshots",
+      "viewSnapshotFailed": "Failed to read snapshot",
+      "undoFailed": "Restore failed",
       "timeJustNow": "Just now",
       "timeMinutesAgo": "{minutes} minutes ago",
       "timeHoursAgo": "{hours} hours ago",
@@ -120,144 +92,6 @@
         "create": "Create note",
         "fallback": "Operation"
       }
-    },
-    "pipeline": {
-      "id": "ID",
-      "type": "Type",
-      "stage": "Stage",
-      "view": "View",
-      "confirmCreate": "Confirm Create",
-      "previewWrite": "Preview Write",
-      "mergePreview": "Merge Preview",
-      "amendPreview": "Amend Preview",
-      "verificationResult": "Verification Result:",
-      "chineseName": "Chinese Name:",
-      "englishName": "English Name:",
-      "autoSelect": "Auto Select",
-      "saveEdit": "Save Edit",
-      "generatedContentPreview": "Generated Content Preview (before write)",
-      "progressTitle": "AI Progress",
-      "progressHint": "Live view of LLM stages and write status",
-      "empty": "No pipelines are currently running",
-      "kind": {
-        "create": "Create",
-        "amend": "Amend",
-        "merge": "Merge"
-      },
-      "stages": {
-        "idle": "Idle",
-        "defining": "Defining",
-        "tagging": "Tagging",
-        "indexing": "Indexing",
-        "review_draft": "Review Draft",
-        "writing": "Writing",
-        "verifying": "Verifying",
-        "review_changes": "Review Changes",
-        "saving": "Saving",
-        "checking_duplicates": "Checking Duplicates",
-        "completed": "Completed",
-        "failed": "Failed"
-      },
-      "stageMessages": {
-        "default": "AI is processing this stage",
-        "idle": "Waiting for a new task",
-        "defining": "Analyzing the input and finishing the definition",
-        "tagging": "Generating aliases, tags, and related context",
-        "indexing": "Creating semantic vectors for search",
-        "review_draft": "Waiting for draft confirmation",
-        "writing": "Generating or merging note content",
-        "verifying": "Running verification to ensure reliability",
-        "review_changes": "Waiting for confirmation before writing to disk",
-        "saving": "Writing to the vault and creating a snapshot",
-        "checking_duplicates": "Refreshing duplicate indices and cleaning up",
-        "completed": "Pipeline finished successfully. You can undo from history.",
-        "failed": "Pipeline failed. See the error for details."
-      }
-    },
-    "typeConfidenceTable": {
-      "type": "Type",
-      "standardName": "Standard Name",
-      "confidence": "Confidence",
-      "action": "Action"
-    },
-    "duplicatePreview": {
-      "title": "Duplicate Concept Preview",
-      "similarity": "Similarity:",
-      "type": "Type:",
-      "detectedAt": "Detected At:",
-      "sideBySide": "Side by side",
-      "diffHighlight": "Diff highlight",
-      "mergeAction": "🔀 Merge",
-      "dismissAction": "🚫 Dismiss",
-      "openA": "📄 Open A",
-      "openB": "📄 Open B",
-      "cancel": "Cancel"
-    },
-    "duplicateHistory": {
-      "title": "Duplicate Pair History",
-      "mergedTab": "Merged",
-      "dismissedTab": "Dismissed",
-      "emptyMerged": "No merged duplicates",
-      "emptyDismissed": "No dismissed duplicates",
-      "similarity": "Similarity",
-      "undoDismiss": "Undo dismiss",
-      "delete": "Delete",
-      "close": "Close"
-    },
-    "diffPreview": {
-      "accept": "Accept",
-      "reject": "Discard",
-      "acceptAria": "Accept changes",
-      "rejectAria": "Discard changes",
-      "modeLabel": "Diff view mode",
-      "unifiedView": "Unified View",
-      "unifiedViewAria": "Switch to unified diff view",
-      "sideBySideView": "Side-by-Side",
-      "sideBySideViewAria": "Switch to side-by-side diff view",
-      "leftTitle": "Original Content",
-      "rightTitle": "Updated Content"
-    },
-    "snapshotDiff": {
-      "title": "Snapshot preview: {id}",
-      "createdAt": "Created at: {time}",
-      "snapshotVersion": "Snapshot",
-      "currentVersion": "Current",
-      "restore": "Restore snapshot",
-      "close": "Close"
-    },
-    "mergeSelection": {
-      "title": "Select merged note name",
-      "infoLabel": "The following notes will be merged:",
-      "similarity": "Similarity: {value}",
-      "keepSectionTitle": "1. Choose the note to keep",
-      "keepGroupLabel": "Choose the note to keep",
-      "keepCardAria": "Keep “{name}” as primary",
-      "keepRadioAria": "Keep “{name}”",
-      "keepCardTitle": "Keep \"{name}\"",
-      "keepCardDesc": "Use this note as the primary content",
-      "nameSectionTitle": "2. Choose the merged note name",
-      "nameGroupLabel": "Choose the merged note name",
-      "nameOptionAria": "Use name: {name}",
-      "nameRadioAria": "Name: {name}",
-      "customLabel": "Or enter a custom name:",
-      "customPlaceholder": "Enter a new note name (without .md)",
-      "customAria": "Enter custom note name",
-      "confirm": "Confirm merge",
-      "cancel": "Cancel",
-      "nameRequired": "Please select or enter a note name",
-      "invalidName": "File name cannot include: \\ / : * ? \" < > |",
-      "processing": "Processing..."
-    },
-    "mergeDiff": {
-      "snapshotEnabled": "Auto snapshot enabled",
-      "mergeDescription": "Merge \"{from}\" into \"{to}\"",
-      "reversibleHint": "Snapshots will be created before merge and can be restored anytime.",
-      "diffView": "Diff View",
-      "fullView": "Full View",
-      "swapDirection": "Swap Direction",
-      "failed": "Merge failed: {message}",
-      "originalContent": "Original content ({name})",
-      "mergedContent": "Merged content"
     },
     "notifications": {
       "systemNotInitialized": "System not initialized",
@@ -315,7 +149,9 @@
       "pendingDuplicatesHint": "There are {count} pending duplicates. Please select which to merge in the workbench.",
       "improveInstructionRequired": "Please enter an amend instruction",
       "conceptLocked": "This concept is currently being processed. Please try again later.",
-      "clearFailed": "Clear failed"
+      "clearFailed": "Clear failed",
+      "compareNoContent": "Cannot read note content",
+      "compareFailed": "Failed to open comparison"
     }
   },
   "expand": {
@@ -348,11 +184,14 @@
     "tabs": {
       "general": "General",
       "providers": "AI Providers",
-      "knowledge": "Knowledge",
+      "advanced": "Advanced",
       "system": "System"
     },
     "groups": {
       "interface": "Interface",
+      "languageDisplay": "Language & Display",
+      "knowledgeStorage": "Knowledge Storage",
+      "automation": "Automation",
       "deduplication": "Deduplication",
       "performance": "Performance",
       "directory": "Directory Structure",
@@ -384,6 +223,9 @@
     "concurrency": {
       "name": "Concurrency",
       "desc": "Maximum number of concurrent tasks"
+    },
+    "units": {
+      "days": "days"
     },
     "provider": {
       "title": "AI Provider Configuration",
@@ -486,6 +328,12 @@
   },
   "setupWizard": {
     "title": "Configure AI Provider",
+    "steps": {
+      "welcome": "Welcome",
+      "provider": "AI Service",
+      "directory": "Directories",
+      "complete": "Done"
+    },
     "welcome": {
       "title": "Welcome to Cognitive Razor",
       "subtitle": "Turn ideas into structured concepts and evolve your knowledge graph.",
@@ -560,11 +408,6 @@
     "editProvider": {
       "title": "Edit AI Provider"
     },
-    "simpleInput": {
-      "submit": "Submit",
-      "submitHint": "Submit (Enter)",
-      "emptyValue": "Please enter content"
-    },
     "providerConfig": {
       "description": "Configure an OpenAI-compatible API service (Gemini, OpenAI, Azure OpenAI, etc.).",
       "sections": {
@@ -629,38 +472,14 @@
     }
   },
   "taskTypes": {
-    "define": {
-      "name": "Define",
-      "desc": "Normalize the input and determine the concept type"
-    },
-    "tag": {
-      "name": "Tag",
-      "desc": "Generate aliases and tags"
-    },
-    "amend": {
-      "name": "Amend",
-      "desc": "Improve existing content incrementally"
-    },
-    "merge": {
-      "name": "Merge",
-      "desc": "Merge duplicate concepts"
-    },
-    "index": {
-      "name": "Index",
-      "desc": "Produce semantic vectors for retrieval"
-    },
-    "write": {
-      "name": "Write",
-      "desc": "Generate full content or merge results"
-    },
-    "verify": {
-      "name": "Verify",
-      "desc": "Check the accuracy of generated content"
-    },
-    "image-generate": {
-      "name": "Image",
-      "desc": "Generate images and insert into notes"
-    }
+    "define": { "name": "Define", "desc": "Normalize the input and determine the concept type" },
+    "tag": { "name": "Tag", "desc": "Generate aliases and tags" },
+    "amend": { "name": "Amend", "desc": "Improve existing content incrementally" },
+    "merge": { "name": "Merge", "desc": "Merge duplicate concepts" },
+    "index": { "name": "Index", "desc": "Produce semantic vectors for retrieval" },
+    "write": { "name": "Write", "desc": "Generate full content or merge results" },
+    "verify": { "name": "Verify", "desc": "Check the accuracy of generated content" },
+    "image-generate": { "name": "Image", "desc": "Generate images and insert into notes" }
   },
   "crTypes": {
     "Domain": "Domain",
@@ -703,38 +522,14 @@
       "embeddingDimensionDesc": "Dimension size for vector embeddings"
     },
     "tasks": {
-      "define": {
-        "name": "Define",
-        "desc": "Analyze and define core concept meaning"
-      },
-      "tag": {
-        "name": "Tag",
-        "desc": "Tag and categorize concepts"
-      },
-      "write": {
-        "name": "Write",
-        "desc": "Write and expand concept content"
-      },
-      "amend": {
-        "name": "Amend",
-        "desc": "Improve existing content"
-      },
-      "merge": {
-        "name": "Merge",
-        "desc": "Merge duplicate concepts"
-      },
-      "index": {
-        "name": "Index",
-        "desc": "Generate semantic vectors and build index"
-      },
-      "verify": {
-        "name": "Verify",
-        "desc": "Validate and check concept quality"
-      },
-      "image-generate": {
-        "name": "Image",
-        "desc": "Generate images and insert into notes"
-      }
+      "define": { "name": "Define", "desc": "Analyze and define core concept meaning" },
+      "tag": { "name": "Tag", "desc": "Tag and categorize concepts" },
+      "write": { "name": "Write", "desc": "Write and expand concept content" },
+      "amend": { "name": "Amend", "desc": "Improve existing content" },
+      "merge": { "name": "Merge", "desc": "Merge duplicate concepts" },
+      "index": { "name": "Index", "desc": "Generate semantic vectors and build index" },
+      "verify": { "name": "Verify", "desc": "Validate and check concept quality" },
+      "image-generate": { "name": "Image", "desc": "Generate images and insert into notes" }
     },
     "reasoningEffortOptions": {
       "notSet": "Not Set",
@@ -750,10 +545,7 @@
   },
   "imageGeneration": {
     "title": "Image Generation",
-    "enabled": {
-      "name": "Enable image generation",
-      "desc": "Allow inserting AI-generated images into notes"
-    },
+    "enabled": { "name": "Enable image generation", "desc": "Allow inserting AI-generated images into notes" },
     "defaultSize": {
       "name": "Default image size",
       "desc": "Default canvas size when generating images",
@@ -786,17 +578,16 @@
       "desc": "Characters before/after cursor to include in prompt"
     }
   },
-  "statusBadge": {
-    "idle": "Idle",
-    "active": "{count} tasks",
-    "paused": "Paused",
-    "error": "{count} failed",
-    "offline": "Offline",
-    "ariaIdle": "Cognitive Razor - Idle",
-    "ariaActive": "Cognitive Razor - {count} tasks running",
-    "ariaPaused": "Cognitive Razor - Queue paused, {count} tasks",
-    "ariaError": "Cognitive Razor - {count} tasks failed",
-    "ariaOffline": "Cognitive Razor - Offline"
+  "diff": {
+    "modeAmend": "Amend",
+    "modeMerge": "Merge",
+    "modeSnapshot": "Snapshot Restore",
+    "accept": "Accept",
+    "reject": "Reject",
+    "restoreVersion": "Restore to this version",
+    "mergedNoteName": "Merged note name",
+    "customName": "Custom name...",
+    "customNamePlaceholder": "Enter custom name"
   },
   "imageModal": {
     "title": "Generate Image",
@@ -807,5 +598,9 @@
     "cancel": "Cancel",
     "promptTooShort": "Please enter at least 5 characters.",
     "genericFailure": "Operation failed, please try again later"
+  },
+  "feedback": {
+    "undo": "Undo",
+    "defaultError": "Operation failed, please try again later"
   }
 }

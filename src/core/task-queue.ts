@@ -1,6 +1,11 @@
 /** 任务队列 - 负责任务调度、并发控制和持久化 */
 
 import {
+  ok,
+  err,
+  CognitiveRazorError
+} from "../types";
+import type {
   ILogger,
   TaskRecord,
   TaskType,
@@ -10,9 +15,6 @@ import {
   QueueEvent,
   QueueStateFile,
   Result,
-  ok,
-  err,
-  CognitiveRazorError
 } from "../types";
 import { formatCRTimestamp } from "../utils/date-utils";
 import { RetryHandler } from "./retry-handler";

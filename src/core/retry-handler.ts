@@ -1,6 +1,6 @@
 /** RetryHandler：错误处理和重试逻辑 */
 
-import { Result, Err, TaskError, ILogger } from "../types";
+import type { Result, Err, TaskError, ILogger } from "../types";
 import { formatCRTimestamp } from "../utils/date-utils";
 import {
   getErrorCategory,

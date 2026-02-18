@@ -1,10 +1,12 @@
 import { TFile } from "obsidian";
 import {
+  ok,
+  err,
+} from "../types";
+import type {
   CRType,
   ILogger,
   Result,
-  ok,
-  err,
   StandardizedConcept,
 } from "../types";
 import { extractFrontmatter } from "./frontmatter-utils";

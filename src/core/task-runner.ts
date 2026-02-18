@@ -1,6 +1,12 @@
 /** 任务执行器 - 负责执行单个任务，调用 Provider 和验证输出 */
 
 import {
+  ok,
+  err,
+  CognitiveRazorError,
+  toErr,
+} from "../types";
+import type {
   ILogger,
   TaskRecord,
   TaskResult,
@@ -10,10 +16,6 @@ import {
   StandardizedConcept,
   NoteState,
   Result,
-  ok,
-  err,
-  CognitiveRazorError,
-  toErr,
   ChatRequest,
   DefinePayload,
   TagPayload,

@@ -1,6 +1,6 @@
 /** Validator - 验证 AI 输出，包括 JSON 解析和 Schema 校验 */
 
-import {
+import type {
   ValidationResult,
   ValidationError,
   ValidationContext,

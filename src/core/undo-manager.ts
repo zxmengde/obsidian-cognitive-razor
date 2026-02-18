@@ -1,16 +1,18 @@
 /** 撤销管理器 - 负责快照的创建、恢复和管理 */
 
 import {
+  ok,
+  err,
+  CognitiveRazorError,
+  toErr
+} from "../types";
+import type {
   ILogger,
   SnapshotRecord,
   SnapshotIndex,
   Snapshot,
   SnapshotMetadata,
   Result,
-  ok,
-  err,
-  CognitiveRazorError,
-  toErr
 } from "../types";
 import type { FileStorage } from "../data/file-storage";
 import { formatCRTimestamp } from "../utils/date-utils";

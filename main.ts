@@ -38,12 +38,12 @@ import { ContentRenderer } from './src/core/content-renderer';
 import { schemaRegistry } from './src/core/schema-registry';
 import type { OrchestratorDeps } from './src/core/orchestrator-deps';
 
-// UI 层组件
-import { WorkbenchPanel, WORKBENCH_VIEW_TYPE } from './src/ui/workbench-panel';
-import { StatusBadge } from './src/ui/status-badge';
+// UI 层组件（Svelte 5）
+import { WorkbenchView, VIEW_TYPE_CR_WORKBENCH } from './src/ui/svelte/workbench-view';
+import { DiffTabView, VIEW_TYPE_CR_DIFF } from './src/ui/svelte/diff-view';
+import { CRSettingTab } from './src/ui/svelte/settings-tab';
 import { CommandDispatcher } from './src/ui/command-dispatcher';
-import { CognitiveRazorSettingTab } from './src/ui/settings-tab';
-import { SetupWizard } from './src/ui/setup-wizard';
+import { SetupWizard } from './src/ui/svelte/setup-wizard';
 import { ModalManager } from './src/ui/modal-manager';
 
 // ============================================================================
@@ -79,7 +79,6 @@ export const SERVICE_TOKENS = {
 
 	// UI 层
 	modalManager: Symbol('ModalManager'),
-	statusBadge: Symbol('StatusBadge'),
 	commandDispatcher: Symbol('CommandDispatcher'),
 } as const;
 
@@ -161,18 +160,12 @@ export default class CognitiveRazorPlugin extends Plugin {
 			this.tryResolve<VerifyOrchestrator>(SERVICE_TOKENS.verifyOrchestrator)?.dispose();
 			this.tryResolve<CruidCache>(SERVICE_TOKENS.cruidCache)?.dispose();
 
-			// 3. 清理 UI 组件
-			const statusBadge = this.tryResolve<StatusBadge>(SERVICE_TOKENS.statusBadge);
-			if (statusBadge) {
-				statusBadge.destroy();
-				logger?.debug('CognitiveRazorPlugin', '状态栏徽章已清理');
-			}
-
-			// 4. 卸载视图
-			this.app.workspace.detachLeavesOfType(WORKBENCH_VIEW_TYPE);
+			// 3. 卸载视图
+			this.app.workspace.detachLeavesOfType(VIEW_TYPE_CR_WORKBENCH);
+			this.app.workspace.detachLeavesOfType(VIEW_TYPE_CR_DIFF);
 			logger?.debug('CognitiveRazorPlugin', '视图已卸载');
 
-			// 5. 解除所有订阅
+			// 4. 解除所有订阅
 			for (const unsub of this.unsubscribers) {
 				try {
 					unsub();
@@ -182,7 +175,7 @@ export default class CognitiveRazorPlugin extends Plugin {
 			}
 			this.unsubscribers = [];
 
-			// 6. 释放 ServiceContainer 中所有服务
+			// 5. 释放 ServiceContainer 中所有服务
 			this.container?.disposeAll();
 
 			logger?.info('CognitiveRazorPlugin', '插件卸载完成');
@@ -497,22 +490,14 @@ export default class CognitiveRazorPlugin extends Plugin {
 		this.container.registerInstance(SERVICE_TOKENS.modalManager, modalManager, 'ui');
 		logger.debug('CognitiveRazorPlugin', 'ModalManager 初始化完成');
 
-		// StatusBadge
-		const i18nForBadge = this.container.resolve<I18n>(SERVICE_TOKENS.i18n);
-		const statusBadge = new StatusBadge({ plugin: this, i18n: i18nForBadge });
-		const status = taskQueue.getStatus();
-		statusBadge.updateStatus(status);
-		this.container.registerInstance(SERVICE_TOKENS.statusBadge, statusBadge, 'ui');
-		logger.debug('CognitiveRazorPlugin', 'StatusBadge 初始化完成', { status });
-
 		// CommandDispatcher
 		const commandDispatcher = new CommandDispatcher(this, taskQueue);
 		commandDispatcher.registerAllCommands();
 		this.container.registerInstance(SERVICE_TOKENS.commandDispatcher, commandDispatcher, 'ui');
 		logger.debug('CognitiveRazorPlugin', '命令注册完成');
 
-		// 设置面板
-		this.addSettingTab(new CognitiveRazorSettingTab(this.app, this));
+		// 设置面板（Svelte 5）
+		this.addSettingTab(new CRSettingTab(this.app, this));
 
 		logger.info('CognitiveRazorPlugin', 'UI 层初始化完成');
 	}
@@ -542,7 +527,7 @@ export default class CognitiveRazorPlugin extends Plugin {
 		new Notice(`Cognitive Razor 初始化失败，已进入安全模式: ${errorMessage}`, 10000);
 
 		// 仅注册设置面板，允许用户修改配置
-		this.addSettingTab(new CognitiveRazorSettingTab(this.app, this));
+		this.addSettingTab(new CRSettingTab(this.app, this));
 	}
 
 	// ========================================================================
@@ -641,17 +626,27 @@ export default class CognitiveRazorPlugin extends Plugin {
 		const logger = this.container.resolve<Logger>(SERVICE_TOKENS.logger);
 		logger.debug('CognitiveRazorPlugin', '开始注册视图');
 
+		// 工作台视图（Svelte 5）
 		this.registerView(
-			WORKBENCH_VIEW_TYPE,
+			VIEW_TYPE_CR_WORKBENCH,
 			(leaf) => {
-				const panel = new WorkbenchPanel(leaf);
-				panel.setPlugin(this);
-				logger.debug('CognitiveRazorPlugin', 'WorkbenchPanel 视图已创建');
-				return panel;
+				const view = new WorkbenchView(leaf, this);
+				logger.debug('CognitiveRazorPlugin', 'WorkbenchView 视图已创建');
+				return view;
 			}
 		);
 
-		logger.info('CognitiveRazorPlugin', '视图注册完成', { views: [WORKBENCH_VIEW_TYPE] });
+		// Diff 标签页视图（Svelte 5）
+		this.registerView(
+			VIEW_TYPE_CR_DIFF,
+			(leaf) => {
+				const view = new DiffTabView(leaf, this);
+				logger.debug('CognitiveRazorPlugin', 'DiffTabView 视图已创建');
+				return view;
+			}
+		);
+
+		logger.info('CognitiveRazorPlugin', '视图注册完成', { views: [VIEW_TYPE_CR_WORKBENCH, VIEW_TYPE_CR_DIFF] });
 	}
 
 	/**
@@ -660,23 +655,14 @@ export default class CognitiveRazorPlugin extends Plugin {
 	private subscribeToEvents(): void {
 		const logger = this.container.resolve<Logger>(SERVICE_TOKENS.logger);
 		const taskQueue = this.container.resolve<TaskQueue>(SERVICE_TOKENS.taskQueue);
-		const statusBadge = this.container.resolve<StatusBadge>(SERVICE_TOKENS.statusBadge);
 		const duplicateManager = this.container.resolve<DuplicateManager>(SERVICE_TOKENS.duplicateManager);
 		const i18n = this.container.resolve<I18n>(SERVICE_TOKENS.i18n);
 
 		logger.debug('CognitiveRazorPlugin', '开始订阅事件');
 
-		// 1. 队列事件
+		// 1. 队列事件（Svelte 响应式 store 自动订阅，此处仅保留日志）
 		const unsubQueue = taskQueue.subscribe((event) => {
 			const status = taskQueue.getStatus();
-			statusBadge.updateStatus(status);
-
-			const workbenchLeaves = this.app.workspace.getLeavesOfType(WORKBENCH_VIEW_TYPE);
-			if (workbenchLeaves.length > 0) {
-				const workbench = workbenchLeaves[0].view as WorkbenchPanel;
-				workbench.updateQueueStatus(status);
-			}
-
 			logger.debug('CognitiveRazorPlugin', '队列事件', { event, status });
 		});
 		this.unsubscribers.push(unsubQueue);
@@ -698,14 +684,8 @@ export default class CognitiveRazorPlugin extends Plugin {
 		});
 		this.unsubscribers.push(unsubSettings);
 
-		// 3. 重复对变更事件
+		// 3. 重复对变更事件（Svelte 响应式 store 自动订阅，此处仅保留日志）
 		const unsubDuplicates = duplicateManager.subscribe((pairs) => {
-			const workbenchLeaves = this.app.workspace.getLeavesOfType(WORKBENCH_VIEW_TYPE);
-			if (workbenchLeaves.length > 0) {
-				const workbench = workbenchLeaves[0].view as WorkbenchPanel;
-				workbench.updateDuplicates(pairs);
-			}
-
 			logger.debug('CognitiveRazorPlugin', '重复对变更', { count: pairs.length });
 		});
 		this.unsubscribers.push(unsubDuplicates);
@@ -723,8 +703,6 @@ export default class CognitiveRazorPlugin extends Plugin {
 		if (online) {
 			if (this.isOffline) {
 				this.isOffline = false;
-				const statusBadge = this.tryResolve<StatusBadge>(SERVICE_TOKENS.statusBadge);
-				statusBadge?.setOffline(false);
 				if (t) new Notice(t.notices.networkRestored);
 			}
 			return;
@@ -734,8 +712,6 @@ export default class CognitiveRazorPlugin extends Plugin {
 			this.isOffline = true;
 			const taskQueue = this.tryResolve<TaskQueue>(SERVICE_TOKENS.taskQueue);
 			if (taskQueue) void taskQueue.pause();
-			const statusBadge = this.tryResolve<StatusBadge>(SERVICE_TOKENS.statusBadge);
-			statusBadge?.setOffline(true);
 			if (t) {
 				new Notice(reason ? `${t.notices.networkOffline}: ${reason}` : t.notices.networkOffline);
 			}
@@ -794,6 +770,7 @@ export default class CognitiveRazorPlugin extends Plugin {
 	 */
 	public getComponents() {
 		return {
+			container: this.container,
 			settings: this.settings,
 			settingsStore: this.container.resolve<SettingsStore>(SERVICE_TOKENS.settingsStore),
 			i18n: this.container.resolve<I18n>(SERVICE_TOKENS.i18n),

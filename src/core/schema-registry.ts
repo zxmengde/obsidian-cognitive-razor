@@ -3,7 +3,7 @@
  * 为五种知识类型提供 JSON Schema、字段描述和校验规则
  */
 
-import { CRType } from "../types";
+import type { CRType } from "../types";
 
 /** JSON Schema 类型定义 */
 type JSONSchema = {

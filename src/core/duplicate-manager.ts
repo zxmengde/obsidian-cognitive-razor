@@ -1,14 +1,16 @@
 /** 重复管理器：检测和管理重复概念 */
 
 import {
+  ok,
+  err
+} from "../types";
+import type {
   ILogger,
   DuplicatePair,
   DuplicatePairStatus,
   DuplicatePairsStore,
   CRType,
   Result,
-  ok,
-  err
 } from "../types";
 import { formatCRTimestamp } from "../utils/date-utils";
 import type { VectorIndex } from "./vector-index";

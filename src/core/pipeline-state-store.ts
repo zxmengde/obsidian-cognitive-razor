@@ -1,10 +1,12 @@
 import type { FileStorage } from "../data/file-storage";
 import {
+  ok,
+  err,
+} from "../types";
+import type {
   ILogger,
   PipelineContext,
   Result,
-  ok,
-  err,
 } from "../types";
 
 export interface PipelineStateFile {

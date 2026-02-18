@@ -1,12 +1,14 @@
 /** 提示词管理器：加载、验证和构建提示词模板 */
 
 import {
-  ILogger,
-  TaskType,
-  Result,
   ok,
   err,
   CognitiveRazorError
+} from "../types";
+import type {
+  ILogger,
+  TaskType,
+  Result,
 } from "../types";
 import type { FileStorage } from "../data/file-storage";
 

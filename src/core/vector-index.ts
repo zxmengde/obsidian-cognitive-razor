@@ -11,14 +11,16 @@
  */
 
 import {
+  ok,
+  err,
+} from "../types";
+import type {
   ILogger,
   VectorEntry,
   SearchResult,
   IndexStats,
   CRType,
   Result,
-  ok,
-  err,
   Err,
   ConceptVector,
   VectorIndexMeta,

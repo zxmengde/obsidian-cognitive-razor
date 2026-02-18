@@ -1,6 +1,10 @@
 /** 数据验证函数 - 验证数据模型的完整性和正确性 */
 
 import {
+  ok,
+  err,
+} from "../types";
+import type {
   CRFrontmatter,
   CRType,
   NoteState,
@@ -10,8 +14,6 @@ import {
   DuplicatePair,
   DuplicatePairStatus,
   Result,
-  ok,
-  err,
 } from "../types";
 import { formatCRTimestamp } from "../utils/date-utils";
 

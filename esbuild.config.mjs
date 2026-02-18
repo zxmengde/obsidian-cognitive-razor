@@ -1,6 +1,8 @@
 import esbuild from "esbuild";
 import process from "process";
 import builtins from "builtin-modules";
+import sveltePlugin from "esbuild-svelte";
+import sveltePreprocess from "svelte-preprocess";
 
 const banner =
 `/*
@@ -42,6 +44,19 @@ const context = await esbuild.context({
 	alias: {
 		"@": "./src"
 	},
+	// Svelte 5 编译插件
+	plugins: [
+		sveltePlugin({
+			preprocess: sveltePreprocess(),
+			compilerOptions: {
+				// 生产模式下启用 CSS 注入，开发模式下也注入（单文件输出）
+				css: "injected",
+			},
+		}),
+	],
+	// 确保 .svelte 文件中的路径别名正确解析
+	mainFields: ["svelte", "browser", "module", "main"],
+	conditions: ["svelte", "browser"],
 });
 
 if (prod) {

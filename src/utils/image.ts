@@ -1,4 +1,5 @@
-import { Result, err, ok } from "../types";
+import { err, ok } from "../types";
+import type { Result } from "../types";
 
 const DATA_URL_REGEX = /data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/;
 

@@ -1,5 +1,6 @@
 import type { CRType } from "../types";
-import { FieldDescription, schemaRegistry } from "./schema-registry";
+import { schemaRegistry } from "./schema-registry";
+import type { FieldDescription } from "./schema-registry";
 
 export class ContentRenderer {
   renderNoteMarkdown(options: {

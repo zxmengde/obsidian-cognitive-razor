@@ -1,7 +1,8 @@
 /** 命名工具：概念命名模板渲染、签名生成、文件路径生成 */
 
 import { normalizePath } from "obsidian";
-import { CRType, type ILogger } from "../types";
+import type { CRType } from "../types";
+import type { ILogger } from "../types";
 
 /** Obsidian 非法文件名字符 */
 const ILLEGAL_FILENAME_CHARS = /[\\/:*?"<>|]/g;

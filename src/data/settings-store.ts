@@ -1,6 +1,8 @@
 /** SettingsStore - 管理插件配置，支持版本兼容性检查和导入导出 */
 
-import { PluginSettings, ProviderConfig, Result, ok, err, DirectoryScheme, TaskType, TaskModelConfig, DEFAULT_UI_STATE } from "../types";
+import { ok, err } from "../types";
+import type { PluginSettings, ProviderConfig, Result, DirectoryScheme, TaskType, TaskModelConfig } from "../types";
+import { DEFAULT_UI_STATE } from "../types";
 import { Plugin } from "obsidian";
 
 /**

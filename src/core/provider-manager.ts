@@ -1,7 +1,13 @@
 /** Provider 管理器：与 AI 服务提供商交互，支持 OpenAI 标准格式 */
 
-import { requestUrl, type RequestUrlParam, type RequestUrlResponse } from "obsidian";
+import { requestUrl } from "obsidian";
+import type { RequestUrlParam, RequestUrlResponse } from "obsidian";
 import {
+  ok,
+  err,
+  DEFAULT_ENDPOINTS,
+} from "../types";
+import type {
   ILogger,
   ChatRequest,
   ChatResponse,
@@ -11,9 +17,6 @@ import {
   ProviderInfo,
   ProviderConfig,
   Result,
-  ok,
-  err,
-  DEFAULT_ENDPOINTS,
   Err,
   ImageGenerateRequest,
   ImageGenerateResponse
@@ -380,9 +383,9 @@ export class ProviderManager {
   }
 
   /** 检查 Provider 可用性 */
-  async checkAvailability(providerId: string, forceRefresh = false): Promise<Result<ProviderCapabilities>> {
-    // 检查缓存（除非强制刷新）
-    if (!forceRefresh) {
+  async checkAvailability(providerId: string, forceRefresh = false, configOverride?: ProviderConfig): Promise<Result<ProviderCapabilities>> {
+    // 检查缓存（除非强制刷新或使用临时配置）
+    if (!forceRefresh && !configOverride) {
       const cached = this.availabilityCache.get(providerId);
       if (cached && Date.now() - cached.timestamp < ProviderManager.CACHE_TTL_MS) {
         this.logger.debug("ProviderManager", "使用缓存的可用性信息", {
@@ -394,12 +397,17 @@ export class ProviderManager {
       }
     }
 
-    // 验证 Provider 配置
-    const configResult = this.getProviderConfig(providerId);
-    if (!configResult.ok) {
-      return configResult;
+    // 验证 Provider 配置（支持临时配置覆盖，用于 Modal 连接测试）
+    let providerConfig: ProviderConfig;
+    if (configOverride) {
+      providerConfig = configOverride;
+    } else {
+      const configResult = this.getProviderConfig(providerId);
+      if (!configResult.ok) {
+        return configResult;
+      }
+      providerConfig = configResult.value;
     }
-    const providerConfig = configResult.value;
 
     // 构建请求 URL
     const baseUrl = providerConfig.baseUrl || DEFAULT_ENDPOINTS["openai"];

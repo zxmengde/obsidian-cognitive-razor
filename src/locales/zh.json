@@ -43,22 +43,11 @@
     },
     "duplicates": {
       "title": "重复概念",
-      "sortBy": "排序:",
-      "sortSimilarityDesc": "相似度 (高到低)",
-      "sortSimilarityAsc": "相似度 (低到高)",
-      "sortTimeDesc": "时间 (新到旧)",
-      "sortTimeAsc": "时间 (旧到新)",
-      "sortByType": "按类型",
-      "filterBy": "类型:",
-      "filterAll": "全部",
-      "selectAll": "全选",
-      "batchMerge": "批量合并",
-      "batchDismiss": "批量忽略",
-      "viewHistory": "查看历史",
       "empty": "暂无重复概念",
-      "merge": "合并",
       "dismiss": "忽略",
-      "selectPair": "选择重复对"
+      "compare": "对比",
+      "compareAria": "对比合并",
+      "dismissAria": "忽略此重复对"
     },
     "queueStatus": {
       "title": "队列状态",
@@ -66,47 +55,30 @@
       "paused": "已暂停",
       "pending": "待处理",
       "running": "执行中",
-      "completed": "已完成",
       "failed": "失败",
-      "cancelled": "已取消",
       "clearPending": "清除待处理",
-      "clearCompleted": "清除已完成",
-      "clearFailed": "清除失败",
       "retryFailed": "重试失败",
       "pauseQueue": "暂停队列",
       "resumeQueue": "恢复队列",
-      "viewDetails": "查看详情",
-      "currentPipeline": "当前管线",
-      "noPipeline": "暂无活动管线",
-      "queuePaused": "队列已暂停",
-      "queueRunning": "队列运行中",
       "queueResumed": "队列已恢复运行",
       "cancel": "取消",
-      "retry": "重试",
-      "taskId": "任务 ID",
-      "type": "类型",
-      "status": "状态",
-      "progress": "进度",
-      "actions": "操作",
       "noTasks": "队列中暂无任务",
-      "noteName": "笔记名",
       "clearPendingConfirmTitle": "确认清空待处理",
-      "clearPendingConfirmMessage": "是否取消所有待处理任务？",
-      "clearCompletedConfirmTitle": "确认清空已完成",
-      "clearCompletedConfirmMessage": "是否清空所有已完成任务记录？",
-      "clearFailedConfirmTitle": "确认清空失败",
-      "clearFailedConfirmMessage": "是否取消所有失败任务？"
+      "clearPendingConfirmMessage": "是否取消所有待处理任务？"
     },
     "recentOps": {
       "title": "操作历史",
       "empty": "暂无可撤销的操作",
       "undo": "撤销",
-      "viewSnapshot": "查看快照",
-      "refresh": "刷新",
+      "view": "查看",
+      "viewAria": "查看快照",
+      "undoAria": "撤销此操作",
       "clearAll": "清空全部",
       "clearAllConfirmTitle": "确认清空",
       "clearAllConfirmMessage": "确定要清空所有快照吗？此操作不可撤销。",
       "moreSnapshots": "还有 {count} 个更早的快照",
+      "viewSnapshotFailed": "读取快照失败",
+      "undoFailed": "恢复失败",
       "timeJustNow": "刚刚",
       "timeMinutesAgo": "{minutes} 分钟前",
       "timeHoursAgo": "{hours} 小时前",
@@ -120,144 +92,6 @@
         "create": "创建笔记",
         "fallback": "操作"
       }
-    },
-    "pipeline": {
-      "id": "ID",
-      "type": "类型",
-      "stage": "阶段",
-      "view": "查看",
-      "confirmCreate": "确认创建",
-      "previewWrite": "预览写入",
-      "mergePreview": "合并预览",
-      "amendPreview": "修订预览",
-      "verificationResult": "校验结果：",
-      "chineseName": "中文名称：",
-      "englishName": "英文名称：",
-      "autoSelect": "自动选择",
-      "saveEdit": "保存编辑",
-      "generatedContentPreview": "生成内容预览（写入前）",
-      "progressTitle": "AI 阶段进度",
-      "progressHint": "实时显示 LLM 调用阶段与写入状态",
-      "empty": "当前没有进行中的管线",
-      "kind": {
-        "create": "创建",
-        "amend": "修订",
-        "merge": "合并"
-      },
-      "stages": {
-        "idle": "空闲",
-        "defining": "定义中",
-        "tagging": "标记中",
-        "indexing": "索引中",
-        "review_draft": "确认草稿",
-        "writing": "撰写中",
-        "verifying": "校验中",
-        "review_changes": "确认修改",
-        "saving": "写入中",
-        "checking_duplicates": "查重中",
-        "completed": "已完成",
-        "failed": "失败"
-      },
-      "stageMessages": {
-        "default": "AI 正在处理该步骤",
-        "idle": "等待新任务开始",
-        "defining": "分析输入并完成概念定义",
-        "tagging": "扩展别名、标签等上下文",
-        "indexing": "生成语义向量以便搜索",
-        "review_draft": "等待确认创建草稿",
-        "writing": "生成正文或合并内容",
-        "verifying": "AI 校验中，确保输出可靠",
-        "review_changes": "等待用户确认写入",
-        "saving": "写入文件并生成快照",
-        "checking_duplicates": "刷新查重索引，清理历史记录",
-        "completed": "流程已完成，可在历史中撤销",
-        "failed": "流程失败，请查看错误信息或重试"
-      }
-    },
-    "typeConfidenceTable": {
-      "type": "类型",
-      "standardName": "标准名称",
-      "confidence": "置信度",
-      "action": "操作"
-    },
-    "duplicatePreview": {
-      "title": "重复概念预览",
-      "similarity": "相似度:",
-      "type": "类型:",
-      "detectedAt": "检测时间:",
-      "sideBySide": "并排对比",
-      "diffHighlight": "差异高亮",
-      "mergeAction": "🔀 合并",
-      "dismissAction": "🚫 忽略",
-      "openA": "📄 打开 A",
-      "openB": "📄 打开 B",
-      "cancel": "取消"
-    },
-    "duplicateHistory": {
-      "title": "重复对历史",
-      "mergedTab": "已合并",
-      "dismissedTab": "已忽略",
-      "emptyMerged": "暂无已合并的重复对",
-      "emptyDismissed": "暂无已忽略的重复对",
-      "similarity": "相似度",
-      "undoDismiss": "撤销忽略",
-      "delete": "删除",
-      "close": "关闭"
-    },
-    "diffPreview": {
-      "accept": "接受",
-      "reject": "放弃",
-      "acceptAria": "接受更改",
-      "rejectAria": "放弃更改",
-      "modeLabel": "差异视图模式",
-      "unifiedView": "统一视图",
-      "unifiedViewAria": "切换到统一差异视图",
-      "sideBySideView": "并排视图",
-      "sideBySideViewAria": "切换到并排差异视图",
-      "leftTitle": "原始内容",
-      "rightTitle": "更新后内容"
-    },
-    "snapshotDiff": {
-      "title": "快照预览: {id}",
-      "createdAt": "创建时间：{time}",
-      "snapshotVersion": "快照版本",
-      "currentVersion": "当前版本",
-      "restore": "恢复此快照",
-      "close": "关闭"
-    },
-    "mergeSelection": {
-      "title": "选择合并后的笔记名称",
-      "infoLabel": "将合并以下两个笔记：",
-      "similarity": "相似度: {value}",
-      "keepSectionTitle": "1. 选择保留哪个笔记",
-      "keepGroupLabel": "选择保留哪个笔记",
-      "keepCardAria": "保留“{name}”作为主体",
-      "keepRadioAria": "保留“{name}”",
-      "keepCardTitle": "保留 \"{name}\"",
-      "keepCardDesc": "以此笔记的内容为主体",
-      "nameSectionTitle": "2. 选择合并后的名称",
-      "nameGroupLabel": "选择合并后的名称",
-      "nameOptionAria": "使用名称：{name}",
-      "nameRadioAria": "名称：{name}",
-      "customLabel": "或输入自定义名称:",
-      "customPlaceholder": "输入新笔记名称（不含 .md 扩展名）",
-      "customAria": "输入自定义笔记名称",
-      "confirm": "确认合并",
-      "cancel": "取消",
-      "nameRequired": "请选择或输入笔记名称",
-      "invalidName": "文件名不能包含以下字符: \\ / : * ? \" < > |",
-      "processing": "处理中..."
-    },
-    "mergeDiff": {
-      "snapshotEnabled": "已启用自动快照",
-      "mergeDescription": "将 \"{from}\" 合并到 \"{to}\"",
-      "reversibleHint": "操作前会为双方创建快照，可随时恢复。",
-      "diffView": "差异视图",
-      "fullView": "完整视图",
-      "swapDirection": "交换方向",
-      "failed": "合并失败: {message}",
-      "originalContent": "原内容（{name}）",
-      "mergedContent": "合并后内容"
     },
     "notifications": {
       "systemNotInitialized": "系统未初始化",
@@ -315,7 +149,9 @@
       "pendingDuplicatesHint": "有 {count} 个待处理的重复对，请在工作台中选择要合并的重复对",
       "improveInstructionRequired": "请输入修订指令",
       "conceptLocked": "该概念正在被处理中，请稍后再试",
-      "clearFailed": "清空失败"
+      "clearFailed": "清空失败",
+      "compareNoContent": "无法读取笔记内容",
+      "compareFailed": "打开对比失败"
     }
   },
   "expand": {
@@ -347,12 +183,15 @@
     "title": "Cognitive Razor 设置",
     "tabs": {
       "general": "通用",
-      "providers": "AI Providers",
-      "knowledge": "知识库",
+      "providers": "AI 服务",
+      "advanced": "高级",
       "system": "系统"
     },
     "groups": {
       "interface": "界面",
+      "languageDisplay": "语言与显示",
+      "knowledgeStorage": "知识存储",
+      "automation": "自动化",
       "deduplication": "去重",
       "performance": "性能",
       "directory": "目录结构",
@@ -384,6 +223,9 @@
     "concurrency": {
       "name": "并发任务数",
       "desc": "同时执行的最大任务数"
+    },
+    "units": {
+      "days": "天"
     },
     "provider": {
       "title": "AI Provider 配置",
@@ -486,6 +328,12 @@
   },
   "setupWizard": {
     "title": "配置 AI Provider",
+    "steps": {
+      "welcome": "欢迎",
+      "provider": "AI 服务",
+      "directory": "目录",
+      "complete": "完成"
+    },
     "welcome": {
       "title": "欢迎使用 Cognitive Razor",
       "subtitle": "将想法快速转化为结构化概念，并持续演进知识图谱。",
@@ -560,11 +408,6 @@
     "editProvider": {
       "title": "编辑 AI Provider"
     },
-    "simpleInput": {
-      "submit": "提交",
-      "submitHint": "提交（Enter）",
-      "emptyValue": "请输入内容"
-    },
     "providerConfig": {
       "description": "配置兼容 OpenAI 的 API 服务（如 Gemini、OpenAI、Azure OpenAI 等）。",
       "sections": {
@@ -629,38 +472,14 @@
     }
   },
   "taskTypes": {
-    "define": {
-      "name": "定义",
-      "desc": "标准化输入并确定知识类型"
-    },
-    "tag": {
-      "name": "标记",
-      "desc": "生成别名与标签"
-    },
-    "amend": {
-      "name": "修订",
-      "desc": "对现有内容进行增量优化"
-    },
-    "merge": {
-      "name": "合并",
-      "desc": "融合语义重复的概念"
-    },
-    "index": {
-      "name": "索引",
-      "desc": "生成语义向量以便检索"
-    },
-    "write": {
-      "name": "撰写",
-      "desc": "生成完整正文或合并内容"
-    },
-    "verify": {
-      "name": "校验",
-      "desc": "验证生成内容的准确性"
-    },
-    "image-generate": {
-      "name": "图像生成",
-      "desc": "生成图片并插入笔记"
-    }
+    "define": { "name": "定义", "desc": "标准化输入并确定知识类型" },
+    "tag": { "name": "标记", "desc": "生成别名与标签" },
+    "amend": { "name": "修订", "desc": "对现有内容进行增量优化" },
+    "merge": { "name": "合并", "desc": "融合语义重复的概念" },
+    "index": { "name": "索引", "desc": "生成语义向量以便检索" },
+    "write": { "name": "撰写", "desc": "生成完整正文或合并内容" },
+    "verify": { "name": "校验", "desc": "验证生成内容的准确性" },
+    "image-generate": { "name": "图像生成", "desc": "生成图片并插入笔记" }
   },
   "crTypes": {
     "Domain": "领域",
@@ -703,38 +522,14 @@
       "embeddingDimensionDesc": "向量嵌入的维度大小"
     },
     "tasks": {
-      "define": {
-        "name": "Define (定义)",
-        "desc": "分析和定义概念的核心含义"
-      },
-      "tag": {
-        "name": "Tag (标记)",
-        "desc": "标记和分类概念"
-      },
-      "write": {
-        "name": "Write (撰写)",
-        "desc": "撰写和扩展概念内容"
-      },
-      "amend": {
-        "name": "Amend (修订)",
-        "desc": "对已有概念进行增量优化"
-      },
-      "merge": {
-        "name": "Merge (合并)",
-        "desc": "融合重复概念并生成合并内容"
-      },
-      "index": {
-        "name": "Index (索引)",
-        "desc": "生成语义向量并建立索引"
-      },
-      "verify": {
-        "name": "Verify (校验)",
-        "desc": "验证和检查概念质量"
-      },
-      "image-generate": {
-        "name": "Image (图像)",
-        "desc": "生成图片并插入笔记"
-      }
+      "define": { "name": "Define (定义)", "desc": "分析和定义概念的核心含义" },
+      "tag": { "name": "Tag (标记)", "desc": "标记和分类概念" },
+      "write": { "name": "Write (撰写)", "desc": "撰写和扩展概念内容" },
+      "amend": { "name": "Amend (修订)", "desc": "对已有概念进行增量优化" },
+      "merge": { "name": "Merge (合并)", "desc": "融合重复概念并生成合并内容" },
+      "index": { "name": "Index (索引)", "desc": "生成语义向量并建立索引" },
+      "verify": { "name": "Verify (校验)", "desc": "验证和检查概念质量" },
+      "image-generate": { "name": "Image (图像)", "desc": "生成图片并插入笔记" }
     },
     "reasoningEffortOptions": {
       "notSet": "不设置",
@@ -750,10 +545,7 @@
   },
   "imageGeneration": {
     "title": "图片生成设置",
-    "enabled": {
-      "name": "启用图片生成",
-      "desc": "允许在笔记中插入 AI 生成的图片"
-    },
+    "enabled": { "name": "启用图片生成", "desc": "允许在笔记中插入 AI 生成的图片" },
     "defaultSize": {
       "name": "默认图片尺寸",
       "desc": "生成图片的默认尺寸",
@@ -786,17 +578,16 @@
       "desc": "读取光标前后用于提示词的字符数"
     }
   },
-  "statusBadge": {
-    "idle": "空闲",
-    "active": "{count} 个任务",
-    "paused": "已暂停",
-    "error": "{count} 个失败",
-    "offline": "离线",
-    "ariaIdle": "Cognitive Razor - 空闲",
-    "ariaActive": "Cognitive Razor - {count} 个任务执行中",
-    "ariaPaused": "Cognitive Razor - 队列已暂停，{count} 个任务",
-    "ariaError": "Cognitive Razor - {count} 个任务失败",
-    "ariaOffline": "Cognitive Razor - 离线"
+  "diff": {
+    "modeAmend": "修订",
+    "modeMerge": "合并",
+    "modeSnapshot": "快照恢复",
+    "accept": "接受",
+    "reject": "拒绝",
+    "restoreVersion": "恢复到此版本",
+    "mergedNoteName": "合并后名称",
+    "customName": "自定义名称...",
+    "customNamePlaceholder": "输入自定义名称"
   },
   "imageModal": {
     "title": "生成图片",
@@ -807,5 +598,9 @@
     "cancel": "取消",
     "promptTooShort": "请至少输入 5 个字符。",
     "genericFailure": "操作失败，请稍后重试"
+  },
+  "feedback": {
+    "undo": "撤销",
+    "defaultError": "操作失败，请稍后重试"
   }
 }

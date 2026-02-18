@@ -7,7 +7,8 @@
  * - 运行时通过 cruid 动态解析 name/path，避免在索引中冗余存储
  */
 
-import { App, EventRef, TFile } from "obsidian";
+import { App, TFile } from "obsidian";
+import type { EventRef } from "obsidian";
 import type { ILogger } from "../types";
 import { extractFrontmatter } from "./frontmatter-utils";
 

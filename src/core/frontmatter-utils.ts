@@ -6,7 +6,7 @@
  * - 可选字段：definition, aliases, tags, sourceUids, version
  */
 
-import { CRFrontmatter, CRType, NoteState } from "../types";
+import type { CRFrontmatter, CRType, NoteState } from "../types";
 import YAML from "yaml";
 import { formatCRTimestamp } from "../utils/date-utils";
 
