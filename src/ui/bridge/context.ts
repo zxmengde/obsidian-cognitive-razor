@@ -27,7 +27,7 @@ const CONTEXT_KEY = Symbol('cr-context');
  * 所有 Svelte 组件通过此接口访问核心服务，
  * 避免直接依赖 Obsidian 全局对象或模块级单例。
  */
-export interface CRContext {
+interface CRContext {
     /** DI 容器，用于解析各类服务 */
     container: ServiceContainer;
     /** 国际化实例，用于获取翻译文本 */

@@ -51,7 +51,7 @@ interface TypeBucket {
  * registerInterval 回调类型
  * 由 Plugin 层注入，确保定时器随插件卸载自动清理
  */
-export type RegisterIntervalFn = (callback: () => void, intervalMs: number) => number;
+type RegisterIntervalFn = (callback: () => void, intervalMs: number) => number;
 
 // ============================================================================
 // VectorIndex 实现

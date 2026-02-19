@@ -24,7 +24,7 @@ type CruidCacheOptions = {
  * registerEvent 回调类型
  * 由 Plugin 层注入，确保事件监听器随插件卸载自动清理
  */
-export type RegisterEventFn = (eventRef: EventRef) => void;
+type RegisterEventFn = (eventRef: EventRef) => void;
 
 export class CruidCache {
   private app: App;

@@ -1,15 +1,14 @@
 /** Logger - 结构化日志记录，支持循环日志、追踪 ID、分组和过滤 */
 
 import type { ILogger } from "../types";
-import { isValidErrorCode, getErrorCodeInfo } from "./error-codes";
-import type { ErrorCode } from "./error-codes";
+
 
 /** 日志级别 */
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
 
 /** 日志条目接口 */
-export interface LogEntry {
+interface LogEntry {
   /** ISO 8601 格式时间戳 */
   timestamp: string;
   /** 日志级别 */
@@ -61,20 +60,7 @@ function formatShortTime(isoString: string): string {
   return `${hours}:${minutes}:${seconds}.${ms}`;
 }
 
-/**
- * 格式化时间戳为日期+时间格式
- * @param isoString ISO 8601 时间戳
- * @returns 格式 MM-DD HH:mm:ss
- */
-function formatDateTime(isoString: string): string {
-  const date = new Date(isoString);
-  const month = (date.getMonth() + 1).toString().padStart(2, "0");
-  const day = date.getDate().toString().padStart(2, "0");
-  const hours = date.getHours().toString().padStart(2, "0");
-  const minutes = date.getMinutes().toString().padStart(2, "0");
-  const seconds = date.getSeconds().toString().padStart(2, "0");
-  return `${month}-${day} ${hours}:${minutes}:${seconds}`;
-}
+
 
 /** 敏感字段键名列表（小写匹配） */
 const SENSITIVE_KEYS = ['apikey', 'token', 'secret', 'authorization', 'password', 'api_key'];
@@ -140,10 +126,8 @@ export class Logger implements ILogger {
   };
   private minLevel: LogLevel;
   private initialized = false;
-  private consoleEnabled = true;
   private sessionId: string;
-  private currentTraceId: string | null = null;
-  private groupStack: string[] = [];
+
 
   constructor(
     logFilePath: string,
@@ -171,38 +155,6 @@ export class Logger implements ILogger {
     return `${dateStr}-${timeStr}-${random}`;
   }
 
-  /** 生成追踪 ID */
-  generateTraceId(): string {
-    const timestamp = Date.now().toString(36);
-    const random = Math.random().toString(36).slice(2, 8);
-    return `${timestamp}-${random}`;
-  }
-
-  /** 设置当前追踪 ID（用于关联同一操作的多条日志） */
-  setTraceId(traceId: string | null): void {
-    this.currentTraceId = traceId;
-  }
-
-  /** 获取当前追踪 ID */
-  getTraceId(): string | null {
-    return this.currentTraceId;
-  }
-
-  /** 开始一个带追踪 ID 的操作 */
-  startTrace(operation: string): string {
-    const traceId = this.generateTraceId();
-    this.currentTraceId = traceId;
-    this.debug("Trace", `开始追踪: ${operation}`, { event: "TRACE_START", operation });
-    return traceId;
-  }
-
-  /** 结束当前追踪 */
-  endTrace(operation: string): void {
-    if (this.currentTraceId) {
-      this.debug("Trace", `结束追踪: ${operation}`, { event: "TRACE_END", operation });
-      this.currentTraceId = null;
-    }
-  }
 
   /** 初始化 Logger */
   async initialize(): Promise<void> {
@@ -266,62 +218,6 @@ export class Logger implements ILogger {
     });
   }
 
-  /** 开始日志分组 */
-  startGroup(groupName: string): void {
-    this.groupStack.push(groupName);
-    this.debug("Group", `┌─ ${groupName}`, { event: "GROUP_START", groupName });
-  }
-
-  /** 结束日志分组 */
-  endGroup(): void {
-    const groupName = this.groupStack.pop();
-    if (groupName) {
-      this.debug("Group", `└─ ${groupName} 完成`, { event: "GROUP_END", groupName });
-    }
-  }
-
-  /** 记录带耗时的操作 */
-  async withTiming<T>(
-    module: string,
-    operation: string,
-    fn: () => Promise<T>
-  ): Promise<T> {
-    const startTime = Date.now();
-    try {
-      const result = await fn();
-      const duration = Date.now() - startTime;
-      this.info(module, `${operation} 完成 (${duration}ms)`, {
-        event: "TIMING",
-        operation,
-        durationMs: duration
-      });
-      return result;
-    } catch (error) {
-      const duration = Date.now() - startTime;
-      this.error(module, `${operation} 失败 (${duration}ms)`, error as Error, {
-        event: "TIMING_ERROR",
-        operation,
-        durationMs: duration
-      });
-      throw error;
-    }
-  }
-
-  /** 记录耗时指标 */
-  timing(
-    module: string,
-    operation: string,
-    durationMs: number,
-    context?: Record<string, unknown>
-  ): void {
-    this.info(module, `${operation} (${durationMs}ms)`, {
-      event: "TIMING",
-      operation,
-      durationMs,
-      ...context
-    });
-  }
-
   /** 调试日志 */
   debug(module: string, message: string, context?: Record<string, unknown>): void {
     this.log("debug", module, message, undefined, context);
@@ -342,30 +238,6 @@ export class Logger implements ILogger {
     this.log("error", module, message, error, context);
   }
 
-  /** 带错误码的错误日志 */
-  errorWithCode(
-    module: string,
-    errorCode: string,
-    message: string,
-    error?: Error,
-    context?: Record<string, unknown>
-  ): void {
-    const codeInfo = isValidErrorCode(errorCode) ? getErrorCodeInfo(errorCode) : undefined;
-    
-    const enrichedContext: Record<string, unknown> = {
-      ...context,
-      errorCode,
-      event: context?.event || "ERROR",
-    };
-
-    if (codeInfo) {
-      enrichedContext.errorCodeName = codeInfo.name;
-      enrichedContext.errorCategory = codeInfo.category;
-      enrichedContext.retryable = codeInfo.retryable;
-    }
-
-    this.logWithErrorCode("error", module, message, errorCode, error, enrichedContext);
-  }
 
   /** 获取日志内容 */
   getLogContent(): string {
@@ -378,25 +250,6 @@ export class Logger implements ILogger {
     this.currentSize = 0;
   }
 
-  /** 获取当前日志大小（字节） */
-  getCurrentSize(): number {
-    return this.currentSize;
-  }
-
-  /** 获取最大日志大小（字节） */
-  getMaxLogSize(): number {
-    return this.maxLogSize;
-  }
-
-  /** 获取日志条目数量 */
-  getEntryCount(): number {
-    return this.logBuffer.length;
-  }
-
-  /** 设置最小日志级别 */
-  setMinLevel(level: LogLevel): void {
-    this.minLevel = level;
-  }
 
   /** 设置日志级别 */
   setLogLevel(level: LogLevel): void {
@@ -406,21 +259,6 @@ export class Logger implements ILogger {
   /** 获取当前日志级别 */
   getLogLevel(): LogLevel {
     return this.minLevel;
-  }
-
-  /** 设置是否启用控制台输出 */
-  setConsoleEnabled(enabled: boolean): void {
-    this.consoleEnabled = enabled;
-  }
-
-  /** 获取控制台输出是否启用 */
-  isConsoleEnabled(): boolean {
-    return this.consoleEnabled;
-  }
-
-  /** 获取会话 ID */
-  getSessionId(): string {
-    return this.sessionId;
   }
 
   /** 核心日志方法 */
@@ -450,11 +288,6 @@ export class Logger implements ILogger {
       event,
       message,
     };
-
-    // 添加追踪 ID
-    if (this.currentTraceId) {
-      entry.traceId = this.currentTraceId;
-    }
 
     // 脱敏上下文中的敏感字段
     if (cleanContext && Object.keys(cleanContext).length > 0) {
@@ -486,78 +319,6 @@ export class Logger implements ILogger {
     });
   }
 
-  /** 带错误码的日志方法 */
-  private logWithErrorCode(
-    level: LogLevel,
-    module: string,
-    message: string,
-    errorCode: string,
-    error?: Error,
-    context?: Record<string, unknown>
-  ): void {
-    if (!this.shouldLog(level)) {
-      return;
-    }
-
-    const event = (context?.event as string) || DEFAULT_EVENTS[level];
-    
-    let cleanContext: Record<string, unknown> | undefined;
-    if (context) {
-      const { 
-        event: _, 
-        errorCode: __, 
-        errorCodeName: ___, 
-        errorCategory: ____, 
-        retryable: _____,
-        ...rest 
-      } = context;
-      cleanContext = Object.keys(rest).length > 0 ? rest : undefined;
-    }
-
-    const codeInfo = isValidErrorCode(errorCode) ? getErrorCodeInfo(errorCode) : undefined;
-
-    const entry: LogEntry = {
-      timestamp: new Date().toISOString(),
-      level,
-      module,
-      event,
-      message,
-    };
-
-    if (this.currentTraceId) {
-      entry.traceId = this.currentTraceId;
-    }
-
-    // 脱敏上下文中的敏感字段
-    if (cleanContext && Object.keys(cleanContext).length > 0) {
-      entry.context = sanitizeContext(cleanContext);
-    }
-
-    entry.error = {
-      name: error?.name || codeInfo?.name || "Error",
-      message: error?.message || message,
-      stack: error?.stack ? sanitizeStack(error.stack) : undefined,
-      code: errorCode,
-      codeName: codeInfo?.name,
-      fixSuggestion: codeInfo?.fixSuggestion,
-    };
-
-    const logLine = this.formatLogEntry(entry);
-    const logLineSize = new TextEncoder().encode(logLine + "\n").length;
-
-    if (this.currentSize + logLineSize > this.maxLogSize) {
-      this.rotateLog(logLineSize);
-    }
-
-    this.logBuffer.push(logLine);
-    this.currentSize += logLineSize;
-
-    this.outputToConsole(entry);
-
-    this.writeToFile().catch((err) => {
-      console.error("Failed to write log to file:", err);
-    });
-  }
 
   /** 检查日志级别 */
   private shouldLog(level: LogLevel): boolean {
@@ -594,27 +355,7 @@ export class Logger implements ILogger {
     return parts.length > 0 ? `{${parts.join(", ")}}` : "";
   }
 
-  /** 解析日志行 */
-  static parseLogEntry(logLine: string): LogEntry | null {
-    try {
-      // 尝试 JSON 解析
-      if (logLine.startsWith("{")) {
-        const parsed = JSON.parse(logLine);
-        if (
-          typeof parsed.timestamp === "string" &&
-          typeof parsed.level === "string" &&
-          typeof parsed.module === "string" &&
-          typeof parsed.event === "string" &&
-          typeof parsed.message === "string"
-        ) {
-          return parsed as LogEntry;
-        }
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  }
+
 
   /** 循环日志 */
   private rotateLog(newEntrySize: number): void {
@@ -641,10 +382,6 @@ export class Logger implements ILogger {
 
   /** 输出到控制台 */
   private outputToConsole(entry: LogEntry): void {
-    if (!this.consoleEnabled) {
-      return;
-    }
-
     // 使用 pretty 格式输出到控制台
     const formattedMsg = this.formatConsoleOutput(entry);
 
@@ -693,127 +430,4 @@ export class Logger implements ILogger {
     return msg;
   }
 
-  // 日志查询和过滤
-
-  /** 按级别过滤 */
-  filterByLevel(level: LogLevel): LogEntry[] {
-    const entries: LogEntry[] = [];
-    const minPriority = LOG_LEVEL_PRIORITY[level];
-    
-    for (const line of this.logBuffer) {
-      const entry = Logger.parseLogEntry(line);
-      if (entry && LOG_LEVEL_PRIORITY[entry.level] >= minPriority) {
-        entries.push(entry);
-      }
-    }
-    return entries;
-  }
-
-  /** 按模块过滤日志 */
-  filterByModule(module: string): LogEntry[] {
-    const entries: LogEntry[] = [];
-    for (const line of this.logBuffer) {
-      const entry = Logger.parseLogEntry(line);
-      if (entry && entry.module === module) {
-        entries.push(entry);
-      }
-    }
-    return entries;
-  }
-
-  /** 按追踪 ID 过滤日志 */
-  filterByTraceId(traceId: string): LogEntry[] {
-    const entries: LogEntry[] = [];
-    for (const line of this.logBuffer) {
-      const entry = Logger.parseLogEntry(line);
-      if (entry && entry.traceId === traceId) {
-        entries.push(entry);
-      }
-    }
-    return entries;
-  }
-
-  /** 按事件类型过滤日志 */
-  filterByEvent(event: string): LogEntry[] {
-    const entries: LogEntry[] = [];
-    for (const line of this.logBuffer) {
-      const entry = Logger.parseLogEntry(line);
-      if (entry && entry.event === event) {
-        entries.push(entry);
-      }
-    }
-    return entries;
-  }
-
-  /** 按时间范围过滤日志 */
-  filterByTimeRange(startTime: Date, endTime: Date): LogEntry[] {
-    const entries: LogEntry[] = [];
-    for (const line of this.logBuffer) {
-      const entry = Logger.parseLogEntry(line);
-      if (entry) {
-        const entryTime = new Date(entry.timestamp);
-        if (entryTime >= startTime && entryTime <= endTime) {
-          entries.push(entry);
-        }
-      }
-    }
-    return entries;
-  }
-
-  /** 搜索日志消息 */
-  search(keyword: string): LogEntry[] {
-    const entries: LogEntry[] = [];
-    const lowerKeyword = keyword.toLowerCase();
-    
-    for (const line of this.logBuffer) {
-      const entry = Logger.parseLogEntry(line);
-      if (entry) {
-        const searchText = `${entry.module} ${entry.message} ${entry.event}`.toLowerCase();
-        if (searchText.includes(lowerKeyword)) {
-          entries.push(entry);
-        }
-      }
-    }
-    return entries;
-  }
-
-  /** 获取最近 N 条日志 */
-  getRecentEntries(count: number): LogEntry[] {
-    const entries: LogEntry[] = [];
-    const startIndex = Math.max(0, this.logBuffer.length - count);
-    
-    for (let i = startIndex; i < this.logBuffer.length; i++) {
-      const entry = Logger.parseLogEntry(this.logBuffer[i]);
-      if (entry) {
-        entries.push(entry);
-      }
-    }
-    return entries;
-  }
-
-  /** 获取错误摘要 */
-  getErrorSummary(): { count: number; byModule: Record<string, number>; byCode: Record<string, number> } {
-    const summary = {
-      count: 0,
-      byModule: {} as Record<string, number>,
-      byCode: {} as Record<string, number>
-    };
-    
-    for (const line of this.logBuffer) {
-      const entry = Logger.parseLogEntry(line);
-      if (entry && entry.level === "error") {
-        summary.count++;
-        summary.byModule[entry.module] = (summary.byModule[entry.module] || 0) + 1;
-        if (entry.error?.code) {
-          summary.byCode[entry.error.code] = (summary.byCode[entry.error.code] || 0) + 1;
-        }
-      }
-    }
-    return summary;
-  }
-
-  /** 导出日志（JSON Lines） */
-  exportAsJsonLines(): string {
-    return this.getLogContent();
-  }
 }

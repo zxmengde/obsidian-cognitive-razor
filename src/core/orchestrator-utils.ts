@@ -14,9 +14,6 @@ import type { PromptManager } from "./prompt-manager";
 import type { TaskQueue } from "./task-queue";
 import type { NoteRepository } from "./note-repository";
 import type { ContentRenderer } from "./content-renderer";
-import type { VectorIndex } from "./vector-index";
-import type { ProviderManager } from "./provider-manager";
-import type { DuplicateManager } from "./duplicate-manager";
 import { TaskFactory } from "./task-factory";
 
 /**
@@ -77,15 +74,17 @@ export function validatePrerequisites(
         return err("E401_PROVIDER_NOT_CONFIGURED", `Provider "${providerId}" 的 API Key 未配置`);
     }
 
-    // 2. 检查模板是否已加载
-    const templateId = promptManager.resolveTemplateId(taskType, conceptType);
-    if (!promptManager.hasTemplate(templateId)) {
-        logger.error(callerName, "模板未加载", undefined, {
-            taskType,
-            templateId,
-            event: "PREREQUISITE_CHECK_FAILED",
-        });
-        return err("E404_TEMPLATE_NOT_FOUND", `模板 "${templateId}" 未加载，请检查 prompts 目录`);
+    // 2. 检查模板是否已加载（write 任务走分阶段路径，模板检查由 buildPhasedWrite 负责）
+    if (taskType !== "write") {
+        const templateId = promptManager.resolveTemplateId(taskType, conceptType);
+        if (!promptManager.hasTemplate(templateId)) {
+            logger.error(callerName, "模板未加载", undefined, {
+                taskType,
+                templateId,
+                event: "PREREQUISITE_CHECK_FAILED",
+            });
+            return err("E404_TEMPLATE_NOT_FOUND", `模板 "${templateId}" 未加载，请检查 prompts 目录`);
+        }
     }
 
     logger.debug(callerName, "前置校验通过", {
@@ -546,112 +545,6 @@ export function handleLockConflictError(
     return null;
 }
 
-
-
-/** refreshEmbeddingAndDuplicates 所需的最小依赖接口（ISP） */
-export interface RefreshEmbeddingDeps {
-    vectorIndex: Pick<VectorIndex, "getEmbeddingModel" | "getEmbeddingDimension" | "delete" | "upsert">;
-    providerManager: Pick<ProviderManager, "embed">;
-    duplicateManager: Pick<DuplicateManager, "clearPendingPairsByNodeId" | "detect">;
-}
-
-/**
- * 重算 Embedding 并触发去重检测
- *
- * @param context - 管线上下文（会更新 embedding 和 updatedAt）
- * @param embeddingText - 用于 embedding 的文本
- * @param providerId - Provider ID
- * @param deps - 最小依赖
- * @param logger - 日志实例
- * @param callerName - 调用方名称
- */
-export async function refreshEmbeddingAndDuplicates(
-    context: PipelineContext,
-    embeddingText: string,
-    providerId: string,
-    deps: RefreshEmbeddingDeps,
-    logger: ILogger,
-    callerName: string,
-): Promise<void> {
-    const embeddingModel = deps.vectorIndex.getEmbeddingModel();
-    const embeddingDimension = deps.vectorIndex.getEmbeddingDimension();
-
-    const embedResult = await deps.providerManager.embed({
-        providerId,
-        model: embeddingModel,
-        input: embeddingText,
-        dimensions: embeddingDimension,
-    });
-
-    if (!embedResult.ok) {
-        logger.warn(callerName, "Embedding 重算失败，已移除旧向量避免陈旧结果", {
-            pipelineId: context.pipelineId,
-            nodeId: context.nodeId,
-            error: embedResult.error,
-        });
-
-        // 移除旧向量
-        const deleteResult = await deps.vectorIndex.delete(context.nodeId);
-        if (!deleteResult.ok && deleteResult.error.code !== "E311_NOT_FOUND") {
-            logger.warn(callerName, "移除旧向量失败", {
-                pipelineId: context.pipelineId,
-                nodeId: context.nodeId,
-                error: deleteResult.error,
-            });
-        }
-
-        // 清理旧重复对
-        const clearResult = await deps.duplicateManager.clearPendingPairsByNodeId(context.nodeId);
-        if (!clearResult.ok) {
-            logger.warn(callerName, "清理旧重复对失败", {
-                pipelineId: context.pipelineId,
-                nodeId: context.nodeId,
-                error: clearResult.error,
-            });
-        }
-
-        context.embedding = undefined;
-        return;
-    }
-
-    context.embedding = embedResult.value.embedding;
-    context.updatedAt = formatCRTimestamp();
-
-    // 清理旧重复对
-    const clearResult = await deps.duplicateManager.clearPendingPairsByNodeId(context.nodeId);
-    if (!clearResult.ok) {
-        logger.warn(callerName, "清理旧重复对失败", {
-            pipelineId: context.pipelineId,
-            nodeId: context.nodeId,
-            error: clearResult.error,
-        });
-    }
-
-    // 更新向量索引
-    const upsertResult = await deps.vectorIndex.upsert({
-        uid: context.nodeId,
-        type: context.type,
-        embedding: context.embedding,
-        updated: context.updatedAt,
-    });
-    if (!upsertResult.ok) {
-        logger.warn(callerName, "更新向量索引失败", {
-            pipelineId: context.pipelineId,
-            nodeId: context.nodeId,
-            error: upsertResult.error,
-        });
-    }
-
-    // 去重检测
-    const detectResult = await deps.duplicateManager.detect(context.nodeId, context.type, context.embedding);
-    if (!detectResult.ok) {
-        logger.warn(callerName, "去重检测失败", {
-            pipelineId: context.pipelineId,
-            nodeId: context.nodeId,
-            error: detectResult.error,
-        });
-    }
-}
 
 /**
  * 获取活跃管线状态快照（DRY：消除 4 个编排器中完全相同的 getActiveState 实现）

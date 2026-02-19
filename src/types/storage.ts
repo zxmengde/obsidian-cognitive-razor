@@ -54,7 +54,7 @@ export interface IndexStats {
 }
 
 /** 概念元数据 */
-export interface ConceptMeta {
+interface ConceptMeta {
     id: string;
     type: CRType;
     vectorFilePath: string;

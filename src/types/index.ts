@@ -11,18 +11,15 @@ export type { CRType, NoteState, CRFrontmatter, StandardizedConcept } from "./do
 
 // Result Monad
 export type { Err, Result } from "./result";
-export { ok, err, CognitiveRazorError, isErrResult, toErr, safeErrorMessage } from "./result";
+export { ok, err, CognitiveRazorError, toErr, safeErrorMessage } from "./result";
 
 // 任务系统
 export type {
     TaskType, TaskState, TaskError,
     DefinePayload, TagPayload, WritePayload,
     IndexPayload, VerifyPayload,
-    DefineResult, TagResult, WriteResult,
-    IndexResult, VerifyResult,
-    TaskPayloadMap, TaskResultMap,
-    AnyTaskPayload, AnyTaskResult,
-    TypedTaskRecord, TaskRecordBase, TaskRecord,
+    TaskPayloadMap,
+    AnyTaskPayload, TypedTaskRecord, TaskRecord,
 } from "./task";
 
 // Provider 系统
@@ -36,7 +33,7 @@ export { DEFAULT_ENDPOINTS } from "./provider";
 // 配置系统
 export type {
     ProviderConfig, TaskModelConfig,
-    DirectoryScheme, WorkbenchUIState, PluginSettings,
+    DirectoryScheme, PluginSettings,
 } from "./settings";
 export { DEFAULT_UI_STATE } from "./settings";
 
@@ -44,7 +41,7 @@ export { DEFAULT_UI_STATE } from "./settings";
 export type {
     DuplicatePairStatus, DuplicatePair,
     VectorEntry, SearchResult, IndexStats,
-    ConceptMeta, VectorIndexMeta, ConceptVector,
+    VectorIndexMeta, ConceptVector,
     DuplicatePairsStore, QueueStateFile,
 } from "./storage";
 
@@ -54,12 +51,12 @@ export type { PipelineStage, PipelineContext } from "./pipeline";
 // 队列系统
 export type {
     QueueStatus, QueueEvent, QueueEventListener,
-    TaskResult, TaskDetails,
+    TaskResult,
 } from "./queue";
 
 // UI 类型
 export type {
-    ValidationContext, ValidationResult, ValidationError,
+    ValidationResult, ValidationError,
 } from "./ui";
 
 // 日志接口

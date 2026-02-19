@@ -25,7 +25,7 @@ import {
     toErr,
 } from "../types";
 import { extractFrontmatter } from "./frontmatter-utils";
-import { generateUUID } from "../data/validators";
+import { generateUUID } from "../data/validator";
 import { formatCRTimestamp } from "../utils/date-utils";
 import {
     validatePrerequisites as sharedValidatePrerequisites,
@@ -57,7 +57,7 @@ type VerifyPipelineEventType =
     | "pipeline_failed";
 
 /** 管线事件 */
-export interface VerifyPipelineEvent {
+interface VerifyPipelineEvent {
     type: VerifyPipelineEventType;
     pipelineId: string;
     stage: PipelineStage;

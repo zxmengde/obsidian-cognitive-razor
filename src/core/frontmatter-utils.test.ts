@@ -49,7 +49,6 @@ describe("frontmatter-utils", () => {
                 cruid: "uid-roundtrip",
                 type: "Domain",
                 name: "往返测试",
-                definition: "这是一个测试定义",
                 aliases: ["别名A", "别名B"],
                 tags: ["tag1", "tag2"],
                 parents: ["[[父概念]]"],
@@ -62,7 +61,6 @@ describe("frontmatter-utils", () => {
             expect(extracted!.frontmatter.cruid).toBe("uid-roundtrip");
             expect(extracted!.frontmatter.type).toBe("Domain");
             expect(extracted!.frontmatter.name).toBe("往返测试");
-            expect(extracted!.frontmatter.definition).toBe("这是一个测试定义");
             expect(extracted!.frontmatter.aliases).toEqual(["别名A", "别名B"]);
             expect(extracted!.frontmatter.tags).toEqual(["tag1", "tag2"]);
             expect(extracted!.frontmatter.parents).toEqual(["[[父概念]]"]);
@@ -97,19 +95,17 @@ describe("frontmatter-utils", () => {
                     crTypeArb,
                     safeStringArb,
                     noteStateArb,
-                    fc.option(safeStringArb, { nil: undefined }),
                     fc.array(aliasArb, { minLength: 0, maxLength: 3 }),
                     fc.array(tagArb, { minLength: 0, maxLength: 3 }),
                     fc.array(safeStringArb.map((s) => `[[${s}]]`), { minLength: 0, maxLength: 3 }),
-                    (cruid, type, name, status, definition, aliases, tags, parents) => {
+                    (cruid, type, name, status, aliases, tags, parents) => {
                         const fm = generateFrontmatter({
                             cruid,
                             type,
                             name,
                             status,
-                            definition,
-                            aliases: aliases.length > 0 ? aliases : undefined,
-                            tags: tags.length > 0 ? tags : undefined,
+                            aliases,
+                            tags,
                             parents,
                         });
 
@@ -127,18 +123,9 @@ describe("frontmatter-utils", () => {
                         expect(extracted.frontmatter.name).toBe(name);
                         expect(extracted.frontmatter.status).toBe(status);
 
-                        // definition 等价
-                        if (definition) {
-                            expect(extracted.frontmatter.definition).toBe(definition);
-                        }
-
-                        // 数组字段等价（aliases/tags 可能为 undefined 当为空时）
-                        if (aliases.length > 0) {
-                            expect(extracted.frontmatter.aliases).toEqual(aliases);
-                        }
-                        if (tags.length > 0) {
-                            expect(extracted.frontmatter.tags).toEqual(tags);
-                        }
+                        // aliases/tags 始终为数组
+                        expect(extracted.frontmatter.aliases).toEqual(aliases);
+                        expect(extracted.frontmatter.tags).toEqual(tags);
 
                         // parents 等价（已规范化）
                         expect(extracted.frontmatter.parents).toEqual(fm.parents);

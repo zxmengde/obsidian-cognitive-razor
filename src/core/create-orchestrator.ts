@@ -47,7 +47,7 @@ import {
     restorePipelinesForKind,
 } from "./orchestrator-utils";
 import { TaskFactory } from "./task-factory";
-import { generateUUID } from "../data/validators";
+import { generateUUID } from "../data/validator";
 import { extractJsonFromResponse } from "../data/validator";
 import { formatCRTimestamp } from "../utils/date-utils";
 
@@ -65,7 +65,7 @@ type PipelineEventType =
     | "pipeline_failed";
 
 /** 管线事件 */
-export interface CreatePipelineEvent {
+interface CreatePipelineEvent {
     type: PipelineEventType;
     pipelineId: string;
     stage: PipelineStage;
@@ -1182,17 +1182,10 @@ export class CreateOrchestrator {
 
         const markdownBody = this.renderContentToMarkdown(context, targetName);
 
-        const definition =
-            context.generatedContent && typeof context.generatedContent === "object"
-                ? typeof (context.generatedContent as Record<string, unknown>).definition === "string"
-                    ? ((context.generatedContent as Record<string, unknown>).definition as string)
-                    : undefined
-                : undefined;
         const frontmatter = generateFrontmatter({
             cruid: context.nodeId,
             type: context.type,
             name: targetName,
-            definition,
             parents: context.parents ?? [],
             status: "Draft",
             aliases: context.enrichedData?.aliases,

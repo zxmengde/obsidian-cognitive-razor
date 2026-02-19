@@ -16,7 +16,7 @@ import { safeErrorMessage } from "../types";
 // ============================================================================
 
 /** 反馈级别 */
-export type FeedbackLevel = "success" | "info" | "warning" | "error";
+type FeedbackLevel = "success" | "info" | "warning" | "error";
 
 /** 各级别的 Notice 持续时间（毫秒） */
 const DURATION: Record<Exclude<FeedbackLevel, "info">, number> = {

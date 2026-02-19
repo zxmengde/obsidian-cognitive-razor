@@ -82,26 +82,26 @@ export interface VerifyPayload {
 // Result 定义
 // ============================================================================
 
-export interface DefineResult { [key: string]: unknown; }
+interface DefineResult { [key: string]: unknown; }
 
-export interface TagResult {
+interface TagResult {
     aliases: string[];
     tags: string[];
     [key: string]: unknown;
 }
 
-export interface WriteResult {
+interface WriteResult {
     [key: string]: unknown;
 }
 
-export interface IndexResult {
+interface IndexResult {
     embedding: number[];
     tokensUsed?: number;
     text?: string;
     [key: string]: unknown;
 }
 
-export interface VerifyResult {
+interface VerifyResult {
     overall_assessment?: string;
     confidence_score?: number;
     issues?: unknown[];
@@ -125,7 +125,7 @@ export type TaskPayloadMap = {
 };
 
 /** Result 类型映射 */
-export type TaskResultMap = {
+type TaskResultMap = {
     "define": DefineResult;
     "tag": TagResult;
     "write": WriteResult;
@@ -137,7 +137,7 @@ export type TaskResultMap = {
 export type AnyTaskPayload = TaskPayloadMap[TaskType];
 
 /** 所有 Result 类型的联合 */
-export type AnyTaskResult = TaskResultMap[TaskType];
+type AnyTaskResult = TaskResultMap[TaskType];
 
 /** TypedTaskRecord 可辨识联合类型（以 taskType 为判别式） */
 export type TypedTaskRecord =
@@ -148,7 +148,7 @@ export type TypedTaskRecord =
     | (TaskRecordBase & { taskType: "verify"; payload: VerifyPayload; result?: VerifyResult });
 
 /** TaskRecord 基础字段 */
-export interface TaskRecordBase {
+interface TaskRecordBase {
     id: string;
     nodeId: string;
     state: TaskState;

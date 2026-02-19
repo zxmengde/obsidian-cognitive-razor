@@ -26,8 +26,6 @@ export interface CRFrontmatter {
     type: CRType;
     /** 笔记名称 */
     name: string;
-    /** 概念核心定义（用于快速索引与预览） */
-    definition?: string;
     /** 笔记状态 */
     status: NoteState;
     /** 创建时间 (yyyy-MM-DD HH:mm:ss) */
@@ -35,18 +33,17 @@ export interface CRFrontmatter {
     /** 更新时间 (yyyy-MM-DD HH:mm:ss) */
     updated: string;
     /** 别名列表 */
-    aliases?: string[];
+    aliases: string[];
     /** 标签列表 */
-    tags?: string[];
+    tags: string[];
     /** 父概念链接列表（规范形态：[[Title]]） */
     parents: string[];
     /** 来源概念 UIDs */
     sourceUids?: string[];
-    /** 版本号 */
-    version?: string;
-    /** 未知字段保留（需求 29.4：解析时不丢弃未知字段） */
+    /** 未知字段保留（解析时不丢弃未知字段） */
     [key: string]: unknown;
 }
+
 
 // ============================================================================
 // 标准化概念

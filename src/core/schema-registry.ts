@@ -682,31 +682,6 @@ export class SchemaRegistry {
     return typeSpecificLabels[type] || commonLabels;
   }
 
-  getValidationRules(type: CRType): string[] {
-    const schema = this.getSchema(type);
-    const rules: string[] = [];
-    
-    if (schema.required) {
-      rules.push(`必填字段: ${schema.required.join(", ")}`);
-    }
-    
-    if (schema.properties) {
-      for (const [name, prop] of Object.entries(schema.properties)) {
-        if (prop.minLength) {
-          rules.push(`${name}: 最小长度 ${prop.minLength} 字符`);
-        }
-        if (prop.minItems) {
-          rules.push(`${name}: 最少 ${prop.minItems} 项`);
-        }
-        if (prop.pattern) {
-          rules.push(`${name}: 必须匹配格式 ${prop.pattern}`);
-        }
-      }
-    }
-    
-    return rules;
-  }
-
   getAllTypes(): CRType[] {
     return Array.from(this.schemas.keys());
   }
@@ -769,105 +744,32 @@ export interface WritePhase {
     id: string;
     /** 本阶段要生成的字段名列表 */
     fields: string[];
-    /** 本阶段的聚焦指令 */
-    focusInstruction: string;
 }
 
-/** 各知识类型的分阶段配置 */
+/** 各知识类型的分阶段配置（阶段和字段分组固定，prompt 内容从文件加载） */
 export const WRITE_PHASES: Record<CRType, WritePhase[]> = {
     Domain: [
-        {
-            id: "framework",
-            fields: ["definition", "teleology", "methodology", "boundaries"],
-            focusInstruction: "聚焦于这个领域的概念框架：给出严格的形式定义（属+种差），阐明其终极目的（为什么存在），描述其认识论基础（如何验证真理），并划定明确的边界（它不是什么）。"
-        },
-        {
-            id: "narrative",
-            fields: ["historical_genesis"],
-            focusInstruction: "聚焦于这个领域的思想史谱系：追溯其起源、危机、范式转换和关键人物。用辩证法结构（正题→反题→合题）重建思想的戏剧，不要罗列事件。"
-        },
-        {
-            id: "synthesis",
-            fields: ["holistic_understanding"],
-            focusInstruction: "聚焦于对这个领域的哲学综合理解：本体论（这个领域中存在的根本性质是什么？）、认识论（知识如何获取和验证？）、实践论（如何在人类实践中体现？）。结合前面已生成的内容，给出一个完整的认知地图。"
-        },
-        {
-            id: "structure",
-            fields: ["sub_domains", "issues"],
-            focusInstruction: "聚焦于这个领域的内部结构分解：列出子领域（MECE 原则）并说明每个在整体中的功能；列出核心议题（优先涌现性议题——由部分交互或整体产生的问题）。\n\n**命名格式（强制）**：所有 name 字段必须严格使用「中文名 (English Name)」格式，例如：「统计热力学 (Statistical Thermodynamics)」「测量问题 (The Measurement Problem)」。不允许纯中文或纯英文。"
-        }
+        { id: "core", fields: ["definition", "teleology", "methodology", "boundaries"] },
+        { id: "narrative", fields: ["historical_genesis", "holistic_understanding"] },
+        { id: "structure", fields: ["sub_domains", "issues"] },
     ],
     Issue: [
-        {
-            id: "framework",
-            fields: ["definition", "core_tension", "significance", "epistemic_barrier", "counter_intuition"],
-            focusInstruction: "聚焦于这个议题的问题框架：给出严格的形式定义，明确核心张力（二元对立用 A vs B，多极用分号分隔），解释其重要性（如果不解决会怎样），分析认识论障碍（为什么至今未解决），以及它如何挑战常识。"
-        },
-        {
-            id: "narrative",
-            fields: ["historical_genesis"],
-            focusInstruction: "聚焦于这个问题的思想史谱系：追溯矛盾何时变得明显，什么具体事件或发现触发了它。用辩证法结构组织叙事。"
-        },
-        {
-            id: "synthesis",
-            fields: ["holistic_understanding"],
-            focusInstruction: "聚焦于对这个议题的哲学综合理解：这个未解决的张力如何塑造了整个领域？解决它的前沿在哪里？结合前面已生成的内容，给出完整的认知综合。"
-        },
-        {
-            id: "structure",
-            fields: ["sub_issues", "stakeholder_perspectives", "boundary_conditions", "theories"],
-            focusInstruction: "聚焦于这个议题的结构分解：列出子议题（MECE 原则），列出各利益相关方的立场，明确边界条件（何时这个议题不相关），以及试图解决它的理论（标注主流/边缘/已证伪）。\n\n**命名格式（强制）**：所有 name 字段必须严格使用「中文名 (English Name)」格式，例如：「量子退相干 (Quantum Decoherence)」「哥本哈根诠释 (Copenhagen Interpretation)」。不允许纯中文或纯英文。"
-        }
+        { id: "core", fields: ["definition", "core_tension", "significance", "epistemic_barrier", "counter_intuition"] },
+        { id: "narrative", fields: ["historical_genesis", "holistic_understanding", "boundary_conditions"] },
+        { id: "structure", fields: ["sub_issues", "stakeholder_perspectives", "theories"] },
     ],
     Theory: [
-        {
-            id: "framework",
-            fields: ["definition", "axioms", "logical_structure"],
-            focusInstruction: "聚焦于这个理论的逻辑骨架：给出严格的形式定义，列出基本公理及其理由，然后重建从公理到结论的完整推理链（公理 A + 公理 B → 中间引理 → 机制激活 → 最终结论/预测）。"
-        },
-        {
-            id: "narrative",
-            fields: ["historical_genesis"],
-            focusInstruction: "聚焦于这个理论的思想考古：前范式状态（之前相信什么？）→ 反常（什么出了问题？）→ 火花（具体的洞见/论文）→ 战斗（抵抗与接受）。提及具体的关键人物、开创性论文和触发理论的具体智识危机。"
-        },
-        {
-            id: "synthesis",
-            fields: ["holistic_understanding", "core_predictions", "limitations"],
-            focusInstruction: "聚焦于这个理论的哲学含义和边界：本体论承诺（根据这个理论，现实的本质是什么？）、认识论地位（我们如何知道它是真的？）、目的论（终极解释目标是什么？）。同时列出可检验的预测和理论的局限性。"
-        },
-        {
-            id: "structure",
-            fields: ["sub_theories", "entities", "mechanisms"],
-            focusInstruction: "聚焦于这个理论的内部组件：列出子理论（MECE 原则），提取构成性实体（重建理论逻辑所需的最小充分集），以及因果机制（每个机制必须作用于具体实体）。\n\n**命名格式（强制）**：所有 name 字段必须严格使用「中文名 (English Name)」格式，例如：「波函数坍缩 (Wave Function Collapse)」「光子 (Photon)」。不允许纯中文或纯英文。"
-        }
+        { id: "core", fields: ["definition", "axioms", "logical_structure", "core_predictions", "limitations"] },
+        { id: "narrative", fields: ["historical_genesis", "holistic_understanding"] },
+        { id: "structure", fields: ["sub_theories", "entities", "mechanisms"] },
     ],
     Entity: [
-        {
-            id: "framework",
-            fields: ["definition", "classification", "properties", "states", "constraints"],
-            focusInstruction: "聚焦于这个实体的本体论定义：给出严格的形式定义（属+种差），明确分类（直接父类别和区分特征），列出属性（内在/外在）、可能状态和约束条件。"
-        },
-        {
-            id: "synthesis",
-            fields: ["holistic_understanding", "composition", "distinguishing_features", "examples", "counter_examples"],
-            focusInstruction: "聚焦于这个实体的认知定位：它在领域中扮演什么角色（主角还是道具）？它的组成结构（向上/向下），与相似概念的严格对比（为什么 X 不是 Y？），以及具体的正例和反例。"
-        }
+        { id: "core", fields: ["definition", "classification", "properties", "states", "constraints", "distinguishing_features"] },
+        { id: "synthesis", fields: ["holistic_understanding", "composition", "examples", "counter_examples"] },
     ],
     Mechanism: [
-        {
-            id: "framework",
-            fields: ["definition", "trigger_conditions", "operates_on", "inputs", "outputs", "side_effects", "termination_conditions"],
-            focusInstruction: "聚焦于这个机制的动力学框架：给出严格的形式定义，明确触发条件、作用对象（主体/客体）、输入、输出、副作用和终止条件。"
-        },
-        {
-            id: "process",
-            fields: ["causal_chain", "modulation"],
-            focusInstruction: "聚焦于这个机制的因果过程：将机制分解为离散的原子步骤（触发 → 步骤1 → 步骤2 → ... → 结果），不要跳过逻辑环节。同时列出调节因素（什么加速/减速/调节它）。"
-        },
-        {
-            id: "synthesis",
-            fields: ["holistic_understanding"],
-            focusInstruction: "聚焦于这个机制的系统意义：它如何驱动系统的演化或稳定？将微观过程连接到宏观现象。结合前面已生成的因果链和调节因素，给出完整的系统视角。"
-        }
-    ]
+        { id: "core", fields: ["definition", "trigger_conditions", "operates_on", "inputs", "outputs", "side_effects", "termination_conditions"] },
+        { id: "process", fields: ["causal_chain", "modulation"] },
+        { id: "synthesis", fields: ["holistic_understanding"] },
+    ],
 };

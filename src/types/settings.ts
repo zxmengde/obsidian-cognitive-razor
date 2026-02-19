@@ -45,7 +45,7 @@ export interface DirectoryScheme {
 }
 
 /** 工作台 UI 状态（持久化到 data.json） */
-export interface WorkbenchUIState {
+interface WorkbenchUIState {
     sectionCollapsed: Record<string, boolean>;
     sortPreferences: Record<string, { field: string; direction: 'asc' | 'desc' }>;
 }

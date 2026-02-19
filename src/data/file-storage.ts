@@ -32,17 +32,17 @@ function mapFsErrorToErrorCode(error: unknown): "E301_FILE_NOT_FOUND" | "E302_PE
 }
 
 /** 数据目录路径常量 */
-export const DATA_DIR = "data";
+const DATA_DIR = "data";
 export const VECTORS_DIR = `${DATA_DIR}/vectors`;
 
 /** 数据文件路径常量 */
-export const QUEUE_STATE_FILE = `${DATA_DIR}/queue-state.json`;
-export const VECTOR_INDEX_META_FILE = `${VECTORS_DIR}/index.json`;
-export const DUPLICATE_PAIRS_FILE = `${DATA_DIR}/duplicate-pairs.json`;
-export const APP_LOG_FILE = `${DATA_DIR}/app.log`;
+const QUEUE_STATE_FILE = `${DATA_DIR}/queue-state.json`;
+const VECTOR_INDEX_META_FILE = `${VECTORS_DIR}/index.json`;
+const DUPLICATE_PAIRS_FILE = `${DATA_DIR}/duplicate-pairs.json`;
+const APP_LOG_FILE = `${DATA_DIR}/app.log`;
 
 /** 默认队列状态 */
-export const DEFAULT_QUEUE_STATE: QueueStateFile = {
+const DEFAULT_QUEUE_STATE: QueueStateFile = {
   version: "2.0.0",
   pendingTasks: [],
   paused: false,
@@ -53,7 +53,7 @@ export const DEFAULT_QUEUE_STATE: QueueStateFile = {
 /**
  * 默认重复对存储
  */
-export const DEFAULT_DUPLICATE_PAIRS: DuplicatePairsStore = {
+const DEFAULT_DUPLICATE_PAIRS: DuplicatePairsStore = {
   version: "1.0.0",
   pairs: [],
   dismissedPairs: [],

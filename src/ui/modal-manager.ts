@@ -27,7 +27,7 @@ export type ModalType = "confirm" | "provider";
 // 依赖接口
 // ============================================================================
 
-export interface ModalManagerDeps {
+interface ModalManagerDeps {
     logger: ILogger;
 }
 

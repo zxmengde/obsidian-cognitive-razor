@@ -3,7 +3,6 @@
 import type {
   ValidationResult,
   ValidationError,
-  ValidationContext,
 } from "../types";
 
 /**
@@ -47,8 +46,6 @@ export class Validator {
   async validate(
     output: string,
     schema: object,
-    _rules: string[],
-    _context?: ValidationContext
   ): Promise<ValidationResult> {
     // 阶段 1: JSON 解析校验（容错提取 markdown 代码块或前后缀文本）
     const parseResult = this.tryParseJson(output);
@@ -195,4 +192,16 @@ export class Validator {
 
     return errors;
   }
+}
+
+
+/**
+ * 生成 UUID v4
+ */
+export function generateUUID(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
 }

@@ -64,7 +64,7 @@ export class CognitiveRazorError extends Error {
 }
 
 /** 类型守卫：判断是否为 Err 结果 */
-export function isErrResult(value: unknown): value is Err {
+function isErrResult(value: unknown): value is Err {
     if (!value || typeof value !== "object") return false;
     const candidate = value as Record<string, unknown>;
     if (candidate.ok !== false) return false;

@@ -37,9 +37,3 @@ export interface TaskResult {
     error?: { code: string; message: string; timestamp: string; attempt: number };
 }
 
-/** 任务详情（用于 UI 显示） */
-export interface TaskDetails {
-    providerName?: string;
-    elapsedTime?: number;
-    estimatedTime?: number;
-}

@@ -8,33 +8,13 @@ import { Plugin } from "obsidian";
 /**
  * 默认目录方案
  */
-export const DEFAULT_DIRECTORY_SCHEME: DirectoryScheme = {
+const DEFAULT_DIRECTORY_SCHEME: DirectoryScheme = {
   Domain: "1-领域",
   Issue: "2-议题",
   Theory: "3-理论",
   Entity: "4-实体",
   Mechanism: "5-机制",
 };
-
-/**
- * PluginSettings 必填字段列表
- * 用于验证设置对象的完整性
- */
-export const REQUIRED_SETTINGS_FIELDS: (keyof PluginSettings)[] = [
-  "version",
-  "directoryScheme",
-  "similarityThreshold",
-  "concurrency",
-  "autoRetry",
-  "maxRetryAttempts",
-  "enableAutoVerify",
-  "providers",
-  "defaultProviderId",
-  "taskModels",
-  "logLevel",
-  "embeddingDimension",
-  "providerTimeoutMs",
-];
 
 /** 默认任务超时时间（毫秒） */
 export const DEFAULT_TASK_TIMEOUT_MS = 3 * 60 * 1000;
@@ -77,17 +57,6 @@ const SCALAR_SETTINGS_SPECS: ScalarSettingsSpec[] = [
   { key: "providerTimeoutMs", type: "number", required: true, integer: true, min: 1000 },
   // 历史版本兼容：这些字段允许缺失，由 mergeSettings/ensureBackwardCompatibility 补齐默认值
   { key: "taskTimeoutMs", type: "number", required: false, integer: true, min: 1000 },
-];
-
-/**
- * DirectoryScheme 必填字段列表
- */
-export const REQUIRED_DIRECTORY_SCHEME_FIELDS: (keyof DirectoryScheme)[] = [
-  "Domain",
-  "Issue",
-  "Theory",
-  "Entity",
-  "Mechanism",
 ];
 
 /**
@@ -134,25 +103,8 @@ export const DEFAULT_TASK_MODEL_CONFIGS: Record<TaskType, TaskModelConfig> = {
   },
 };
 
-/** 参数推荐范围 */
-export const PARAM_RECOMMENDATIONS = {
-  temperature: {
-    define: { min: 0.2, max: 0.5, recommended: "0.3-0.5" },
-    tag: { min: 0.3, max: 0.7, recommended: "0.5" },
-    write: { min: 0.5, max: 1.0, recommended: "0.7-0.9" },
-    verify: { min: 0.2, max: 0.5, recommended: "0.3" },
-  },
-  topP: {
-    default: { min: 0.8, max: 1.0, recommended: "0.8-1.0" },
-  },
-  embeddingDimension: {
-    recommended: "1536",
-    options: [256, 512, 1024, 1536, 3072],
-  },
-} as const;
-
 /** 生成新的默认任务模型配置副本 */
-export function createDefaultTaskModels(): Record<TaskType, TaskModelConfig> {
+function createDefaultTaskModels(): Record<TaskType, TaskModelConfig> {
   const taskModels = {} as Record<TaskType, TaskModelConfig>;
   for (const taskType of TASK_TYPES) {
     taskModels[taskType] = { ...DEFAULT_TASK_MODEL_CONFIGS[taskType] };
@@ -163,22 +115,6 @@ export function createDefaultTaskModels(): Record<TaskType, TaskModelConfig> {
 /**
  * 验证错误接口
  */
-export interface SettingsValidationError {
-  field: string;
-  message: string;
-  expectedType?: string;
-  actualType?: string;
-  severity: 'error' | 'warning';  // 区分阻断性错误和警告
-}
-
-/**
- * 验证结果接口
- */
-export interface SettingsValidationResult {
-  valid: boolean;
-  errors: SettingsValidationError[];
-}
-
 /** 默认设置 */
 export const DEFAULT_SETTINGS: PluginSettings = {
   version: "1.0.0",
@@ -259,8 +195,7 @@ export class SettingsStore {
       // 先 merge（保留用户数据），再验证合并后的结果
       // 避免旧版本缺少新字段时整包重置用户配置
       const merged = this.mergeSettings(DEFAULT_SETTINGS, data);
-      const validationResult = this.validateSettingsDetailed(merged);
-      if (!validationResult.valid) {
+      if (!this.validateSettings(merged)) {
         // 合并后仍有阻断性错误，记录警告并回退默认值
         this.settings = { ...DEFAULT_SETTINGS };
         await this.saveSettings();
@@ -297,12 +232,11 @@ export class SettingsStore {
         return mergeResult;
       }
 
-      const validation = this.validateSettingsDetailed(mergeResult.value);
-      if (!validation.valid) {
+      const validation = this.validateSettings(mergeResult.value);
+      if (!validation) {
         return err(
           "E101_INVALID_INPUT",
-          "设置校验失败",
-          { errors: validation.errors }
+          "设置校验失败"
         );
       }
 
@@ -503,220 +437,15 @@ export class SettingsStore {
    * @returns 是否为有效的 PluginSettings
    */
   private validateSettings(data: unknown): data is PluginSettings {
-    const result = this.validateSettingsDetailed(data);
-    return result.valid;
+    if (data === null || typeof data !== "object") return false;
+    const obj = data as Record<string, unknown>;
+    return typeof obj.version === "string"
+      && typeof obj.directoryScheme === "object" && obj.directoryScheme !== null
+      && typeof obj.providers === "object" && obj.providers !== null
+      && typeof obj.taskModels === "object" && obj.taskModels !== null;
   }
 
-  /** 详细验证设置结构 */
-  validateSettingsDetailed(data: unknown): SettingsValidationResult {
-    const errors: SettingsValidationError[] = [];
 
-    // 基础类型检查
-    if (typeof data !== "object" || data === null) {
-      errors.push({
-        field: "root",
-        message: "Settings must be a non-null object",
-        expectedType: "object",
-        actualType: data === null ? "null" : typeof data,
-        severity: 'error',
-      });
-      return { valid: false, errors };
-    }
-
-    const settings = data as Record<string, unknown>;
-
-    this.validateScalarSettings(settings, errors);
-
-    // 验证 directoryScheme 字段
-    this.validateDirectoryScheme(settings.directoryScheme, errors);
-
-    // 验证 providers 字段
-    if (typeof settings.providers !== "object" || settings.providers === null) {
-      errors.push({
-        field: "providers",
-        message: "providers must be an object",
-        expectedType: "object",
-        actualType: settings.providers === null ? "null" : typeof settings.providers,
-        severity: 'error',
-      });
-    } else {
-      for (const [providerId, providerConfig] of Object.entries(settings.providers)) {
-        if (typeof providerConfig !== "object" || providerConfig === null) {
-          errors.push({
-            field: `providers.${providerId}`,
-            message: "provider config must be an object",
-            expectedType: "ProviderConfig",
-            actualType: providerConfig === null ? "null" : typeof providerConfig,
-            severity: 'error',
-          });
-          continue;
-        }
-        const cfg = providerConfig as ProviderConfig;
-        if (typeof cfg.apiKey !== "string") {
-          errors.push({
-            field: `providers.${providerId}.apiKey`,
-            message: "apiKey must be a string",
-            expectedType: "string",
-            actualType: typeof cfg.apiKey,
-            severity: 'error',
-          });
-        }
-        if (cfg.baseUrl !== undefined && typeof cfg.baseUrl !== "string") {
-          errors.push({
-            field: `providers.${providerId}.baseUrl`,
-            message: "baseUrl must be a string",
-            expectedType: "string",
-            actualType: typeof cfg.baseUrl,
-            severity: 'error',
-          });
-        }
-        // baseUrl 格式校验（需求 21.2）
-        if (cfg.baseUrl !== undefined && typeof cfg.baseUrl === "string" && cfg.baseUrl !== "") {
-          try { new URL(cfg.baseUrl); } catch {
-            errors.push({
-              field: `providers.${providerId}.baseUrl`,
-              message: "baseUrl 格式无效",
-              severity: 'error',
-            });
-          }
-        }
-        if (typeof cfg.defaultChatModel !== "string") {
-          errors.push({
-            field: `providers.${providerId}.defaultChatModel`,
-            message: "defaultChatModel must be a string",
-            expectedType: "string",
-            actualType: typeof cfg.defaultChatModel,
-            severity: 'error',
-          });
-        }
-        if (typeof cfg.defaultEmbedModel !== "string") {
-          errors.push({
-            field: `providers.${providerId}.defaultEmbedModel`,
-            message: "defaultEmbedModel must be a string",
-            expectedType: "string",
-            actualType: typeof cfg.defaultEmbedModel,
-            severity: 'error',
-          });
-        }
-        if (typeof cfg.enabled !== "boolean") {
-          errors.push({
-            field: `providers.${providerId}.enabled`,
-            message: "enabled must be a boolean",
-            expectedType: "boolean",
-            actualType: typeof cfg.enabled,
-            severity: 'error',
-          });
-        }
-
-      }
-    }
-
-    // 验证 taskModels 字段
-    this.validateTaskModels(settings.taskModels, errors);
-
-    // TaskModel → Provider 引用交叉校验（需求 21.3）
-    this.validateTaskModelProviderRefs(settings.taskModels, settings.providers, errors);
-
-    return { valid: errors.filter(e => e.severity === 'error').length === 0, errors };
-  }
-
-  private validateScalarSettings(settings: Record<string, unknown>, errors: SettingsValidationError[]): void {
-    for (const spec of SCALAR_SETTINGS_SPECS) {
-      const value = settings[spec.key];
-
-      if (value === undefined) {
-        if (spec.required) {
-          errors.push({
-            field: spec.key,
-            message: `${spec.key} is required`,
-            expectedType: spec.type,
-            actualType: "undefined",
-            severity: 'error',
-          });
-        }
-        continue;
-      }
-
-      if (spec.type === "string") {
-        if (typeof value !== "string") {
-          errors.push({
-            field: spec.key,
-            message: `${spec.key} must be a string`,
-            expectedType: "string",
-            actualType: value === null ? "null" : typeof value,
-            severity: 'error',
-          });
-          continue;
-        }
-
-        if (spec.allowed && !spec.allowed.includes(value)) {
-          errors.push({
-            field: spec.key,
-            message: `${spec.key} must be one of: ${spec.allowed.join(", ")}`,
-            expectedType: spec.allowed.join(" | "),
-            actualType: `'${value}'`,
-            severity: 'error',
-          });
-        }
-        continue;
-      }
-
-      if (spec.type === "boolean") {
-        if (typeof value !== "boolean") {
-          errors.push({
-            field: spec.key,
-            message: `${spec.key} must be a boolean`,
-            expectedType: "boolean",
-            actualType: value === null ? "null" : typeof value,
-            severity: 'error',
-          });
-        }
-        continue;
-      }
-
-      if (typeof value !== "number" || Number.isNaN(value)) {
-        errors.push({
-          field: spec.key,
-          message: `${spec.key} must be a number`,
-          expectedType: "number",
-          actualType: value === null ? "null" : typeof value,
-          severity: 'error',
-        });
-        continue;
-      }
-
-      if (spec.integer && !Number.isInteger(value)) {
-        errors.push({
-          field: spec.key,
-          message: `${spec.key} must be an integer`,
-          expectedType: "integer",
-          actualType: String(value),
-          severity: 'error',
-        });
-        continue;
-      }
-
-      if (spec.min !== undefined && value < spec.min) {
-        errors.push({
-          field: spec.key,
-          message: `${spec.key} must be >= ${spec.min}`,
-          expectedType: `number (>=${spec.min})`,
-          actualType: String(value),
-          severity: 'error',
-        });
-      }
-
-      if (spec.max !== undefined && value > spec.max) {
-        errors.push({
-          field: spec.key,
-          message: `${spec.key} must be <= ${spec.max}`,
-          expectedType: `number (<=${spec.max})`,
-          actualType: String(value),
-          severity: 'error',
-        });
-      }
-    }
-  }
 
   private applyScalarUpdates(partial: Partial<PluginSettings>, target: PluginSettings): Result<void> {
     for (const spec of SCALAR_SETTINGS_SPECS) {
@@ -766,154 +495,8 @@ export class SettingsStore {
     return ok(undefined);
   }
 
-  /** 验证 DirectoryScheme 结构 */
-  private validateDirectoryScheme(
-    directoryScheme: unknown,
-    errors: SettingsValidationError[]
-  ): void {
-    if (typeof directoryScheme !== "object" || directoryScheme === null) {
-      errors.push({
-        field: "directoryScheme",
-        message: "directoryScheme must be an object",
-        expectedType: "object",
-        actualType: directoryScheme === null ? "null" : typeof directoryScheme,
-        severity: 'error',
-      });
-      return;
-    }
 
-    const scheme = directoryScheme as Record<string, unknown>;
 
-    for (const field of REQUIRED_DIRECTORY_SCHEME_FIELDS) {
-      if (typeof scheme[field] !== "string") {
-        errors.push({
-          field: `directoryScheme.${field}`,
-          message: `directoryScheme.${field} must be a string`,
-          expectedType: "string",
-          actualType: typeof scheme[field],
-          severity: 'error',
-        });
-      }
-    }
-  }
-
-  /** 验证 TaskModels 结构 */
-  private validateTaskModels(
-    taskModels: unknown,
-    errors: SettingsValidationError[]
-  ): void {
-    if (typeof taskModels !== "object" || taskModels === null) {
-      errors.push({
-        field: "taskModels",
-        message: "taskModels must be an object",
-        expectedType: "object",
-        actualType: taskModels === null ? "null" : typeof taskModels,
-        severity: 'error',
-      });
-      return;
-    }
-
-    const models = taskModels as Record<string, unknown>;
-
-    for (const taskType of TASK_TYPES) {
-      const model = models[taskType];
-      if (typeof model !== "object" || model === null) {
-        errors.push({
-          field: `taskModels.${taskType}`,
-          message: `taskModels.${taskType} must be an object`,
-          expectedType: "TaskModelConfig",
-          actualType: model === null ? "null" : typeof model,
-          severity: 'error',
-        });
-        continue;
-      }
-
-      const modelConfig = model as Record<string, unknown>;
-
-      // 验证 providerId
-      if (typeof modelConfig.providerId !== "string") {
-        errors.push({
-          field: `taskModels.${taskType}.providerId`,
-          message: `taskModels.${taskType}.providerId must be a string`,
-          expectedType: "string",
-          actualType: typeof modelConfig.providerId,
-          severity: 'error',
-        });
-      }
-
-      // 验证 model
-      if (typeof modelConfig.model !== "string") {
-        errors.push({
-          field: `taskModels.${taskType}.model`,
-          message: `taskModels.${taskType}.model must be a string`,
-          expectedType: "string",
-          actualType: typeof modelConfig.model,
-          severity: 'error',
-        });
-      }
-
-      // 验证可选字段 temperature
-      if (modelConfig.temperature !== undefined && typeof modelConfig.temperature !== "number") {
-        errors.push({
-          field: `taskModels.${taskType}.temperature`,
-          message: `taskModels.${taskType}.temperature must be a number`,
-          expectedType: "number",
-          actualType: typeof modelConfig.temperature,
-          severity: 'error',
-        });
-      }
-
-      // 验证可选字段 topP
-      if (modelConfig.topP !== undefined && typeof modelConfig.topP !== "number") {
-        errors.push({
-          field: `taskModels.${taskType}.topP`,
-          message: `taskModels.${taskType}.topP must be a number`,
-          expectedType: "number",
-          actualType: typeof modelConfig.topP,
-          severity: 'error',
-        });
-      }
-
-      // 验证可选字段 maxTokens
-      if (modelConfig.maxTokens !== undefined && typeof modelConfig.maxTokens !== "number") {
-        errors.push({
-          field: `taskModels.${taskType}.maxTokens`,
-          message: `taskModels.${taskType}.maxTokens must be a number`,
-          expectedType: "number",
-          actualType: typeof modelConfig.maxTokens,
-          severity: 'error',
-        });
-      }
-    }
-  }
-
-  /** TaskModel → Provider 引用交叉校验（需求 21.3） */
-  private validateTaskModelProviderRefs(
-    taskModels: unknown,
-    providers: unknown,
-    errors: SettingsValidationError[]
-  ): void {
-    // 仅在两者都是有效对象时才做交叉校验
-    if (typeof taskModels !== "object" || taskModels === null) return;
-    if (typeof providers !== "object" || providers === null) return;
-
-    const models = taskModels as Record<string, Record<string, unknown>>;
-    const providerMap = providers as Record<string, unknown>;
-
-    for (const taskType of TASK_TYPES) {
-      const model = models[taskType];
-      if (typeof model !== "object" || model === null) continue;
-      const providerId = model.providerId;
-      if (typeof providerId !== "string" || providerId === "") continue;
-      if (!providerMap[providerId]) {
-        errors.push({
-          field: `taskModels.${taskType}.providerId`,
-          message: `引用的 Provider "${providerId}" 不存在，将回退到默认 Provider`,
-          severity: 'warning',
-        });
-      }
-    }
-  }
 
   /** 合并部分设置并进行类型检查 */
   private mergePartialSettings(partial: Partial<PluginSettings>): Result<PluginSettings> {
@@ -1156,14 +739,6 @@ export class SettingsStore {
       ...this.settings.taskModels,
       [taskType]: { ...DEFAULT_TASK_MODEL_CONFIGS[taskType] }
     };
-    return this.updateSettings({ taskModels });
-  }
-
-  /**
-   * 重置所有任务模型配置到默认值
-   */
-  async resetAllTaskModels(): Promise<Result<void>> {
-    const taskModels = createDefaultTaskModels();
     return this.updateSettings({ taskModels });
   }
 

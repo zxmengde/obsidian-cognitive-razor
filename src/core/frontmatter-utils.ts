@@ -1,9 +1,9 @@
 /**
  * Frontmatter 工具模块
  * 
- * 遵循设计文档 5.1 Frontmatter 约束：
- * - 必填字段：cruid, type, name, status, parents, created, updated
- * - 可选字段：definition, aliases, tags, sourceUids, version
+ * Frontmatter 字段约束：
+ * - 必填字段：cruid, type, name, status, created, updated, aliases, tags, parents
+ * - 可选字段：sourceUids
  */
 
 import type { CRFrontmatter, CRType, NoteState } from "../types";
@@ -20,6 +20,8 @@ const REQUIRED_STRING_FIELDS: Array<keyof CRFrontmatter> = [
   "updated"
 ];
 const REQUIRED_ARRAY_FIELDS: Array<keyof CRFrontmatter> = [
+  "aliases",
+  "tags",
   "parents"
 ];
 const ARRAY_FIELDS: Array<keyof CRFrontmatter> = ["aliases", "tags", "sourceUids", "parents"];
@@ -90,13 +92,11 @@ export function generateFrontmatter(options: {
   cruid: string;
   type: CRType;
   name: string;
-  definition?: string;
   status?: NoteState;
   parents?: string[];
   aliases?: string[];
   tags?: string[];
   sourceUids?: string[];
-  version?: string;
 }): CRFrontmatter {
   const now = formatCRTimestamp();
 
@@ -104,15 +104,13 @@ export function generateFrontmatter(options: {
     cruid: options.cruid,
     type: options.type,
     name: options.name,
-    definition: options.definition,
     status: options.status || "Stub",
     created: now,
     updated: now,
     parents: normalizeParents(options.parents || []),
-    aliases: options.aliases,
-    tags: options.tags,
+    aliases: options.aliases || [],
+    tags: options.tags || [],
     sourceUids: options.sourceUids,
-    version: options.version
   };
 }
 
@@ -138,40 +136,35 @@ function frontmatterToYaml(frontmatter: CRFrontmatter): string {
   lines.push(`cruid: ${frontmatter.cruid}`);
   lines.push(`type: ${frontmatter.type}`);
   lines.push(`name: ${formatYamlString(frontmatter.name)}`);
-  if (frontmatter.definition) {
-    lines.push(`definition: ${formatYamlString(frontmatter.definition)}`);
-  }
   lines.push(`status: ${frontmatter.status}`);
   lines.push(`created: ${frontmatter.created}`);
   lines.push(`updated: ${frontmatter.updated}`);
   
-  // 可选数组字段 - 单行格式
-  if (frontmatter.aliases && frontmatter.aliases.length > 0) {
-    lines.push(`aliases: ${formatArrayInline(frontmatter.aliases)}`);
-  }
+  // 必填数组字段 - 始终输出（即使为空）
+  const aliasesValue = Array.isArray(frontmatter.aliases) && frontmatter.aliases.length > 0
+    ? formatArrayInline(frontmatter.aliases)
+    : "[]";
+  lines.push(`aliases: ${aliasesValue}`);
+
+  const tagsValue = Array.isArray(frontmatter.tags) && frontmatter.tags.length > 0
+    ? formatArrayInline(frontmatter.tags)
+    : "[]";
+  lines.push(`tags: ${tagsValue}`);
 
   const parentsValue = Array.isArray(frontmatter.parents) && frontmatter.parents.length > 0
     ? formatArrayInline(frontmatter.parents)
     : "[]";
   lines.push(`parents: ${parentsValue}`);
-
-  if (frontmatter.tags && frontmatter.tags.length > 0) {
-    lines.push(`tags: ${formatArrayInline(frontmatter.tags)}`);
-  }
   
-  // 其他可选字段
+  // 可选字段
   if (frontmatter.sourceUids && frontmatter.sourceUids.length > 0) {
     lines.push(`sourceUids: ${formatArrayInline(frontmatter.sourceUids)}`);
   }
 
-  if (frontmatter.version) {
-    lines.push(`version: ${frontmatter.version}`);
-  }
-
   // 未知字段保留（需求 29.4：序列化时不丢弃未知字段）
   const KNOWN_FIELDS = new Set<string>([
-    "cruid", "type", "name", "definition", "status",
-    "created", "updated", "aliases", "tags", "parents", "sourceUids", "version"
+    "cruid", "type", "name", "status",
+    "created", "updated", "aliases", "tags", "parents", "sourceUids"
   ]);
   for (const [key, value] of Object.entries(frontmatter)) {
     if (KNOWN_FIELDS.has(key)) continue;
@@ -224,13 +217,11 @@ function parseFrontmatter(yaml: string): CRFrontmatter | null {
       }
     }
 
-    const aliases = normalizeStringArray(normalized.aliases);
-    const tags = normalizeStringArray(normalized.tags);
+    const aliases = normalizeStringArray(normalized.aliases) || [];
+    const tags = normalizeStringArray(normalized.tags) || [];
     const sourceUids = normalizeStringArray(normalized.sourceUids);
     const parents = normalizeParents(normalizeStringArray(normalized.parents) || []);
-    const version = normalizeOptionalString(normalized.version);
     const name = typeof normalized.name === "string" ? normalized.name : "";
-    const definition = normalizeOptionalString(normalized.definition);
 
     const rawCruid = typeof normalized.cruid === "string"
       ? normalized.cruid
@@ -244,8 +235,8 @@ function parseFrontmatter(yaml: string): CRFrontmatter | null {
 
     // 收集未知字段（需求 29.4：保留未知字段不丢弃）
     const KNOWN_FIELDS = new Set<string>([
-      "cruid", "crUid", "type", "name", "definition", "status",
-      "created", "updated", "aliases", "tags", "parents", "sourceUids", "version"
+      "cruid", "crUid", "type", "name", "status",
+      "created", "updated", "aliases", "tags", "parents", "sourceUids"
     ]);
     const extras: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(normalized)) {
@@ -258,7 +249,6 @@ function parseFrontmatter(yaml: string): CRFrontmatter | null {
       cruid: rawCruid,
       type: normalized.type as CRType,
       name,
-      definition,
       status: normalized.status as NoteState,
       created: normalized.created as string,
       updated: normalized.updated as string,
@@ -266,7 +256,6 @@ function parseFrontmatter(yaml: string): CRFrontmatter | null {
       tags,
       parents,
       sourceUids,
-      version,
       ...extras,
     };
   } catch (error) {
@@ -330,13 +319,11 @@ function updateFrontmatter(
       cruid: updates.cruid || "",
       type: updates.type || "Entity",
       name: updates.name || "Unnamed Concept",
-      definition: updates.definition,
       parents: updates.parents || [],
       status: updates.status,
-      aliases: updates.aliases,
-      tags: updates.tags,
+      aliases: updates.aliases || [],
+      tags: updates.tags || [],
       sourceUids: updates.sourceUids,
-      version: updates.version
     });
     
     return frontmatterToYaml(newFrontmatter) + content;

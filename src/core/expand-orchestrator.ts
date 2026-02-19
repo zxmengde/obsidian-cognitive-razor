@@ -16,7 +16,7 @@ import type { ExpandOrchestratorDeps } from "./orchestrator-deps";
 import type { CreateOrchestrator, CreatePresetOptions } from "./create-orchestrator";
 import type { FileStorage } from "../data/file-storage";
 
-export type ExpandMode = "hierarchical" | "abstract";
+type ExpandMode = "hierarchical" | "abstract";
 
 export interface HierarchicalCandidate {
   name: string;
@@ -36,7 +36,7 @@ export interface HierarchicalPlan {
   looseStructure?: boolean;
 }
 
-export interface AbstractCandidate {
+interface AbstractCandidate {
   uid: string;
   name: string;
   path: string;

@@ -4,9 +4,6 @@
 用户是代码小白，只负责提出想法和需求和使用插件；
 Kiro 负责代码修改、构建、测试、调试和实际在 Obsidian 中运行实际测试的全部工作。
 
-> **架构与需求详情** → `.kiro/specs/cognitive-razor-SSOT/`（requirements.md + design.md）
-> **哲学基线** → `docs/PHILOSOPHICAL_FOUNDATIONS.md`
-
 ---
 
 ## 0. 协作模式
@@ -146,9 +143,6 @@ obsidian eval code="const c = app.plugins.plugins['cognitive-razor'].getComponen
 ---
 
 ## 5. 关键设计决策（修改前必读）
-
-> 完整架构设计 → `.kiro/specs/cognitive-razor-SSOT/design.md`
-
 ### SSOT 权威索引
 | 关注点 | 权威来源 |
 |--------|----------|
@@ -156,7 +150,7 @@ obsidian eval code="const c = app.plugins.plugins['cognitive-razor'].getComponen
 | 服务注册与生命周期 | `src/core/service-container.ts` |
 | 错误码与消息模板 | `src/data/error-codes.ts` |
 | Prompt 槽位与模板 | `src/core/prompt-manager.ts` + `prompts/` |
-| Schema 与渲染 | `src/core/schema-registry.ts` + `src/core/content-renderer.ts` |
+| Schema 与渲染 | `src/core/schema-registry.ts`（含 `WRITE_PHASES` 分阶段配置）+ `src/core/content-renderer.ts` |
 | 数据文件格式 | `src/data/file-storage.ts` + 各 `*-store.ts` |
 | 管线编排 | `src/core/*-orchestrator.ts` |
 | 队列/锁 | `src/core/task-queue.ts` + `src/core/lock-manager.ts` |

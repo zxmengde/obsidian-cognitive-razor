@@ -44,10 +44,3 @@ export function dotProduct(a: number[], b: number[]): number {
     }
     return product;
 }
-
-/**
- * 余弦相似度（归一化 + 点积）
- */
-export function cosineSimilarity(a: number[], b: number[]): number {
-    return dotProduct(normalizeVector(a), normalizeVector(b));
-}

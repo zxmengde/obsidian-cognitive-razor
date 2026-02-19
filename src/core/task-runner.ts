@@ -10,18 +10,12 @@ import type {
   ILogger,
   TaskRecord,
   TaskResult,
-  TaskError,
   TaskType,
   CRType,
   StandardizedConcept,
   NoteState,
   Result,
   ChatRequest,
-  DefinePayload,
-  TagPayload,
-  WritePayload,
-  IndexPayload,
-  VerifyPayload,
   AnyTaskPayload,
   TypedTaskRecord
 } from "../types";
@@ -48,97 +42,13 @@ const TASK_PIPELINE_ORDER: TaskType[] = [
   "verify"
 ];
 
-/** 类型必填字段定义 */
-const TYPE_REQUIRED_FIELDS: Record<CRType, string[]> = {
-  Domain: [
-    "definition",
-    "teleology", 
-    "methodology",
-    "historical_genesis",
-    "boundaries",
-    "sub_domains",
-    "issues",
-    "holistic_understanding"
-  ],
-  Issue: [
-    "definition",
-    "core_tension",
-    "significance",
-    "epistemic_barrier",
-    "counter_intuition",
-    "historical_genesis",
-    "sub_issues",
-    "stakeholder_perspectives",
-    "boundary_conditions",
-    "theories",
-    "holistic_understanding"
-  ],
-  Theory: [
-    "definition",
-    "axioms",
-    "sub_theories",
-    "logical_structure",
-    "entities",
-    "mechanisms",
-    "core_predictions",
-    "limitations",
-    "historical_genesis",
-    "holistic_understanding"
-  ],
-  Entity: [
-    "definition",
-    "classification",
-    "properties",
-    "states",
-    "constraints",
-    "composition",
-    "distinguishing_features",
-    "examples",
-    "counter_examples",
-    "holistic_understanding"
-  ],
-  Mechanism: [
-    "definition",
-    "trigger_conditions",
-    "operates_on",
-    "causal_chain",
-    "modulation",
-    "inputs",
-    "outputs",
-    "side_effects",
-    "termination_conditions",
-    "holistic_understanding"
-  ]
-};
 
-
-class InputValidator {
-  private readonly MAX_INPUT_LENGTH = 10000;
-  private readonly SUSPICIOUS_PATTERNS = [
-    /ignore\s+previous\s+instructions/i,
-    /system\s*:/i,
-    /\[INST\]/i,
-    /<\|im_start\|>/i
-  ];
-
-  validate(input: string): string {
-    if (typeof input !== "string") {
-      throw new CognitiveRazorError("E101_INVALID_INPUT", "输入必须是字符串");
-    }
-    if (input.length > this.MAX_INPUT_LENGTH) {
-      throw new CognitiveRazorError("E101_INVALID_INPUT", `输入过长: ${input.length} 字符 (最大 ${this.MAX_INPUT_LENGTH})`, {
-        length: input.length,
-        maxLength: this.MAX_INPUT_LENGTH
-      });
-    }
-    for (const pattern of this.SUSPICIOUS_PATTERNS) {
-      if (pattern.test(input)) {
-        throw new CognitiveRazorError("E101_INVALID_INPUT", "输入包含可疑指令，请检查后再试");
-      }
-    }
-    const sanitized = input.replace(/[\x00-\x1F\x7F]/g, "").replace(/\s+/g, " ").trim();
-    return sanitized;
+/** 输入清洗：去除控制字符、合并空白 */
+function sanitizeInput(input: string): string {
+  if (typeof input !== "string") {
+    throw new CognitiveRazorError("E101_INVALID_INPUT", "输入必须是字符串");
   }
+  return input.replace(/[\x00-\x1F\x7F]/g, "").replace(/\s+/g, " ").trim();
 }
 
 
@@ -157,21 +67,6 @@ interface TaskRunnerDependencies {
 
 /** 写入操作上下文 */
 
-
-interface TaskHandler {
-  taskType: TaskType;
-  run: (task: TaskRecord, signal: AbortSignal) => Promise<Result<TaskResult>>;
-}
-
-/**
- * 将 TaskRecord 按 taskType 窄化为 TypedTaskRecord
- * 由于 TaskRecord 的 payload 已是 AnyTaskPayload 联合类型，
- * 通过 taskType 判别式可安全窄化。
- */
-function narrowTask(task: TaskRecord): TypedTaskRecord {
-  return task as TypedTaskRecord;
-}
-
 export class TaskRunner {
   private providerManager: ProviderManager;
   private promptManager: PromptManager;
@@ -181,10 +76,9 @@ export class TaskRunner {
   private schemaRegistry: SchemaRegistry;
   private settingsStore?: SettingsStore;
   private abortControllers: Map<string, AbortController>;
-  private inputValidator: InputValidator;
   private app: App;
   private noteRepository: NoteRepository;
-  private taskHandlers: Map<TaskType, TaskHandler>;
+  private taskHandlers: Map<TaskType, (task: TaskRecord, signal: AbortSignal) => Promise<Result<TaskResult>>>;
 
   constructor(deps: TaskRunnerDependencies) {
     this.providerManager = deps.providerManager;
@@ -198,28 +92,12 @@ export class TaskRunner {
     this.app = deps.app;
     this.noteRepository = deps.noteRepository ?? new NoteRepository(deps.app, deps.logger);
     this.abortControllers = new Map();
-    this.inputValidator = new InputValidator();
     this.taskHandlers = new Map([
-      [
-        "define",
-        { taskType: "define", run: (task, signal) => this.executeDefine(task, signal) }
-      ],
-      [
-        "tag",
-        { taskType: "tag", run: (task, signal) => this.executeTag(task, signal) }
-      ],
-      [
-        "index",
-        { taskType: "index", run: (task, signal) => this.executeIndex(task, signal) }
-      ],
-      [
-        "write",
-        { taskType: "write", run: (task, signal) => this.executeWrite(task, signal) }
-      ],
-      [
-        "verify",
-        { taskType: "verify", run: (task, signal) => this.executeVerify(task, signal) }
-      ],
+      ["define", (task, signal) => this.executeDefine(task, signal)],
+      ["tag", (task, signal) => this.executeTag(task, signal)],
+      ["index", (task, signal) => this.executeIndex(task, signal)],
+      ["write", (task, signal) => this.executeWrite(task, signal)],
+      ["verify", (task, signal) => this.executeVerify(task, signal)],
     ]);
 
     this.logger.debug("TaskRunner", "TaskRunner 初始化完成");
@@ -252,7 +130,7 @@ export class TaskRunner {
       // 根据任务类型分发
       const handler = this.taskHandlers.get(task.taskType);
       const result = handler
-        ? await handler.run(task, abortController.signal)
+        ? await handler(task, abortController.signal)
         : err("E310_INVALID_STATE", `未知的任务类型: ${task.taskType}`);
 
       const elapsedTime = Date.now() - startTime;
@@ -384,12 +262,12 @@ export class TaskRunner {
   ): Promise<Result<TaskResult>> {
     try {
       // 通过 taskType 判别式窄化，安全访问 DefinePayload 字段
-      const typed = narrowTask(task);
+      const typed = task as TypedTaskRecord;
       if (typed.taskType !== "define") {
         return this.createTaskError(task, { code: "E310_INVALID_STATE", message: "任务类型不匹配: 期望 define" });
       }
       const payload = typed.payload;
-      const sanitizedInput = this.inputValidator.validate(payload.userInput);
+      const sanitizedInput = sanitizeInput(payload.userInput);
 
       // 构建 prompt（CTX_INPUT）
       const slots = {
@@ -413,7 +291,6 @@ export class TaskRunner {
       const validationResult = await this.validator.validate(
         chatResult.value.content,
         schema,
-        ["C009"]
       );
 
       if (!validationResult.valid) {
@@ -444,7 +321,7 @@ export class TaskRunner {
   ): Promise<Result<TaskResult>> {
     try {
       // 通过 taskType 判别式窄化，安全访问 TagPayload 字段
-      const typed = narrowTask(task);
+      const typed = task as TypedTaskRecord;
       if (typed.taskType !== "tag") {
         return this.createTaskError(task, { code: "E310_INVALID_STATE", message: "任务类型不匹配: 期望 tag" });
       }
@@ -479,7 +356,6 @@ export class TaskRunner {
       const validationResult = await this.validator.validate(
         chatResult.value.content,
         schema,
-        []
       );
 
       if (!validationResult.valid) {
@@ -514,7 +390,7 @@ export class TaskRunner {
   ): Promise<Result<TaskResult>> {
     try {
       // 通过 taskType 判别式窄化，安全访问 IndexPayload 字段
-      const typed = narrowTask(task);
+      const typed = task as TypedTaskRecord;
       if (typed.taskType !== "index") {
         return this.createTaskError(task, { code: "E310_INVALID_STATE", message: "任务类型不匹配: 期望 index" });
       }
@@ -590,7 +466,7 @@ export class TaskRunner {
   ): Promise<Result<TaskResult>> {
     try {
       // 通过 taskType 判别式窄化，安全访问 WritePayload 字段
-      const typed = narrowTask(task);
+      const typed = task as TypedTaskRecord;
       if (typed.taskType !== "write") {
         return this.createTaskError(task, { code: "E310_INVALID_STATE", message: "任务类型不匹配: 期望 write" });
       }
@@ -601,11 +477,10 @@ export class TaskRunner {
       const metaContext = this.buildMetaContext(payload);
       const language = this.getLanguage();
 
-      // 获取分阶段配置
+      // 获取分阶段配置（从代码常量读取）
       const phases = WRITE_PHASES[conceptType];
       if (!phases || phases.length === 0) {
-        // 回退到旧的一次性生成
-        return this.executeWriteLegacy(task, signal);
+        return this.createTaskError(task, { code: "E310_INVALID_STATE", message: `未找到 ${conceptType} 的分阶段配置` });
       }
 
       // 累积已生成的字段
@@ -633,6 +508,9 @@ export class TaskRunner {
           ? JSON.stringify(accumulated, null, 2)
           : "";
 
+        // 加载阶段专属 prompt 模板（优先从文件，fallback 到默认模板）
+        const phaseTemplate = await this.loadPhasePromptTemplate(conceptType, phase.id);
+
         // 构建分阶段 prompt
         const prompt = this.promptManager.buildPhasedWrite({
           CTX_META: metaContext,
@@ -641,8 +519,7 @@ export class TaskRunner {
           CTX_LANGUAGE: language,
           CONCEPT_TYPE: conceptType,
           PHASE_SCHEMA: phaseSchema,
-          PHASE_FOCUS: phase.focusInstruction
-        });
+        }, phaseTemplate ?? undefined);
 
         // 调用 LLM
         const chatResult = await this.providerManager.chat(
@@ -658,7 +535,6 @@ export class TaskRunner {
         const validationResult = await this.validator.validate(
           chatResult.value.content,
           phaseValidationSchema,
-          []
         );
 
         if (!validationResult.valid) {
@@ -712,47 +588,31 @@ export class TaskRunner {
     }
   }
 
-  /** 旧版一次性 Write（回退路径） */
-  private async executeWriteLegacy(
-    task: TaskRecord,
-    signal: AbortSignal
-  ): Promise<Result<TaskResult>> {
-    const typed = narrowTask(task);
-    if (typed.taskType !== "write") {
-      return this.createTaskError(task, { code: "E310_INVALID_STATE", message: "任务类型不匹配" });
+  /**
+   * 加载阶段专属 prompt 模板
+   * 
+   * 优先从 prompts/_phases/{Type}/{phaseId}.md 读取，
+   * 读取失败时返回 null（由调用方 fallback 到默认模板）。
+   */
+  private async loadPhasePromptTemplate(conceptType: CRType, phaseId: string): Promise<string | null> {
+    try {
+      const filePath = `prompts/_phases/${conceptType}/${phaseId}.md`;
+      const file = this.app.vault.getFileByPath(filePath);
+      if (!file) {
+        this.logger.debug("TaskRunner", `阶段 prompt 文件不存在，使用默认模板: ${filePath}`);
+        return null;
+      }
+      const content = await this.app.vault.read(file);
+      if (!content.trim()) {
+        this.logger.warn("TaskRunner", `阶段 prompt 文件为空，使用默认模板: ${filePath}`);
+        return null;
+      }
+      this.logger.debug("TaskRunner", `已加载阶段 prompt: ${filePath}`);
+      return content;
+    } catch (e) {
+      this.logger.warn("TaskRunner", `加载阶段 prompt 失败，使用默认模板: ${conceptType}/${phaseId}`, { error: e });
+      return null;
     }
-    const payload = typed.payload;
-    const conceptType = payload.conceptType || "Entity";
-    const schema = this.getSchema(conceptType);
-    const sources = typeof payload.sources === "string" ? payload.sources : "";
-
-    const slots = {
-      CTX_META: this.buildMetaContext(payload),
-      CTX_SOURCES: sources,
-      CTX_LANGUAGE: this.getLanguage()
-    };
-
-    const prompt = this.promptManager.build(task.taskType, slots, conceptType);
-
-    const chatResult = await this.providerManager.chat(
-      this.buildChatRequest("write", prompt, task.providerRef), signal
-    );
-
-    if (!chatResult.ok) {
-      return this.createTaskError(task, chatResult.error!);
-    }
-
-    const validationResult = await this.validator.validate(
-      chatResult.value.content, schema, []
-    );
-
-    if (!validationResult.valid) {
-      return this.createValidationError(task, validationResult.errors!);
-    }
-
-    const data = (validationResult.data as Record<string, unknown>) || JSON.parse(chatResult.value.content);
-
-    return ok({ taskId: task.id, state: "Completed", data });
   }
 
   /**
@@ -826,7 +686,7 @@ export class TaskRunner {
   ): Promise<Result<TaskResult>> {
     try {
       // 通过 taskType 判别式窄化，安全访问 VerifyPayload 字段
-      const typed = narrowTask(task);
+      const typed = task as TypedTaskRecord;
       if (typed.taskType !== "verify") {
         return this.createTaskError(task, { code: "E310_INVALID_STATE", message: "任务类型不匹配: 期望 verify" });
       }
@@ -881,17 +741,38 @@ export class TaskRunner {
 
   // 辅助方法
 
-  /** 构建 ChatRequest（DRY：消除 7 处重复的请求构建） */
+  /** 构建 ChatRequest（DRY：消除 7 处重复的请求构建）
+   * 按 <system_instructions>...</system_instructions> 标签分割 system/user 消息：
+   * - 标签内内容 → system 消息
+   * - 其余内容 → user 消息
+   * - 无标签时整体放 user 消息（向后兼容）
+   */
   private buildChatRequest(
     taskType: TaskType,
     prompt: string,
     providerRef?: string,
   ): ChatRequest {
     const modelConfig = this.getTaskModelConfig(taskType, providerRef);
+
+    // 提取 system_instructions 标签内容
+    const sysMatch = prompt.match(/<system_instructions>([\s\S]*?)<\/system_instructions>/);
+    let messages: ChatRequest["messages"];
+    if (sysMatch) {
+      const systemContent = sysMatch[1].trim();
+      // 移除 system_instructions 块后剩余内容作为 user 消息
+      const userContent = prompt.replace(/<system_instructions>[\s\S]*?<\/system_instructions>/, "").trim();
+      messages = [
+        { role: "system", content: systemContent },
+        { role: "user", content: userContent },
+      ];
+    } else {
+      messages = [{ role: "user", content: prompt }];
+    }
+
     return {
       providerId: providerRef || modelConfig.providerId,
       model: modelConfig.model,
-      messages: [{ role: "user", content: prompt }],
+      messages,
       temperature: modelConfig.temperature,
       topP: modelConfig.topP,
       maxTokens: modelConfig.maxTokens,
@@ -996,19 +877,6 @@ export class TaskRunner {
       taskId: task.id,
       validationErrors: errors
     });
-  }
-
-  /**
-   * 获取验证规则
-   * 
-   * 简化版本：返回空数组，不再使用业务规则校验
-   * 
-   * @param _conceptType 知识类型（未使用）
-   * @returns 空数组
-   */
-  private getValidationRules(_conceptType: string): string[] {
-    // 简化版本：不再使用业务规则校验
-    return [];
   }
 
 

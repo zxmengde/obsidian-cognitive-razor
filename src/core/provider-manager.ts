@@ -22,22 +22,21 @@ import type {
 import type { SettingsStore } from "../data/settings-store";
 import { RetryHandler, PROVIDER_ERROR_CONFIG } from "./retry-handler";
 
-class SecurityUtils {
-  static maskApiKey(apiKey: string): string {
-    if (!apiKey) return "***";
-    if (apiKey.length <= 8) return "***";
-    return `${apiKey.slice(0, 4)}...${apiKey.slice(-4)}`;
-  }
+/** API Key 脱敏（日志用） */
+function maskApiKey(apiKey: string): string {
+  if (!apiKey || apiKey.length <= 8) return "***";
+  return `${apiKey.slice(0, 4)}...${apiKey.slice(-4)}`;
+}
 
-  static sanitizeUrl(raw: string): string {
-    try {
-      const url = new URL(raw);
-      url.searchParams.delete("api_key");
-      url.searchParams.delete("token");
-      return url.toString();
-    } catch {
-      return "[invalid-url]";
-    }
+/** URL 脱敏（移除敏感参数） */
+function sanitizeUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    url.searchParams.delete("api_key");
+    url.searchParams.delete("token");
+    return url.toString();
+  } catch {
+    return "[invalid-url]";
   }
 }
 
@@ -127,7 +126,7 @@ export class ProviderManager {
     // 构建请求 URL
     const baseUrl = providerConfig.baseUrl || DEFAULT_ENDPOINTS["openai"];
     const url = `${baseUrl}/chat/completions`;
-    const safeUrl = SecurityUtils.sanitizeUrl(url);
+    const safeUrl = sanitizeUrl(url);
 
     // 构建请求体（OpenAI 标准格式）
     // 注意：不设置 max_tokens 时让模型自由输出，避免截断
@@ -151,7 +150,7 @@ export class ProviderManager {
       providerId: request.providerId,
       model: request.model,
       url: safeUrl,
-      apiKeyMasked: SecurityUtils.maskApiKey(providerConfig.apiKey),
+      apiKeyMasked: maskApiKey(providerConfig.apiKey),
       messageCount: request.messages.length
     });
 
@@ -214,7 +213,7 @@ export class ProviderManager {
     // 构建请求 URL
     const baseUrl = providerConfig.baseUrl || DEFAULT_ENDPOINTS["openai"];
     const url = `${baseUrl}/embeddings`;
-    const safeUrl = SecurityUtils.sanitizeUrl(url);
+    const safeUrl = sanitizeUrl(url);
 
     // 构建请求体（OpenAI 标准格式）
     // 支持 dimensions 参数（用于 text-embedding-3-small 等可变维度模型）
@@ -233,7 +232,7 @@ export class ProviderManager {
       providerId: request.providerId,
       model: request.model,
       url: safeUrl,
-      apiKeyMasked: SecurityUtils.maskApiKey(providerConfig.apiKey),
+      apiKeyMasked: maskApiKey(providerConfig.apiKey),
       inputLength: request.input.length
     });
 

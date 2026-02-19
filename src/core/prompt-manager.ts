@@ -73,7 +73,12 @@ function validateBlockOrder(content: string): { valid: boolean; error?: string; 
   // 检查所有必需区块是否存在
   const missingBlocks: string[] = [];
   for (const block of REQUIRED_BLOCKS) {
-    if (!content.includes(block)) {
+    // <output_schema> 和 <output_format> 互为替代（verify 模板直接输出 Markdown 报告）
+    if (block === "<output_schema>") {
+      if (!content.includes("<output_schema>") && !content.includes("<output_format>")) {
+        missingBlocks.push(block);
+      }
+    } else if (!content.includes(block)) {
       missingBlocks.push(block);
     }
   }
@@ -99,7 +104,8 @@ function validateBlockOrder(content: string): { valid: boolean; error?: string; 
   // 验证基本顺序：system_instructions 应该在最前面
   const systemPos = content.indexOf("<system_instructions>");
   const contextPos = content.indexOf("<context_slots>");
-  const schemaPos = content.indexOf("<output_schema>");
+  // 兼容两种输出区块
+  const schemaPos = Math.max(content.indexOf("<output_schema>"), content.indexOf("<output_format>"));
 
   if (systemPos === -1 || contextPos === -1 || schemaPos === -1) {
     return {
@@ -118,6 +124,7 @@ function validateBlockOrder(content: string): { valid: boolean; error?: string; 
 
   return { valid: true };
 }
+
 
 /** 检测未替换的变量 */
 function findUnreplacedVariables(content: string): string[] {
@@ -316,30 +323,15 @@ export class PromptManager {
     return mapping ? mapping.optional : [];
   }
 
-  /** 获取模板 ID（对于 write 任务，根据知识类型选择模板） */
+  /** 获取模板 ID */
   resolveTemplateId(taskType: TaskType, conceptType?: string): string {
-    // 将任务类型映射到模板文件名
-    /** 模板 ID 映射 */
     const mapping: Record<TaskType, string> = {
       "define": "_base/operations/define",
       "tag": "_base/operations/tag",
       "index": "index",
-      "write": "_type/entity-core", // 默认值，会被 conceptType 覆盖
+      "write": "_base/operations/write-default", // write 走分阶段路径，此处为 fallback 模板
       "verify": "_base/operations/verify",
     };
-
-    // 对于 write 任务，根据知识类型选择模板
-    if (taskType === "write" && conceptType) {
-      const typeMapping: Record<string, string> = {
-        "Domain": "_type/domain-core",
-        "Issue": "_type/issue-core",
-        "Theory": "_type/theory-core",
-        "Entity": "_type/entity-core",
-        "Mechanism": "_type/mechanism-core"
-      };
-      return typeMapping[conceptType] || mapping[taskType];
-    }
-
     return mapping[taskType] || taskType;
   }
 
@@ -428,33 +420,6 @@ export class PromptManager {
     return ok(processedContent);
   }
 
-  /** 注入操作区块（用于 _type/*-core.md 的 {{OPERATION_BLOCK}}） */
-  private async injectOperationBlockIfPresent(templateId: string, content: string): Promise<Result<string>> {
-    if (!content.includes("{{OPERATION_BLOCK}}")) {
-      return ok(content);
-    }
-
-    // 当前约定：_type/*-core 仅用于 write 任务，统一注入 write 操作区块
-    if (!templateId.startsWith("_type/")) {
-      return err("E405_TEMPLATE_INVALID", `模板 ${templateId} 包含 OPERATION_BLOCK，但未定义注入规则`);
-    }
-
-    const operationBlockId = "_base/operations/write";
-    const operationBlockPath = `${this.promptsDir}/${operationBlockId}.md`;
-    const readResult = await this.fileStorage.read(operationBlockPath);
-    if (!readResult.ok) {
-      return readResult;
-    }
-
-    const injected = await this.injectBaseComponents(readResult.value);
-    if (!injected.ok) {
-      return injected;
-    }
-
-    const next = content.split("{{OPERATION_BLOCK}}").join(injected.value);
-    return ok(next);
-  }
-
   /** 预加载模板（应在初始化时调用） */
   async preloadTemplate(templateId: string): Promise<Result<void>> {
     try {
@@ -478,13 +443,6 @@ export class PromptManager {
         return injectionResult as Result<void>;
       }
       content = injectionResult.value;
-
-      // 注入操作区块（如 _type/*-core.md 的 {{OPERATION_BLOCK}}）
-      const operationInjection = await this.injectOperationBlockIfPresent(templateId, content);
-      if (!operationInjection.ok) {
-        return operationInjection as Result<void>;
-      }
-      content = operationInjection.value;
 
       // A-PDD-01: 验证模板结构
       const blockValidation = validateBlockOrder(content);
@@ -530,12 +488,7 @@ export class PromptManager {
       "_base/operations/define",
       "_base/operations/tag",
       "_base/operations/verify",
-      "_base/operations/write-phased",
-      "_type/domain-core",
-      "_type/issue-core",
-      "_type/theory-core",
-      "_type/entity-core",
-      "_type/mechanism-core",
+      "_base/operations/write-default",
     ];
 
     const errors: string[] = [];
@@ -620,23 +573,35 @@ export class PromptManager {
   /**
    * 构建分阶段 Write prompt
    * 
-   * 用于 Chain-of-Fields 分阶段写入，每次只生成部分字段。
-   * 绕过 TASK_SLOT_MAPPING 约束，直接使用 write-phased 模板。
+   * 支持两种模式：
+   * 1. 传入 templateContent：使用阶段专属 prompt 模板（从 _phases/{Type}/{phaseId}.md 加载）
+   * 2. 不传入：fallback 到默认模板 write-default.md
    * 
-   * @param slots 槽位值（CTX_META, CTX_PREVIOUS, CTX_SOURCES, CTX_LANGUAGE, CONCEPT_TYPE, PHASE_SCHEMA, PHASE_FOCUS）
+   * @param slots 槽位值（CTX_META, CTX_PREVIOUS, CTX_SOURCES, CTX_LANGUAGE, CONCEPT_TYPE, PHASE_SCHEMA）
+   * @param templateContent 可选的阶段专属模板内容
    * @returns 构建的 prompt
    */
-  buildPhasedWrite(slots: Record<string, string>): string {
+  buildPhasedWrite(slots: Record<string, string>, templateContent?: string): string {
     try {
-      const templateId = "_base/operations/write-phased";
-      const template = this.loadTemplate(templateId);
+      let content: string;
+
+      if (templateContent) {
+        // 使用阶段专属模板
+        content = templateContent;
+      } else {
+        // fallback 到默认模板
+        const templateId = "_base/operations/write-default";
+        const template = this.loadTemplate(templateId);
+        content = template.content;
+      }
 
       // 委托共享渲染管线（M-01 DRY）
       const optionalSlots = ["CTX_PREVIOUS", "CTX_SOURCES"];
-      const prompt = this.renderTemplate(template.content, slots, optionalSlots, "buildPhasedWrite");
+      const prompt = this.renderTemplate(content, slots, optionalSlots, "buildPhasedWrite");
 
       this.logger.debug("PromptManager", "分阶段 Write Prompt 构建成功", {
-        promptLength: prompt.length
+        promptLength: prompt.length,
+        usedCustomTemplate: !!templateContent
       });
 
       return prompt;
