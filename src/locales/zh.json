@@ -15,16 +15,13 @@
   "commands": {
     "openWorkbench": "打开工作台",
     "createConcept": "创建概念",
-    "improveNote": "改进笔记",
     "expandNote": "拓展当前笔记",
-    "mergeDuplicates": "合并重复对"
+    "mergeDuplicates": "查看重复对"
   },
   "workbench": {
     "title": "工作台",
     "buttons": {
-      "improveNote": "改进当前笔记",
       "expand": "拓展当前笔记",
-      "insertImage": "插入图片",
       "verify": "事实核查",
       "openNoteHint": "打开一篇 Markdown 笔记以使用改进、拓展等工具"
     },
@@ -37,16 +34,10 @@
       "create": "创建",
       "clear": "清空输入"
     },
-    "amendModal": {
-      "title": "修订笔记",
-      "placeholder": "请输入修订指令（例如：补充更多示例、优化定义、添加相关理论）"
-    },
     "duplicates": {
       "title": "重复概念",
       "empty": "暂无重复概念",
       "dismiss": "忽略",
-      "compare": "对比",
-      "compareAria": "对比合并",
       "dismissAria": "忽略此重复对"
     },
     "queueStatus": {
@@ -66,33 +57,6 @@
       "clearPendingConfirmTitle": "确认清空待处理",
       "clearPendingConfirmMessage": "是否取消所有待处理任务？"
     },
-    "recentOps": {
-      "title": "操作历史",
-      "empty": "暂无可撤销的操作",
-      "undo": "撤销",
-      "view": "查看",
-      "viewAria": "查看快照",
-      "undoAria": "撤销此操作",
-      "clearAll": "清空全部",
-      "clearAllConfirmTitle": "确认清空",
-      "clearAllConfirmMessage": "确定要清空所有快照吗？此操作不可撤销。",
-      "moreSnapshots": "还有 {count} 个更早的快照",
-      "viewSnapshotFailed": "读取快照失败",
-      "undoFailed": "恢复失败",
-      "timeJustNow": "刚刚",
-      "timeMinutesAgo": "{minutes} 分钟前",
-      "timeHoursAgo": "{hours} 小时前",
-      "timeDaysAgo": "{days} 天前",
-      "operationLabels": {
-        "enrich": "标记",
-        "merge": "合并",
-        "amend": "修订",
-        "manualEdit": "手动编辑",
-        "standardize": "定义",
-        "create": "创建笔记",
-        "fallback": "操作"
-      }
-    },
     "notifications": {
       "systemNotInitialized": "系统未初始化",
       "enterDescription": "请输入概念描述",
@@ -102,16 +66,9 @@
       "openMarkdownFirst": "请先打开一个 Markdown 笔记",
       "createFailed": "创建失败",
       "conceptCreated": "概念创建已启动",
-      "selectDuplicates": "请先选择要合并的重复对",
-      "batchMergeConfirm": "确定要合并选中的重复对吗？",
-      "batchMergeComplete": "批量合并完成",
+      "selectDuplicates": "请先选择要处理的重复对",
       "batchDismissConfirm": "确定要忽略选中的重复对吗？",
       "batchDismissComplete": "批量忽略完成",
-      "fileNotFound": "文件不存在",
-      "previewFailed": "显示预览失败",
-      "mergeTaskCreated": "合并任务已创建",
-      "duplicateManagerNotInitialized": "重复管理器未初始化",
-      "orchestratorNotInitialized": "管线编排器未初始化",
       "dismissFailed": "忽略失败",
       "dismissSuccess": "已忽略重复对",
       "queueResumed": "队列已恢复运行",
@@ -120,38 +77,22 @@
       "cancelFailed": "取消失败",
       "retryComplete": "已重试失败任务",
       "clearComplete": "已清除任务",
-      "undoFailed": "撤销失败",
-      "undoSuccess": "撤销成功",
-      "undoSuccessRestored": "撤销成功（文件已恢复）",
       "confirmCreateFailed": "确认创建失败",
       "confirmCreateWaiting": "已确认创建，等待内容生成",
-      "standardizeUpdated": "已更新定义结果",
       "undoDismissSuccess": "已撤销忽略，重复对已恢复到待处理列表",
       "deletePairSuccess": "已删除重复对记录",
       "writeFailed": "写入失败",
-      "writeSuccess": "已写入，支持撤销",
+      "writeSuccess": "已写入",
       "writePreviewFailed": "无法生成写入预览",
-      "amendCancelled": "已取消修订",
-      "writeCancelled": "已取消写入",
-      "amendCompleted": "修订完成",
-      "mergeCompleted": "合并完成",
-      "mergeCancelled": "已取消合并",
-      "mergeStarted": "合并任务已启动，请等待 AI 生成合并内容...",
-      "improveStarted": "改进任务已启动，请等待 AI 生成改进内容...",
       "verifyStarted": "核查任务已启动，请等待 AI 生成核查报告...",
-      "imageTaskCreated": "图片生成任务已创建",
-      "imageGenerationFailed": "图片生成任务创建失败",
       "featureDisabled": "功能已关闭",
       "workbenchNotInitialized": "工作台未初始化，请稍后重试",
       "startFailed": "启动失败: {message}",
       "commandFailed": "命令执行失败: {message}",
       "noPendingDuplicates": "没有待处理的重复对",
-      "pendingDuplicatesHint": "有 {count} 个待处理的重复对，请在工作台中选择要合并的重复对",
-      "improveInstructionRequired": "请输入修订指令",
+      "pendingDuplicatesHint": "有 {count} 个待处理的重复对，请在工作台中查看",
       "conceptLocked": "该概念正在被处理中，请稍后再试",
-      "clearFailed": "清空失败",
-      "compareNoContent": "无法读取笔记内容",
-      "compareFailed": "打开对比失败"
+      "clearFailed": "清空失败"
     }
   },
   "expand": {
@@ -198,7 +139,6 @@
       "typeDirectories": "类型目录",
       "vectorEmbedding": "向量嵌入",
       "taskModels": "任务模型配置",
-      "snapshots": "快照与撤销",
       "logging": "日志",
       "dataManagement": "数据管理"
     },
@@ -211,14 +151,6 @@
     "similarityThreshold": {
       "name": "相似度阈值",
       "desc": "用于检测重复概念的相似度阈值 (0-1)"
-    },
-    "maxSnapshots": {
-      "name": "最大快照数量",
-      "desc": "用于撤销操作的最大快照数量"
-    },
-    "maxSnapshotAgeDays": {
-      "name": "快照保留天数",
-      "desc": "超过此天数的快照将被自动清理"
     },
     "concurrency": {
       "name": "并发任务数",
@@ -253,10 +185,6 @@
     },
     "advanced": {
       "title": "高级设置",
-      "namingTemplate": {
-        "name": "命名模板",
-        "desc": "笔记文件名模板。支持的占位符：{{chinese}} (中文名), {{english}} (英文名), {{type}} (类型英文), {{type_cn}} (类型中文), {{uid}} (唯一标识符)"
-      },
       "directoryScheme": {
         "title": "目录方案",
         "desc": "为每种知识类型配置存储目录"
@@ -306,8 +234,6 @@
         "maxRetryAttemptsDesc": "任务失败时的最大重试次数",
         "taskTimeout": "任务超时时间",
         "taskTimeoutDesc": "单个任务的最大执行时长（毫秒，默认 180000 = 3分钟）",
-        "maxTaskHistory": "任务历史上限",
-        "maxTaskHistoryDesc": "保留的已完成/失败/取消任务数量上限（默认 300）",
         "providerTimeout": "Provider 请求超时",
         "providerTimeoutDesc": "API 请求的超时时间（毫秒，默认 1800000 = 30分钟）"
       },
@@ -324,81 +250,6 @@
           "error": "错误"
         }
       }
-    }
-  },
-  "setupWizard": {
-    "title": "配置 AI Provider",
-    "steps": {
-      "welcome": "欢迎",
-      "provider": "AI 服务",
-      "directory": "目录",
-      "complete": "完成"
-    },
-    "welcome": {
-      "title": "欢迎使用 Cognitive Razor",
-      "subtitle": "将想法快速转化为结构化概念，并持续演进知识图谱。",
-      "featureDefineTagWrite": "定义 -> 标注 -> 写作：完整创建管线",
-      "featureMergeAmend": "合并与修订：安全的 Diff 确认",
-      "featureVector": "向量索引：去重与相似检索",
-      "languageName": "语言",
-      "languageDesc": "选择界面语言",
-      "languageOptionZh": "中文",
-      "languageOptionEn": "English"
-    },
-    "provider": {
-      "title": "配置 AI Provider",
-      "apiKeyHintBeforeLink": "从 ",
-      "apiKeyHintAfterLink": " 获取 API Key",
-      "apiKeyDesc": "本地保存，不会上传",
-      "customEndpointName": "自定义端点",
-      "customEndpointDesc": "留空使用 Gemini OpenAI 兼容端点",
-      "chatModelName": "聊天模型",
-      "embedModelName": "嵌入模型"
-    },
-    "directory": {
-      "title": "初始化目录",
-      "subtitle": "将为 5 个概念类型创建目录结构。"
-    },
-    "complete": {
-      "title": "配置完成",
-      "subtitle": "Cognitive Razor 已准备就绪，打开工作台开始使用。"
-    },
-    "actions": {
-      "getStarted": "开始配置",
-      "back": "上一步",
-      "saveAndValidate": "保存并校验",
-      "createAndContinue": "创建目录并继续",
-      "openWorkbench": "打开工作台",
-      "saving": "保存中...",
-      "creating": "创建中...",
-      "skipAndContinue": "跳过并继续"
-    },
-    "validation": {
-      "idle": "尚未校验",
-      "checking": "正在校验连接...",
-      "ok": "连接正常",
-      "offline": "网络不可用，可跳过继续",
-      "error": "校验失败，请检查配置",
-      "offlineSaved": "网络不可用，配置已保存，可跳过继续",
-      "failedWithMessage": "校验失败：{message}",
-      "offlineSavedByError": "网络错误，配置已保存，可跳过继续"
-    },
-    "directoryStatus": {
-      "idle": "尚未初始化目录",
-      "creating": "正在创建目录...",
-      "done": "目录已初始化",
-      "error": "目录初始化失败",
-      "createFailed": "创建目录失败"
-    },
-    "notices": {
-      "enterApiKey": "请输入 API Key",
-      "enterProviderId": "请输入 Provider ID",
-      "invalidEndpointUrl": "端点 URL 无效: {message}",
-      "saveFailed": "保存失败: {message}",
-      "validationSkippedOffline": "网络不可用，已跳过在线校验",
-      "validationSkippedNetworkError": "网络错误，已跳过校验",
-      "saveErrorFallback": "保存出错",
-      "saveError": "保存出错: {message}"
     }
   },
   "modals": {
@@ -419,7 +270,7 @@
         "providerId": "Provider ID",
         "providerIdDesc": "唯一标识，例如 my-openai",
         "apiKey": "API Key",
-        "apiKeyDesc": "你的 API 密钥",
+        "apiKeyDesc": "你的 API 密钥。存储在 Obsidian 本地配置文件中，未加密。",
         "endpoint": "API 端点",
         "endpointDesc": "留空使用默认 Gemini 端点。",
         "chatModel": "聊天模型",
@@ -434,7 +285,8 @@
         "apiKeyRequired": "请输入 API Key",
         "saveFailed": "保存失败",
         "invalidUrlProtocol": "URL 必须以 http:// 或 https:// 开头",
-        "invalidUrl": "URL 格式无效"
+        "invalidUrl": "URL 格式无效",
+        "privateAddressBlocked": "出于安全原因，不允许使用内网/本地地址"
       }
     }
   },
@@ -447,6 +299,7 @@
     "connectionFailed": "连接失败: {error}",
     "settingsExported": "配置已导出",
     "settingsImported": "配置已导入",
+    "settingsImportFailed": "配置导入失败",
     "settingsReset": "配置已重置",
     "logsCleared": "日志已清除",
     "noLogsToClean": "没有日志文件需要清除",
@@ -474,12 +327,9 @@
   "taskTypes": {
     "define": { "name": "定义", "desc": "标准化输入并确定知识类型" },
     "tag": { "name": "标记", "desc": "生成别名与标签" },
-    "amend": { "name": "修订", "desc": "对现有内容进行增量优化" },
-    "merge": { "name": "合并", "desc": "融合语义重复的概念" },
     "index": { "name": "索引", "desc": "生成语义向量以便检索" },
-    "write": { "name": "撰写", "desc": "生成完整正文或合并内容" },
-    "verify": { "name": "校验", "desc": "验证生成内容的准确性" },
-    "image-generate": { "name": "图像生成", "desc": "生成图片并插入笔记" }
+    "write": { "name": "撰写", "desc": "生成完整正文" },
+    "verify": { "name": "校验", "desc": "验证生成内容的准确性" }
   },
   "crTypes": {
     "Domain": "领域",
@@ -525,11 +375,8 @@
       "define": { "name": "Define (定义)", "desc": "分析和定义概念的核心含义" },
       "tag": { "name": "Tag (标记)", "desc": "标记和分类概念" },
       "write": { "name": "Write (撰写)", "desc": "撰写和扩展概念内容" },
-      "amend": { "name": "Amend (修订)", "desc": "对已有概念进行增量优化" },
-      "merge": { "name": "Merge (合并)", "desc": "融合重复概念并生成合并内容" },
       "index": { "name": "Index (索引)", "desc": "生成语义向量并建立索引" },
-      "verify": { "name": "Verify (校验)", "desc": "验证和检查概念质量" },
-      "image-generate": { "name": "Image (图像)", "desc": "生成图片并插入笔记" }
+      "verify": { "name": "Verify (校验)", "desc": "验证和检查概念质量" }
     },
     "reasoningEffortOptions": {
       "notSet": "不设置",
@@ -542,62 +389,6 @@
       "topP": "Top P 需在 0-1 之间",
       "maxTokens": "最大输出 Tokens 需为正整数"
     }
-  },
-  "imageGeneration": {
-    "title": "图片生成设置",
-    "enabled": { "name": "启用图片生成", "desc": "允许在笔记中插入 AI 生成的图片" },
-    "defaultSize": {
-      "name": "默认图片尺寸",
-      "desc": "生成图片的默认尺寸",
-      "square": "正方形 (1024×1024)",
-      "landscape": "横向 (1792×1024)",
-      "portrait": "纵向 (1024×1792)"
-    },
-    "defaultQuality": {
-      "name": "图片质量",
-      "desc": "standard: 标准质量，hd: 高清质量（消耗更多 token）",
-      "standard": "标准",
-      "hd": "高清"
-    },
-    "defaultStyle": {
-      "name": "图片风格",
-      "desc": "vivid: 鲜艳生动，natural: 自然真实",
-      "vivid": "鲜艳",
-      "natural": "自然"
-    },
-    "defaultAspectRatio": {
-      "name": "宽高比",
-      "desc": "（已废弃）旧字段，不再用于图片生成；请使用「默认图片尺寸」"
-    },
-    "defaultImageSize": {
-      "name": "输出分辨率",
-      "desc": "（已废弃）旧字段，不再用于图片生成；请使用「默认图片尺寸」"
-    },
-    "contextWindowSize": {
-      "name": "上下文窗口大小",
-      "desc": "读取光标前后用于提示词的字符数"
-    }
-  },
-  "diff": {
-    "modeAmend": "修订",
-    "modeMerge": "合并",
-    "modeSnapshot": "快照恢复",
-    "accept": "接受",
-    "reject": "拒绝",
-    "restoreVersion": "恢复到此版本",
-    "mergedNoteName": "合并后名称",
-    "customName": "自定义名称...",
-    "customNamePlaceholder": "输入自定义名称"
-  },
-  "imageModal": {
-    "title": "生成图片",
-    "promptLabel": "描述你想要的图片",
-    "promptPlaceholder": "例如：一张展示量子纠缠的简洁线稿图，带精炼标注。",
-    "contextPreview": "上下文预览",
-    "generate": "生成",
-    "cancel": "取消",
-    "promptTooShort": "请至少输入 5 个字符。",
-    "genericFailure": "操作失败，请稍后重试"
   },
   "feedback": {
     "undo": "撤销",

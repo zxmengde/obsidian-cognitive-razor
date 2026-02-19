@@ -29,6 +29,15 @@ export class CRSettingTab extends PluginSettingTab {
         containerEl.empty();
         containerEl.addClass('cr-scope');
 
+        // 检查插件是否已完全初始化
+        if (!this.plugin.isFullyInitialized()) {
+            containerEl.createEl('div', {
+                cls: 'cr-loading',
+                text: '插件正在初始化，请稍后重新打开设置页...',
+            });
+            return;
+        }
+
         // 挂载 Svelte 根组件，传入 plugin 引用供组件获取服务
         const { destroy } = mountSvelteComponent(containerEl, SettingsRoot, {
             plugin: this.plugin,

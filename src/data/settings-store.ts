@@ -22,20 +22,15 @@ export const DEFAULT_DIRECTORY_SCHEME: DirectoryScheme = {
  */
 export const REQUIRED_SETTINGS_FIELDS: (keyof PluginSettings)[] = [
   "version",
-  "language",
-  "namingTemplate",
   "directoryScheme",
   "similarityThreshold",
   "concurrency",
   "autoRetry",
   "maxRetryAttempts",
-  "maxSnapshots",
-  "maxSnapshotAgeDays",
   "enableAutoVerify",
   "providers",
   "defaultProviderId",
   "taskModels",
-  "imageGeneration",
   "logLevel",
   "embeddingDimension",
   "providerTimeoutMs",
@@ -43,27 +38,20 @@ export const REQUIRED_SETTINGS_FIELDS: (keyof PluginSettings)[] = [
 
 /** 默认任务超时时间（毫秒） */
 export const DEFAULT_TASK_TIMEOUT_MS = 3 * 60 * 1000;
-/** 默认任务历史记录上限 */
-export const DEFAULT_TASK_HISTORY = 300;
 
 type ScalarSettingsKey = keyof Pick<
   PluginSettings,
   | "version"
-  | "language"
-  | "namingTemplate"
   | "similarityThreshold"
   | "concurrency"
   | "autoRetry"
   | "maxRetryAttempts"
-  | "maxSnapshots"
-  | "maxSnapshotAgeDays"
   | "enableAutoVerify"
   | "defaultProviderId"
   | "logLevel"
   | "embeddingDimension"
   | "providerTimeoutMs"
   | "taskTimeoutMs"
-  | "maxTaskHistory"
 >;
 
 interface ScalarSettingsSpec {
@@ -78,14 +66,10 @@ interface ScalarSettingsSpec {
 
 const SCALAR_SETTINGS_SPECS: ScalarSettingsSpec[] = [
   { key: "version", type: "string", required: true },
-  { key: "language", type: "string", required: true, allowed: ["zh", "en"] },
-  { key: "namingTemplate", type: "string", required: true },
   { key: "similarityThreshold", type: "number", required: true, min: 0, max: 1 },
   { key: "concurrency", type: "number", required: true, integer: true, min: 1 },
   { key: "autoRetry", type: "boolean", required: true },
   { key: "maxRetryAttempts", type: "number", required: true, integer: true, min: 0 },
-  { key: "maxSnapshots", type: "number", required: true, integer: true, min: 1 },
-  { key: "maxSnapshotAgeDays", type: "number", required: true, integer: true, min: 1 },
   { key: "enableAutoVerify", type: "boolean", required: true },
   { key: "defaultProviderId", type: "string", required: true },
   { key: "logLevel", type: "string", required: true, allowed: ["debug", "info", "warn", "error"] },
@@ -93,7 +77,6 @@ const SCALAR_SETTINGS_SPECS: ScalarSettingsSpec[] = [
   { key: "providerTimeoutMs", type: "number", required: true, integer: true, min: 1000 },
   // 历史版本兼容：这些字段允许缺失，由 mergeSettings/ensureBackwardCompatibility 补齐默认值
   { key: "taskTimeoutMs", type: "number", required: false, integer: true, min: 1000 },
-  { key: "maxTaskHistory", type: "number", required: false, integer: true, min: 50 },
 ];
 
 /**
@@ -114,11 +97,8 @@ export const TASK_TYPES: TaskType[] = [
   "define",
   "tag",
   "write",
-  "amend",
-  "merge",
   "index",
   "verify",
-  "image-generate",
 ];
 
 /** 任务模型默认配置 */
@@ -141,18 +121,6 @@ export const DEFAULT_TASK_MODEL_CONFIGS: Record<TaskType, TaskModelConfig> = {
     temperature: 0.7,
     topP: 1.0,
   },
-  amend: {
-    providerId: "",
-    model: "gemini-3-flash-preview",
-    temperature: 0.7,
-    topP: 1.0,
-  },
-  merge: {
-    providerId: "",
-    model: "gemini-3-flash-preview",
-    temperature: 0.7,
-    topP: 1.0,
-  },
   index: {
     providerId: "",
     model: "text-embedding-3-small",
@@ -163,10 +131,6 @@ export const DEFAULT_TASK_MODEL_CONFIGS: Record<TaskType, TaskModelConfig> = {
     model: "gemini-3-flash-preview",
     temperature: 0.3,
     topP: 1.0,
-  },
-  "image-generate": {
-    providerId: "",
-    model: "gemini-3-pro-image-preview",
   },
 };
 
@@ -186,17 +150,6 @@ export const PARAM_RECOMMENDATIONS = {
     options: [256, 512, 1024, 1536, 3072],
   },
 } as const;
-
-/** 默认图片生成设置 */
-export const DEFAULT_IMAGE_SETTINGS: PluginSettings["imageGeneration"] = {
-  enabled: true,
-  defaultSize: "1024x1024",
-  defaultImageSize: "2K",
-  defaultAspectRatio: "1:1",
-  defaultQuality: "standard",
-  defaultStyle: "natural",
-  contextWindowSize: 500
-};
 
 /** 生成新的默认任务模型配置副本 */
 export function createDefaultTaskModels(): Record<TaskType, TaskModelConfig> {
@@ -230,12 +183,6 @@ export interface SettingsValidationResult {
 export const DEFAULT_SETTINGS: PluginSettings = {
   version: "1.0.0",
   
-  // 基础设置
-  language: "zh",
-  
-  // 命名设置 (G-10: 命名规范性公理)
-  namingTemplate: "{{chinese}} ({{english}})",
-  
   // 存储设置
   directoryScheme: DEFAULT_DIRECTORY_SCHEME,
   
@@ -247,11 +194,6 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   autoRetry: true,
   maxRetryAttempts: 3,
   taskTimeoutMs: DEFAULT_TASK_TIMEOUT_MS,
-  maxTaskHistory: DEFAULT_TASK_HISTORY,
-  
-  // 快照设置
-  maxSnapshots: 100,
-  maxSnapshotAgeDays: 30, // A-FUNC-02: 可配置的快照保留天数
   
   // 功能开关
   enableAutoVerify: false,
@@ -262,9 +204,6 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   
   // 任务模型配置
   taskModels: createDefaultTaskModels(),
-
-  // 图片生成配置
-  imageGeneration: { ...DEFAULT_IMAGE_SETTINGS },
   
   // 日志级别
   logLevel: "info",
@@ -317,17 +256,18 @@ export class SettingsStore {
         return ok(undefined);
       }
 
-      // 验证设置结构
-      const validationResult = this.validateSettingsDetailed(data);
+      // 先 merge（保留用户数据），再验证合并后的结果
+      // 避免旧版本缺少新字段时整包重置用户配置
+      const merged = this.mergeSettings(DEFAULT_SETTINGS, data);
+      const validationResult = this.validateSettingsDetailed(merged);
       if (!validationResult.valid) {
-        // 验证失败时重置为默认值
+        // 合并后仍有阻断性错误，记录警告并回退默认值
         this.settings = { ...DEFAULT_SETTINGS };
         await this.saveSettings();
         return ok(undefined);
       }
 
-      // 合并设置（保留默认值）
-      this.settings = this.mergeSettings(DEFAULT_SETTINGS, data);
+      this.settings = merged;
       this.ensureBackwardCompatibility();
       
       return ok(undefined);
@@ -382,6 +322,27 @@ export class SettingsStore {
         error
       );
     }
+  }
+
+  /**
+   * 更新工作台区块折叠状态（避免深层 Partial 类型问题）
+   */
+  async updateSectionCollapsed(key: string, value: boolean): Promise<Result<void>> {
+    const current = this.settings.uiState ?? { ...DEFAULT_UI_STATE };
+    const updated: PluginSettings = {
+      ...this.settings,
+      uiState: {
+        ...current,
+        sectionCollapsed: {
+          ...current.sectionCollapsed,
+          [key]: value,
+        },
+      },
+    };
+    this.settings = updated;
+    await this.saveSettings();
+    this.notifyListeners();
+    return ok(undefined);
   }
 
   /**
@@ -495,7 +456,6 @@ export class SettingsStore {
       directoryScheme: { ...DEFAULT_SETTINGS.directoryScheme },
       providers: { ...DEFAULT_SETTINGS.providers },
       taskModels: createDefaultTaskModels(),
-      imageGeneration: { ...DEFAULT_IMAGE_SETTINGS },
       uiState: { ...DEFAULT_UI_STATE, sectionCollapsed: { ...DEFAULT_UI_STATE.sectionCollapsed }, sortPreferences: {} },
     };
   }
@@ -656,84 +616,6 @@ export class SettingsStore {
 
     // TaskModel → Provider 引用交叉校验（需求 21.3）
     this.validateTaskModelProviderRefs(settings.taskModels, settings.providers, errors);
-
-    // 图片生成配置
-    if (settings.imageGeneration !== undefined) {
-      const img = settings.imageGeneration as Record<string, unknown>;
-      if (typeof img !== "object" || img === null) {
-        errors.push({
-          field: "imageGeneration",
-          message: "imageGeneration must be an object",
-          expectedType: "object",
-          actualType: img === null ? "null" : typeof img,
-          severity: 'error',
-        });
-      } else {
-        if (typeof img.enabled !== "boolean") {
-          errors.push({
-            field: "imageGeneration.enabled",
-            message: "imageGeneration.enabled must be a boolean",
-            expectedType: "boolean",
-            actualType: typeof img.enabled,
-            severity: 'error',
-          });
-        }
-        if (typeof img.defaultSize !== "string") {
-          errors.push({
-            field: "imageGeneration.defaultSize",
-            message: "imageGeneration.defaultSize must be a string",
-            expectedType: "string",
-            actualType: typeof img.defaultSize,
-            severity: 'error',
-          });
-        }
-        if (img.defaultImageSize !== undefined && typeof img.defaultImageSize !== "string") {
-          errors.push({
-            field: "imageGeneration.defaultImageSize",
-            message: "imageGeneration.defaultImageSize must be a string",
-            expectedType: "string",
-            actualType: typeof img.defaultImageSize,
-            severity: 'error',
-          });
-        }
-        if (img.defaultAspectRatio !== undefined && typeof img.defaultAspectRatio !== "string") {
-          errors.push({
-            field: "imageGeneration.defaultAspectRatio",
-            message: "imageGeneration.defaultAspectRatio must be a string",
-            expectedType: "string",
-            actualType: typeof img.defaultAspectRatio,
-            severity: 'error',
-          });
-        }
-        if (typeof img.defaultQuality !== "string") {
-          errors.push({
-            field: "imageGeneration.defaultQuality",
-            message: "imageGeneration.defaultQuality must be a string",
-            expectedType: "string",
-            actualType: typeof img.defaultQuality,
-            severity: 'error',
-          });
-        }
-        if (typeof img.defaultStyle !== "string") {
-          errors.push({
-            field: "imageGeneration.defaultStyle",
-            message: "imageGeneration.defaultStyle must be a string",
-            expectedType: "string",
-            actualType: typeof img.defaultStyle,
-            severity: 'error',
-          });
-        }
-        if (typeof img.contextWindowSize !== "number") {
-          errors.push({
-            field: "imageGeneration.contextWindowSize",
-            message: "imageGeneration.contextWindowSize must be a number",
-            expectedType: "number",
-            actualType: typeof img.contextWindowSize,
-            severity: 'error',
-          });
-        }
-      }
-    }
 
     return { valid: errors.filter(e => e.severity === 'error').length === 0, errors };
   }
@@ -1040,7 +922,6 @@ export class SettingsStore {
       directoryScheme: { ...this.settings.directoryScheme },
       providers: { ...this.settings.providers },
       taskModels: { ...this.settings.taskModels },
-      imageGeneration: { ...this.settings.imageGeneration }
     };
 
     const scalarResult = this.applyScalarUpdates(partial, next);
@@ -1096,16 +977,6 @@ export class SettingsStore {
         };
       }
       next.taskModels = mergedTaskModels;
-    }
-
-    if (partial.imageGeneration !== undefined) {
-      if (!this.isPlainObject(partial.imageGeneration)) {
-        return err("E101_INVALID_INPUT", "imageGeneration 必须是对象");
-      }
-      next.imageGeneration = {
-        ...next.imageGeneration,
-        ...(partial.imageGeneration as PluginSettings["imageGeneration"])
-      };
     }
 
     // UI 状态（折叠/排序偏好）
@@ -1196,16 +1067,6 @@ export class SettingsStore {
 
   /** 向后兼容：填充新字段缺省值，修复缺失的任务模型配置 */
   private ensureBackwardCompatibility(): void {
-    // 填充图片生成配置
-    if (!this.settings.imageGeneration) {
-      this.settings.imageGeneration = { ...DEFAULT_IMAGE_SETTINGS };
-    } else {
-      this.settings.imageGeneration = {
-        ...DEFAULT_IMAGE_SETTINGS,
-        ...this.settings.imageGeneration
-      };
-    }
-
     // 确保 taskModels 包含新增的任务类型
     const taskModels: Record<TaskType, TaskModelConfig> = {
       ...createDefaultTaskModels(),

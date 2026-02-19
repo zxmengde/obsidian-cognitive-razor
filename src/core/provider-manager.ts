@@ -18,8 +18,6 @@ import type {
   ProviderConfig,
   Result,
   Err,
-  ImageGenerateRequest,
-  ImageGenerateResponse
 } from "../types";
 import type { SettingsStore } from "../data/settings-store";
 import { RetryHandler, PROVIDER_ERROR_CONFIG } from "./retry-handler";
@@ -66,15 +64,6 @@ interface OpenAIEmbedResponse {
     prompt_tokens: number;
     total_tokens: number;
   };
-}
-
-/** OpenAI Images API 响应格式 */
-interface OpenAIImagesResponse {
-  data?: Array<{
-    b64_json?: string;
-    url?: string;
-    revised_prompt?: string;
-  }>;
 }
 
 /** HTTP 错误响应 */
@@ -294,94 +283,6 @@ export class ProviderManager {
     return result;
   }
 
-  /** 调用图片生成（OpenAI-Compatible Images API） */
-  async generateImage(request: ImageGenerateRequest, signal?: AbortSignal): Promise<Result<ImageGenerateResponse>> {
-    const startTime = Date.now();
-
-    const configResult = this.getProviderConfig(request.providerId);
-    if (!configResult.ok) {
-      return configResult;
-    }
-    const providerConfig = configResult.value;
-
-    const baseUrl = providerConfig.baseUrl || DEFAULT_ENDPOINTS["openai"];
-    const url = `${baseUrl}/images/generations`;
-    const safeUrl = SecurityUtils.sanitizeUrl(url);
-
-    const body: Record<string, unknown> = {
-      model: request.model,
-      prompt: request.prompt,
-      n: 1,
-      response_format: "b64_json"
-    };
-    if (request.size) {
-      body.size = request.size;
-    }
-    if (request.quality) {
-      body.quality = request.quality;
-    }
-    if (request.style) {
-      body.style = request.style;
-    }
-
-    this.logger.debug("ProviderManager", "发送图片生成请求", {
-      event: "API_REQUEST",
-      providerId: request.providerId,
-      model: request.model,
-      url: safeUrl,
-      apiKeyMasked: SecurityUtils.maskApiKey(providerConfig.apiKey)
-    });
-
-    const result = await this.retryHandler.executeWithRetry(
-      async () => this.executeImageRequest(url, body, providerConfig.apiKey, signal),
-      {
-        ...PROVIDER_ERROR_CONFIG,
-        onRetry: (attempt, error) => {
-          this.logger.warn("ProviderManager", `图片生成请求重试 ${attempt}`, {
-            event: "API_RETRY",
-            providerId: request.providerId,
-            errorCode: error.code,
-            errorMessage: error.message
-          });
-        }
-      }
-    );
-
-    if (result.ok && /^https?:\/\//i.test(result.value.imageUrl)) {
-      const normalized = await this.fetchImageUrlAsDataUrl(result.value.imageUrl, signal);
-      if (!normalized.ok) {
-        return err(normalized.error.code, normalized.error.message, normalized.error.details);
-      }
-      result.value.imageUrl = normalized.value;
-    }
-
-    const elapsedTime = Date.now() - startTime;
-    if (result.ok) {
-      this.notifyNetworkStatus(true);
-      this.logger.info("ProviderManager", "图片生成请求成功", {
-        event: "API_RESPONSE",
-        providerId: request.providerId,
-        model: request.model,
-        elapsedTime
-      });
-    } else {
-      const offline = result.error.code === "E204_PROVIDER_ERROR" &&
-        typeof result.error.details === "object" &&
-        (result.error.details as { kind?: unknown } | null)?.kind === "network";
-      this.notifyNetworkStatus(!offline, offline ? (result as Err) : undefined);
-      this.logger.error("ProviderManager", "图片生成请求失败", undefined, {
-        event: "API_ERROR",
-        providerId: request.providerId,
-        model: request.model,
-        errorCode: result.error.code,
-        errorMessage: result.error.message,
-        elapsedTime
-      });
-    }
-
-    return result;
-  }
-
   /** 检查 Provider 可用性 */
   async checkAvailability(providerId: string, forceRefresh = false, configOverride?: ProviderConfig): Promise<Result<ProviderCapabilities>> {
     // 检查缓存（除非强制刷新或使用临时配置）
@@ -454,12 +355,9 @@ export class ProviderManager {
 
       // 构建能力信息
       const models = data.data?.map((m) => m.id) ?? [];
-      const image = models.length === 0 || models.some((modelId) => /image|dall-e/i.test(modelId));
-
       const capabilities: ProviderCapabilities = {
         chat: true,
         embedding: true,
-        image,
         maxContextLength: 128000, // 默认值
         models
       };
@@ -688,70 +586,6 @@ export class ProviderManager {
         tokensUsed: data.usage?.total_tokens
       });
     });
-  }
-
-  /** 执行图片请求（单次，不含重试） */
-  private async executeImageRequest(
-    url: string,
-    body: object,
-    apiKey: string,
-    signal?: AbortSignal
-  ): Promise<Result<ImageGenerateResponse>> {
-    return this.executeJsonRequest(url, body, apiKey, signal, (raw) => {
-      const data = raw as OpenAIImagesResponse;
-      const first = data.data?.[0];
-      if (!first) {
-        return err("E210_MODEL_OUTPUT_PARSE_FAILED", "图片 API 返回空结果");
-      }
-
-      const revisedPrompt = typeof first.revised_prompt === "string" ? first.revised_prompt : undefined;
-
-      if (typeof first.b64_json === "string" && first.b64_json.trim().length > 0) {
-        return ok({
-          imageUrl: `data:image/png;base64,${first.b64_json}`,
-          revisedPrompt
-        });
-      }
-
-      if (typeof first.url === "string" && first.url.trim().length > 0) {
-        return ok({
-          imageUrl: first.url,
-          revisedPrompt
-        });
-      }
-
-      return err("E210_MODEL_OUTPUT_PARSE_FAILED", "图片 API 返回格式异常：缺少 b64_json/url");
-    });
-  }
-
-  // 需求 22.7：使用 requestUrl() 而非 fetch()，绕过 CORS 限制
-  private async fetchImageUrlAsDataUrl(url: string, signal?: AbortSignal): Promise<Result<string>> {
-    if (signal?.aborted) {
-      return err("E310_INVALID_STATE", "请求已取消", signal.reason);
-    }
-
-    try {
-      const response = await requestUrl({
-        url,
-        method: "GET",
-        throw: false
-      });
-
-      if (response.status < 200 || response.status >= 300) {
-        return err("E204_PROVIDER_ERROR", `图片下载失败 (${response.status})`);
-      }
-
-      const contentType = response.headers["content-type"] || "image/png";
-      const buffer = Buffer.from(response.arrayBuffer);
-      const base64 = buffer.toString("base64");
-      return ok(`data:${contentType};base64,${base64}`);
-    } catch (error) {
-      if (signal?.aborted) {
-        return err("E310_INVALID_STATE", "请求已取消", signal.reason);
-      }
-      // 需求 23.4：不暴露原始错误消息给用户
-      return err("E204_PROVIDER_ERROR", "图片下载失败，请检查网络连接", { kind: "network", rawError: (error as Error).message });
-    }
   }
 
   /**

@@ -5,7 +5,7 @@
   - 全宽搜索输入框（含清除/提交按钮、Enter 键触发 Define）
   - Define 加载状态（按钮动画 + 输入框禁用）
   - Define 成功后显示类型置信度表格（TypeTable，任务 6.3 实现）
-  - 操作按钮行（改进、拓展、配图、核查），右对齐，Secondary 样式
+  - 操作按钮行（拓展、配图、核查），右对齐，Secondary 样式
   - 无活跃笔记时隐藏按钮行显示引导文字
   - 图片未启用时隐藏配图按钮
 
@@ -19,17 +19,14 @@
     import Button from '../../components/Button.svelte';
     import InlinePanel from '../../components/InlinePanel.svelte';
     import TypeTable from './TypeTable.svelte';
-    import AmendPanel from './AmendPanel.svelte';
     import ExpandPanel from './ExpandPanel.svelte';
-    import ImagePanel from './ImagePanel.svelte';
     import type { StandardizedConcept, CRType } from '../../../types';
     import type { CreateOrchestrator } from '../../../core/create-orchestrator';
     import type { VerifyOrchestrator } from '../../../core/verify-orchestrator';
-    import type { SettingsStore } from '../../../data/settings-store';
     import type { Logger } from '../../../data/logger';
 
     /** 当前展开的面板类型 */
-    type ActivePanel = 'none' | 'amend' | 'expand' | 'image';
+    type ActivePanel = 'none' | 'expand';
 
     let {
         activeFile,
@@ -42,7 +39,6 @@
     const t = ctx.i18n.t();
     const createOrch = ctx.container.resolve<CreateOrchestrator>(SERVICE_TOKENS.createOrchestrator);
     const verifyOrch = ctx.container.resolve<VerifyOrchestrator>(SERVICE_TOKENS.verifyOrchestrator);
-    const settingsStore = ctx.container.resolve<SettingsStore>(SERVICE_TOKENS.settingsStore);
     const logger = ctx.container.resolve<Logger>(SERVICE_TOKENS.logger);
 
     // 组件状态
@@ -55,7 +51,6 @@
     // 派生状态
     let hasInput = $derived(inputValue.trim().length > 0);
     let isMarkdown = $derived(activeFile?.extension === 'md');
-    let imageEnabled = $derived(settingsStore.getSettings().imageGeneration?.enabled ?? false);
 
     /** 切换面板：再次点击同一按钮则收起 */
     function togglePanel(panel: ActivePanel): void {
@@ -178,44 +173,20 @@
     {#if isMarkdown}
         <div class="cr-action-row">
             <Button
-                variant={activePanel === 'amend' ? 'primary' : 'secondary'}
-                size="sm"
-                onclick={() => togglePanel('amend')}
-            >
-                {t.workbench?.buttons?.improveNote ?? '改进'}
-            </Button>
-            <Button
                 variant={activePanel === 'expand' ? 'primary' : 'secondary'}
                 size="sm"
                 onclick={() => togglePanel('expand')}
             >
                 {t.workbench?.buttons?.expand ?? '拓展'}
             </Button>
-            {#if imageEnabled}
-                <Button
-                    variant={activePanel === 'image' ? 'primary' : 'secondary'}
-                    size="sm"
-                    onclick={() => togglePanel('image')}
-                >
-                    {t.workbench?.buttons?.insertImage ?? '配图'}
-                </Button>
-            {/if}
             <Button variant="secondary" size="sm" onclick={handleVerify}>
                 {t.workbench?.buttons?.verify ?? '核查'}
             </Button>
         </div>
 
-        <!-- 内联展开面板区（互斥） -->
-        <InlinePanel expanded={activePanel === 'amend'} onclose={closePanel}>
-            <AmendPanel {activeFile} onclose={closePanel} />
-        </InlinePanel>
-
+        <!-- 内联展开面板区 -->
         <InlinePanel expanded={activePanel === 'expand'} onclose={closePanel}>
             <ExpandPanel {activeFile} onclose={closePanel} />
-        </InlinePanel>
-
-        <InlinePanel expanded={activePanel === 'image'} onclose={closePanel}>
-            <ImagePanel {activeFile} onclose={closePanel} />
         </InlinePanel>
     {:else}
         <div class="cr-hint-text">

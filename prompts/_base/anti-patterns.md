@@ -1,10 +1,10 @@
 <anti_patterns>
-**CRITICAL: Avoid the following patterns in all outputs.**
-1. **Wikipedia-style Generalization**: Do not write vague, encyclopedic overviews. Be specific and analytical.
-2. **Tautological Definitions**: Do not define a concept by repeating itself (e.g., "X is a type of X").
-3. **Vague Adjectives**: Avoid non-specific descriptors like "important", "various", "complex", "significant" without concrete elaboration.
-4. **Preamble/Epilogue**: Do not add opening remarks ("Let me explain...") or closing statements ("In conclusion...").
-5. **Redundant Emphasis**: Do not repeat the same phrase multiple times (e.g., "extremely detailed, extremely detailed").
-6. **Generic Suffixes**: Do not add unnecessary suffixes like "Entity", "Concept", "Object" to proper nouns unless required for disambiguation.
-7. **Markdown Code Blocks**: Never wrap JSON output in ```json blocks. Output raw JSON only.
+**关键：在所有输出中避免以下模式。**
+1. **维基百科式泛化**：不要写模糊的百科全书式概述。要具体且有分析性。
+2. **同义反复定义**：不要用概念本身来定义概念（例如，"X 是一种 X"）。
+3. **模糊形容词**：避免使用没有具体阐述的非特定描述词，如"重要的"、"各种"、"复杂的"、"显著的"。
+4. **开场白/结语**：不要添加开头语（"让我来解释..."）或结束语（"总之..."）。
+5. **冗余强调**：不要多次重复相同的短语（例如，"极其详细，极其详细"）。
+6. **泛化后缀**：除非为消歧义所必需，不要给专有名词添加不必要的后缀，如"实体"、"概念"、"对象"。
+7. **Markdown 代码块**：永远不要将 JSON 输出包裹在 ```json 代码块中。只输出原始 JSON。
 </anti_patterns>

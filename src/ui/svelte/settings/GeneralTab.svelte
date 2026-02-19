@@ -1,10 +1,9 @@
 <!--
   GeneralTab.svelte — 通用设置 Tab
 
-  三个设置组：
-  1. 语言与显示：界面语言（下拉）、命名模板（文本输入）
-  2. 知识存储：5 种知识类型的目录路径编辑器
-  3. 自动化：创建后自动核查（开关）
+  两个设置组：
+  1. 知识存储：5 种知识类型的目录路径编辑器
+  2. 自动化：创建后自动核查（开关）
 
   @see 需求 10.2, 10.4, 10.9
 -->
@@ -14,7 +13,6 @@
     import type { PluginSettings, DirectoryScheme } from '../../../types';
     import type { SettingsStore } from '../../../data/settings-store';
     import SettingItem from './SettingItem.svelte';
-    import Select from '../../components/Select.svelte';
     import TextInput from '../../components/TextInput.svelte';
     import Toggle from '../../components/Toggle.svelte';
 
@@ -40,65 +38,19 @@
         return () => unsubscribe();
     });
 
-    /** 语言选项 */
-    const languageOptions = $derived([
-        { value: 'zh', label: i18n.t('settings.language.zh') },
-        { value: 'en', label: i18n.t('settings.language.en') },
-    ]);
-
-    /** 切换语言 */
-    async function handleLanguageChange(value: string) {
-        const lang = value as 'zh' | 'en';
-        await settingsStore.update({ language: lang });
-        i18n.setLanguage(lang);
-    }
-
-    /** 更新命名模板 */
-    async function handleNamingTemplateChange(value: string) {
-        await settingsStore.update({ namingTemplate: value });
-    }
-
     /** 更新目录路径 */
     async function handleDirectoryChange(key: keyof DirectoryScheme, value: string) {
         const scheme = { ...settings.directoryScheme, [key]: value };
-        await settingsStore.update({ directoryScheme: scheme });
+        await settingsStore.updateSettings({ directoryScheme: scheme });
     }
 
     /** 切换自动核查 */
     async function handleAutoVerifyChange(checked: boolean) {
-        await settingsStore.update({ enableAutoVerify: checked });
+        await settingsStore.updateSettings({ enableAutoVerify: checked });
     }
 </script>
 
 <div class="cr-general-tab">
-    <!-- 语言与显示组 -->
-    <div class="cr-settings-group">
-        <h3 class="cr-settings-group__title">{i18n.t('settings.groups.languageDisplay')}</h3>
-
-        <SettingItem
-            name={i18n.t('settings.language.name')}
-            description={i18n.t('settings.language.desc')}
-        >
-            <Select
-                value={settings.language}
-                options={languageOptions}
-                onchange={handleLanguageChange}
-            />
-        </SettingItem>
-
-        <SettingItem
-            name={i18n.t('settings.advanced.namingTemplate.name')}
-            description={i18n.t('settings.advanced.namingTemplate.desc')}
-        >
-            <TextInput
-                value={settings.namingTemplate}
-                placeholder={'{{chinese}} ({{english}})'}
-                onchange={handleNamingTemplateChange}
-                widthClass="cr-input-lg"
-            />
-        </SettingItem>
-    </div>
-
     <!-- 知识存储组 -->
     <div class="cr-settings-group">
         <h3 class="cr-settings-group__title">{i18n.t('settings.groups.knowledgeStorage')}</h3>

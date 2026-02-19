@@ -11,7 +11,6 @@
     import { SERVICE_TOKENS } from '../../../../main';
     import Button from '../../components/Button.svelte';
     import type { TaskRecord, StandardizedConcept, CRType } from '../../../types';
-    import type { SettingsStore } from '../../../data/settings-store';
     import { renderNamingTemplate } from '../../../core/naming-utils';
 
     let {
@@ -24,24 +23,22 @@
 
     const ctx = getCRContext();
     const t = ctx.i18n.t();
-    const settingsStore = ctx.container.resolve<SettingsStore>(SERVICE_TOKENS.settingsStore);
+
+    /** 硬编码命名模板 */
+    const NAMING_TEMPLATE = '{{chinese}} ({{english}})';
 
     /** 任务类型 → 显示标签映射 */
     const TYPE_LABELS: Record<string, string> = {
         define: 'Define',
         tag: 'Tag',
         write: 'Write',
-        amend: 'Amend',
-        merge: 'Merge',
         index: 'Index',
         verify: 'Verify',
-        'image-generate': 'Image',
     };
 
     /** 获取任务显示名称（复用旧逻辑） */
     function getTaskDisplayName(task: TaskRecord): string {
         const payload = task.payload as Record<string, unknown>;
-        const namingTemplate = settingsStore.getSettings().namingTemplate || '{{chinese}} ({{english}})';
 
         const standardizedData = payload?.standardizedData as StandardizedConcept | undefined;
         const conceptType = (payload?.conceptType as CRType) || standardizedData?.primaryType;
@@ -49,7 +46,7 @@
         if (standardizedData?.standardNames && conceptType) {
             const nameData = standardizedData.standardNames[conceptType];
             if (nameData?.chinese || nameData?.english) {
-                const name = renderNamingTemplate(namingTemplate, {
+                const name = renderNamingTemplate(NAMING_TEMPLATE, {
                     chinese: nameData.chinese || '',
                     english: nameData.english || '',
                     type: conceptType,

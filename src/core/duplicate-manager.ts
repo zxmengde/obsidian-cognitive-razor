@@ -211,8 +211,13 @@ export class DuplicateManager {
       }
 
       if (newPairs.length > 0) {
-        // 保存存储
-        await this.saveStore();
+        // 保存存储，失败时记录警告但不阻断流程
+        const saveResult = await this.saveStore();
+        if (!saveResult.ok) {
+          this.logger.warn("DuplicateManager", "保存重复对失败，新检测结果仅存在内存中", {
+            error: saveResult.error
+          });
+        }
 
         // 通知监听器
         this.notifyListeners();
@@ -650,13 +655,13 @@ export class DuplicateManager {
     return changed;
   }
 
-  /** 保存存储 */
+  /** 保存存储（原子写入，防止崩溃时损坏文件） */
   private async saveStore(): Promise<Result<void>> {
     if (!this.store) {
       return err("E310_INVALID_STATE", "存储未初始化");
     }
 
-    const writeResult = await this.fileStorage.write(
+    const writeResult = await this.fileStorage.atomicWrite(
       this.storePath,
       JSON.stringify(this.store, null, 2)
     );

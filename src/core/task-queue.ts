@@ -22,7 +22,7 @@ import type { SimpleLockManager } from "./lock-manager";
 import type { TaskRunner } from "./task-runner";
 import type { FileStorage } from "../data/file-storage";
 import type { SettingsStore } from "../data/settings-store";
-import { DEFAULT_TASK_TIMEOUT_MS, DEFAULT_TASK_HISTORY } from "../data/settings-store";
+import { DEFAULT_TASK_TIMEOUT_MS } from "../data/settings-store";
 import { TaskQueueStore } from "./task-queue-store";
 
 // ============================================================================
@@ -31,25 +31,20 @@ import { TaskQueueStore } from "./task-queue-store";
 
 /** 所有合法的 TaskType 值集合 */
 const VALID_TASK_TYPES: ReadonlySet<string> = new Set<TaskType>([
-  "define", "tag", "write", "amend", "merge", "index", "verify", "image-generate",
+  "define", "tag", "write", "index", "verify",
 ]);
 
 /**
  * 各 TaskType 对应 payload 的必填字段映射
  *
  * 仅校验核心必填字段，可选字段不做强制要求。
- * payload 接口中带 `[key: string]: unknown` 索引签名，
- * 因此只需确认关键字段存在且类型正确即可。
  */
 const PAYLOAD_REQUIRED_FIELDS: Record<TaskType, Array<{ field: string; type: string }>> = {
   "define":          [{ field: "userInput", type: "string" }],
   "tag":             [{ field: "userInput", type: "string" }, { field: "conceptType", type: "string" }],
   "write":           [{ field: "conceptType", type: "string" }],
-  "amend":           [{ field: "currentContent", type: "string" }, { field: "instruction", type: "string" }, { field: "conceptType", type: "string" }],
-  "merge":           [{ field: "keepName", type: "string" }, { field: "deleteName", type: "string" }, { field: "keepContent", type: "string" }, { field: "deleteContent", type: "string" }, { field: "conceptType", type: "string" }],
-  "index":           [], // 所有字段均为可选
+  "index":           [],
   "verify":          [{ field: "currentContent", type: "string" }],
-  "image-generate":  [{ field: "userPrompt", type: "string" }, { field: "filePath", type: "string" }],
 };
 
 /**
@@ -103,7 +98,7 @@ export class TaskQueue {
 
   // 防抖批量写入（需求 17.1 ~ 17.4）
   private pendingWrite: boolean = false;
-  private writeTimer: ReturnType<typeof setTimeout> | null = null;
+  private writeTimer: number | null = null;
   private readonly writeIntervalMs: number = 2000; // 2 秒防抖窗口
 
   constructor(
@@ -409,8 +404,7 @@ export class TaskQueue {
       return err("E311_NOT_FOUND", `任务不存在: ${taskId}`);
     }
 
-    Object.assign(task, updates);
-    task.updated = formatCRTimestamp();
+    Object.assign(task, updates, { updated: formatCRTimestamp() });
     this.scheduleSave();
 
     return ok(undefined);
@@ -627,7 +621,7 @@ export class TaskQueue {
       return;
     }
 
-    let timeoutHandle: NodeJS.Timeout | null = null;
+    let timeoutHandle: number | null = null;
 
     try {
       this.logger.debug("TaskQueue", `开始执行任务: ${task.id}`, {
@@ -638,7 +632,7 @@ export class TaskQueue {
 
       const timeoutMs = this.settingsStore.getSettings().taskTimeoutMs || DEFAULT_TASK_TIMEOUT_MS;
       let timedOut = false;
-      timeoutHandle = setTimeout(() => {
+      timeoutHandle = window.setTimeout(() => {
         timedOut = true;
         this.logger.warn("TaskQueue", `任务超时，触发自动取消: ${task.id}`, {
           taskId: task.id,
@@ -879,6 +873,9 @@ export class TaskQueue {
       taskId: task.id,
       timestamp: task.updated
     });
+
+    // 异常路径同样需要继续调度，避免队列挂起
+    this.tryScheduleAll();
   }
 
   /**
@@ -902,7 +899,7 @@ export class TaskQueue {
   private scheduleSave(): void {
     this.pendingWrite = true;
     if (this.writeTimer !== null) return; // 已有定时器
-    this.writeTimer = setTimeout(async () => {
+    this.writeTimer = window.setTimeout(async () => {
       this.writeTimer = null;
       if (this.pendingWrite) {
         await this.flushSave();
@@ -1068,7 +1065,7 @@ export class TaskQueue {
    * 限制历史任务数量，避免 queue-state.json 无限增长
    */
   private trimHistory(): void {
-    const limit = this.settingsStore.getSettings().maxTaskHistory || DEFAULT_TASK_HISTORY;
+    const limit = 300;
     const removableStates = new Set(["Completed", "Failed", "Cancelled"]);
     const candidates = Array.from(this.tasks.values()).filter((task) => removableStates.has(task.state));
 

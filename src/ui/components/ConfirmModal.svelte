@@ -146,6 +146,7 @@
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        tabindex="0"
         onmousedown={(e: MouseEvent) => e.stopPropagation()}
     >
         <h3 id={titleId} class="cr-confirm-title">{title}</h3>

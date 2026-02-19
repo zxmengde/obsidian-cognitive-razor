@@ -54,10 +54,11 @@
     }
 </script>
 
-<nav
+<div
     class="cr-settings-nav"
     role="tablist"
     aria-label={i18n.t('settings.title')}
+    tabindex="0"
     onkeydown={handleKeydown}
 >
     {#each TAB_ORDER as tab (tab)}
@@ -73,7 +74,7 @@
             {tabLabel(tab)}
         </button>
     {/each}
-</nav>
+</div>
 
 <style>
     .cr-settings-nav {

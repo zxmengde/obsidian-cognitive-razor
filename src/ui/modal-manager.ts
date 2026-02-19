@@ -79,7 +79,7 @@ export class ModalManager {
             return false;
         }
 
-        // 创建临时 DOM 容器
+        // 创建临时 DOM 容器并挂载到 body
         const container = document.createElement("div");
         container.classList.add("cr-modal-container", `cr-modal-container--${type}`);
         document.body.appendChild(container);

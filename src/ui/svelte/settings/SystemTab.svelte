@@ -52,9 +52,9 @@
     /** 切换日志级别 */
     async function handleLogLevelChange(value: string) {
         const level = value as LogLevel;
-        await settingsStore.update({ logLevel: level });
+        await settingsStore.updateSettings({ logLevel: level });
         logger.setLogLevel(level);
-        new Notice(i18n.t('notices.logLevelChanged', { level }));
+        new Notice(i18n.format('notices.logLevelChanged', { level }));
     }
 
     /** 清空日志 */
@@ -93,8 +93,8 @@
                 } else {
                     new Notice(`${result.error.code}: ${result.error.message}`);
                 }
-            } catch {
-                new Notice(i18n.t('notices.settingsImported'));
+            } catch (e) {
+                new Notice(i18n.t('notices.settingsImportFailed'));
             }
         };
         input.click();

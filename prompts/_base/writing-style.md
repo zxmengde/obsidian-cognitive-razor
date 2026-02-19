@@ -1,8 +1,8 @@
 <writing_style>
-1. The writing style must have a high degree of academic rigor, using accurate, objective, impersonal third-person narration. Prioritize the use of definitions, classifications, causation, and logical relationships to organize information. It is forbidden to use any literary rhetoric (such as personification, parallelism, emotional metaphor, etc.) that does not aim to reveal structure and logic. 
-2. Never use markdown headings (#) at any level in your answers, because the heading organization of the generated notes should be fixed. 
-3. Mathematical formulas: Write LaTeX with ESCAPED backslashes for JSON compatibility. Example: "$E = mc^2$" is OK, but for fractions write "$\\frac{a}{b}$" (double-escaped). Inline code uses backticks.
-4. Mark the most critical terms in bold (**). Use italics (*) to mark the most central and general sentence in a paragraph of multiple sentences. Do not use italics (*) to mark sentences if there are only 3 sentences or less in the paragraph. 
-5. The accuracy of the answers is crucial and will serve as the cornerstone of a serious academic knowledge base. Any inaccurate or unsubstantiated information undermines the overall value and credibility of the knowledge base. 
-6. It is forbidden to add any opening remarks, epilogue, self-evaluation or any additional explanatory text to the structured content. 
+1. 写作风格必须具有高度的学术严谨性，使用准确、客观、非人称的第三人称叙述。优先使用定义、分类、因果关系和逻辑关系来组织信息。禁止使用任何不以揭示结构和逻辑为目的的文学修辞（如拟人、排比、情感隐喻等）。
+2. 回答中不得使用任何级别的 Markdown 标题（#），因为生成笔记的标题组织结构应当是固定的。
+3. 数学公式：在 JSON 中使用双重转义反斜杠书写 LaTeX。例如："$E = mc^2$" 可以直接写，但分数需写成 "$\\frac{a}{b}$"（双重转义）。行内代码使用反引号。
+4. 用粗体（**）标记最关键的术语。在多句段落中用斜体（*）标记最核心的概括性句子。如果段落只有 3 句或更少，则不使用斜体（*）标记句子。
+5. 回答的准确性至关重要，将作为严肃学术知识库的基石。任何不准确或无依据的信息都会损害知识库的整体价值和可信度。
+6. 禁止在结构化内容中添加任何开场白、结语、自我评价或任何额外的解释性文字。
 </writing_style>

@@ -78,18 +78,10 @@
     /* === 阴影 === */
     --cr-shadow-sm: var(--shadow-s);
     --cr-shadow-lg: var(--shadow-l);
-
-    /* === Diff 视图颜色变量 === */
-    --cr-diff-add-bg: var(--cr-overlay-success-15);
-    --cr-diff-add-border: var(--cr-status-success);
-    --cr-diff-remove-bg: var(--cr-overlay-error-15);
-    --cr-diff-remove-border: var(--cr-status-error);
 }
 
 /* 浅色主题：10% 透明度 */
 .theme-light .cr-scope {
-    --cr-diff-add-bg: var(--cr-overlay-success-10);
-    --cr-diff-remove-bg: var(--cr-overlay-error-10);
 }
 
 /* ========================================
@@ -112,7 +104,7 @@
    ======================================== */
 
 /* 加载旋转器（Button.svelte、ExpandPanel.svelte、ProviderCard.svelte 使用） */
-.cr-loading-spinner {
+.cr-scope .cr-loading-spinner {
     border: 2px solid var(--cr-border);
     border-top: 2px solid var(--cr-interactive-accent);
     border-radius: 50%;
@@ -410,12 +402,6 @@
     container-name: cr-workbench;
 }
 
-/* Diff 标签页：设为容器查询上下文 */
-.cr-diff-tab {
-    container-type: inline-size;
-    container-name: cr-diff;
-}
-
 /* 工作台 < 280px：紧凑布局 */
 @container cr-workbench (max-width: 279px) {
     .cr-workbench-root {
@@ -439,3 +425,5 @@
         gap: var(--cr-space-4);
     }
 }
+
+

@@ -8,7 +8,6 @@ import * as fc from "fast-check";
 import {
     renderNamingTemplate,
     sanitizeFileName,
-    validateNamingTemplate,
     generateSignatureText,
     createConceptSignature,
     generateFilePath,
@@ -74,29 +73,6 @@ describe("naming-utils", () => {
 
         it("trim 前后空格", () => {
             expect(sanitizeFileName("  hello  ")).toBe("hello");
-        });
-    });
-
-    describe("validateNamingTemplate", () => {
-        it("有效模板通过验证", () => {
-            const result = validateNamingTemplate("{{chinese}} ({{english}})");
-            expect(result.valid).toBe(true);
-            expect(result.errors).toHaveLength(0);
-        });
-
-        it("空模板不通过", () => {
-            const result = validateNamingTemplate("");
-            expect(result.valid).toBe(false);
-        });
-
-        it("无有效占位符不通过", () => {
-            const result = validateNamingTemplate("static text only");
-            expect(result.valid).toBe(false);
-        });
-
-        it("无效占位符报错", () => {
-            const result = validateNamingTemplate("{{chinese}} {{invalid_placeholder}}");
-            expect(result.errors.some((e) => e.includes("invalid_placeholder"))).toBe(true);
         });
     });
 

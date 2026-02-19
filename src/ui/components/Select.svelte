@@ -12,11 +12,13 @@
         options = [],
         onchange,
         disabled = false,
+        id = undefined,
     }: {
         value?: string;
         options?: Array<{ value: string; label: string }>;
         onchange: (value: string) => void;
         disabled?: boolean;
+        id?: string;
     } = $props();
 
     function handleChange(e: Event) {
@@ -27,6 +29,7 @@
 
 <select
     class="cr-select"
+    {id}
     {value}
     {disabled}
     aria-disabled={disabled ? 'true' : undefined}

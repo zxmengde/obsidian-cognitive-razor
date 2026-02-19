@@ -21,17 +21,12 @@ const COMMAND_PREFIX = "cognitive-razor";
  * 至少需要：
  * - 打开 Workbench
  * - 创建概念
- * - 对当前笔记启动 Amend（修订）
- * - 对当前重复对启动 Merge
  */
 export const COMMAND_IDS = {
   // 核心命令（设计文档第 12 章）
   CREATE_CONCEPT: `${COMMAND_PREFIX}:create-concept`,
   OPEN_WORKBENCH: `${COMMAND_PREFIX}:open-workbench`,
-  IMPROVE_NOTE: `${COMMAND_PREFIX}:improve-note`,
-  MERGE_DUPLICATES: `${COMMAND_PREFIX}:merge-duplicates`,
   EXPAND_CURRENT_NOTE: `${COMMAND_PREFIX}:expand-current-note`,
-  INSERT_IMAGE: `${COMMAND_PREFIX}:insert-image`,
   VERIFY_CURRENT_NOTE: `${COMMAND_PREFIX}:verify-current-note`,
   RETRY_FAILED: `${COMMAND_PREFIX}:retry-failed`,
 
@@ -39,7 +34,6 @@ export const COMMAND_IDS = {
   VIEW_DUPLICATES: `${COMMAND_PREFIX}:view-duplicates`,
   RESUME_QUEUE: `${COMMAND_PREFIX}:resume-queue`,
   CLEAR_QUEUE: `${COMMAND_PREFIX}:clear-queue`,
-  VIEW_OPERATION_HISTORY: `${COMMAND_PREFIX}:view-operation-history`,
   
   // 队列管理（已整合到工作台）
   PAUSE_QUEUE: `${COMMAND_PREFIX}:pause-queue`,

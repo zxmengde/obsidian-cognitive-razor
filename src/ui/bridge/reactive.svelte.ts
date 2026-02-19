@@ -2,7 +2,7 @@
  * 响应式包装器 — Obsidian 事件 → Svelte 5 $state
  *
  * 将 Core 层的事件驱动 API 转换为 Svelte 5 响应式状态，
- * 使 Svelte 组件能以声明式方式消费队列、管线、重复对、快照等数据。
+ * 使 Svelte 组件能以声明式方式消费队列、管线、重复对等数据。
  *
  * 每个 store 工厂函数返回 `destroy` 方法用于清理订阅，
  * 应在组件卸载时（$effect 清理或 onDestroy）调用。
@@ -13,16 +13,10 @@
 import type { Workspace, TFile } from 'obsidian';
 import type { TaskQueue } from '@/core/task-queue';
 import type { DuplicateManager } from '@/core/duplicate-manager';
-import type { UndoManager } from '@/core/undo-manager';
-import type { CreateOrchestrator } from '@/core/create-orchestrator';
-import type { AmendOrchestrator } from '@/core/amend-orchestrator';
-import type { MergeOrchestrator } from '@/core/merge-orchestrator';
 import type {
     QueueStatus,
     TaskRecord,
     DuplicatePair,
-    SnapshotMetadata,
-    PipelineContext,
 } from '@/types';
 
 // ============================================================================
@@ -76,67 +70,6 @@ export function createActiveFileStore(workspace: Workspace) {
 }
 
 // ============================================================================
-// 管线事件 Store
-// ============================================================================
-
-/** 管线 store 依赖的 Orchestrator 集合 */
-export interface PipelineOrchestrators {
-    create: CreateOrchestrator;
-    amend: AmendOrchestrator;
-    merge: MergeOrchestrator;
-}
-
-/**
- * 管线事件响应式 store
- *
- * 订阅 Create/Amend/Merge 三个 Orchestrator 的管线事件，
- * 跟踪当前活跃管线的上下文。管线完成或失败时清除。
- */
-export function createPipelineStore(orchestrators: PipelineOrchestrators) {
-    let activePipeline = $state<PipelineContext | null>(null);
-
-    const unsubCreate = orchestrators.create.subscribe((event) => {
-        if (event.type === 'pipeline_completed' || event.type === 'pipeline_failed') {
-            // 仅清除对应管线
-            if (activePipeline?.pipelineId === event.pipelineId) {
-                activePipeline = null;
-            }
-        } else {
-            activePipeline = event.context;
-        }
-    });
-
-    const unsubAmend = orchestrators.amend.subscribe((event) => {
-        if (event.type === 'pipeline_completed' || event.type === 'pipeline_failed') {
-            if (activePipeline?.pipelineId === event.pipelineId) {
-                activePipeline = null;
-            }
-        } else {
-            activePipeline = event.context;
-        }
-    });
-
-    const unsubMerge = orchestrators.merge.subscribe((event) => {
-        if (event.type === 'pipeline_completed' || event.type === 'pipeline_failed') {
-            if (activePipeline?.pipelineId === event.pipelineId) {
-                activePipeline = null;
-            }
-        } else {
-            activePipeline = event.context;
-        }
-    });
-
-    return {
-        get pipeline() { return activePipeline; },
-        destroy: () => {
-            unsubCreate();
-            unsubAmend();
-            unsubMerge();
-        },
-    };
-}
-
-// ============================================================================
 // 重复对 Store
 // ============================================================================
 
@@ -161,37 +94,4 @@ export function createDuplicatesStore(duplicateManager: DuplicateManager) {
     };
 }
 
-// ============================================================================
-// 快照 Store
-// ============================================================================
 
-/**
- * 快照列表响应式 store
- *
- * UndoManager 没有事件订阅机制，提供手动刷新方法。
- * 组件在需要时（如操作完成后）调用 refresh() 更新列表。
- */
-export function createSnapshotsStore(undoManager: UndoManager) {
-    let snapshots = $state<SnapshotMetadata[]>([]);
-    let loading = $state(false);
-
-    /** 从 UndoManager 拉取最新快照列表 */
-    async function refresh(): Promise<void> {
-        loading = true;
-        const result = await undoManager.listSnapshots();
-        if (result.ok) {
-            snapshots = result.value;
-        }
-        loading = false;
-    }
-
-    // 初始加载
-    void refresh();
-
-    return {
-        get snapshots() { return snapshots; },
-        get loading() { return loading; },
-        refresh,
-        destroy: () => { /* 无订阅需清理，占位保持接口一致 */ },
-    };
-}

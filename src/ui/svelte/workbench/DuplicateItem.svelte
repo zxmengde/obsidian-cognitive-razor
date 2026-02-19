@@ -20,13 +20,11 @@
         pair,
         nameA,
         nameB,
-        oncompare,
         ondismiss,
     }: {
         pair: DuplicatePair;
         nameA: string;
         nameB: string;
-        oncompare: (pair: DuplicatePair) => void;
         ondismiss: (pair: DuplicatePair) => void;
     } = $props();
 
@@ -49,9 +47,12 @@
     }
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="cr-dup-item" onclick={() => oncompare(pair)}>
+<div
+    class="cr-dup-item"
+    role="listitem"
+    aria-label={`${nameA} ↔ ${nameB}，相似度 ${Math.round(pair.similarity * 100)}%`}
+>
     <!-- 相似度进度条 -->
     <div class="cr-dup-item__bar">
         <ProgressBar value={pair.similarity} color={barColor} />
@@ -72,14 +73,6 @@
 
     <!-- 操作按钮 -->
     <div class="cr-dup-item__actions">
-        <Button
-            variant="ghost"
-            size="sm"
-            ariaLabel={t.workbench?.duplicates?.compareAria ?? '对比合并'}
-            onclick={(e: MouseEvent) => { e.stopPropagation(); oncompare(pair); }}
-        >
-            {t.workbench?.duplicates?.compare ?? '对比'}
-        </Button>
         <Button
             variant="ghost"
             size="sm"

@@ -7,7 +7,15 @@ import type {
   ILogger,
   QueueStateFile,
   Result,
+  TaskType,
+  TaskError,
 } from "../types";
+
+/** 校验字符串是否为合法 TaskType */
+const VALID_TASK_TYPES = new Set<string>(["define", "tag", "write", "index", "verify"]);
+function isTaskType(v: unknown): v is TaskType {
+  return typeof v === "string" && VALID_TASK_TYPES.has(v);
+}
 
 export class TaskQueueStore {
   private readonly fileStorage: FileStorage;
@@ -110,7 +118,7 @@ export class TaskQueueStore {
       tasks.map((t) => ({
         id: String(t.id),
         nodeId: String(t.nodeId),
-        taskType: t.taskType as any,
+        taskType: isTaskType(t.taskType) ? t.taskType : "define",
         attempt: typeof t.attempt === "number" ? t.attempt : 0,
         maxAttempts: typeof t.maxAttempts === "number" ? t.maxAttempts : 1,
         providerRef: typeof t.providerRef === "string" ? t.providerRef : undefined,
@@ -120,7 +128,7 @@ export class TaskQueueStore {
           : undefined,
         created: typeof t.created === "string" ? t.created : undefined,
         updated: typeof t.updated === "string" ? t.updated : undefined,
-        errors: Array.isArray(t.errors) ? (t.errors as any) : undefined,
+        errors: Array.isArray(t.errors) ? (t.errors as TaskError[]) : undefined,
       }));
 
     const filterValidTasks = (arr: unknown[]) =>

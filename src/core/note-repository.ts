@@ -105,9 +105,12 @@ export class NoteRepository {
   }
 
   getAvailablePathForAttachment(fileName: string, currentFilePath: string): string {
-    const vaultAny = this.app.vault as any;
-    if (typeof vaultAny.getAvailablePathForAttachment === "function") {
-      return vaultAny.getAvailablePathForAttachment(fileName, currentFilePath);
+    // Obsidian 内部 API，未在公开类型中声明，使用接口扩展安全访问
+    const vaultInternal = this.app.vault as typeof this.app.vault & {
+      getAvailablePathForAttachment?: (fileName: string, currentFilePath: string) => string;
+    };
+    if (typeof vaultInternal.getAvailablePathForAttachment === "function") {
+      return vaultInternal.getAvailablePathForAttachment(fileName, currentFilePath);
     }
 
     const currentFile = this.getFileByPath(currentFilePath);

@@ -41,7 +41,6 @@ function createSettingsStore(settings: { concurrency: number; taskTimeoutMs?: nu
       taskTimeoutMs: settings.taskTimeoutMs ?? 1000,
       autoRetry: settings.autoRetry ?? false,
       maxRetryAttempts: 1,
-      maxTaskHistory: 300,
     }),
   } as unknown as SettingsStore;
 }

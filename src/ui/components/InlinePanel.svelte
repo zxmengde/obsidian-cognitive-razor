@@ -35,8 +35,7 @@
 <div
     class="cr-inline-panel"
     class:cr-inline-panel--expanded={expanded}
-    role="region"
-    aria-expanded={expanded}
+    role="group"
 >
     {#if expanded && children}
         <div class="cr-inline-panel__inner">

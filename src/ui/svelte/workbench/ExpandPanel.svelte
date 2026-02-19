@@ -90,7 +90,7 @@
             }
         } catch (e) {
             logger.error('ExpandPanel', '加载候选列表失败', e as Error);
-            error = t.imageModal?.genericFailure ?? '操作失败，请稍后重试';
+            error = '操作失败，请稍后重试';
         } finally {
             loading = false;
         }
@@ -159,7 +159,7 @@
             }
         } catch (e) {
             logger.error('ExpandPanel', '创建失败', e as Error);
-            new Notice(t.imageModal?.genericFailure ?? '操作失败，请稍后重试');
+            new Notice('操作失败，请稍后重试');
         } finally {
             submitting = false;
         }
@@ -177,7 +177,7 @@
     <div class="cr-expand-error">
         <p>{error}</p>
         <Button variant="ghost" size="sm" onclick={() => onclose?.()}>
-            {t.imageModal?.cancel ?? '取消'}
+            {t.common?.cancel ?? '取消'}
         </Button>
     </div>
 {:else if plan}
@@ -275,7 +275,7 @@
                 disabled={submitting}
                 onclick={() => onclose?.()}
             >
-                {t.imageModal?.cancel ?? '取消'}
+                {t.common?.cancel ?? '取消'}
             </Button>
         </div>
     </div>

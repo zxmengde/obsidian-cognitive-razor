@@ -5,10 +5,6 @@
  */
 
 import type { CRType, StandardizedConcept } from "./domain";
-import type { ImageGeneratePayload, ImageGenerateResult } from "./provider";
-
-// Re-export 以便从 task.ts 直接访问
-export type { ImageGeneratePayload, ImageGenerateResult } from "./provider";
 
 // ============================================================================
 // 任务基础类型
@@ -16,8 +12,8 @@ export type { ImageGeneratePayload, ImageGenerateResult } from "./provider";
 
 /** 任务类型 */
 export type TaskType =
-    | "define" | "tag" | "write" | "amend"
-    | "merge" | "index" | "verify" | "image-generate";
+    | "define" | "tag" | "write"
+    | "index" | "verify";
 
 /** 任务状态 */
 export type TaskState =
@@ -57,29 +53,9 @@ export interface WritePayload {
     enrichedData?: { aliases: string[]; tags: string[] };
     embedding?: number[];
     filePath?: string;
-    skipSnapshot?: boolean;
     userInput?: string;
     sources?: string;
     originalContent?: string;
-    [key: string]: unknown;
-}
-
-export interface AmendPayload {
-    pipelineId?: string;
-    currentContent: string;
-    instruction: string;
-    conceptType: CRType;
-    [key: string]: unknown;
-}
-
-export interface MergePayload {
-    pipelineId?: string;
-    keepName: string;
-    deleteName: string;
-    keepContent: string;
-    deleteContent: string;
-    conceptType: CRType;
-    finalFileName?: string;
     [key: string]: unknown;
 }
 
@@ -88,7 +64,6 @@ export interface IndexPayload {
     standardizedData?: StandardizedConcept;
     conceptType?: CRType;
     aliases?: string[];
-    namingTemplate?: string;
     [key: string]: unknown;
 }
 
@@ -116,18 +91,6 @@ export interface TagResult {
 }
 
 export interface WriteResult {
-    snapshotId?: string;
-    [key: string]: unknown;
-}
-
-export interface AmendResult { [key: string]: unknown; }
-
-export interface MergeResult {
-    merged_name?: Record<string, unknown>;
-    merge_rationale?: string;
-    content?: Record<string, unknown>;
-    preserved_from_a?: string[];
-    preserved_from_b?: string[];
     [key: string]: unknown;
 }
 
@@ -157,11 +120,8 @@ export type TaskPayloadMap = {
     "define": DefinePayload;
     "tag": TagPayload;
     "write": WritePayload;
-    "amend": AmendPayload;
-    "merge": MergePayload;
     "index": IndexPayload;
     "verify": VerifyPayload;
-    "image-generate": ImageGeneratePayload;
 };
 
 /** Result 类型映射 */
@@ -169,11 +129,8 @@ export type TaskResultMap = {
     "define": DefineResult;
     "tag": TagResult;
     "write": WriteResult;
-    "amend": AmendResult;
-    "merge": MergeResult;
     "index": IndexResult;
     "verify": VerifyResult;
-    "image-generate": ImageGenerateResult;
 };
 
 /** 所有 Payload 类型的联合 */
@@ -187,11 +144,8 @@ export type TypedTaskRecord =
     | (TaskRecordBase & { taskType: "define"; payload: DefinePayload; result?: DefineResult })
     | (TaskRecordBase & { taskType: "tag"; payload: TagPayload; result?: TagResult })
     | (TaskRecordBase & { taskType: "write"; payload: WritePayload; result?: WriteResult })
-    | (TaskRecordBase & { taskType: "amend"; payload: AmendPayload; result?: AmendResult })
-    | (TaskRecordBase & { taskType: "merge"; payload: MergePayload; result?: MergeResult })
     | (TaskRecordBase & { taskType: "index"; payload: IndexPayload; result?: IndexResult })
-    | (TaskRecordBase & { taskType: "verify"; payload: VerifyPayload; result?: VerifyResult })
-    | (TaskRecordBase & { taskType: "image-generate"; payload: ImageGeneratePayload; result?: ImageGenerateResult });
+    | (TaskRecordBase & { taskType: "verify"; payload: VerifyPayload; result?: VerifyResult });
 
 /** TaskRecord 基础字段 */
 export interface TaskRecordBase {
@@ -202,7 +156,6 @@ export interface TaskRecordBase {
     promptRef?: string;
     attempt: number;
     maxAttempts: number;
-    undoPointer?: string;
     lockKey?: string;
     typeLockKey?: string;
     created: string;

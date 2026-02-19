@@ -2,7 +2,7 @@
  * VerifyOrchestrator：核查管线编排器
  *
  * 独立的核查管线编排器。
- * 管线流程：Snapshot → Verify → 追加报告
+ * 管线流程：Verify → 追加报告
  *
  * 所有错误通过 ResultMonad 返回，不抛出未捕获异常。
  *
@@ -317,8 +317,7 @@ export class VerifyOrchestrator {
         context.verificationResult = result;
 
         this.logger.info("VerifyOrchestrator", `Verify 完成: ${context.pipelineId}`, {
-            overall_assessment: result.overall_assessment,
-            issueCount: Array.isArray(result.issues) ? result.issues.length : 0,
+            reportLength: typeof result.reportText === "string" ? result.reportText.length : 0,
         });
 
         // 追加报告到笔记末尾
@@ -327,8 +326,6 @@ export class VerifyOrchestrator {
             const appendResult = await this.appendVerificationReportToNote(
                 filePath,
                 result,
-                task.id,
-                context.nodeId,
             );
             if (!appendResult.ok) {
                 context.stage = "failed";
@@ -355,7 +352,7 @@ export class VerifyOrchestrator {
     /**
      * 执行核查管线（异步）
      *
-     * 流程：读取笔记 → 解析 frontmatter → 创建快照 → 入队 Verify 任务
+     * 流程：读取笔记 → 解析 frontmatter → 入队 Verify 任务
      */
     private async executeVerifyPipeline(
         context: PipelineContext,
@@ -383,18 +380,7 @@ export class VerifyOrchestrator {
             context.nodeId = extracted.frontmatter.cruid;
             context.type = extracted.frontmatter.type;
 
-            // 3. 创建快照（Verify 会追加报告到笔记末尾，先创建快照保证可撤销）
-            const snapshotResult = await this.deps.undoManager.createSnapshot(
-                context.filePath!,
-                content,
-                context.pipelineId,
-                context.nodeId,
-            );
-            if (snapshotResult.ok) {
-                context.snapshotId = snapshotResult.value;
-            }
-
-            // 4. 二次校验（类型已确定后再次检查 Provider 和模板）
+            // 3. 二次校验（类型已确定后再次检查 Provider 和模板）
             const prereqResult = this.validatePrerequisites("verify", context.type);
             if (!prereqResult.ok) {
                 context.stage = "failed";
@@ -409,7 +395,7 @@ export class VerifyOrchestrator {
                 return;
             }
 
-            // 5. 入队 Verify 任务
+            // 4. 入队 Verify 任务
             const startResult = await this.startVerifyTask(context);
             if (!startResult.ok) {
                 context.stage = "failed";
@@ -445,7 +431,7 @@ export class VerifyOrchestrator {
     private async startVerifyTask(context: PipelineContext): Promise<Result<void>> {
         return sharedStartVerifyTask(
             context,
-            { noteRepository: this.deps.noteRepository, taskQueue: this.deps.taskQueue, i18n: this.deps.i18n },
+            { noteRepository: this.deps.noteRepository, taskQueue: this.deps.taskQueue },
             (e) => this.publishEvent(e as VerifyPipelineEvent),
             this.taskToPipeline,
             (t) => this.getProviderIdForTask(t),
@@ -502,24 +488,11 @@ export class VerifyOrchestrator {
     private async appendVerificationReportToNote(
         filePath: string,
         result: Record<string, unknown>,
-        snapshotTaskId: string,
-        nodeId?: string,
     ): Promise<Result<void>> {
         try {
             const existing = await this.deps.noteRepository.readByPathIfExists(filePath);
             if (existing === null) {
                 return err("E301_FILE_NOT_FOUND", `文件不存在: ${filePath}`, { filePath });
-            }
-
-            // 追加前创建快照（保证可撤销）
-            const snapshotResult = await this.deps.undoManager.createSnapshot(
-                filePath,
-                existing,
-                snapshotTaskId,
-                nodeId,
-            );
-            if (!snapshotResult.ok) {
-                return err(snapshotResult.error.code, snapshotResult.error.message, snapshotResult.error.details);
             }
 
             const report = buildVerificationReportMarkdown(result);

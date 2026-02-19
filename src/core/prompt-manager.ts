@@ -37,7 +37,7 @@ const TASK_BLOCKS = [
  * 
  * 遵循设计文档 7.4 槽位契约：
  * - 通用槽位：CTX_LANGUAGE（可选；默认 Chinese）
- * - 操作模块槽位：用于 create/merge/amend
+ * - 操作模块槽位：用于 create
  * - 任务型模板槽位：用于现有 TaskType
  */
 const TASK_SLOT_MAPPING: Record<TaskType, { required: string[]; optional: string[] }> = {
@@ -57,41 +57,13 @@ const TASK_SLOT_MAPPING: Record<TaskType, { required: string[]; optional: string
     required: ["CTX_META"],
     optional: ["CTX_SOURCES", "CTX_LANGUAGE"]
   },
-  "amend": {
-    required: ["CTX_CURRENT", "USER_INSTRUCTION"],
-    optional: ["CTX_LANGUAGE", "CONCEPT_TYPE"]
-  },
-  "merge": {
-    required: ["SOURCE_A_NAME", "CTX_SOURCE_A", "SOURCE_B_NAME", "CTX_SOURCE_B"],
-    optional: ["USER_INSTRUCTION", "CTX_LANGUAGE", "CONCEPT_TYPE"]
-  },
   "verify": {
     required: ["CTX_META", "CTX_CURRENT"],
     optional: ["CTX_SOURCES", "CTX_LANGUAGE"]
   },
-  "image-generate": {
-    required: ["USER_PROMPT", "CONTEXT_BEFORE", "CONTEXT_AFTER"],
-    optional: ["CONCEPT_TYPE", "CONCEPT_NAME", "CTX_LANGUAGE"]
-  }
 };
 
-/**
- * 操作模块槽位映射（用于 Merge/Amend 等操作）
- * 
- * 遵循设计文档 7.4：
- * - Merge：必需 SOURCE_A_NAME, CTX_SOURCE_A, SOURCE_B_NAME, CTX_SOURCE_B
- * - Amend：必需 CTX_CURRENT, USER_INSTRUCTION
- */
-export const OPERATION_SLOT_MAPPING: Record<string, { required: string[]; optional: string[] }> = {
-  "merge": {
-    required: ["SOURCE_A_NAME", "CTX_SOURCE_A", "SOURCE_B_NAME", "CTX_SOURCE_B"],
-    optional: ["USER_INSTRUCTION", "CTX_LANGUAGE", "CONCEPT_TYPE"]
-  },
-  "amend": {
-    required: ["CTX_CURRENT", "USER_INSTRUCTION"],
-    optional: ["CTX_LANGUAGE", "CONCEPT_TYPE"]
-  },
-};
+
 
 
 
@@ -347,15 +319,13 @@ export class PromptManager {
   /** 获取模板 ID（对于 write 任务，根据知识类型选择模板） */
   resolveTemplateId(taskType: TaskType, conceptType?: string): string {
     // 将任务类型映射到模板文件名
+    /** 模板 ID 映射 */
     const mapping: Record<TaskType, string> = {
       "define": "_base/operations/define",
       "tag": "_base/operations/tag",
       "index": "index",
       "write": "_type/entity-core", // 默认值，会被 conceptType 覆盖
-      "amend": "_base/operations/amend",
-      "merge": "_base/operations/merge",
       "verify": "_base/operations/verify",
-      "image-generate": "visualize"
     };
 
     // 对于 write 任务，根据知识类型选择模板
@@ -376,63 +346,6 @@ export class PromptManager {
   /** 判断模板是否已缓存（用于入队前硬校验） */
   hasTemplate(templateId: string): boolean {
     return this.templateCache.has(templateId);
-  }
-
-  /**
-   * 构建操作 prompt（用于 Merge/Amend 等操作）
-   * 
-   * 遵循设计文档 7.4：使用操作模块槽位映射
-   * 
-   * @param operation 操作类型：merge | amend
-   * @param slots 槽位值
-   * @returns 构建的 prompt
-   */
-  buildOperation(operation: string, slots: Record<string, string>): string {
-    try {
-      const slotMapping = OPERATION_SLOT_MAPPING[operation];
-      if (!slotMapping) {
-        throw new CognitiveRazorError("E101_INVALID_INPUT", `不支持的操作类型: ${operation}`);
-      }
-
-      // 加载操作模板（遵循路线图：prompts/_base/operations/<operation>.md）
-      const templateId = `_base/operations/${operation}`;
-      const template = this.loadTemplate(templateId);
-
-      // 1) 先按契约校验传入槽位是否合法（缺少必需/包含额外）
-      const allowedSlots = new Set([...slotMapping.required, ...slotMapping.optional]);
-      const missingRequired = slotMapping.required.filter((slot) => !(slot in slots));
-      if (missingRequired.length > 0) {
-        throw new CognitiveRazorError("E102_MISSING_FIELD", `缺少必需槽位: ${missingRequired.join(", ")}`);
-      }
-
-      const extraProvided = Object.keys(slots).filter((slot) => !allowedSlots.has(slot));
-      if (extraProvided.length > 0) {
-        throw new CognitiveRazorError("E101_INVALID_INPUT", `操作 ${operation} 不支持槽位: ${extraProvided.join(", ")}`);
-      }
-
-      // 2) 模板自身的占位符也必须全部被填充，且不允许未知占位符
-      const templateSlots = extractPlaceholderNames(template.content);
-      const unknownTemplateSlots = templateSlots.filter((slot) => !allowedSlots.has(slot));
-      if (unknownTemplateSlots.length > 0) {
-        throw new CognitiveRazorError("E405_TEMPLATE_INVALID", `模板存在未声明的槽位: ${unknownTemplateSlots.join(", ")}`);
-      }
-
-      // 委托共享渲染管线（M-01 DRY）
-      const prompt = this.renderTemplate(template.content, slots, slotMapping.optional, `buildOperation:${operation}`);
-
-      this.logger.debug("PromptManager", "操作 Prompt 构建成功", {
-        operation,
-        promptLength: prompt.length
-      });
-
-      return prompt;
-    } catch (error) {
-      if (error instanceof CognitiveRazorError) {
-        throw error;
-      }
-      this.logger.error("PromptManager", "构建操作 prompt 失败", error as Error, { operation });
-      throw new CognitiveRazorError("E500_INTERNAL_ERROR", "构建操作 prompt 失败", error);
-    }
   }
 
   /** 加载模板 */
@@ -623,9 +536,6 @@ export class PromptManager {
       "_type/theory-core",
       "_type/entity-core",
       "_type/mechanism-core",
-      "_base/operations/merge",
-      "_base/operations/amend",
-      "visualize"
     ];
 
     const errors: string[] = [];

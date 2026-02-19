@@ -16,21 +16,15 @@ import { I18n } from './src/core/i18n';
 import { CruidCache } from './src/core/cruid-cache';
 import { VectorIndex } from './src/core/vector-index';
 import { SimpleLockManager } from './src/core/lock-manager';
-import { UndoManager } from './src/core/undo-manager';
 import { ProviderManager } from './src/core/provider-manager';
 import { PromptManager } from './src/core/prompt-manager';
 import { DuplicateManager } from './src/core/duplicate-manager';
 import { TaskQueue } from './src/core/task-queue';
 import { TaskRunner } from './src/core/task-runner';
 
-import { PipelineStateStore } from './src/core/pipeline-state-store';
 import { CreateOrchestrator } from './src/core/create-orchestrator';
-import { AmendOrchestrator } from './src/core/amend-orchestrator';
-import { MergeOrchestrator } from './src/core/merge-orchestrator';
 import { VerifyOrchestrator } from './src/core/verify-orchestrator';
 import { ExpandOrchestrator } from './src/core/expand-orchestrator';
-import { ImageInsertOrchestrator } from './src/core/image-insert-orchestrator';
-
 // ServiceContainer
 import { ServiceContainer } from './src/core/service-container';
 import { NoteRepository } from './src/core/note-repository';
@@ -40,10 +34,8 @@ import type { OrchestratorDeps } from './src/core/orchestrator-deps';
 
 // UI 层组件（Svelte 5）
 import { WorkbenchView, VIEW_TYPE_CR_WORKBENCH } from './src/ui/svelte/workbench-view';
-import { DiffTabView, VIEW_TYPE_CR_DIFF } from './src/ui/svelte/diff-view';
 import { CRSettingTab } from './src/ui/svelte/settings-tab';
 import { CommandDispatcher } from './src/ui/command-dispatcher';
-import { SetupWizard } from './src/ui/svelte/setup-wizard';
 import { ModalManager } from './src/ui/modal-manager';
 
 // ============================================================================
@@ -63,19 +55,14 @@ export const SERVICE_TOKENS = {
 	cruidCache: Symbol('CruidCache'),
 	vectorIndex: Symbol('VectorIndex'),
 	lockManager: Symbol('LockManager'),
-	undoManager: Symbol('UndoManager'),
 	providerManager: Symbol('ProviderManager'),
 	promptManager: Symbol('PromptManager'),
 	duplicateManager: Symbol('DuplicateManager'),
 	taskRunner: Symbol('TaskRunner'),
 	taskQueue: Symbol('TaskQueue'),
-	pipelineStateStore: Symbol('PipelineStateStore'),
 	createOrchestrator: Symbol('CreateOrchestrator'),
-	amendOrchestrator: Symbol('AmendOrchestrator'),
-	mergeOrchestrator: Symbol('MergeOrchestrator'),
 	verifyOrchestrator: Symbol('VerifyOrchestrator'),
 	expandOrchestrator: Symbol('ExpandOrchestrator'),
-	imageInsertOrchestrator: Symbol('ImageInsertOrchestrator'),
 
 	// UI 层
 	modalManager: Symbol('ModalManager'),
@@ -155,15 +142,11 @@ export default class CognitiveRazorPlugin extends Plugin {
 
 			// 2. 停止管线编排器和缓存
 			this.tryResolve<CreateOrchestrator>(SERVICE_TOKENS.createOrchestrator)?.dispose();
-			this.tryResolve<AmendOrchestrator>(SERVICE_TOKENS.amendOrchestrator)?.dispose();
-			this.tryResolve<MergeOrchestrator>(SERVICE_TOKENS.mergeOrchestrator)?.dispose();
 			this.tryResolve<VerifyOrchestrator>(SERVICE_TOKENS.verifyOrchestrator)?.dispose();
 			this.tryResolve<CruidCache>(SERVICE_TOKENS.cruidCache)?.dispose();
 
-			// 3. 卸载视图
-			this.app.workspace.detachLeavesOfType(VIEW_TYPE_CR_WORKBENCH);
-			this.app.workspace.detachLeavesOfType(VIEW_TYPE_CR_DIFF);
-			logger?.debug('CognitiveRazorPlugin', '视图已卸载');
+			// 3. 视图由 Obsidian 工作区自动管理，onunload 不主动 detach
+			logger?.debug('CognitiveRazorPlugin', '视图由 Obsidian 工作区自动管理');
 
 			// 4. 解除所有订阅
 			for (const unsub of this.unsubscribers) {
@@ -242,8 +225,8 @@ export default class CognitiveRazorPlugin extends Plugin {
 		// 1. 初始化数据目录
 		await this.initializeDataDirectory();
 
-		// 2. FileStorage
-		const pluginDir = `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
+		// 2. FileStorage（使用 manifest.dir 确保路径与实际插件目录一致）
+		const pluginDir = this.manifest.dir;
 		const fileStorage = new FileStorage(this.app.vault, pluginDir);
 		const initResult = await fileStorage.initialize();
 		if (!initResult.ok) {
@@ -292,11 +275,11 @@ export default class CognitiveRazorPlugin extends Plugin {
 
 		logger.info('CognitiveRazorPlugin', '应用层组件初始化开始');
 
-		// 国际化
-		const i18n = new I18n(this.settings.language);
+		// 国际化（中文单语）
+		const i18n = new I18n();
 		i18n.setLogger(logger);
 		this.container.registerInstance(SERVICE_TOKENS.i18n, i18n, 'core');
-		logger.debug('CognitiveRazorPlugin', 'i18n 初始化完成', { language: this.settings.language });
+		logger.debug('CognitiveRazorPlugin', 'i18n 初始化完成');
 
 		// CruidCache
 		const cruidCache = new CruidCache(this.app, logger, (ref) => this.registerEvent(ref));
@@ -327,28 +310,6 @@ export default class CognitiveRazorPlugin extends Plugin {
 		// LockManager
 		const lockManager = new SimpleLockManager();
 		this.container.registerInstance(SERVICE_TOKENS.lockManager, lockManager, 'core');
-
-		// UndoManager
-		const undoManager = new UndoManager(
-			fileStorage, logger, 'data/snapshots',
-			this.settings.maxSnapshots,
-			this.settings.maxSnapshotAgeDays ?? 30
-		);
-		const undoInitResult = await undoManager.initialize();
-		if (!undoInitResult.ok) {
-			logger.error('CognitiveRazorPlugin', 'UndoManager 初始化失败', undefined, { error: undoInitResult.error });
-		}
-		this.container.registerInstance(SERVICE_TOKENS.undoManager, undoManager, 'core');
-
-		// 清理过期快照
-		const maxAgeDays = this.settings.maxSnapshotAgeDays ?? 30;
-		const maxAgeMs = maxAgeDays * 24 * 60 * 60 * 1000;
-		const cleanupResult = await undoManager.cleanupExpiredSnapshots(maxAgeMs);
-		if (cleanupResult.ok && cleanupResult.value > 0) {
-			logger.info('CognitiveRazorPlugin', `清理了 ${cleanupResult.value} 个过期快照`, {
-				maxAgeDays, cleanedCount: cleanupResult.value
-			});
-		}
 
 		// ProviderManager
 		const providerManager = new ProviderManager(this.settingsStore, logger);
@@ -394,7 +355,7 @@ export default class CognitiveRazorPlugin extends Plugin {
 
 		// TaskRunner
 		const taskRunner = new TaskRunner({
-			providerManager, promptManager, validator, undoManager,
+			providerManager, promptManager, validator,
 			logger, vectorIndex, settingsStore: this.settingsStore, app: this.app
 		});
 		this.container.registerInstance(SERVICE_TOKENS.taskRunner, taskRunner, 'core');
@@ -409,10 +370,6 @@ export default class CognitiveRazorPlugin extends Plugin {
 		this.container.registerInstance(SERVICE_TOKENS.taskQueue, taskQueue, 'core');
 		logger.debug('CognitiveRazorPlugin', 'TaskQueue 初始化完成', { status: taskQueue.getStatus() });
 
-		// PipelineStateStore
-		const pipelineStateStore = new PipelineStateStore(fileStorage, logger);
-		this.container.registerInstance(SERVICE_TOKENS.pipelineStateStore, pipelineStateStore, 'core');
-
 		// NoteRepository + ContentRenderer（Orchestrator 共享依赖）
 		const noteRepository = new NoteRepository(this.app, logger);
 		const contentRenderer = new ContentRenderer();
@@ -420,22 +377,14 @@ export default class CognitiveRazorPlugin extends Plugin {
 		// OrchestratorDeps：所有独立编排器共享的依赖对象
 		const orchestratorDeps: OrchestratorDeps = {
 			app: this.app, noteRepository, taskQueue, taskRunner, vectorIndex,
-			duplicateManager, undoManager, lockManager, promptManager,
+			duplicateManager, lockManager, promptManager,
 			contentRenderer, schemaRegistry, settingsStore: this.settingsStore,
-			cruidCache, logger, i18n, pipelineStateStore, providerManager,
+			cruidCache, logger, providerManager,
 		};
 
 		// CreateOrchestrator
 		const createOrchestrator = new CreateOrchestrator(orchestratorDeps);
 		this.container.registerInstance(SERVICE_TOKENS.createOrchestrator, createOrchestrator, 'core');
-
-		// AmendOrchestrator
-		const amendOrchestrator = new AmendOrchestrator(orchestratorDeps);
-		this.container.registerInstance(SERVICE_TOKENS.amendOrchestrator, amendOrchestrator, 'core');
-
-		// MergeOrchestrator
-		const mergeOrchestrator = new MergeOrchestrator(orchestratorDeps);
-		this.container.registerInstance(SERVICE_TOKENS.mergeOrchestrator, mergeOrchestrator, 'core');
 
 		// VerifyOrchestrator
 		const verifyOrchestrator = new VerifyOrchestrator(orchestratorDeps);
@@ -446,21 +395,6 @@ export default class CognitiveRazorPlugin extends Plugin {
 			createOrchestrator, fileStorage
 		});
 		this.container.registerInstance(SERVICE_TOKENS.expandOrchestrator, expandOrchestrator, 'core');
-
-		// ImageInsertOrchestrator
-		const imageInsertOrchestrator = new ImageInsertOrchestrator(orchestratorDeps);
-		this.container.registerInstance(SERVICE_TOKENS.imageInsertOrchestrator, imageInsertOrchestrator, 'core');
-
-		// 恢复持久化的管线状态（需求 33.2：Plugin 重启时恢复处于确认阶段的管线上下文）
-		const restoreResult = await pipelineStateStore.restoreToOrchestrators([
-			createOrchestrator,
-			amendOrchestrator,
-			mergeOrchestrator,
-			verifyOrchestrator,
-		]);
-		if (restoreResult.ok && restoreResult.value > 0) {
-			logger.info('CognitiveRazorPlugin', `已恢复 ${restoreResult.value} 条管线状态`);
-		}
 
 		logger.info('CognitiveRazorPlugin', '应用层组件初始化完成');
 	}
@@ -473,14 +407,6 @@ export default class CognitiveRazorPlugin extends Plugin {
 		const taskQueue = this.container.resolve<TaskQueue>(SERVICE_TOKENS.taskQueue);
 
 		logger.debug('CognitiveRazorPlugin', '开始初始化 UI 层');
-
-		// 检查是否需要首次配置向导
-		const needsSetup = this.checkNeedsSetup();
-		if (needsSetup) {
-			this.app.workspace.onLayoutReady(() => {
-				this.showSetupWizard();
-			});
-		}
 
 		// 注册视图
 		this.registerViews();
@@ -546,14 +472,13 @@ export default class CognitiveRazorPlugin extends Plugin {
 	}
 
 	/**
-	 * 初始化数据目录结构
+	 * 初始化数据目录结构（使用 manifest.dir 确保路径正确）
 	 */
 	private async initializeDataDirectory(): Promise<void> {
 		const dataDir = `${this.manifest.dir}/data`;
 		const adapter = this.app.vault.adapter;
 		const directories = [
 			dataDir,
-			`${dataDir}/snapshots`,
 			`${dataDir}/vectors`,
 			`${dataDir}/vectors/Domain`,
 			`${dataDir}/vectors/Issue`,
@@ -587,7 +512,6 @@ export default class CognitiveRazorPlugin extends Plugin {
 			this.settings = this.settingsStore.getSettings();
 			logger.info('CognitiveRazorPlugin', '设置加载成功', {
 				version: this.settings.version,
-				language: this.settings.language,
 				providersCount: Object.keys(this.settings.providers).length
 			});
 		}
@@ -600,23 +524,6 @@ export default class CognitiveRazorPlugin extends Plugin {
 			logger.setLogLevel(this.settings.logLevel);
 			logger.debug('CognitiveRazorPlugin', '日志配置已同步', { logLevel: this.settings.logLevel });
 		}
-	}
-
-	/**
-	 * 检查是否需要首次配置
-	 */
-	private checkNeedsSetup(): boolean {
-		return Object.keys(this.settings.providers).length === 0;
-	}
-
-	/**
-	 * 显示配置向导
-	 */
-	private showSetupWizard(): void {
-		const logger = this.tryResolve<Logger>(SERVICE_TOKENS.logger);
-		logger?.info('CognitiveRazorPlugin', '显示首次配置向导');
-		const wizard = new SetupWizard(this.app, this);
-		wizard.open();
 	}
 
 	/**
@@ -636,17 +543,7 @@ export default class CognitiveRazorPlugin extends Plugin {
 			}
 		);
 
-		// Diff 标签页视图（Svelte 5）
-		this.registerView(
-			VIEW_TYPE_CR_DIFF,
-			(leaf) => {
-				const view = new DiffTabView(leaf, this);
-				logger.debug('CognitiveRazorPlugin', 'DiffTabView 视图已创建');
-				return view;
-			}
-		);
-
-		logger.info('CognitiveRazorPlugin', '视图注册完成', { views: [VIEW_TYPE_CR_WORKBENCH, VIEW_TYPE_CR_DIFF] });
+		logger.info('CognitiveRazorPlugin', '视图注册完成', { views: [VIEW_TYPE_CR_WORKBENCH] });
 	}
 
 	/**
@@ -670,11 +567,6 @@ export default class CognitiveRazorPlugin extends Plugin {
 		// 2. 设置变更事件
 		const unsubSettings = this.settingsStore.subscribe((newSettings) => {
 			this.settings = newSettings;
-
-			if (i18n && newSettings.language !== i18n.getLanguage()) {
-				i18n.setLanguage(newSettings.language);
-				logger.debug('CognitiveRazorPlugin', '语言已切换', { language: newSettings.language });
-			}
 
 			logger.debug('CognitiveRazorPlugin', '设置已更新', {
 				logLevel: newSettings.logLevel,
@@ -763,12 +655,33 @@ export default class CognitiveRazorPlugin extends Plugin {
 	}
 
 	/**
+	 * 检查插件是否已完全初始化（所有服务已注册）
+	 * UI 组件应在调用 getComponents() 前检查此状态
+	 */
+	public isFullyInitialized(): boolean {
+		return this.container?.has(SERVICE_TOKENS.createOrchestrator) ?? false;
+	}
+
+	/**
+	 * 检查 Data 层是否已初始化（最小可用状态）
+	 */
+	public isDataLayerReady(): boolean {
+		return this.container?.has(SERVICE_TOKENS.settingsStore) ?? false;
+	}
+
+	/**
 	 * 获取组件（供其他模块使用）
 	 * 所有服务通过 ServiceContainer 解析，UI 组件不直接依赖 Plugin 实例获取服务
 	 *
 	 * @see 需求 1.4, 1.5
+	 * @throws 如果服务尚未初始化完成，抛出友好错误提示
 	 */
 	public getComponents() {
+		// 防御性检查：确保 Core 层已初始化
+		if (!this.isFullyInitialized()) {
+			throw new Error('插件尚未完全初始化，请稍后重试');
+		}
+
 		return {
 			container: this.container,
 			settings: this.settings,
@@ -782,18 +695,14 @@ export default class CognitiveRazorPlugin extends Plugin {
 			cruidCache: this.container.resolve<CruidCache>(SERVICE_TOKENS.cruidCache),
 			vectorIndex: this.container.resolve<VectorIndex>(SERVICE_TOKENS.vectorIndex),
 			lockManager: this.container.resolve<SimpleLockManager>(SERVICE_TOKENS.lockManager),
-			undoManager: this.container.resolve<UndoManager>(SERVICE_TOKENS.undoManager),
 			providerManager: this.container.resolve<ProviderManager>(SERVICE_TOKENS.providerManager),
 			promptManager: this.container.resolve<PromptManager>(SERVICE_TOKENS.promptManager),
 			duplicateManager: this.container.resolve<DuplicateManager>(SERVICE_TOKENS.duplicateManager),
 			taskQueue: this.container.resolve<TaskQueue>(SERVICE_TOKENS.taskQueue),
 			taskRunner: this.container.resolve<TaskRunner>(SERVICE_TOKENS.taskRunner),
 			createOrchestrator: this.container.resolve<CreateOrchestrator>(SERVICE_TOKENS.createOrchestrator),
-			amendOrchestrator: this.container.resolve<AmendOrchestrator>(SERVICE_TOKENS.amendOrchestrator),
-			mergeOrchestrator: this.container.resolve<MergeOrchestrator>(SERVICE_TOKENS.mergeOrchestrator),
 			verifyOrchestrator: this.container.resolve<VerifyOrchestrator>(SERVICE_TOKENS.verifyOrchestrator),
 			expandOrchestrator: this.container.resolve<ExpandOrchestrator>(SERVICE_TOKENS.expandOrchestrator),
-			imageInsertOrchestrator: this.container.resolve<ImageInsertOrchestrator>(SERVICE_TOKENS.imageInsertOrchestrator),
 		};
 	}
 }

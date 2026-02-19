@@ -11,36 +11,34 @@
   @see 需求 3.1, 3.2, 3.7, 3.8
 -->
 <script lang="ts">
+    import { untrack } from 'svelte';
     import type CognitiveRazorPlugin from '../../../../main';
     import { setCRContext } from '../../bridge/context';
     import {
         createQueueStore,
         createActiveFileStore,
         createDuplicatesStore,
-        createSnapshotsStore,
     } from '../../bridge/reactive.svelte';
     import CreateSection from './CreateSection.svelte';
     import QueueSection from './QueueSection.svelte';
     import DuplicatesSection from './DuplicatesSection.svelte';
-    import HistorySection from './HistorySection.svelte';
 
     let { plugin }: { plugin: CognitiveRazorPlugin } = $props();
 
-    // 从插件获取核心服务
-    const components = plugin.getComponents();
+    // untrack：plugin 是挂载时单次传入的稳定引用，不需要响应式追踪
+    const components = untrack(() => plugin.getComponents());
 
     // 设置 Context，供子组件通过 getCRContext() 获取
     setCRContext({
         container: components.container,
         i18n: components.i18n,
-        app: plugin.app,
+        app: untrack(() => plugin.app),
     });
 
     // 创建响应式 stores
     const queueStore = createQueueStore(components.taskQueue);
-    const activeFileStore = createActiveFileStore(plugin.app.workspace);
+    const activeFileStore = createActiveFileStore(untrack(() => plugin.app.workspace));
     const duplicatesStore = createDuplicatesStore(components.duplicateManager);
-    const snapshotsStore = createSnapshotsStore(components.undoManager);
 
     // 组件卸载时清理所有 store 订阅
     $effect(() => {
@@ -48,7 +46,6 @@
             queueStore.destroy();
             activeFileStore.destroy();
             duplicatesStore.destroy();
-            snapshotsStore.destroy();
         };
     });
 </script>
@@ -68,15 +65,6 @@
     <section class="cr-section" aria-label="重复对">
         <DuplicatesSection pairs={duplicatesStore.pairs} />
     </section>
-
-    <!-- 历史区（可折叠，默认折叠） -->
-    <section class="cr-section" aria-label="历史">
-        <HistorySection
-            snapshots={snapshotsStore.snapshots}
-            activeFile={activeFileStore.file}
-            onRefresh={snapshotsStore.refresh}
-        />
-    </section>
 </div>
 
 <style>
@@ -91,12 +79,5 @@
 
     .cr-section {
         width: 100%;
-    }
-
-    .cr-placeholder {
-        padding: var(--cr-space-3);
-        color: var(--cr-text-muted);
-        font-size: var(--cr-font-sm, 13px);
-        text-align: center;
     }
 </style>

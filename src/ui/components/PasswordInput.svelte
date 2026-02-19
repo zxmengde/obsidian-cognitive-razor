@@ -12,11 +12,13 @@
         placeholder = '',
         onchange,
         disabled = false,
+        id = undefined,
     }: {
         value?: string;
         placeholder?: string;
         onchange: (value: string) => void;
         disabled?: boolean;
+        id?: string;
     } = $props();
 
     /** 是否显示明文 */
@@ -41,6 +43,7 @@
     <input
         type={inputType}
         class="cr-password-input__field"
+        {id}
         {value}
         {placeholder}
         {disabled}

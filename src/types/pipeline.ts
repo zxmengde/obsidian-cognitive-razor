@@ -13,7 +13,7 @@ export type PipelineStage =
 
 /** 管线上下文 */
 export interface PipelineContext {
-    kind: "create" | "amend" | "merge" | "verify";
+    kind: "create" | "verify";
     pipelineId: string;
     nodeId: string;
     type: CRType;
@@ -30,13 +30,7 @@ export interface PipelineContext {
     newContent?: string;
     filePath?: string;
     verificationResult?: Record<string, unknown>;
-    mergePairId?: string;
-    deleteFilePath?: string;
-    deleteNoteName?: string;
-    deleteNodeId?: string;
-    deleteContent?: string;
     currentStatus?: string;
-    snapshotId?: string;
     error?: { code: string; message: string };
     createdAt: string;
     updatedAt: string;

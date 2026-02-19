@@ -16,10 +16,10 @@ export { ok, err, CognitiveRazorError, isErrResult, toErr, safeErrorMessage } fr
 // 任务系统
 export type {
     TaskType, TaskState, TaskError,
-    DefinePayload, TagPayload, WritePayload, AmendPayload,
-    MergePayload, IndexPayload, VerifyPayload,
-    DefineResult, TagResult, WriteResult, AmendResult,
-    MergeResult, IndexResult, VerifyResult,
+    DefinePayload, TagPayload, WritePayload,
+    IndexPayload, VerifyPayload,
+    DefineResult, TagResult, WriteResult,
+    IndexResult, VerifyResult,
     TaskPayloadMap, TaskResultMap,
     AnyTaskPayload, AnyTaskResult,
     TypedTaskRecord, TaskRecordBase, TaskRecord,
@@ -29,8 +29,6 @@ export type {
 export type {
     ProviderCapabilities, ProviderInfo,
     ChatRequest, ChatResponse,
-    ImageGenerateRequest, ImageGenerateResponse,
-    ImageGeneratePayload, ImageGenerateResult,
     EmbedRequest, EmbedResponse,
 } from "./provider";
 export { DEFAULT_ENDPOINTS } from "./provider";
@@ -47,7 +45,6 @@ export type {
     DuplicatePairStatus, DuplicatePair,
     VectorEntry, SearchResult, IndexStats,
     ConceptMeta, VectorIndexMeta, ConceptVector,
-    SnapshotRecord, SnapshotIndex, SnapshotMetadata, Snapshot,
     DuplicatePairsStore, QueueStateFile,
 } from "./storage";
 

@@ -308,8 +308,8 @@ export class CreateOrchestrator {
                 );
             } catch (error) {
                 this.pipelines.delete(pipelineId);
-                // 需求 34.3：锁冲突时使用用户友好的 i18n 提示
-                const lockMsg = handleLockConflictError(error, this.deps.i18n);
+                // 需求 34.3：锁冲突时使用用户友好提示
+                const lockMsg = handleLockConflictError(error);
                 if (lockMsg) {
                     return err("E320_TASK_CONFLICT", lockMsg) as Result<string>;
                 }
@@ -404,7 +404,6 @@ export class CreateOrchestrator {
                             enrichedData: context.enrichedData,
                             embedding: context.embedding,
                             filePath: context.filePath,
-                            skipSnapshot: true,
                             userInput: context.userInput,
                             sources: context.sources,
                         },
@@ -412,8 +411,8 @@ export class CreateOrchestrator {
                 );
             } catch (error) {
                 context.stage = "failed";
-                // 需求 34.3：锁冲突时使用用户友好的 i18n 提示
-                const lockMsg = handleLockConflictError(error, this.deps.i18n);
+                // 需求 34.3：锁冲突时使用用户友好提示
+                const lockMsg = handleLockConflictError(error);
                 if (lockMsg) {
                     context.error = { code: "E320_TASK_CONFLICT", message: lockMsg };
                     return err("E320_TASK_CONFLICT", lockMsg) as Result<void>;
@@ -756,9 +755,6 @@ export class CreateOrchestrator {
             // 如果没有 content 字段，整个 result 就是内容
             context.generatedContent = result;
         }
-        if (result?.snapshotId) {
-            context.snapshotId = result.snapshotId as string;
-        }
 
         // 生成文件路径（如果 Stub 阶段未生成）
         if (!context.filePath && context.standardizedData) {
@@ -826,34 +822,43 @@ export class CreateOrchestrator {
         const { targetPath, newContent } = composed.value;
         context.filePath = targetPath;
 
-        // 创建流程不保存快照（仅修订和合并时保存）
-
         await this.deps.noteRepository.writeAtomic(targetPath, newContent);
 
         this.logger.info("CreateOrchestrator", `文件已写入 (Stub → Draft): ${targetPath}`, {
             pipelineId: context.pipelineId,
             fileSize: newContent.length,
-            hasSnapshot: !!context.snapshotId,
             statusTransition: "Stub → Draft",
         });
 
         if (context.embedding) {
-            await this.deps.vectorIndex.upsert({
+            const upsertResult = await this.deps.vectorIndex.upsert({
                 uid: context.nodeId,
                 type: context.type,
                 embedding: context.embedding,
                 updated: formatCRTimestamp(),
             });
+            if (!upsertResult.ok) {
+                this.logger.warn("CreateOrchestrator", "向量索引更新失败，继续流程", {
+                    pipelineId: context.pipelineId,
+                    error: upsertResult.error,
+                });
+            }
         }
 
         context.stage = "checking_duplicates";
         context.updatedAt = formatCRTimestamp();
         if (context.embedding) {
-            await this.deps.duplicateManager.detect(
+            const detectResult = await this.deps.duplicateManager.detect(
                 context.nodeId,
                 context.type,
                 context.embedding,
             );
+            if (!detectResult.ok) {
+                this.logger.warn("CreateOrchestrator", "重复检测失败，继续流程", {
+                    pipelineId: context.pipelineId,
+                    error: detectResult.error,
+                });
+            }
         }
 
         await this.maybeStartAutoVerifyOrComplete(context);
@@ -948,7 +953,7 @@ export class CreateOrchestrator {
     private async maybeStartAutoVerifyOrComplete(context: PipelineContext): Promise<void> {
         return sharedMaybeStartAutoVerifyOrComplete(
             context,
-            { noteRepository: this.deps.noteRepository, taskQueue: this.deps.taskQueue, i18n: this.deps.i18n },
+            { noteRepository: this.deps.noteRepository, taskQueue: this.deps.taskQueue },
             (e) => this.publishEvent(e as CreatePipelineEvent),
             this.taskToPipeline,
             (t) => this.validatePrerequisites(t, context.type),
@@ -966,7 +971,7 @@ export class CreateOrchestrator {
     private async startVerifyTask(context: PipelineContext): Promise<Result<void>> {
         return sharedStartVerifyTask(
             context,
-            { noteRepository: this.deps.noteRepository, taskQueue: this.deps.taskQueue, i18n: this.deps.i18n },
+            { noteRepository: this.deps.noteRepository, taskQueue: this.deps.taskQueue },
             (e) => this.publishEvent(e as CreatePipelineEvent),
             this.taskToPipeline,
             (t) => this.getProviderIdForTask(t),
@@ -1029,7 +1034,6 @@ export class CreateOrchestrator {
                 coreDefinition: standardizedData.coreDefinition,
             },
             type,
-            settings.namingTemplate,
         );
 
         // 生成目标文件路径
@@ -1086,7 +1090,6 @@ export class CreateOrchestrator {
                     coreDefinition: context.standardizedData.coreDefinition,
                 },
                 context.type,
-                settings.namingTemplate,
             );
 
             // 生成目标路径
@@ -1168,7 +1171,6 @@ export class CreateOrchestrator {
                 coreDefinition: context.standardizedData.coreDefinition,
             },
             context.type,
-            settings.namingTemplate,
         );
 
         const { targetPath, targetName } = this.resolveCreateTarget(context, signature.standardName);
@@ -1212,7 +1214,7 @@ export class CreateOrchestrator {
     private renderContentToMarkdown(context: PipelineContext, standardName: string): string {
         const settings = this.getSettings();
         return sharedRenderContentToMarkdown(
-            context, standardName, this.deps.contentRenderer, settings.language || "zh",
+            context, standardName, this.deps.contentRenderer, "zh",
         );
     }
 

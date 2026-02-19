@@ -90,45 +90,6 @@ export interface ConceptVector {
 }
 
 // ============================================================================
-// 快照
-// ============================================================================
-
-/** 快照记录 */
-export interface SnapshotRecord {
-    id: string;
-    nodeId: string;
-    taskId: string;
-    path: string;
-    content: string;
-    created: string;
-    fileSize: number;
-    checksum: string;
-}
-
-/** 快照索引 */
-export interface SnapshotIndex {
-    version: string;
-    snapshots: SnapshotRecord[];
-    retentionPolicy: {
-        maxCount: number;
-        maxAgeDays: number;
-    };
-}
-
-/** 快照元数据（用于列表显示） */
-export interface SnapshotMetadata {
-    id: string;
-    nodeId: string;
-    taskId: string;
-    path: string;
-    created: string;
-    fileSize: number;
-}
-
-/** 快照（完整内容），与 SnapshotRecord 相同 */
-export type Snapshot = SnapshotRecord;
-
-// ============================================================================
 // 持久化存储
 // ============================================================================
 

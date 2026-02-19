@@ -7,17 +7,38 @@ import type {
 } from "../types";
 
 /**
- * 从 AI 响应中提取 JSON（支持 markdown 代码块包裹）
+ * 从 AI 响应中提取 JSON（多级容错）
  *
- * 优先匹配 ```json ... ```，其次匹配 ``` ... ```，
- * 若无代码块则直接尝试解析原始内容。
+ * 1. 优先匹配 ```json ... ```，其次匹配 ``` ... ```
+ * 2. 若无代码块，尝试提取第一个完整的 JSON 对象（{ ... }）
+ * 3. 最后直接尝试解析原始内容
  */
 export function extractJsonFromResponse<T = Record<string, unknown>>(raw: string): T {
     const trimmed = raw.trim();
+
+    // 阶段 1：代码块提取
     const jsonMatch = trimmed.match(/```json\s*([\s\S]*?)\s*```/)
         || trimmed.match(/```\s*([\s\S]*?)\s*```/);
-    const jsonStr = jsonMatch ? jsonMatch[1] : trimmed;
-    return JSON.parse(jsonStr) as T;
+    if (jsonMatch) {
+        return JSON.parse(jsonMatch[1]) as T;
+    }
+
+    // 阶段 2：直接解析（纯 JSON 输出）
+    try {
+        return JSON.parse(trimmed) as T;
+    } catch {
+        // 继续尝试阶段 3
+    }
+
+    // 阶段 3：提取第一个完整 JSON 对象（处理 AI 在前后加解释性文字的情况）
+    const firstBrace = trimmed.indexOf("{");
+    const lastBrace = trimmed.lastIndexOf("}");
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+        return JSON.parse(trimmed.substring(firstBrace, lastBrace + 1)) as T;
+    }
+
+    // 兜底：抛出解析错误
+    throw new SyntaxError("无法从响应中提取 JSON");
 }
 
 /** Validator 实现类 */
@@ -54,7 +75,7 @@ export class Validator {
     };
   }
 
-  /** 容错 JSON 解析 */
+  /** 容错 JSON 解析（支持 markdown 代码块包裹） */
   private tryParseJson(
     output: string
   ):
@@ -67,12 +88,12 @@ export class Validator {
       type: "ParseError",
       message: "模型输出非 JSON 或解析失败",
       rawOutput: trimmed.substring(0, 500),
-      fixInstruction:
-        "确保输出为纯 JSON，禁止使用代码块或额外文本",
+      fixInstruction: "确保输出为有效 JSON，可使用代码块包裹",
     });
 
     try {
-      return { ok: true, data: JSON.parse(trimmed) as Record<string, unknown> };
+      // 复用 extractJsonFromResponse，统一支持代码块提取
+      return { ok: true, data: extractJsonFromResponse<Record<string, unknown>>(output) };
     } catch {
       return { ok: false, error: buildParseError() };
     }

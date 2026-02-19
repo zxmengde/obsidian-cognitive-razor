@@ -10,7 +10,7 @@
  *   task.ts     — TaskType, TaskState, Payload/Result, TaskRecord
  *   provider.ts — Chat/Embed/Image 请求响应, DEFAULT_ENDPOINTS
  *   settings.ts — ProviderConfig, PluginSettings, DEFAULT_UI_STATE
- *   storage.ts  — Snapshot, DuplicatePair, VectorEntry, QueueStateFile
+ *   storage.ts  — DuplicatePair, VectorEntry, QueueStateFile
  *   pipeline.ts — PipelineStage, PipelineContext
  *   queue.ts    — QueueStatus, QueueEvent, TaskResult
  *   ui.ts       — ValidationContext/Result/Error

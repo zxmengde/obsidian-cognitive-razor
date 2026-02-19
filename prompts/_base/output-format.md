@@ -1,10 +1,10 @@
 <output_format>
-**CRITICAL: All outputs must follow these formatting rules.**
-1. **JSON Only**: Output strictly valid JSON. Do not wrap in markdown code blocks.
-2. **No Conversational Text**: Do not include any text before or after the JSON object.
-3. **Character Escaping**: 
-   - Use double quotes (") for all strings
-   - Escape special characters: \" for quotes, \\ for backslash, \n for newlines
-   - For LaTeX formulas, escape backslashes: write \\frac instead of \frac
-4. **Validation**: Ensure the output is parseable by standard JSON parsers.
+**关键：所有输出必须遵循以下格式规则。**
+1. **仅 JSON**：输出严格有效的 JSON。不要用 Markdown 代码块包裹。
+2. **无对话文本**：不要在 JSON 对象前后包含任何文本。
+3. **字符转义**：
+   - 所有字符串使用双引号（"）
+   - 转义特殊字符：\" 表示引号，\\ 表示反斜杠，\n 表示换行
+   - LaTeX 公式需转义反斜杠：写 \\frac 而非 \frac
+4. **验证**：确保输出可被标准 JSON 解析器解析。
 </output_format>

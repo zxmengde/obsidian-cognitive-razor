@@ -1,17 +1,17 @@
 
 <terminology_reference>
-**CRITICAL: Use consistent terminology across all outputs.**
+**关键：在所有输出中使用一致的术语。**
 
-| English | 中文 (Primary) | 中文 (Alternative) | Notes |
+| 英文 | 中文（首选） | 中文（备选） | 说明 |
 |---------|---------------|-------------------|-------|
-| Domain | 领域 | 边界 | The Container / Context |
-| Issue | 议题 | 张力 | The Tension / Conflict |
-| Theory | 理论 | 推演 | The Solution / Framework |
-| Entity | 实体 | 对象 | The Object / Actor |
-| Mechanism | 机制 | 因果 | The Process / Interaction |
+| Domain | 领域 | 边界 | 容器 / 上下文 |
+| Issue | 议题 | 张力 | 张力 / 冲突 |
+| Theory | 理论 | 推演 | 解决方案 / 框架 |
+| Entity | 实体 | 对象 | 对象 / 行动者 |
+| Mechanism | 机制 | 因果 | 过程 / 交互 |
 
-**Usage Rules:**
-- Primary translations are preferred in formal definitions
-- Alternative translations can be used in metaphorical contexts
-- Always maintain consistency within a single output
+**使用规则：**
+- 正式定义中优先使用首选翻译
+- 隐喻性语境中可使用备选翻译
+- 在单次输出中保持一致性
 </terminology_reference>

@@ -137,14 +137,6 @@ export const ERROR_CODE_INFO = {
     retryable: false,
     fixSuggestion: "请释放磁盘空间后重试。",
   },
-  E304_SNAPSHOT_FAILED: {
-    code: "E304_SNAPSHOT_FAILED",
-    name: "SNAPSHOT_FAILED",
-    description: "快照创建失败",
-    category: "SYSTEM_IO",
-    retryable: false,
-    fixSuggestion: "请检查快照目录权限与磁盘空间。",
-  },
   E305_VECTOR_MISMATCH: {
     code: "E305_VECTOR_MISMATCH",
     name: "VECTOR_MISMATCH",

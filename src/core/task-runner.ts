@@ -20,11 +20,8 @@ import type {
   DefinePayload,
   TagPayload,
   WritePayload,
-  AmendPayload as TypedAmendPayload,
-  MergePayload as TypedMergePayload,
   IndexPayload,
   VerifyPayload,
-  ImageGeneratePayload,
   AnyTaskPayload,
   TypedTaskRecord
 } from "../types";
@@ -33,14 +30,12 @@ import { createConceptSignature, generateSignatureText } from "./naming-utils";
 import { mapStandardizeOutput } from "./standardize-mapper";
 import type { ProviderManager } from "./provider-manager";
 import type { PromptManager } from "./prompt-manager";
-import type { UndoManager } from "./undo-manager";
 import type { VectorIndex } from "./vector-index";
 import type { SettingsStore } from "../data/settings-store";
 import { DEFAULT_TASK_MODEL_CONFIGS } from "../data/settings-store";
 import type { Validator } from "../data/validator";
 import { extractJsonFromResponse } from "../data/validator";
-import { App, MarkdownView, TFile } from "obsidian";
-import { dataUrlToArrayBuffer, inferImageExtension } from "../utils/image";
+import { App, TFile } from "obsidian";
 import { formatCRTimestamp } from "../utils/date-utils";
 import { NoteRepository } from "./note-repository";
 
@@ -52,11 +47,6 @@ const TASK_PIPELINE_ORDER: TaskType[] = [
   "index",
   "verify"
 ];
-
-// 本地 AmendPayload / MergePayload 已移除，使用 types.ts 中的类型安全定义
-// TypedAmendPayload = AmendPayload from types.ts
-// TypedMergePayload = MergePayload from types.ts
-
 
 /** 类型必填字段定义 */
 const TYPE_REQUIRED_FIELDS: Record<CRType, string[]> = {
@@ -157,7 +147,6 @@ interface TaskRunnerDependencies {
   providerManager: ProviderManager;
   promptManager: PromptManager;
   validator: Validator;
-  undoManager: UndoManager;
   logger: ILogger;
   vectorIndex?: VectorIndex;
   schemaRegistry?: SchemaRegistry;
@@ -167,13 +156,7 @@ interface TaskRunnerDependencies {
 }
 
 /** 写入操作上下文 */
-interface WriteContext {
-  filePath: string;
-  content: string;
-  nodeId: string;
-  taskId: string;
-  originalContent?: string;
-}
+
 
 interface TaskHandler {
   taskType: TaskType;
@@ -193,7 +176,6 @@ export class TaskRunner {
   private providerManager: ProviderManager;
   private promptManager: PromptManager;
   private validator: Validator;
-  private undoManager: UndoManager;
   private logger: ILogger;
   private vectorIndex?: VectorIndex;
   private schemaRegistry: SchemaRegistry;
@@ -208,7 +190,6 @@ export class TaskRunner {
     this.providerManager = deps.providerManager;
     this.promptManager = deps.promptManager;
     this.validator = deps.validator;
-    this.undoManager = deps.undoManager;
     this.logger = deps.logger;
     this.vectorIndex = deps.vectorIndex;
     // 使用注入的 SchemaRegistry 或默认单例
@@ -236,20 +217,8 @@ export class TaskRunner {
         { taskType: "write", run: (task, signal) => this.executeWrite(task, signal) }
       ],
       [
-        "amend",
-        { taskType: "amend", run: (task, signal) => this.executeAmend(task, signal) }
-      ],
-      [
-        "merge",
-        { taskType: "merge", run: (task, signal) => this.executeMerge(task, signal) }
-      ],
-      [
         "verify",
         { taskType: "verify", run: (task, signal) => this.executeVerify(task, signal) }
-      ],
-      [
-        "image-generate",
-        { taskType: "image-generate", run: (task, signal) => this.executeImageGenerate(task, signal) }
       ],
     ]);
 
@@ -327,73 +296,24 @@ export class TaskRunner {
   }
 
 
-  /** 创建写入前快照 */
-  async createSnapshotBeforeWrite(context: WriteContext): Promise<Result<string>> {
-    try {
-      this.logger.debug("TaskRunner", "创建写入前快照", {
-        filePath: context.filePath,
-        nodeId: context.nodeId,
-        taskId: context.taskId
-      });
-
-      // 获取原始内容（如果未提供）
-      let originalContent = context.originalContent;
-      if (originalContent === undefined) {
-        const existing = await this.noteRepository.readByPathIfExists(context.filePath);
-        originalContent = existing ?? "";
-      }
-
-      // 如果文件不存在，使用空字符串作为原始内容
-      if (originalContent === undefined) {
-        originalContent = "";
-      }
-
-      // 创建快照
-      const snapshotResult = await this.undoManager.createSnapshot(
-        context.filePath,
-        originalContent,
-        context.taskId,
-        context.nodeId
-      );
-
-      if (!snapshotResult.ok) {
-        this.logger.error("TaskRunner", "创建快照失败", undefined, {
-          filePath: context.filePath,
-          error: snapshotResult.error
-        });
-        return snapshotResult;
-      }
-
-      this.logger.info("TaskRunner", `快照已创建: ${snapshotResult.value}`, {
-        filePath: context.filePath,
-        nodeId: context.nodeId,
-        taskId: context.taskId
-      });
-
-      return snapshotResult;
-    } catch (error) {
-      this.logger.error("TaskRunner", "创建快照异常", error as Error, {
-        filePath: context.filePath
-      });
-      return err("E304_SNAPSHOT_FAILED", "创建快照失败", error);
-    }
-  }
 
 
 
 
-  /** 更新笔记状态 */
+
+  /** 更新笔记状态 — 使用 Obsidian 官方原子 API */
   async updateNoteStatus(filePath: string, newStatus: NoteState): Promise<Result<void>> {
     try {
-      const content = await this.noteRepository.readByPathIfExists(filePath);
-      if (content === null) {
+      const file = this.app.vault.getAbstractFileByPath(filePath);
+      if (!(file instanceof TFile)) {
         return err("E301_FILE_NOT_FOUND", `目标文件不存在: ${filePath}`, { filePath });
       }
-      
-      // 更新 frontmatter 中的 status 字段
-      const updatedContent = this.updateFrontmatterStatus(content, newStatus);
-      
-      await this.noteRepository.writeAtomic(filePath, updatedContent);
+
+      const now = formatCRTimestamp();
+      await this.app.fileManager.processFrontMatter(file, (fm) => {
+        fm.status = newStatus;
+        fm.updated = now;
+      });
 
       this.logger.info("TaskRunner", `笔记状态已更新为 ${newStatus}`, { filePath });
       return ok(undefined);
@@ -403,80 +323,8 @@ export class TaskRunner {
     }
   }
 
-  /** 更新 frontmatter 中的 status 字段 */
-  private updateFrontmatterStatus(content: string, newStatus: NoteState): string {
-    // 匹配 YAML frontmatter
-    const frontmatterRegex = /^---\n([\s\S]*?)\n---/;
-    const match = content.match(frontmatterRegex);
-    
-    if (!match) {
-      return content;
-    }
-
-    const frontmatter = match[1];
-    const withStatus = frontmatter.replace(
-      /^status:\s*.*$/m,
-      `status: ${newStatus}`
-    );
-    const now = formatCRTimestamp();
-    const updatedFrontmatter = withStatus.replace(
-      /^updated:\s*.*$/m,
-      `updated: ${now}`
-    );
-
-    return content.replace(frontmatterRegex, `---\n${updatedFrontmatter}\n---`);
-  }
 
 
-  /** 完成合并流程 - 删除被合并笔记并更新向量索引 */
-  async completeMergeFlow(
-    keepNodeId: string,
-    deleteNodeId: string,
-    deleteFilePath: string
-  ): Promise<Result<void>> {
-    try {
-      this.logger.info("TaskRunner", "开始完成合并流程", {
-        keepNodeId,
-        deleteNodeId,
-        deleteFilePath
-      });
-
-      // 1. 删除被合并的笔记文件
-      const deleted = await this.noteRepository.deleteByPathIfExists(deleteFilePath);
-      if (!deleted) {
-        this.logger.warn("TaskRunner", "被合并笔记不存在，跳过删除", { deleteFilePath });
-      } else {
-        this.logger.info("TaskRunner", `已删除被合并笔记: ${deleteFilePath}`);
-      }
-
-      // 2. 从向量索引中移除被合并的条目
-      if (this.vectorIndex) {
-        const deleteIndexResult = await this.vectorIndex.delete(deleteNodeId);
-        if (!deleteIndexResult.ok) {
-          this.logger.warn("TaskRunner", "从向量索引移除条目失败", {
-            deleteNodeId,
-            error: deleteIndexResult.error
-          });
-          // 不阻断流程，继续执行
-        } else {
-          this.logger.info("TaskRunner", `已从向量索引移除: ${deleteNodeId}`);
-        }
-      }
-
-      this.logger.info("TaskRunner", "合并流程完成", {
-        keepNodeId,
-        deleteNodeId
-      });
-
-      return ok(undefined);
-    } catch (error) {
-      this.logger.error("TaskRunner", "完成合并流程失败", error as Error, {
-        keepNodeId,
-        deleteNodeId
-      });
-      return err("E500_INTERNAL_ERROR", "完成合并流程失败", error);
-    }
-  }
 
 
   /** 验证任务管线顺序 */
@@ -693,8 +541,7 @@ export class TaskRunner {
             aliases: Array.isArray(payload.aliases) ? payload.aliases : [],
             coreDefinition: standardized.coreDefinition
           },
-          primaryType,
-          payload.namingTemplate || "{{chinese}} ({{english}})"
+          primaryType
         );
         text = generateSignatureText(signature);
       }
@@ -852,21 +699,6 @@ export class TaskRunner {
         });
       }
 
-      // 创建快照（写入前）
-      const skipSnapshot = payload.skipSnapshot === true;
-      if (payload.filePath && !skipSnapshot) {
-        const snapshotResult = await this.createSnapshotBeforeWrite({
-          filePath: payload.filePath,
-          content: "",
-          nodeId: task.nodeId,
-          taskId: task.id,
-          originalContent: payload.originalContent || ""
-        });
-        if (snapshotResult.ok) {
-          accumulated.snapshotId = snapshotResult.value;
-        }
-      }
-
       return ok({
         taskId: task.id,
         state: "Completed",
@@ -919,20 +751,6 @@ export class TaskRunner {
     }
 
     const data = (validationResult.data as Record<string, unknown>) || JSON.parse(chatResult.value.content);
-
-    const skipSnapshot = payload.skipSnapshot === true;
-    if (payload.filePath && !skipSnapshot) {
-      const snapshotResult = await this.createSnapshotBeforeWrite({
-        filePath: payload.filePath,
-        content: "",
-        nodeId: task.nodeId,
-        taskId: task.id,
-        originalContent: payload.originalContent || ""
-      });
-      if (snapshotResult.ok) {
-        data.snapshotId = snapshotResult.value;
-      }
-    }
 
     return ok({ taskId: task.id, state: "Completed", data });
   }
@@ -1001,194 +819,6 @@ export class TaskRunner {
   }
 
 
-  /** 执行 amend 任务（修订） */
-  private async executeAmend(
-    task: TaskRecord,
-    signal: AbortSignal
-  ): Promise<Result<TaskResult>> {
-    try {
-      // 通过 taskType 判别式窄化，安全访问 AmendPayload 字段
-      const typed = narrowTask(task);
-      if (typed.taskType !== "amend") {
-        return this.createTaskError(task, { code: "E310_INVALID_STATE", message: "任务类型不匹配: 期望 amend" });
-      }
-      const payload = typed.payload;
-      if (!payload.currentContent || !payload.instruction) {
-        return this.createTaskError(task, { code: "E102_MISSING_FIELD", message: "修订任务载荷缺失必要字段" });
-      }
-
-      const conceptType = payload.conceptType || "Entity";
-      const slots = {
-        CTX_CURRENT: payload.currentContent,
-        USER_INSTRUCTION: payload.instruction,
-        CONCEPT_TYPE: conceptType,
-        CTX_LANGUAGE: this.getLanguage()
-      };
-
-      const prompt = this.promptManager.build("amend", slots, conceptType);
-
-      const chatResult = await this.providerManager.chat(
-        this.buildChatRequest("amend", prompt, task.providerRef), signal
-      );
-      if (!chatResult.ok) {
-        return this.createTaskError(task, chatResult.error!);
-      }
-
-      const amendOutputSchema = {
-        type: "object",
-        properties: {
-          content: { type: "object" },
-          changes_summary: { type: "string" },
-          preserved_sections: { type: "array" },
-          enhanced_sections: { type: "array" }
-        },
-        required: ["content"]
-      };
-
-      const validationResult = await this.validator.validate(
-        chatResult.value.content,
-        amendOutputSchema,
-        []
-      );
-
-      if (!validationResult.valid) {
-        return this.createValidationError(task, validationResult.errors!);
-      }
-
-      const parsed = (validationResult.data || {}) as Record<string, unknown>;
-      const rawContent = parsed.content;
-      if (!rawContent || typeof rawContent !== "object" || Array.isArray(rawContent)) {
-        return this.createTaskError(task, { code: "E211_MODEL_SCHEMA_VIOLATION", message: "修订结果缺少有效的 content 对象" });
-      }
-
-      const schema = this.getSchema(conceptType);
-      const rules = this.getValidationRules(conceptType);
-      const contentValidation = await this.validator.validate(
-        JSON.stringify(rawContent),
-        schema,
-        rules,
-        { type: conceptType }
-      );
-
-      if (!contentValidation.valid) {
-        return this.createValidationError(task, contentValidation.errors!);
-      }
-
-      return ok({
-        taskId: task.id,
-        state: "Completed",
-        data: (contentValidation.data || {}) as Record<string, unknown>
-      });
-    } catch (error) {
-      this.logger.error("TaskRunner", "执行 amend 失败", error as Error, {
-        taskId: task.id
-      });
-      return toErr(error, "E500_INTERNAL_ERROR", "执行 amend 失败");
-    }
-  }
-
-  /** 执行 merge 任务（合并） */
-  private async executeMerge(
-    task: TaskRecord,
-    signal: AbortSignal
-  ): Promise<Result<TaskResult>> {
-    try {
-      // 通过 taskType 判别式窄化，安全访问 MergePayload 字段
-      const typed = narrowTask(task);
-      if (typed.taskType !== "merge") {
-        return this.createTaskError(task, { code: "E310_INVALID_STATE", message: "任务类型不匹配: 期望 merge" });
-      }
-      const payload = typed.payload;
-      if (!payload.keepContent || !payload.deleteContent || !payload.keepName || !payload.deleteName) {
-        return this.createTaskError(task, { code: "E102_MISSING_FIELD", message: "合并任务载荷缺失必要字段" });
-      }
-
-      const conceptType = payload.conceptType || "Entity";
-      const instruction = payload.finalFileName
-        ? `合并这两个 ${conceptType} 类型的概念笔记，最终文件名为 "${payload.finalFileName}"`
-        : `合并这两个 ${conceptType} 类型的概念笔记`;
-
-      const slots: Record<string, string> = {
-        SOURCE_A_NAME: payload.keepName,
-        CTX_SOURCE_A: payload.keepContent,
-        SOURCE_B_NAME: payload.deleteName,
-        CTX_SOURCE_B: payload.deleteContent,
-        USER_INSTRUCTION: instruction,
-        CONCEPT_TYPE: conceptType,
-        CTX_LANGUAGE: this.getLanguage()
-      };
-
-      const prompt = this.promptManager.build("merge", slots, conceptType);
-
-      const chatResult = await this.providerManager.chat(
-        this.buildChatRequest("merge", prompt, task.providerRef), signal
-      );
-      if (!chatResult.ok) {
-        return this.createTaskError(task, chatResult.error!);
-      }
-
-      const mergeOutputSchema = {
-        type: "object",
-        properties: {
-          merged_name: { type: "object" },
-          merge_rationale: { type: "string" },
-          content: { type: "object" },
-          preserved_from_a: { type: "array" },
-          preserved_from_b: { type: "array" }
-        },
-        required: ["merged_name", "merge_rationale", "content", "preserved_from_a", "preserved_from_b"]
-      };
-
-      const validationResult = await this.validator.validate(
-        chatResult.value.content,
-        mergeOutputSchema,
-        []
-      );
-
-      if (!validationResult.valid) {
-        return this.createValidationError(task, validationResult.errors!);
-      }
-
-      const parsed = (validationResult.data || {}) as Record<string, unknown>;
-      const rawContent = parsed.content;
-      if (!rawContent || typeof rawContent !== "object" || Array.isArray(rawContent)) {
-        return this.createTaskError(task, { code: "E211_MODEL_SCHEMA_VIOLATION", message: "合并结果缺少有效的 content 对象" });
-      }
-
-      const schema = this.getSchema(conceptType);
-      const rules = this.getValidationRules(conceptType);
-      const contentValidation = await this.validator.validate(
-        JSON.stringify(rawContent),
-        schema,
-        rules,
-        { type: conceptType }
-      );
-
-      if (!contentValidation.valid) {
-        return this.createValidationError(task, contentValidation.errors!);
-      }
-
-      const mergeResult = {
-        ...parsed,
-        content: (contentValidation.data || {}) as Record<string, unknown>
-      };
-
-      return ok({
-        taskId: task.id,
-        state: "Completed",
-        data: mergeResult as Record<string, unknown>
-      });
-    } catch (error) {
-      this.logger.error("TaskRunner", "执行 merge 失败", error as Error, {
-        taskId: task.id
-      });
-      return toErr(error, "E500_INTERNAL_ERROR", "执行 merge 失败");
-    }
-  }
-
-
-
-
   /** 执行 verify 任务（校验） */
   private async executeVerify(
     task: TaskRecord,
@@ -1226,47 +856,20 @@ export class TaskRunner {
         return this.createTaskError(task, chatResult.error!);
       }
 
-      const verifyOutputSchema = {
-        type: "object",
-        required: [
-          "overall_assessment",
-          "confidence_score",
-          "issues",
-          "verified_claims",
-          "recommendations",
-          "requires_human_review"
-        ],
-        properties: {
-          overall_assessment: { type: "string" },
-          confidence_score: { type: "number" },
-          issues: { type: "array" },
-          verified_claims: { type: "array" },
-          recommendations: { type: "array" },
-          requires_human_review: { type: "boolean" }
-        }
-      };
-
-      const validationResult = await this.validator.validate(
-        chatResult.value.content,
-        verifyOutputSchema,
-        []
-      );
-
-      if (!validationResult.valid) {
-        return this.createValidationError(task, validationResult.errors!);
+      // Verify 输出为纯文本 Markdown 报告，无需 JSON 解析
+      const reportText = (chatResult.value.content || "").trim();
+      if (!reportText) {
+        return this.createTaskError(task, { code: "E102_MISSING_FIELD", message: "Verify 报告内容为空" });
       }
 
-      const resultData = (validationResult.data || {}) as Record<string, unknown>;
-
       this.logger.info("TaskRunner", `Verify 任务完成: ${task.id}`, {
-        overall_assessment: resultData.overall_assessment,
-        issueCount: (resultData.issues as unknown[]).length
+        reportLength: reportText.length,
       });
 
       return ok({
         taskId: task.id,
         state: "Completed",
-        data: resultData
+        data: { reportText },
       });
     } catch (error) {
       this.logger.error("TaskRunner", "执行 verify 失败", error as Error, {
@@ -1274,175 +877,6 @@ export class TaskRunner {
       });
       return toErr(error, "E500_INTERNAL_ERROR", "执行 verify 失败");
     }
-  }
-
-  /** 执行图片生成任务 */
-  private async executeImageGenerate(
-    task: TaskRecord,
-    signal?: AbortSignal
-  ): Promise<Result<TaskResult>> {
-    try {
-      if (!this.settingsStore) {
-        return this.createTaskError(task, { code: "E310_INVALID_STATE", message: "设置未初始化" });
-      }
-      // 通过 taskType 判别式窄化，安全访问 ImageGeneratePayload 字段
-      const typed = narrowTask(task);
-      if (typed.taskType !== "image-generate") {
-        return this.createTaskError(task, { code: "E310_INVALID_STATE", message: "任务类型不匹配: 期望 image-generate" });
-      }
-      const payload = typed.payload;
-      if (!payload.userPrompt || !payload.filePath) {
-        return this.createTaskError(task, { code: "E102_MISSING_FIELD", message: "图片生成任务载荷缺失必要字段" });
-      }
-
-      const settings = this.settingsStore.getSettings();
-      const promptSlots = {
-        USER_PROMPT: payload.userPrompt,
-        CONTEXT_BEFORE: payload.contextBefore ?? "",
-        CONTEXT_AFTER: payload.contextAfter ?? "",
-        CONCEPT_TYPE: payload.frontmatter?.type ?? "",
-        CONCEPT_NAME: payload.frontmatter?.name ?? "",
-        CTX_LANGUAGE: this.getLanguage()
-      };
-
-      let promptTemplate: string;
-      try {
-        promptTemplate = this.promptManager.build("image-generate", promptSlots);
-      } catch (error) {
-        return toErr(error, "E500_INTERNAL_ERROR", "构建图片提示词失败");
-      }
-
-      const promptModelConfig = this.getTaskModelConfig("write", task.providerRef);
-      if (!promptModelConfig.providerId) {
-        return this.createTaskError(task, { code: "E401_PROVIDER_NOT_CONFIGURED", message: "请先配置 Provider" });
-      }
-
-      const promptResult = await this.providerManager.chat(
-        this.buildChatRequest("write", promptTemplate, task.providerRef), signal
-      );
-      if (!promptResult.ok) {
-        return this.createTaskError(task, promptResult.error!);
-      }
-
-      const promptSchema = {
-        type: "object",
-        required: ["prompt", "altText"],
-        properties: {
-          prompt: { type: "string" },
-          altText: { type: "string" },
-          styleHints: { type: "array" },
-          negativePrompt: { type: "string" }
-        }
-      };
-
-      const promptValidation = await this.validator.validate(
-        promptResult.value.content,
-        promptSchema,
-        []
-      );
-
-      if (!promptValidation.valid) {
-        return this.createValidationError(task, promptValidation.errors!);
-      }
-
-      const promptData = (promptValidation.data || {}) as {
-        prompt?: string;
-        altText?: string;
-      };
-
-      if (!promptData.prompt) {
-        return this.createTaskError(task, { code: "E211_MODEL_SCHEMA_VIOLATION", message: "图片提示词缺失" });
-      }
-
-      const imageModelConfig = this.getTaskModelConfig("image-generate", task.providerRef);
-      if (!imageModelConfig.providerId) {
-        return this.createTaskError(task, { code: "E401_PROVIDER_NOT_CONFIGURED", message: "请先配置 Provider" });
-      }
-
-      const imageResult = await this.providerManager.generateImage(
-        {
-          providerId: imageModelConfig.providerId,
-          model: imageModelConfig.model,
-          prompt: promptData.prompt,
-          size: settings.imageGeneration.defaultSize,
-          quality: settings.imageGeneration.defaultQuality,
-          style: settings.imageGeneration.defaultStyle
-        },
-        signal
-      );
-
-      if (!imageResult.ok) {
-        return this.createTaskError(task, imageResult.error);
-      }
-
-      const binaryResult = dataUrlToArrayBuffer(imageResult.value.imageUrl);
-      if (!binaryResult.ok) {
-        return this.createTaskError(task, binaryResult.error);
-      }
-
-      const file = this.noteRepository.getFileByPath(payload.filePath);
-      if (!file) {
-        return this.createTaskError(task, { code: "E301_FILE_NOT_FOUND", message: "目标文件不存在" });
-      }
-
-      const currentContent = await this.noteRepository.read(file);
-
-      const ext = inferImageExtension(imageResult.value.imageUrl);
-      const attachmentPath = this.noteRepository.getAvailablePathForAttachment(
-        `generated-image.${ext}`,
-        payload.filePath
-      );
-
-      await this.noteRepository.createBinary(attachmentPath, binaryResult.value);
-
-      const altText = promptData.altText || imageResult.value.altText || payload.userPrompt;
-      const markdown = `![${altText}](${attachmentPath})\n`;
-      await this.insertImageReference(file, currentContent, markdown, payload.cursorPosition);
-
-      return ok({
-        taskId: task.id,
-        state: "Completed",
-        data: {
-          localPath: attachmentPath,
-          imageUrl: imageResult.value.imageUrl,
-          revisedPrompt: imageResult.value.revisedPrompt,
-          altText
-        }
-      });
-    } catch (error) {
-      this.logger.error("TaskRunner", "执行 image-generate 失败", error as Error, {
-        taskId: task.id
-      });
-      return toErr(error, "E500_INTERNAL_ERROR", "执行 image-generate 失败");
-    }
-  }
-
-  private async insertImageReference(
-    file: TFile,
-    originalContent: string,
-    markdown: string,
-    cursor: { line: number; ch: number }
-  ): Promise<void> {
-    // 尝试使用当前编辑器插入，若无则回退为直接写入
-    const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-    if (activeView && activeView.file && activeView.file.path === file.path) {
-      const editor = activeView.editor;
-      editor.replaceRange(markdown, cursor);
-      await this.noteRepository.modify(file, editor.getValue());
-      return;
-    }
-
-    const lines = originalContent.split("\n");
-    const lineIndex = Math.min(Math.max(cursor.line ?? lines.length, 0), lines.length);
-    if (lineIndex >= lines.length) {
-      lines.push("");
-    }
-    const targetLine = lines[lineIndex] ?? "";
-    const ch = Math.min(Math.max(cursor.ch ?? targetLine.length, 0), targetLine.length);
-    const updatedLine = `${targetLine.slice(0, ch)}${markdown}${targetLine.slice(ch)}`;
-    lines[lineIndex] = updatedLine;
-    const nextContent = lines.join("\n");
-    await this.noteRepository.modify(file, nextContent);
   }
 
   // 辅助方法
@@ -1534,11 +968,10 @@ export class TaskRunner {
   }
 
   /**
-   * 获取 CTX_LANGUAGE 值
+   * 获取 CTX_LANGUAGE 值（始终返回中文）
    */
   private getLanguage(): string {
-    const settings = this.settingsStore?.getSettings();
-    return settings?.language === "en" ? "English" : "Chinese";
+    return "Chinese";
   }
 
 
@@ -1577,6 +1010,7 @@ export class TaskRunner {
     // 简化版本：不再使用业务规则校验
     return [];
   }
+
 
   /**
    * 获取 Schema
@@ -1691,14 +1125,6 @@ export class TaskRunner {
       });
     }
 
-    if (requiredCapability === "image" && !capabilities.image) {
-      return err("E401_PROVIDER_NOT_CONFIGURED", `Provider ${providerId} 不支持图片生成能力`, {
-        providerId,
-        requiredCapability,
-        availableCapabilities: capabilities
-      });
-    }
-
     this.logger.debug("TaskRunner", "Provider 能力验证通过", {
       taskId: task.id,
       providerId,
@@ -1714,17 +1140,13 @@ export class TaskRunner {
    * @param taskType 任务类型
    * @returns 所需能力类型
    */
-  private getRequiredCapability(taskType: TaskType): "chat" | "embedding" | "image" {
+  private getRequiredCapability(taskType: TaskType): "chat" | "embedding" {
     switch (taskType) {
       case "index":
         return "embedding";
-      case "image-generate":
-        return "image";
       case "define":
       case "tag":
       case "write":
-      case "amend":
-      case "merge":
       case "verify":
       default:
         return "chat";

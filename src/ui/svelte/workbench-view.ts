@@ -44,7 +44,39 @@ export class WorkbenchView extends ItemView {
         container.empty();
         container.addClass('cr-scope');
 
-        // 挂载 Svelte 根组件，传入 plugin 引用供组件获取服务
+        // 等待插件完全初始化后再挂载 Svelte 组件
+        // 避免在服务未注册时调用 getComponents() 导致崩溃
+        if (!this.plugin.isFullyInitialized()) {
+            container.createEl('div', {
+                cls: 'cr-loading',
+                text: '正在初始化...',
+            });
+            // 轮询等待初始化完成（最多 10 秒）
+            const maxWait = 10000;
+            const interval = 100;
+            let waited = 0;
+            const checkReady = setInterval(() => {
+                waited += interval;
+                if (this.plugin.isFullyInitialized()) {
+                    clearInterval(checkReady);
+                    container.empty();
+                    this.mountComponent(container);
+                } else if (waited >= maxWait) {
+                    clearInterval(checkReady);
+                    container.empty();
+                    container.createEl('div', {
+                        cls: 'cr-error',
+                        text: '插件初始化超时，请重新加载插件',
+                    });
+                }
+            }, interval);
+            return;
+        }
+
+        this.mountComponent(container);
+    }
+
+    private mountComponent(container: HTMLElement): void {
         const { destroy } = mountSvelteComponent(container, WorkbenchRoot, {
             plugin: this.plugin,
         });

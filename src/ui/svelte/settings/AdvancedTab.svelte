@@ -1,13 +1,11 @@
 <!--
   AdvancedTab.svelte — 高级设置 Tab
 
-  四个设置组：
+  两个设置组：
   1. 去重检测：相似度阈值滑块、嵌入向量维度下拉（唯一配置点）
   2. 队列性能：并发数、自动重试、最大重试次数、任务超时、历史保留上限
-  3. 快照管理：最大快照数、快照保留天数
-  4. 图片生成：启用开关、默认尺寸/质量/风格下拉、上下文窗口大小
 
-  @see 需求 10.4, 10.5, 10.7, 10.9
+  @see 需求 10.4, 10.5, 10.7
 -->
 <script lang="ts">
     import { getCRContext } from '../../bridge/context';
@@ -45,92 +43,32 @@
         { value: '3072', label: '3072' },
     ]);
 
-    /** 图片尺寸选项 */
-    const imageSizeOptions = $derived([
-        { value: '1024x1024', label: i18n.t('imageGeneration.defaultSize.square') },
-        { value: '1792x1024', label: i18n.t('imageGeneration.defaultSize.landscape') },
-        { value: '1024x1792', label: i18n.t('imageGeneration.defaultSize.portrait') },
-    ]);
-
-    /** 图片质量选项 */
-    const imageQualityOptions = $derived([
-        { value: 'standard', label: i18n.t('imageGeneration.defaultQuality.standard') },
-        { value: 'hd', label: i18n.t('imageGeneration.defaultQuality.hd') },
-    ]);
-
-    /** 图片风格选项 */
-    const imageStyleOptions = $derived([
-        { value: 'vivid', label: i18n.t('imageGeneration.defaultStyle.vivid') },
-        { value: 'natural', label: i18n.t('imageGeneration.defaultStyle.natural') },
-    ]);
-
     /* ── 去重检测 ── */
 
     async function handleSimilarityChange(value: number) {
-        await settingsStore.update({ similarityThreshold: value });
+        await settingsStore.updateSettings({ similarityThreshold: value });
     }
 
     async function handleEmbeddingDimensionChange(value: string) {
-        await settingsStore.update({ embeddingDimension: Number(value) });
+        await settingsStore.updateSettings({ embeddingDimension: Number(value) });
     }
 
     /* ── 队列性能 ── */
 
     async function handleConcurrencyChange(value: number) {
-        await settingsStore.update({ concurrency: value });
+        await settingsStore.updateSettings({ concurrency: value });
     }
 
     async function handleAutoRetryChange(checked: boolean) {
-        await settingsStore.update({ autoRetry: checked });
+        await settingsStore.updateSettings({ autoRetry: checked });
     }
 
     async function handleMaxRetriesChange(value: number) {
-        await settingsStore.update({ maxRetryAttempts: value });
+        await settingsStore.updateSettings({ maxRetryAttempts: value });
     }
 
     async function handleTaskTimeoutChange(value: number) {
-        await settingsStore.update({ taskTimeoutMs: value });
-    }
-
-    async function handleMaxHistoryChange(value: number) {
-        await settingsStore.update({ maxTaskHistory: value });
-    }
-
-    /* ── 快照管理 ── */
-
-    async function handleMaxSnapshotsChange(value: number) {
-        await settingsStore.update({ maxSnapshots: value });
-    }
-
-    async function handleSnapshotRetentionChange(value: number) {
-        await settingsStore.update({ maxSnapshotAgeDays: value });
-    }
-
-    /* ── 图片生成 ── */
-
-    async function handleImageEnabledChange(checked: boolean) {
-        const imageGeneration = { ...settings.imageGeneration, enabled: checked };
-        await settingsStore.update({ imageGeneration });
-    }
-
-    async function handleImageSizeChange(value: string) {
-        const imageGeneration = { ...settings.imageGeneration, defaultSize: value as PluginSettings['imageGeneration']['defaultSize'] };
-        await settingsStore.update({ imageGeneration });
-    }
-
-    async function handleImageQualityChange(value: string) {
-        const imageGeneration = { ...settings.imageGeneration, defaultQuality: value as 'standard' | 'hd' };
-        await settingsStore.update({ imageGeneration });
-    }
-
-    async function handleImageStyleChange(value: string) {
-        const imageGeneration = { ...settings.imageGeneration, defaultStyle: value as 'vivid' | 'natural' };
-        await settingsStore.update({ imageGeneration });
-    }
-
-    async function handleContextWindowChange(value: number) {
-        const imageGeneration = { ...settings.imageGeneration, contextWindowSize: value };
-        await settingsStore.update({ imageGeneration });
+        await settingsStore.updateSettings({ taskTimeoutMs: value });
     }
 </script>
 
@@ -220,116 +158,6 @@
                 step={30000}
                 unit="ms"
                 onchange={handleTaskTimeoutChange}
-            />
-        </SettingItem>
-
-        <SettingItem
-            name={i18n.t('settings.advanced.queue.maxTaskHistory')}
-            description={i18n.t('settings.advanced.queue.maxTaskHistoryDesc')}
-        >
-            <Slider
-                value={settings.maxTaskHistory}
-                min={50}
-                max={1000}
-                step={50}
-                onchange={handleMaxHistoryChange}
-            />
-        </SettingItem>
-    </div>
-
-    <!-- 快照管理组 -->
-    <div class="cr-settings-group">
-        <h3 class="cr-settings-group__title">{i18n.t('settings.groups.snapshots')}</h3>
-
-        <SettingItem
-            name={i18n.t('settings.maxSnapshots.name')}
-            description={i18n.t('settings.maxSnapshots.desc')}
-        >
-            <Slider
-                value={settings.maxSnapshots}
-                min={10}
-                max={500}
-                step={10}
-                onchange={handleMaxSnapshotsChange}
-            />
-        </SettingItem>
-
-        <SettingItem
-            name={i18n.t('settings.maxSnapshotAgeDays.name')}
-            description={i18n.t('settings.maxSnapshotAgeDays.desc')}
-        >
-            <Slider
-                value={settings.maxSnapshotAgeDays}
-                min={1}
-                max={365}
-                step={1}
-                unit={i18n.t('settings.units.days')}
-                onchange={handleSnapshotRetentionChange}
-            />
-        </SettingItem>
-    </div>
-
-    <!-- 图片生成组 -->
-    <div class="cr-settings-group">
-        <h3 class="cr-settings-group__title">{i18n.t('imageGeneration.title')}</h3>
-
-        <SettingItem
-            name={i18n.t('imageGeneration.enabled.name')}
-            description={i18n.t('imageGeneration.enabled.desc')}
-        >
-            <Toggle
-                checked={settings.imageGeneration.enabled}
-                onchange={handleImageEnabledChange}
-            />
-        </SettingItem>
-
-        <SettingItem
-            name={i18n.t('imageGeneration.defaultSize.name')}
-            description={i18n.t('imageGeneration.defaultSize.desc')}
-        >
-            <Select
-                value={settings.imageGeneration.defaultSize}
-                options={imageSizeOptions}
-                disabled={!settings.imageGeneration.enabled}
-                onchange={handleImageSizeChange}
-            />
-        </SettingItem>
-
-        <SettingItem
-            name={i18n.t('imageGeneration.defaultQuality.name')}
-            description={i18n.t('imageGeneration.defaultQuality.desc')}
-        >
-            <Select
-                value={settings.imageGeneration.defaultQuality}
-                options={imageQualityOptions}
-                disabled={!settings.imageGeneration.enabled}
-                onchange={handleImageQualityChange}
-            />
-        </SettingItem>
-
-        <SettingItem
-            name={i18n.t('imageGeneration.defaultStyle.name')}
-            description={i18n.t('imageGeneration.defaultStyle.desc')}
-        >
-            <Select
-                value={settings.imageGeneration.defaultStyle}
-                options={imageStyleOptions}
-                disabled={!settings.imageGeneration.enabled}
-                onchange={handleImageStyleChange}
-            />
-        </SettingItem>
-
-        <SettingItem
-            name={i18n.t('imageGeneration.contextWindowSize.name')}
-            description={i18n.t('imageGeneration.contextWindowSize.desc')}
-        >
-            <Slider
-                value={settings.imageGeneration.contextWindowSize}
-                min={100}
-                max={2000}
-                step={100}
-                disabled={!settings.imageGeneration.enabled}
-                onchange={handleContextWindowChange}
             />
         </SettingItem>
     </div>

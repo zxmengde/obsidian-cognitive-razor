@@ -13,12 +13,14 @@
         onchange,
         disabled = false,
         widthClass = '',
+        id = undefined,
     }: {
         value?: string;
         placeholder?: string;
         onchange: (value: string) => void;
         disabled?: boolean;
         widthClass?: string;
+        id?: string;
     } = $props();
 
     /** 组合 CSS 类名 */
@@ -35,6 +37,7 @@
 <input
     type="text"
     class={className}
+    {id}
     {value}
     {placeholder}
     {disabled}

@@ -281,12 +281,15 @@ export function extractFrontmatter(content: string): {
   frontmatter: CRFrontmatter;
   body: string;
 } | null {
+  // 兼容 CRLF：统一转换为 LF 后再处理
+  const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
   // 检查是否以 --- 开头
-  if (!content.startsWith(`${FRONTMATTER_DELIMITER}\n`)) {
+  if (!normalized.startsWith(`${FRONTMATTER_DELIMITER}\n`)) {
     return null;
   }
 
-  const lines = content.split("\n");
+  const lines = normalized.split("\n");
   let endIndex = -1;
 
   for (let i = 1; i < lines.length; i++) {

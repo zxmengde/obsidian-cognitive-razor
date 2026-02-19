@@ -801,7 +801,6 @@ export class VectorIndex {
     return ok(undefined);
   }
 
-  /**
   /** 释放资源：清除定时器和缓存 */
   dispose(): void {
     if (this.evictionTimer !== null) {

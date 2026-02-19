@@ -1,7 +1,7 @@
 /**
  * Provider 系统类型定义
  *
- * Chat/Embed/Image 请求响应、Provider 能力与信息
+ * Chat/Embed 请求响应、Provider 能力与信息
  */
 
 import type { CRFrontmatter } from "./domain";
@@ -17,7 +17,6 @@ type ProviderType = "openai";
 export interface ProviderCapabilities {
     chat: boolean;
     embedding: boolean;
-    image: boolean;
     maxContextLength: number;
     models: string[];
 }
@@ -57,47 +56,6 @@ export interface ChatResponse {
     content: string;
     tokensUsed?: number;
     finishReason?: string;
-}
-
-// ============================================================================
-// Image
-// ============================================================================
-
-/** 图片生成请求 */
-export interface ImageGenerateRequest {
-    providerId: string;
-    model: string;
-    prompt: string;
-    size?: string;
-    quality?: "standard" | "hd";
-    style?: "vivid" | "natural";
-}
-
-/** 图片生成响应 */
-export interface ImageGenerateResponse {
-    imageUrl: string;
-    revisedPrompt?: string;
-    altText?: string;
-}
-
-/** 图片生成任务载荷 */
-export interface ImageGeneratePayload {
-    userPrompt: string;
-    contextBefore: string;
-    contextAfter: string;
-    frontmatter: CRFrontmatter;
-    filePath: string;
-    cursorPosition: { line: number; ch: number };
-    [key: string]: unknown;
-}
-
-/** 图片生成结果 */
-export interface ImageGenerateResult {
-    imageUrl: string;
-    localPath: string;
-    description: string;
-    revisedPrompt?: string;
-    [key: string]: unknown;
 }
 
 // ============================================================================

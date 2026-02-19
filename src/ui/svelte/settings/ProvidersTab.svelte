@@ -127,7 +127,7 @@
 
     /** 更新请求超时 */
     async function handleTimeoutChange(value: number) {
-        await settingsStore.update({ providerTimeoutMs: value });
+        await settingsStore.updateSettings({ providerTimeoutMs: value });
     }
 
     // ---- 任务模型 ----
@@ -138,7 +138,7 @@
             ...settings.taskModels,
             [taskType]: { ...settings.taskModels[taskType], ...partial },
         };
-        await settingsStore.update({ taskModels });
+        await settingsStore.updateSettings({ taskModels });
     }
 
     /** 重置任务模型配置 */

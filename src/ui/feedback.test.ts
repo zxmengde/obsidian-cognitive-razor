@@ -5,7 +5,6 @@
  * - 各级别通知的正确创建
  * - safeErrorMessage 过滤
  * - 同级去重逻辑
- * - Undo Toast 的创建与回调
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -13,7 +12,6 @@ import {
     showSuccess,
     showWarning,
     showError,
-    showUndoToast,
     resetDedupeState,
 } from "./feedback";
 
@@ -177,56 +175,4 @@ describe("feedback 统一反馈服务", () => {
         });
     });
 
-    describe("showUndoToast", () => {
-        it("应创建不自动关闭的 Notice（duration=0）", () => {
-            const onUndo = vi.fn();
-            showUndoToast("已写入", { onUndo });
-            expect(mockNoticeInstances).toHaveLength(1);
-            expect(mockNoticeInstances[0].duration).toBe(0);
-        });
-
-        it("应在 8s 后自动关闭", () => {
-            const onUndo = vi.fn();
-            showUndoToast("已写入", { onUndo });
-            const instance = mockNoticeInstances[0];
-            expect(instance.hide).not.toHaveBeenCalled();
-            vi.advanceTimersByTime(8000);
-            expect(instance.hide).toHaveBeenCalled();
-        });
-
-        it("点击撤销按钮应触发回调并关闭", () => {
-            const onUndo = vi.fn();
-            showUndoToast("已写入", { onUndo });
-            const instance = mockNoticeInstances[0];
-            const undoBtn = instance.noticeEl.querySelector("button");
-            expect(undoBtn).not.toBeNull();
-            undoBtn!.click();
-            expect(onUndo).toHaveBeenCalledOnce();
-            expect(instance.hide).toHaveBeenCalled();
-        });
-
-        it("撤销按钮不应重复触发", () => {
-            const onUndo = vi.fn();
-            showUndoToast("已写入", { onUndo });
-            const undoBtn = mockNoticeInstances[0].noticeEl.querySelector("button");
-            undoBtn!.click();
-            undoBtn!.click();
-            expect(onUndo).toHaveBeenCalledOnce();
-        });
-
-        it("dismiss 函数应手动关闭 Toast", () => {
-            const onUndo = vi.fn();
-            const dismiss = showUndoToast("已写入", { onUndo });
-            dismiss();
-            expect(mockNoticeInstances[0].hide).toHaveBeenCalled();
-        });
-
-        it("应显示文件名（如果提供 filePath）", () => {
-            const onUndo = vi.fn();
-            showUndoToast("已写入", { onUndo, filePath: "notes/test.md" });
-            const el = mockNoticeInstances[0].noticeEl;
-            const fileEl = el.querySelector(".cr-undo-toast-file");
-            expect(fileEl?.textContent).toBe("test.md");
-        });
-    });
 });

@@ -11,7 +11,7 @@ import { validateTaskRecordPayload } from "./task-queue";
 import type { TaskType, CRType } from "../types";
 
 const taskTypeArb = fc.constantFrom<TaskType>(
-    "define", "tag", "write", "amend", "merge", "index", "verify", "image-generate"
+    "define", "tag", "write", "index", "verify"
 );
 const crTypeArb = fc.constantFrom<CRType>("Domain", "Issue", "Theory", "Entity", "Mechanism");
 const nodeIdArb = fc.uuid();
@@ -31,33 +31,10 @@ function payloadArbForType(taskType: TaskType): fc.Arbitrary<Record<string, unkn
             }));
         case "write":
             return crTypeArb.map((conceptType) => ({ conceptType }));
-        case "amend":
-            return fc.tuple(safeStringArb, safeStringArb, crTypeArb).map(
-                ([currentContent, instruction, conceptType]) => ({
-                    currentContent,
-                    instruction,
-                    conceptType,
-                })
-            );
-        case "merge":
-            return fc.tuple(safeStringArb, safeStringArb, safeStringArb, safeStringArb, crTypeArb).map(
-                ([keepName, deleteName, keepContent, deleteContent, conceptType]) => ({
-                    keepName,
-                    deleteName,
-                    keepContent,
-                    deleteContent,
-                    conceptType,
-                })
-            );
         case "index":
             return fc.constant({});
         case "verify":
             return safeStringArb.map((currentContent) => ({ currentContent }));
-        case "image-generate":
-            return fc.tuple(safeStringArb, safeStringArb).map(([userPrompt, filePath]) => ({
-                userPrompt,
-                filePath,
-            }));
     }
 }
 

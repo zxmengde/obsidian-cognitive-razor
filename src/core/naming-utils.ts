@@ -143,51 +143,6 @@ function getTypeChinese(type: CRType): string {
   return typeMap[type];
 }
 
-/** 验证命名模板 */
-export function validateNamingTemplate(template: string): {
-  valid: boolean;
-  errors: string[];
-} {
-  const errors: string[] = [];
-
-  // 检查是否为空
-  if (!template || template.trim() === "") {
-    errors.push("命名模板不能为空");
-    return { valid: false, errors };
-  }
-
-  // 检查是否包含至少一个有效占位符
-  const validPlaceholders = KNOWN_PLACEHOLDERS.map(p => `{{${p}}}`);
-  const hasValidPlaceholder = validPlaceholders.some(p => template.includes(p));
-  
-  if (!hasValidPlaceholder) {
-    errors.push("命名模板必须包含至少一个有效占位符: {{chinese}}, {{english}}, {{type}}, {{type_cn}}, {{uid}}, {{alias}}");
-  }
-
-  // 检查是否有未闭合的占位符
-  const openBraces = (template.match(/\{\{/g) || []).length;
-  const closeBraces = (template.match(/\}\}/g) || []).length;
-  
-  if (openBraces !== closeBraces) {
-    errors.push("命名模板中存在未闭合的占位符");
-  }
-
-  // 检查是否有无效的占位符
-  const placeholderRegex = /\{\{(\w+)\}\}/g;
-  let match;
-  while ((match = placeholderRegex.exec(template)) !== null) {
-    const placeholder = match[1];
-    if (!KNOWN_PLACEHOLDERS.includes(placeholder)) {
-      errors.push(`无效的占位符: {{${placeholder}}}`);
-    }
-  }
-
-  return {
-    valid: errors.length === 0,
-    errors
-  };
-}
-
 /** 清理文件名（移除非法字符） */
 export function sanitizeFileName(name: string): string {
   // 移除 Obsidian 非法文件名字符

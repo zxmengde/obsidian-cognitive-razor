@@ -16,6 +16,7 @@
         unit = '',
         onchange,
         disabled = false,
+        id = undefined,
     }: {
         value?: number;
         min?: number;
@@ -24,6 +25,7 @@
         unit?: string;
         onchange: (value: number) => void;
         disabled?: boolean;
+        id?: string;
     } = $props();
 
     /** 滑块拖动 */
@@ -47,6 +49,7 @@
     <input
         type="range"
         class="cr-slider__range"
+        {id}
         {value}
         {min}
         {max}

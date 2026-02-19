@@ -10,6 +10,7 @@
 -->
 <script lang="ts">
     import { Notice } from 'obsidian';
+    import { untrack } from 'svelte';
     import Button from '../../components/Button.svelte';
     import TextInput from '../../components/TextInput.svelte';
     import PasswordInput from '../../components/PasswordInput.svelte';
@@ -36,13 +37,13 @@
         oncancel: () => void;
     } = $props();
 
-    /** 表单状态 */
-    let formId = $state(providerId);
-    let formApiKey = $state(currentConfig?.apiKey ?? '');
-    let formBaseUrl = $state(currentConfig?.baseUrl ?? '');
-    let formChatModel = $state(currentConfig?.defaultChatModel ?? '');
-    let formEmbedModel = $state(currentConfig?.defaultEmbedModel ?? '');
-    let formEnabled = $state(currentConfig?.enabled ?? true);
+    /** 表单状态（untrack 避免 state_referenced_locally 警告：这些是有意的单次初始化） */
+    let formId = $state(untrack(() => providerId));
+    let formApiKey = $state(untrack(() => currentConfig?.apiKey ?? ''));
+    let formBaseUrl = $state(untrack(() => currentConfig?.baseUrl ?? ''));
+    let formChatModel = $state(untrack(() => currentConfig?.defaultChatModel ?? ''));
+    let formEmbedModel = $state(untrack(() => currentConfig?.defaultEmbedModel ?? ''));
+    let formEnabled = $state(untrack(() => currentConfig?.enabled ?? true));
 
     /** UI 状态 */
     let saving = $state(false);
@@ -118,6 +119,19 @@
         }
     }
 
+    /** 检测是否为内网/本地地址（安全校验，防止 SSRF） */
+    function isPrivateHost(hostname: string): boolean {
+        const h = hostname.toLowerCase();
+        return (
+            h === 'localhost' ||
+            h === '127.0.0.1' ||
+            h === '::1' ||
+            /^10\./.test(h) ||
+            /^172\.(1[6-9]|2\d|3[01])\./.test(h) ||
+            /^192\.168\./.test(h)
+        );
+    }
+
     /** 表单验证 */
     function validate(): boolean {
         const newErrors: Record<string, string> = {};
@@ -132,6 +146,8 @@
                 const url = new URL(formBaseUrl.trim());
                 if (!['http:', 'https:'].includes(url.protocol)) {
                     newErrors.baseUrl = t('modals.providerConfig.errors.invalidUrlProtocol');
+                } else if (isPrivateHost(url.hostname)) {
+                    newErrors.baseUrl = t('modals.providerConfig.errors.privateAddressBlocked');
                 }
             } catch {
                 newErrors.baseUrl = t('modals.providerConfig.errors.invalidUrl');
@@ -250,6 +266,7 @@
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        tabindex="0"
         onmousedown={(e: MouseEvent) => e.stopPropagation()}
     >
         <!-- 标题 -->
@@ -262,7 +279,7 @@
         <div class="cr-provider-form">
             <!-- Provider ID -->
             <div class="cr-provider-field">
-                <label class="cr-provider-field__label">
+                <label class="cr-provider-field__label" for="pm-provider-id">
                     {t('modals.providerConfig.fields.providerId')}
                     <span class="cr-provider-field__required">*</span>
                 </label>
@@ -270,6 +287,7 @@
                     {t('modals.providerConfig.fields.providerIdDesc')}
                 </p>
                 <TextInput
+                    id="pm-provider-id"
                     value={formId}
                     placeholder="my-openai"
                     disabled={mode === 'edit'}
@@ -282,7 +300,7 @@
 
             <!-- API Key -->
             <div class="cr-provider-field">
-                <label class="cr-provider-field__label">
+                <label class="cr-provider-field__label" for="pm-api-key">
                     {t('modals.providerConfig.fields.apiKey')}
                     <span class="cr-provider-field__required">*</span>
                 </label>
@@ -290,6 +308,7 @@
                     {t('modals.providerConfig.fields.apiKeyDesc')}
                 </p>
                 <PasswordInput
+                    id="pm-api-key"
                     value={formApiKey}
                     placeholder="sk-..."
                     onchange={(v) => { formApiKey = v; errors = { ...errors, apiKey: '' }; }}
@@ -301,13 +320,14 @@
 
             <!-- Base URL -->
             <div class="cr-provider-field">
-                <label class="cr-provider-field__label">
+                <label class="cr-provider-field__label" for="pm-base-url">
                     {t('modals.providerConfig.fields.endpoint')}
                 </label>
                 <p class="cr-provider-field__desc">
                     {t('modals.providerConfig.fields.endpointDesc')}
                 </p>
                 <TextInput
+                    id="pm-base-url"
                     value={formBaseUrl}
                     placeholder="https://api.openai.com/v1"
                     onchange={(v) => { formBaseUrl = v; errors = { ...errors, baseUrl: '' }; }}
@@ -319,13 +339,14 @@
 
             <!-- 默认聊天模型 -->
             <div class="cr-provider-field">
-                <label class="cr-provider-field__label">
+                <label class="cr-provider-field__label" for="pm-chat-model">
                     {t('modals.providerConfig.fields.chatModel')}
                 </label>
                 <p class="cr-provider-field__desc">
                     {t('modals.providerConfig.fields.chatModelDesc')}
                 </p>
                 <TextInput
+                    id="pm-chat-model"
                     value={formChatModel}
                     placeholder="gemini-2.5-flash"
                     onchange={(v) => { formChatModel = v; }}
@@ -334,26 +355,28 @@
 
             <!-- 默认嵌入模型 -->
             <div class="cr-provider-field">
-                <label class="cr-provider-field__label">
+                <label class="cr-provider-field__label" for="pm-embed-model">
                     {t('modals.providerConfig.fields.embedModel')}
                 </label>
                 <p class="cr-provider-field__desc">
                     {t('modals.providerConfig.fields.embedModelDesc')}
                 </p>
                 <TextInput
+                    id="pm-embed-model"
                     value={formEmbedModel}
                     placeholder="text-embedding-004"
                     onchange={(v) => { formEmbedModel = v; }}
                 />
             </div>
 
-            <!-- 启用开关 -->
+            <!-- 启用开关（Toggle 是 div[role=switch]，用 aria-labelledby 关联） -->
             <div class="cr-provider-field cr-provider-field--row">
-                <label class="cr-provider-field__label">
+                <span class="cr-provider-field__label" id="pm-enabled-label">
                     {t('settings.provider.enabled')}
-                </label>
+                </span>
                 <Toggle
                     checked={formEnabled}
+                    ariaLabel={t('settings.provider.enabled')}
                     onchange={(v) => { formEnabled = v; }}
                 />
             </div>

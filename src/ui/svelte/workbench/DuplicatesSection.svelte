@@ -13,7 +13,6 @@
     import { Notice } from 'obsidian';
     import { getCRContext } from '../../bridge/context';
     import { SERVICE_TOKENS } from '../../../../main';
-    import { openDiffTab } from '../diff-utils';
     import Collapsible from '../../components/Collapsible.svelte';
     import EmptyState from '../../components/EmptyState.svelte';
     import DuplicateItem from './DuplicateItem.svelte';
@@ -32,7 +31,6 @@
     // 从 Context 获取服务
     const ctx = getCRContext();
     const t = ctx.i18n.t();
-    const app = ctx.app;
     const duplicateManager = ctx.container.resolve<DuplicateManager>(SERVICE_TOKENS.duplicateManager);
     const settingsStore = ctx.container.resolve<SettingsStore>(SERVICE_TOKENS.settingsStore);
     const cruidCache = ctx.container.resolve<CruidCache>(SERVICE_TOKENS.cruidCache);
@@ -56,58 +54,7 @@
     /** 折叠状态变化时持久化 */
     function handleToggle(newCollapsed: boolean): void {
         collapsed = newCollapsed;
-        void settingsStore.updateSettings({
-            uiState: {
-                sectionCollapsed: { duplicates: newCollapsed },
-            },
-        } as any);
-    }
-
-    /** 读取笔记文件内容 */
-    async function readNoteContent(nodeId: string): Promise<string> {
-        const file = cruidCache.getFile(nodeId);
-        if (!file) return '';
-        return await app.vault.read(file);
-    }
-
-    /** 点击对比：打开 Diff 标签页（Merge 模式） */
-    async function handleCompare(pair: DuplicatePair): Promise<void> {
-        logger.info('DuplicatesSection', '用户请求对比重复对', { pairId: pair.id });
-
-        const nameA = resolveName(pair.nodeIdA);
-        const nameB = resolveName(pair.nodeIdB);
-
-        try {
-            // 读取两个笔记的内容
-            const [contentA, contentB] = await Promise.all([
-                readNoteContent(pair.nodeIdA),
-                readNoteContent(pair.nodeIdB),
-            ]);
-
-            if (!contentA && !contentB) {
-                new Notice(t.workbench?.notifications?.compareNoContent ?? '无法读取笔记内容');
-                return;
-            }
-
-            // 打开 Merge Diff 标签页
-            await openDiffTab(app, {
-                mode: 'merge',
-                noteName: `${nameA} ↔ ${nameB}`,
-                oldContent: contentA,
-                newContent: contentB,
-                mergeNames: { nameA, nameB },
-                mergePairId: pair.id,
-                onAccept: () => {
-                    logger.info('DuplicatesSection', '用户接受合并', { pairId: pair.id });
-                },
-                onReject: () => {
-                    logger.info('DuplicatesSection', '用户拒绝合并', { pairId: pair.id });
-                },
-            });
-        } catch (error) {
-            logger.error('DuplicatesSection', '打开对比标签页失败', error as Error, { pairId: pair.id });
-            new Notice(t.workbench?.notifications?.compareFailed ?? '打开对比失败');
-        }
+        void settingsStore.updateSectionCollapsed('duplicates', newCollapsed);
     }
 
     /** 点击忽略：标记为非重复 + Notice 反馈 */
@@ -135,7 +82,6 @@
                     {pair}
                     nameA={resolveName(pair.nodeIdA)}
                     nameB={resolveName(pair.nodeIdB)}
-                    oncompare={(p) => void handleCompare(p)}
                     ondismiss={(p) => void handleDismiss(p)}
                 />
             {/each}

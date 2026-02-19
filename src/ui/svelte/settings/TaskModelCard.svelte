@@ -42,11 +42,8 @@
     /** 是否为嵌入类任务（index 不需要温度/topP/推理参数） */
     let isEmbeddingTask = $derived(taskType === 'index');
 
-    /** 是否为图片生成任务（不需要温度/topP/推理参数） */
-    let isImageTask = $derived(taskType === 'image-generate');
-
     /** 是否显示聊天模型参数（温度、topP、推理强度） */
-    let showChatParams = $derived(!isEmbeddingTask && !isImageTask);
+    let showChatParams = $derived(!isEmbeddingTask);
 
     /** 推理强度下拉选项 */
     let reasoningOptions = $derived(() => [
@@ -122,10 +119,11 @@
     <!-- 配置行 -->
     <div class="cr-task-model-card__fields">
         <div class="cr-task-model-card__field">
-            <label class="cr-task-model-card__label">
+            <label class="cr-task-model-card__label" for={`tmc-${taskType}-provider`}>
                 {i18n.t('taskModels.fields.provider')}
             </label>
             <Select
+                id={`tmc-${taskType}-provider`}
                 value={config.providerId}
                 options={providerOptions()}
                 onchange={handleProviderChange}
@@ -133,10 +131,11 @@
         </div>
 
         <div class="cr-task-model-card__field">
-            <label class="cr-task-model-card__label">
+            <label class="cr-task-model-card__label" for={`tmc-${taskType}-model`}>
                 {i18n.t('taskModels.fields.model')}
             </label>
             <TextInput
+                id={`tmc-${taskType}-model`}
                 value={config.model}
                 placeholder={i18n.t('taskModels.fields.model')}
                 onchange={handleModelChange}
@@ -146,10 +145,11 @@
 
         {#if showChatParams}
             <div class="cr-task-model-card__field">
-                <label class="cr-task-model-card__label">
+                <label class="cr-task-model-card__label" for={`tmc-${taskType}-temp`}>
                     {i18n.t('taskModels.fields.temperature')}
                 </label>
                 <Slider
+                    id={`tmc-${taskType}-temp`}
                     value={config.temperature ?? 0.7}
                     min={0}
                     max={2}
@@ -159,10 +159,11 @@
             </div>
 
             <div class="cr-task-model-card__field">
-                <label class="cr-task-model-card__label">
+                <label class="cr-task-model-card__label" for={`tmc-${taskType}-topp`}>
                     {i18n.t('taskModels.fields.topP')}
                 </label>
                 <Slider
+                    id={`tmc-${taskType}-topp`}
                     value={config.topP ?? 1}
                     min={0}
                     max={1}
@@ -172,10 +173,11 @@
             </div>
 
             <div class="cr-task-model-card__field">
-                <label class="cr-task-model-card__label">
+                <label class="cr-task-model-card__label" for={`tmc-${taskType}-reasoning`}>
                     {i18n.t('taskModels.fields.reasoningEffort')}
                 </label>
                 <Select
+                    id={`tmc-${taskType}-reasoning`}
                     value={config.reasoning_effort ?? ''}
                     options={reasoningOptions()}
                     onchange={handleReasoningEffortChange}

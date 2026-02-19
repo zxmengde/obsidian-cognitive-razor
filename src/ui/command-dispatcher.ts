@@ -6,13 +6,13 @@
  * - 实现快捷键绑定（遵循 A-UCD-05 多输入一致）
  * - 实现命令分发
  *
- * 命令通过新的 Svelte 工作台视图（WorkbenchView）和 Diff 标签页（DiffTabView）
+ * 命令通过新的 Svelte 工作台视图（WorkbenchView）
  * 触发对应的 UI 流程，不再使用旧的原生 DOM Modal。
  *
  * @see 需求 21.3
  */
 
-import { Notice, TFile, Menu } from "obsidian";
+import { Notice, TFile } from "obsidian";
 import { VIEW_TYPE_CR_WORKBENCH } from "./svelte/workbench-view";
 import { TaskQueue } from "../core/task-queue";
 import { COMMAND_IDS } from "./command-utils";
@@ -54,9 +54,7 @@ interface CommandDefinition {
  *
  * 所有命令通过 Svelte 工作台视图和 Orchestrator API 触发 UI 流程：
  * - Define/Create → 打开工作台，聚焦 CreateSection 搜索框
- * - Amend → 直接调用 AmendOrchestrator（工作台内联面板由用户在工作台中操作）
  * - Expand → 打开工作台（拓展由内联面板处理）
- * - Merge → 打开工作台，提示用户在重复对区操作
  * - Verify → 直接调用 VerifyOrchestrator
  * - Visualize → 打开工作台（配图由内联面板处理）
  */
@@ -146,9 +144,7 @@ export class CommandDispatcher {
     public registerAllCommands(): void {
         this.registerWorkbenchCommands();
         this.registerConceptCommands();
-        this.registerImproveCommands();
         this.registerExpandCommands();
-        this.registerMergeCommands();
         this.registerUtilityCommands();
         this.registerFileMenu();
     }
@@ -158,17 +154,6 @@ export class CommandDispatcher {
      */
     private registerUtilityCommands(): void {
         const t = this.plugin.getI18n().t();
-
-        // 插入图片 — 打开工作台（配图由内联面板处理）
-        this.registerCommand({
-            id: COMMAND_IDS.INSERT_IMAGE,
-            name: this.t("workbench.buttons.insertImage"),
-            icon: "image",
-            editorRequired: true,
-            handler: async () => {
-                await this.openWorkbench();
-            }
-        });
 
         // 事实核查（Verify）— 直接调用 Orchestrator
         this.registerCommand({
@@ -291,52 +276,13 @@ export class CommandDispatcher {
             }
         });
 
-        // 查看操作历史 — 打开工作台
-        this.registerCommand({
-            id: COMMAND_IDS.VIEW_OPERATION_HISTORY,
-            name: t.workbench.recentOps.title,
-            icon: "history",
-            handler: async () => {
-                await this.openWorkbench();
-            }
-        });
     }
 
     /**
      * 注册文件菜单（右键菜单）
      */
     private registerFileMenu(): void {
-        const t = this.plugin.getI18n().t();
-        const workspace = this.plugin.app.workspace as unknown as {
-            on: (event: string, callback: (menu: Menu, file: TFile) => void) => { unload: () => void };
-        };
-        this.plugin.registerEvent(
-            workspace.on("file-menu", (menu: Menu, file: TFile) => {
-                if (file.extension !== "md") return;
-
-                menu.addItem((item) => {
-                    item
-                        .setTitle(t.commands.improveNote)
-                        .setIcon("sparkles")
-                        .onClick(async () => {
-                            await this.improveNote(file.path);
-                        });
-                });
-            })
-        );
-    }
-
-    /**
-     * 注册修订命令
-     * Amend 命令直接调用 AmendOrchestrator，工作台内联面板由用户在工作台中操作
-     */
-    private registerImproveCommands(): void {
-        this.registerCommand({
-            id: COMMAND_IDS.IMPROVE_NOTE,
-            name: this.t("commands.improveNote"),
-            icon: "sparkles",
-            ...this.withActiveMarkdownFile((file) => this.improveNote(file.path)),
-        });
+        // 右键菜单暂无额外项
     }
 
     /**
@@ -350,43 +296,6 @@ export class CommandDispatcher {
             icon: "git-branch",
             ...this.withActiveMarkdownFile(() => this.openWorkbench()),
         });
-    }
-
-    /**
-     * 注册合并重复对命令
-     * 打开工作台，提示用户在重复对区选择操作
-     */
-    private registerMergeCommands(): void {
-        this.registerCommand({
-            id: COMMAND_IDS.MERGE_DUPLICATES,
-            name: this.t("commands.mergeDuplicates"),
-            icon: "git-merge",
-            handler: async () => {
-                await this.openMergeFromWorkbench();
-            }
-        });
-    }
-
-    /**
-     * 从工作台打开合并流程
-     */
-    private async openMergeFromWorkbench(): Promise<void> {
-        await this.openWorkbench();
-
-        const components = this.plugin.getComponents();
-        const duplicateManager = components.duplicateManager;
-        const pendingPairs = duplicateManager.getPendingPairs();
-
-        if (pendingPairs.length === 0) {
-            showWarning(this.t("workbench.notifications.noPendingDuplicates"));
-            return;
-        }
-
-        // 提示用户在工作台重复对区选择合并
-        showSuccess(formatMessage(
-            this.t("workbench.notifications.pendingDuplicatesHint"),
-            { count: pendingPairs.length }
-        ));
     }
 
     /**
@@ -535,23 +444,4 @@ export class CommandDispatcher {
         }
     }
 
-    /**
-     * 修订笔记
-     * 打开工作台，用户通过工作台内联面板输入修订指令
-     */
-    private async improveNote(filePath: string): Promise<void> {
-        try {
-            const activeFile = this.plugin.app.workspace.getActiveFile();
-            if (!activeFile || activeFile.path !== filePath) {
-                showWarning(this.t("workbench.notifications.openMarkdownFirst"));
-                return;
-            }
-
-            // 打开工作台，用户在 CreateSection 的"改进"按钮触发内联面板
-            await this.openWorkbench();
-        } catch (error) {
-            this.logError("修订操作失败", error);
-            showError(error, this.t("workbench.notifications.startFailed"));
-        }
-    }
 }

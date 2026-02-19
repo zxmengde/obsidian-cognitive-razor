@@ -33,10 +33,7 @@ Cognitive Razor 是 Obsidian 桌面端插件，利用 AI 将模糊知识转化�
 | Define | AI 识别概念类型（5 类）+ 标准化命名 | 直调 |
 | Tag | 生成别名、标签 | 入队 |
 | Write | 按类型 Schema 生成结构化正文 | 入队 |
-| Amend | 增量修订现有概念（Diff 确认） | 入队 |
-| Merge | 合并语义重复概念（Diff 确认） | 入队 |
 | Expand | 从概念发现相关新概念 | 批量 Create |
-| Visualize | 为概念生成配图 | 入队 |
 | Verify | 事实核查（报告追加到笔记末尾） | 入队 |
 | Index | 向量化（embedding） | 直调 |
 | Deduplicate | 同类型向量相似度检测 | 直调 |
@@ -67,13 +64,13 @@ Stub（Tag 后占位）→ Draft（Write 后有正文）→ Evergreen（用户�
 ```powershell
 # 1. 构建 + 重载
 npm run build
-obsidian plugin:reload id=obsidian-cognitive-razor
+obsidian plugin:reload id=cognitive-razor
 
 # 2. 检查加载错误
 obsidian dev:errors
 
 # 3. 验证插件状态
-obsidian eval code="app.plugins.plugins['obsidian-cognitive-razor'] ? 'loaded' : 'not loaded'" | Out-String
+obsidian eval code="app.plugins.plugins['cognitive-razor'] ? 'loaded' : 'not loaded'" | Out-String
 ```
 
 **关键规则：**
@@ -107,7 +104,7 @@ obsidian eval code="app.plugins.plugins['obsidian-cognitive-razor'] ? 'loaded' :
 ### 错误处理
 - 错误码：E1xx（输入）、E2xx（Provider）、E3xx（系统）、E4xx（配置）、E5xx（内部）
 - `ErrorRegistry` 集中注册，`{param}` 模板插值
-- 异步用 `Result<T>` 单子，破坏性操作先快照（UndoManager）
+- 异步用 `Result<T>` 单子
 - Logger 统一日志，`sanitizeContext` 脱敏，通知仅显示错误码 + i18n 消息
 
 ---
@@ -128,7 +125,7 @@ obsidian eval code="app.plugins.plugins['obsidian-cognitive-razor'] ? 'loaded' :
 **核心入口：**
 ```powershell
 # 获取所有组件
-obsidian eval code="const c = app.plugins.plugins['obsidian-cognitive-razor'].getComponents(); Object.keys(c).join(', ')" | Out-String
+obsidian eval code="const c = app.plugins.plugins['cognitive-razor'].getComponents(); Object.keys(c).join(', ')" | Out-String
 ```
 
 **可测试的操作：**
@@ -137,11 +134,8 @@ obsidian eval code="const c = app.plugins.plugins['obsidian-cognitive-razor'].ge
 |------|--------|---------|
 | Create（自动） | `defineDirect()` → `startCreatePipelineWithStandardized()` | 自动完成 |
 | Create（手动） | `defineDirect()` → `startCreatePipeline()` → `confirmCreate()` → `confirmWrite()` | 两步确认 |
-| Amend | `startAmendPipeline(path, instruction)` → `confirmWrite()` | 一步确认 |
-| Merge | `startMergePipeline(pair, keepId, name)` → `confirmWrite()` | 一步确认 |
 | Verify | `startVerifyPipeline(path)` | 自动完成 |
 | Expand | `prepare(file)` → `createFromHierarchical/Abstract()` | 委托 Create |
-| Image | `startImagePipeline(options)` | 自动完成 |
 
 **测试规范：**
 - 测试笔记使用 `__test_` 前缀，便于批量清理
@@ -166,7 +160,7 @@ obsidian eval code="const c = app.plugins.plugins['obsidian-cognitive-razor'].ge
 | 数据文件格式 | `src/data/file-storage.ts` + 各 `*-store.ts` |
 | 管线编排 | `src/core/*-orchestrator.ts` |
 | 队列/锁 | `src/core/task-queue.ts` + `src/core/lock-manager.ts` |
-| 国际化 | `src/locales/*.json` + `src/core/i18n.ts` |
+| 国际化 | `src/core/i18n.ts` + `src/locales/zh.json` |
 | Modal 生命周期 | `src/ui/modal-manager.ts` + `src/ui/abstract-modal.ts` |
 | 命令 ID | `src/ui/command-utils.ts` |
 | 命令注册 | `src/ui/command-dispatcher.ts` |
@@ -178,7 +172,6 @@ obsidian eval code="const c = app.plugins.plugins['obsidian-cognitive-razor'].ge
 | 日志/脱敏 | `src/data/logger.ts` |
 | Frontmatter | `src/core/frontmatter-utils.ts` |
 | 命名模板 | `src/core/naming-utils.ts` |
-| 快照/撤销 | `src/core/undo-manager.ts` |
 | 哲学基线 | `docs/PHILOSOPHICAL_FOUNDATIONS.md` |
 
 ---

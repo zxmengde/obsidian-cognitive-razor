@@ -10,6 +10,7 @@
   @see 需求 10.1, 10.10
 -->
 <script lang="ts">
+    import { untrack } from 'svelte';
     import type CognitiveRazorPlugin from '../../../../main';
     import { setCRContext } from '../../bridge/context';
     import SettingsNav from './SettingsNav.svelte';
@@ -23,14 +24,15 @@
 
     let { plugin }: { plugin: CognitiveRazorPlugin } = $props();
 
-    const components = plugin.getComponents();
+    // untrack：plugin 是挂载时单次传入的稳定引用，不需要响应式追踪
+    const components = untrack(() => plugin.getComponents());
     const i18n = components.i18n;
 
     /** 设置 Context，供子组件通过 getCRContext() 获取 */
     setCRContext({
         container: components.container,
         i18n: components.i18n,
-        app: plugin.app,
+        app: untrack(() => plugin.app),
     });
 
     /** 当前激活的 Tab */

@@ -794,7 +794,7 @@ export const WRITE_PHASES: Record<CRType, WritePhase[]> = {
         {
             id: "structure",
             fields: ["sub_domains", "issues"],
-            focusInstruction: "聚焦于这个领域的内部结构分解：列出子领域（MECE 原则）并说明每个在整体中的功能；列出核心议题（优先涌现性议题——由部分交互或整体产生的问题）。"
+            focusInstruction: "聚焦于这个领域的内部结构分解：列出子领域（MECE 原则）并说明每个在整体中的功能；列出核心议题（优先涌现性议题——由部分交互或整体产生的问题）。\n\n**命名格式（强制）**：所有 name 字段必须严格使用「中文名 (English Name)」格式，例如：「统计热力学 (Statistical Thermodynamics)」「测量问题 (The Measurement Problem)」。不允许纯中文或纯英文。"
         }
     ],
     Issue: [
@@ -816,7 +816,7 @@ export const WRITE_PHASES: Record<CRType, WritePhase[]> = {
         {
             id: "structure",
             fields: ["sub_issues", "stakeholder_perspectives", "boundary_conditions", "theories"],
-            focusInstruction: "聚焦于这个议题的结构分解：列出子议题（MECE 原则），列出各利益相关方的立场，明确边界条件（何时这个议题不相关），以及试图解决它的理论（标注主流/边缘/已证伪）。"
+            focusInstruction: "聚焦于这个议题的结构分解：列出子议题（MECE 原则），列出各利益相关方的立场，明确边界条件（何时这个议题不相关），以及试图解决它的理论（标注主流/边缘/已证伪）。\n\n**命名格式（强制）**：所有 name 字段必须严格使用「中文名 (English Name)」格式，例如：「量子退相干 (Quantum Decoherence)」「哥本哈根诠释 (Copenhagen Interpretation)」。不允许纯中文或纯英文。"
         }
     ],
     Theory: [
@@ -838,7 +838,7 @@ export const WRITE_PHASES: Record<CRType, WritePhase[]> = {
         {
             id: "structure",
             fields: ["sub_theories", "entities", "mechanisms"],
-            focusInstruction: "聚焦于这个理论的内部组件：列出子理论（MECE 原则），提取构成性实体（重建理论逻辑所需的最小充分集），以及因果机制（每个机制必须作用于具体实体）。"
+            focusInstruction: "聚焦于这个理论的内部组件：列出子理论（MECE 原则），提取构成性实体（重建理论逻辑所需的最小充分集），以及因果机制（每个机制必须作用于具体实体）。\n\n**命名格式（强制）**：所有 name 字段必须严格使用「中文名 (English Name)」格式，例如：「波函数坍缩 (Wave Function Collapse)」「光子 (Photon)」。不允许纯中文或纯英文。"
         }
     ],
     Entity: [

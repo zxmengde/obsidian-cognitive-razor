@@ -285,7 +285,7 @@ export class CruidCache {
       return null;
     }
 
-    const raw = typeof fm.cruid === "string" ? fm.cruid : typeof (fm as any).crUid === "string" ? (fm as any).crUid : null;
+    const raw = typeof fm.cruid === "string" ? fm.cruid : typeof fm.crUid === "string" ? (fm.crUid as string) : null;
     if (!raw) {
       return null;
     }

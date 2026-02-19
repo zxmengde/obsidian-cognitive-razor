@@ -1,20 +1,19 @@
 /**
  * Orchestrator 共享工具函数
  *
- * 提取自 Create/Amend/Merge/Verify 四个编排器中重复的
+ * 提取自 Create/Verify 编排器中重复的
  * validatePrerequisites 和 getProviderIdForTask 逻辑。
  *
  * DRY 原则：消除 4 处 ~90% 相同的前置校验代码。
  */
 
-import type { ILogger, TaskType, CRType, PluginSettings, Result, PipelineContext, CRFrontmatter } from "../types";
+import type { ILogger, TaskType, CRType, PluginSettings, Result, PipelineContext } from "../types";
 import { ok, err, CognitiveRazorError, toErr } from "../types";
 import { formatCRTimestamp } from "../utils/date-utils";
 import type { PromptManager } from "./prompt-manager";
 import type { TaskQueue } from "./task-queue";
 import type { NoteRepository } from "./note-repository";
 import type { ContentRenderer } from "./content-renderer";
-import type { I18n } from "./i18n";
 import type { VectorIndex } from "./vector-index";
 import type { ProviderManager } from "./provider-manager";
 import type { DuplicateManager } from "./duplicate-manager";
@@ -142,7 +141,7 @@ export function resolveProviderIdForTask(
  * overall_assessment, confidence_score, issues, verified_claims,
  * recommendations, requires_human_review
  *
- * DRY 原则：替代 Create/Amend/Merge/Verify 四处重复实现。
+ * DRY 原则：替代 Create/Verify 两处重复实现。
  */
 export function buildVerificationReportMarkdown(result: Record<string, unknown>): string {
     const now = formatCRTimestamp();
@@ -150,79 +149,15 @@ export function buildVerificationReportMarkdown(result: Record<string, unknown>)
 
     lines.push("## 事实核查报告\n");
 
-    // 总体评估
-    const assessment = result.overall_assessment;
-    if (typeof assessment === "string" && assessment) {
-        const label = assessment === "pass" ? "✅ 通过"
-            : assessment === "needs_review" ? "⚠️ 需要审查"
-            : assessment === "fail" ? "❌ 未通过"
-            : assessment;
-        lines.push(`**总体评估**: ${label}`);
-    }
-
-    // 置信度
-    const score = result.confidence_score;
-    if (typeof score === "number") {
-        lines.push(`**置信度**: ${(score * 100).toFixed(0)}%`);
-    }
-
-    // 是否需要人工审查
-    const humanReview = result.requires_human_review;
-    if (typeof humanReview === "boolean" && humanReview) {
-        lines.push(`**需要人工审查**: 是`);
+    // 纯文本模式：直接使用 reportText
+    const reportText = result.reportText;
+    if (typeof reportText === "string" && reportText.trim()) {
+        lines.push(reportText.trim());
+    } else {
+        lines.push("（报告内容为空）");
     }
 
     lines.push("");
-
-    // 已验证声明
-    const claims = result.verified_claims;
-    if (Array.isArray(claims) && claims.length > 0) {
-        lines.push("### 已验证声明\n");
-        for (const claim of claims) {
-            if (typeof claim === "string") {
-                lines.push(`- ✅ ${claim}`);
-            }
-        }
-        lines.push("");
-    }
-
-    // 问题列表
-    const issues = result.issues;
-    if (Array.isArray(issues) && issues.length > 0) {
-        lines.push("### 发现的问题\n");
-        for (const issue of issues) {
-            if (typeof issue === "object" && issue !== null) {
-                const i = issue as Record<string, unknown>;
-                const verdict = i.verdict === "false" ? "❌"
-                    : i.verdict === "suspect" ? "⚠️"
-                    : "❓";
-                lines.push(`- ${verdict} ${i.claim || ""}`);
-                if (i.correction) {
-                    lines.push(`  - **修正**: ${i.correction}`);
-                }
-                if (i.source) {
-                    lines.push(`  - **来源**: ${i.source}`);
-                }
-                if (i.notes) {
-                    lines.push(`  - ${i.notes}`);
-                }
-            }
-        }
-        lines.push("");
-    }
-
-    // 建议
-    const recs = result.recommendations;
-    if (Array.isArray(recs) && recs.length > 0) {
-        lines.push("### 建议\n");
-        for (const rec of recs) {
-            if (typeof rec === "string") {
-                lines.push(`- ${rec}`);
-            }
-        }
-        lines.push("");
-    }
-
     lines.push(`> 核查时间: ${now}\n`);
 
     return lines.join("\n");
@@ -368,8 +303,7 @@ export async function appendVerificationReport(
 /**
  * 渲染内容为 Markdown（共享实现）
  *
- * 提取自 Create/Amend 两个编排器中 100% 相同的 renderContentToMarkdown。
- * DRY 原则：消除 2 处完全重复的渲染逻辑。
+ * 提取自 Create 编排器中的 renderContentToMarkdown。
  */
 export function renderContentToMarkdown(
     context: PipelineContext,
@@ -377,12 +311,8 @@ export function renderContentToMarkdown(
     contentRenderer: ContentRenderer,
     language: string,
 ): string {
-    const title = language === "en"
-        ? (context.standardizedData?.standardNames[context.type].english || standardName)
-        : standardName;
-
     return contentRenderer.renderNoteMarkdown({
-        title,
+        title: standardName,
         type: context.type,
         content: context.generatedContent,
         language,
@@ -393,17 +323,16 @@ export function renderContentToMarkdown(
 export interface StartVerifyTaskDeps {
     noteRepository: NoteRepository;
     taskQueue: TaskQueue;
-    i18n: I18n;
 }
 
 /**
  * 启动 Verify 任务（共享实现）
  *
- * 提取自 Create/Amend/Merge/Verify 四个编排器中几乎相同的 startVerifyTask。
- * 修复行为漂移：Create 原先缺少 E320_TASK_CONFLICT i18n 处理，现已统一。
+ * 提取自 Create/Verify 编排器中几乎相同的 startVerifyTask。
+ * 修复行为漂移：Create 原先缺少 E320_TASK_CONFLICT 处理，现已统一。
  *
  * @param context - 管线上下文
- * @param deps - 最小依赖（noteRepository + taskQueue + i18n）
+ * @param deps - 最小依赖（noteRepository + taskQueue）
  * @param publishEvent - 事件发布回调
  * @param taskToPipeline - taskId → pipelineId 映射
  * @param getProviderIdForTask - Provider 解析回调
@@ -465,10 +394,8 @@ export async function startVerifyTask(
         taskToPipeline.set(taskId, context.pipelineId);
         return ok(undefined);
     } catch (error) {
-        // 需求 34.3：锁冲突时使用用户友好的 i18n 提示（统一所有编排器行为）
         if (error instanceof CognitiveRazorError && error.code === "E320_TASK_CONFLICT") {
-            const msg = deps.i18n.t("workbench.notifications.conceptLocked");
-            return err("E320_TASK_CONFLICT", msg);
+            return err("E320_TASK_CONFLICT", "该概念正在被处理中，请稍后再试");
         }
         return toErr(error, "E500_INTERNAL_ERROR", "Verify 任务创建失败");
     }
@@ -477,8 +404,7 @@ export async function startVerifyTask(
 /**
  * 根据设置决定是否自动 Verify 或直接完成（共享实现）
  *
- * 提取自 Create/Amend/Merge 三个编排器中仅 logger 名称不同的实现。
- * DRY 原则：消除 3 处 ~22 行的重复逻辑。
+ * 提取自 Create 编排器中的实现。
  *
  * @param context - 管线上下文
  * @param deps - startVerifyTask 所需依赖
@@ -603,87 +529,24 @@ export function getActivePipelinesFrom<T extends { stage: string }>(
     );
 }
 
-/**
- * 持久化管线状态（DRY：消除 Amend/Merge 中相同的 savePipelineState 方法）
- *
- * @param orchestrator - 实现了 getActiveState 的编排器实例
- * @param pipelineStateStore - 管线状态存储
- * @param logger - 日志实例
- * @param callerName - 调用方名称
- */
-export async function savePipelineState(
-    orchestrator: {
-        getActiveState(): {
-            pipelines: Map<string, PipelineContext>;
-            taskToPipeline: Map<string, string>;
-        };
-    },
-    pipelineStateStore: {
-        persistFromOrchestrators(orchestrators: {
-            getActiveState(): {
-                pipelines: Map<string, PipelineContext>;
-                taskToPipeline: Map<string, string>;
-            };
-        }[]): Promise<unknown>;
-    },
-    logger: ILogger,
-    callerName: string,
-): Promise<void> {
-    try {
-        await pipelineStateStore.persistFromOrchestrators([orchestrator]);
-    } catch (error) {
-        logger.warn(callerName, "持久化管线状态失败", {
-            error: error instanceof Error ? error.message : String(error),
-        });
-    }
-}
+
 
 /**
  * 处理锁冲突错误（DRY：消除 4 个编排器中相同的 E320_TASK_CONFLICT 处理模式）
  *
  * @param error - 捕获的错误
- * @param i18n - 国际化实例
- * @returns 如果是锁冲突则返回 i18n 消息，否则返回 null
+ * @returns 如果是锁冲突则返回中文提示消息，否则返回 null
  */
 export function handleLockConflictError(
     error: unknown,
-    i18n: I18n,
 ): string | null {
     if (error instanceof CognitiveRazorError && error.code === "E320_TASK_CONFLICT") {
-        return i18n.t("workbench.notifications.conceptLocked");
+        return "该概念正在被处理中，请稍后再试";
     }
     return null;
 }
 
-// ============================================================================
-// R6 轮次共享函数：消除编排器层深层重复
-// ============================================================================
 
-/**
- * 从 Frontmatter 构建嵌入文本（DRY：消除 Amend/Merge 中完全相同的实现）
- *
- * @param frontmatter - 笔记 frontmatter
- * @returns 用于 embedding 的文本
- */
-export function buildEmbeddingText(frontmatter: CRFrontmatter): string {
-    const parts: string[] = [];
-
-    if (frontmatter.name) {
-        parts.push(frontmatter.name);
-    }
-    if (frontmatter.aliases && frontmatter.aliases.length > 0) {
-        parts.push(...frontmatter.aliases);
-    }
-    if (frontmatter.definition) {
-        parts.push(frontmatter.definition);
-    }
-    parts.push(`类型: ${frontmatter.type}`);
-    if (frontmatter.tags && frontmatter.tags.length > 0) {
-        parts.push(`标签: ${frontmatter.tags.join(", ")}`);
-    }
-
-    return parts.join("\n");
-}
 
 /** refreshEmbeddingAndDuplicates 所需的最小依赖接口（ISP） */
 export interface RefreshEmbeddingDeps {
@@ -693,7 +556,7 @@ export interface RefreshEmbeddingDeps {
 }
 
 /**
- * 重算 Embedding 并触发去重检测（DRY：消除 Amend/Merge 中 ~80 行完全相同的实现）
+ * 重算 Embedding 并触发去重检测
  *
  * @param context - 管线上下文（会更新 embedding 和 updatedAt）
  * @param embeddingText - 用于 embedding 的文本
@@ -817,9 +680,9 @@ export function getActiveState(
 }
 
 /**
- * 恢复持久化的管线状态（DRY：消除 4 个编排器中结构相同的 restorePipelines 实现）
+ * 恢复持久化的管线状态
  *
- * @param kind - 管线类型过滤（"create" | "amend" | "merge" | "verify"）
+ * @param kind - 管线类型过滤（"create" | "verify"）
  * @param targetPipelines - 目标管线 Map（编排器的 this.pipelines）
  * @param targetTaskMap - 目标任务映射（编排器的 this.taskToPipeline）
  * @param pipelines - 来源管线 Map

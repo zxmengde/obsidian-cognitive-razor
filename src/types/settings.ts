@@ -56,7 +56,6 @@ export const DEFAULT_UI_STATE: WorkbenchUIState = {
         createConcept: false,
         duplicates: false,
         queueStatus: true,
-        recentOps: true,
     },
     sortPreferences: {},
 };
@@ -68,30 +67,16 @@ export const DEFAULT_UI_STATE: WorkbenchUIState = {
 /** 插件设置 */
 export interface PluginSettings {
     version: string;
-    language: "zh" | "en";
-    namingTemplate: string;
     directoryScheme: DirectoryScheme;
     similarityThreshold: number;
     concurrency: number;
     autoRetry: boolean;
     maxRetryAttempts: number;
     taskTimeoutMs: number;
-    maxTaskHistory: number;
-    maxSnapshots: number;
-    maxSnapshotAgeDays: number;
     enableAutoVerify: boolean;
     providers: Record<string, ProviderConfig>;
     defaultProviderId: string;
     taskModels: Record<TaskType, TaskModelConfig>;
-    imageGeneration: {
-        enabled: boolean;
-        defaultSize: "1024x1024" | "1792x1024" | "1024x1792" | string;
-        defaultQuality: "standard" | "hd";
-        defaultStyle: "vivid" | "natural";
-        defaultAspectRatio?: string;
-        defaultImageSize?: string;
-        contextWindowSize: number;
-    };
     logLevel: "debug" | "info" | "warn" | "error";
     embeddingDimension: number;
     providerTimeoutMs: number;

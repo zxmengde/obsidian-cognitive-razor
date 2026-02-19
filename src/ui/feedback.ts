@@ -3,13 +3,12 @@
  *
  * 需求 18.1-18.5：
  * - 统一出口，禁止业务代码散点使用 new Notice(...)
- * - 按级别分类：success(3s)、info(内联持久)、warning(5s)、error(6s)、undoable(Undo Toast 8s)
+ * - 按级别分类：success(3s)、info(内联持久)、warning(5s)、error(6s)
  * - 错误消息通过 safeErrorMessage() 过滤，不暴露技术细节
  * - 同一操作链禁止连续弹出同级通知
- * - 写入操作后显示 Undo Toast（底部浮层，8s 超时）
  */
 
-import { Notice, setIcon } from "obsidian";
+import { Notice } from "obsidian";
 import { safeErrorMessage } from "../types";
 
 // ============================================================================
@@ -17,23 +16,14 @@ import { safeErrorMessage } from "../types";
 // ============================================================================
 
 /** 反馈级别 */
-export type FeedbackLevel = "success" | "info" | "warning" | "error" | "undoable";
+export type FeedbackLevel = "success" | "info" | "warning" | "error";
 
 /** 各级别的 Notice 持续时间（毫秒） */
 const DURATION: Record<Exclude<FeedbackLevel, "info">, number> = {
     success: 3000,
     warning: 5000,
     error: 6000,
-    undoable: 8000,
 };
-
-/** Undo Toast 选项 */
-export interface UndoOptions {
-    /** 撤销回调 */
-    onUndo: () => void;
-    /** 文件路径（用于显示文件名） */
-    filePath?: string;
-}
 
 /** 去重记录 */
 interface DedupeRecord {
@@ -117,81 +107,4 @@ export function showError(error: unknown, fallback?: string): void {
     new Notice(message, DURATION.error);
 }
 
-/**
- * 显示 Undo Toast（底部浮层，8s 超时）
- * 用于写入操作后提供撤销入口
- *
- * @param message - 通知消息
- * @param options - 撤销选项（回调 + 可选文件路径）
- * @returns dismiss 函数，可手动关闭 Toast
- */
-export function showUndoToast(
-    message: string,
-    options: UndoOptions
-): () => void {
-    if (shouldSuppress("undoable", message)) return () => {};
-    recordNotice("undoable", message);
 
-    const notice = new Notice("", 0); // 不自动关闭，手动管理生命周期
-    const el = notice.noticeEl;
-    el.empty();
-    el.addClass("cr-undo-toast", "cr-scope");
-
-    // 容器
-    const container = el.createDiv({ cls: "cr-undo-toast-container" });
-
-    // 图标
-    const icon = container.createDiv({ cls: "cr-undo-toast-icon" });
-    icon.setAttr("aria-hidden", "true");
-    setIcon(icon, "rotate-ccw");
-
-    // 内容区
-    const content = container.createDiv({ cls: "cr-undo-toast-content" });
-    content.createDiv({ text: message, cls: "cr-undo-toast-message" });
-
-    if (options.filePath) {
-        const fileName = options.filePath.split("/").pop() || options.filePath;
-        content.createDiv({ text: fileName, cls: "cr-undo-toast-file" });
-    }
-
-    // 撤销按钮
-    let triggered = false;
-    const undoBtn = container.createEl("button", {
-        text: "撤销",
-        cls: "cr-undo-toast-button",
-        attr: { "aria-label": `撤销: ${message}` },
-    });
-
-    const dismiss = (): void => {
-        clearTimeout(timer);
-        notice.hide();
-    };
-
-    undoBtn.addEventListener("click", () => {
-        if (triggered) return;
-        triggered = true;
-        options.onUndo();
-        dismiss();
-    });
-
-    // 进度条
-    const bar = container.createDiv({ cls: "cr-undo-toast-progress" });
-    const fill = bar.createDiv({ cls: "cr-undo-toast-progress-fill" });
-    const duration = DURATION.undoable;
-
-    fill.style.width = "100%";
-    const prefersReduced =
-        typeof window !== "undefined" &&
-        typeof window.matchMedia === "function" &&
-        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-    if (!prefersReduced) {
-        fill.style.transition = `width ${duration}ms linear`;
-        setTimeout(() => { fill.style.width = "0%"; }, 10);
-    }
-
-    // 超时自动关闭
-    const timer = setTimeout(dismiss, duration);
-
-    return dismiss;
-}

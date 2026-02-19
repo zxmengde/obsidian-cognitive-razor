@@ -121,7 +121,7 @@
         try {
             const result = await taskQueue.retryFailed();
             if (result.ok) {
-                new Notice(`${t.workbench?.queueStatus?.retryFailed ?? '重试失败'} (${result.value})`);
+                new Notice(`${t.workbench?.notifications?.retryComplete ?? '已重试失败任务'} (${result.value})`);
             }
         } catch (e) {
             logger.error('QueueSection', '重试失败任务异常', e as Error);
@@ -169,9 +169,16 @@
 <div class="cr-queue-section">
     <!-- 状态栏 -->
     <div class="cr-queue-status-bar">
-        <!-- svelte-ignore a11y_click_events_have_key_events -->
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="cr-queue-status-info" onclick={toggleExpanded}>
+        <!-- 状态栏（可点击展开/折叠） -->
+        <div
+            class="cr-queue-status-info"
+            role="button"
+            tabindex="0"
+            onclick={toggleExpanded}
+            onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpanded(); } }}
+            aria-expanded={expanded}
+            aria-label={expanded ? '折叠队列' : '展开队列'}
+        >
             <StatusDot status={dotStatus} label={statusLabel} />
             {#if statsText}
                 <span class="cr-queue-stats" aria-live="polite">{statsText}</span>
