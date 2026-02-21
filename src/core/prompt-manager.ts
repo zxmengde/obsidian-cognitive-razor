@@ -234,7 +234,7 @@ export class PromptManager {
       // A-PDD-04: 验证槽位是否符合任务-槽位映射表
       const providedSlotKeys = Object.keys(slots);
       const slotValidation = validateSlots(taskType, providedSlotKeys);
-      
+
       if (!slotValidation.valid) {
         if (slotValidation.missingRequired && slotValidation.missingRequired.length > 0) {
           this.logger.error("PromptManager", "缺少必需槽位", undefined, {
@@ -325,12 +325,11 @@ export class PromptManager {
 
   /** 获取模板 ID */
   resolveTemplateId(taskType: TaskType, conceptType?: string): string {
-    const mapping: Record<TaskType, string> = {
-      "define": "_base/operations/define",
-      "tag": "_base/operations/tag",
+    const mapping: Partial<Record<TaskType, string>> = {
+      "define": "base/operations/define",
+      "tag": "base/operations/tag",
       "index": "index",
-      "write": "_base/operations/write-default", // write 走分阶段路径，此处为 fallback 模板
-      "verify": "_base/operations/verify",
+      "verify": "base/operations/verify",
     };
     return mapping[taskType] || taskType;
   }
@@ -350,7 +349,7 @@ export class PromptManager {
     this.logger.error("PromptManager", "模板未加载，请先调用 preloadTemplate", undefined, {
       templateId
     });
-    
+
     throw new CognitiveRazorError(
       "E404_TEMPLATE_NOT_FOUND",
       `模板未加载: ${templateId}，请先调用 preloadTemplate 或 preloadAllTemplates`,
@@ -366,7 +365,7 @@ export class PromptManager {
     }
 
     try {
-      const componentPath = `${this.promptsDir}/_base/${componentName}.md`;
+      const componentPath = `${this.promptsDir}/base/${componentName}.md`;
       const readResult = await this.fileStorage.read(componentPath);
 
       if (!readResult.ok) {
@@ -395,14 +394,13 @@ export class PromptManager {
     const componentMapping: Record<string, string> = {
       "{{BASE_WRITING_STYLE}}": "writing-style",
       "{{BASE_ANTI_PATTERNS}}": "anti-patterns",
-      "{{BASE_TERMINOLOGY}}": "terminology",
       "{{BASE_OUTPUT_FORMAT}}": "output-format"
     };
 
     for (const [placeholder, componentName] of Object.entries(componentMapping)) {
       if (processedContent.includes(placeholder)) {
         const componentResult = await this.preloadBaseComponent(componentName);
-        
+
         if (componentResult.ok) {
           processedContent = processedContent.split(placeholder).join(componentResult.value);
           this.logger.debug("PromptManager", `已注入基础组件: ${componentName}`);
@@ -485,10 +483,9 @@ export class PromptManager {
   /** 预加载所有模板 */
   async preloadAllTemplates(): Promise<Result<void>> {
     const templateIds = [
-      "_base/operations/define",
-      "_base/operations/tag",
-      "_base/operations/verify",
-      "_base/operations/write-default",
+      "base/operations/define",
+      "base/operations/tag",
+      "base/operations/verify",
     ];
 
     const errors: string[] = [];
@@ -544,7 +541,7 @@ export class PromptManager {
 
   /** 预加载所有基础组件 */
   async preloadAllBaseComponents(): Promise<Result<void>> {
-    const componentNames = ["writing-style", "anti-patterns", "terminology", "output-format"];
+    const componentNames = ["writing-style", "anti-patterns", "output-format"];
     const errors: string[] = [];
 
     for (const componentName of componentNames) {
@@ -573,35 +570,20 @@ export class PromptManager {
   /**
    * 构建分阶段 Write prompt
    * 
-   * 支持两种模式：
-   * 1. 传入 templateContent：使用阶段专属 prompt 模板（从 _phases/{Type}/{phaseId}.md 加载）
-   * 2. 不传入：fallback 到默认模板 write-default.md
+   * 使用阶段专属 prompt 模板（从 phases/{Type}/{phaseId}.md 加载）
    * 
    * @param slots 槽位值（CTX_META, CTX_PREVIOUS, CTX_SOURCES, CTX_LANGUAGE, CONCEPT_TYPE, PHASE_SCHEMA）
-   * @param templateContent 可选的阶段专属模板内容
+   * @param templateContent 阶段专属模板内容
    * @returns 构建的 prompt
    */
-  buildPhasedWrite(slots: Record<string, string>, templateContent?: string): string {
+  buildPhasedWrite(slots: Record<string, string>, templateContent: string): string {
     try {
-      let content: string;
-
-      if (templateContent) {
-        // 使用阶段专属模板
-        content = templateContent;
-      } else {
-        // fallback 到默认模板
-        const templateId = "_base/operations/write-default";
-        const template = this.loadTemplate(templateId);
-        content = template.content;
-      }
-
       // 委托共享渲染管线（M-01 DRY）
       const optionalSlots = ["CTX_PREVIOUS", "CTX_SOURCES"];
-      const prompt = this.renderTemplate(content, slots, optionalSlots, "buildPhasedWrite");
+      const prompt = this.renderTemplate(templateContent, slots, optionalSlots, "buildPhasedWrite");
 
       this.logger.debug("PromptManager", "分阶段 Write Prompt 构建成功", {
         promptLength: prompt.length,
-        usedCustomTemplate: !!templateContent
       });
 
       return prompt;

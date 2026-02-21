@@ -12,6 +12,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import { buildPhaseSchema, WRITE_PHASES } from "./schema-data.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
@@ -30,43 +31,13 @@ function readPromptFile(relativePath) {
 
 /**
  * 加载阶段专属 prompt 模板
- * 优先从 _phases/{Type}/{phaseId}.md 读取，不存在时返回 null
+ * 优先从 phases/{Type}/{phaseId}.md 读取，不存在时返回 null
  */
 function loadPhaseTemplate(type, phaseId) {
-    const fullPath = join(PROMPTS_DIR, "_phases", type, `${phaseId}.md`);
+    const fullPath = join(PROMPTS_DIR, "phases", type, `${phaseId}.md`);
     if (!existsSync(fullPath)) return null;
     return readFileSync(fullPath, "utf-8");
 }
-
-/**
- * 分阶段配置（与 schema-registry.ts 的 WRITE_PHASES 保持一致）
- */
-const WRITE_PHASES = {
-    Domain: [
-        { id: "core", fields: ["definition", "teleology", "methodology", "boundaries"] },
-        { id: "narrative", fields: ["historical_genesis", "holistic_understanding"] },
-        { id: "structure", fields: ["sub_domains", "issues"] },
-    ],
-    Issue: [
-        { id: "core", fields: ["definition", "core_tension", "significance", "epistemic_barrier", "counter_intuition"] },
-        { id: "narrative", fields: ["historical_genesis", "holistic_understanding", "boundary_conditions"] },
-        { id: "structure", fields: ["sub_issues", "stakeholder_perspectives", "theories"] },
-    ],
-    Theory: [
-        { id: "core", fields: ["definition", "axioms", "logical_structure", "core_predictions", "limitations"] },
-        { id: "narrative", fields: ["historical_genesis", "holistic_understanding"] },
-        { id: "structure", fields: ["sub_theories", "entities", "mechanisms"] },
-    ],
-    Entity: [
-        { id: "core", fields: ["definition", "classification", "properties", "states", "constraints", "distinguishing_features"] },
-        { id: "synthesis", fields: ["holistic_understanding", "composition", "examples", "counter_examples"] },
-    ],
-    Mechanism: [
-        { id: "core", fields: ["definition", "trigger_conditions", "operates_on", "inputs", "outputs", "side_effects", "termination_conditions"] },
-        { id: "process", fields: ["causal_chain", "modulation"] },
-        { id: "synthesis", fields: ["holistic_understanding"] },
-    ],
-};
 
 // ============================================================================
 // 基础组件注入
@@ -75,14 +46,13 @@ const WRITE_PHASES = {
 const BASE_COMPONENT_MAP = {
     "{{BASE_WRITING_STYLE}}": "writing-style",
     "{{BASE_ANTI_PATTERNS}}": "anti-patterns",
-    "{{BASE_TERMINOLOGY}}": "terminology",
     "{{BASE_OUTPUT_FORMAT}}": "output-format",
 };
 
 function loadBaseComponents() {
     const cache = {};
     for (const [, name] of Object.entries(BASE_COMPONENT_MAP)) {
-        const path = join(PROMPTS_DIR, "_base", name + ".md");
+        const path = join(PROMPTS_DIR, "base", name + ".md");
         cache[name] = existsSync(path) ? readFileSync(path, "utf-8") : `<!-- ${name} not found -->`;
     }
     return cache;
@@ -163,67 +133,6 @@ const EXAMPLES = {
 };
 
 // ============================================================================
-// Schema 描述生成（简化版，用于 PHASE_SCHEMA 槽位）
-// ============================================================================
-
-// 各类型字段的简要描述（从 schema-registry.ts 提取的人类可读版本）
-const FIELD_DESCRIPTIONS = {
-    // Domain
-    definition: "string — 形式定义（属+种差）",
-    teleology: "string — 终极目的/目标",
-    methodology: "string — 认识论基础，真理如何验证",
-    boundaries: '["string"] — 明确排除项（这不是什么）',
-    historical_genesis: "string — 思想史叙事（辩证法结构）",
-    holistic_understanding: "string — 哲学综合理解（本体论/认识论/实践论）",
-    sub_domains: '[{ "name": "string", "role": "string" }] — 子领域（MECE）',
-    issues: '[{ "name": "string", "description": "string" }] — 核心议题',
-    // Issue
-    core_tension: "string — 核心张力（A vs B 格式）",
-    significance: "string — 重要性（不解决会怎样）",
-    epistemic_barrier: "string — 认识论障碍（为什么至今未解决）",
-    counter_intuition: "string — 如何挑战常识",
-    sub_issues: '[{ "name": "string", "description": "string" }]',
-    stakeholder_perspectives: '[{ "name": "string", "position": "string" }]',
-    boundary_conditions: '["string"] — 何时此议题不相关',
-    theories: '[{ "name": "string", "status": "主流/边缘/已证伪" }]',
-    // Theory
-    axioms: '[{ "statement": "string", "justification": "string" }]',
-    logical_structure: "string — 从公理到结论的完整推理链",
-    core_predictions: '["string"] — 可检验的预测',
-    limitations: '["string"] — 理论局限性',
-    sub_theories: '[{ "name": "string", "description": "string" }]',
-    entities: '[{ "name": "string", "role": "string" }]',
-    mechanisms: '[{ "name": "string", "description": "string" }]',
-    // Entity
-    classification: '{ "genus": "string", "differentia": "string" }',
-    properties: '[{ "name": "string", "type": "内在/外在", "description": "string" }]',
-    states: '[{ "name": "string", "description": "string" }]',
-    constraints: '["string"]',
-    composition: '{ "upward": "string", "downward": "string" }',
-    distinguishing_features: '["string"] — 与相似概念的区别',
-    examples: '["string"]',
-    counter_examples: '["string"]',
-    // Mechanism
-    trigger_conditions: '["string"]',
-    operates_on: '{ "subject": "string", "object": "string" }',
-    inputs: '["string"]',
-    outputs: '["string"]',
-    side_effects: '["string"]',
-    termination_conditions: '["string"]',
-    causal_chain: '["string"] — 离散原子步骤',
-    modulation: '[{ "factor": "string", "effect": "加速/减速/调节" }]',
-};
-
-function buildPhaseSchema(fields) {
-    const lines = ["{"];
-    for (const f of fields) {
-        lines.push(`  "${f}": "${FIELD_DESCRIPTIONS[f] ?? "..."}"`);
-    }
-    lines.push("}");
-    return lines.join("\n");
-}
-
-// ============================================================================
 // 主流程
 // ============================================================================
 
@@ -241,7 +150,7 @@ function main() {
         {
             id: "define",
             label: "Define",
-            templateId: "_base/operations/define",
+            templateId: "base/operations/define",
             slots: { CTX_INPUT: "量子纠缠" },
             optionalSlots: ["CTX_LANGUAGE"],
             userMessage: "量子纠缠",
@@ -249,7 +158,7 @@ function main() {
         {
             id: "tag",
             label: "Tag",
-            templateId: "_base/operations/tag",
+            templateId: "base/operations/tag",
             slots: { CTX_META: JSON.stringify(EXAMPLES.Entity.meta, null, 2) },
             optionalSlots: ["CTX_LANGUAGE"],
             userMessage: "请为以上概念生成别名和标签。",
@@ -257,7 +166,7 @@ function main() {
         {
             id: "verify",
             label: "Verify",
-            templateId: "_base/operations/verify",
+            templateId: "base/operations/verify",
             slots: {
                 CTX_META: JSON.stringify(EXAMPLES.Entity.meta, null, 2),
                 CTX_CURRENT: "## 定义\n量子纠缠是量子力学中两个或多个粒子之间的特殊关联状态。",
@@ -288,12 +197,6 @@ function main() {
     }
 
     // --- Write 任务：每个类型的每个阶段 ---
-    // 加载默认 write 模板（fallback）
-    const writeDefaultTemplate = (() => {
-        let content = readPromptFile("_base/operations/write-default");
-        return injectBaseComponents(content, baseComponents);
-    })();
-
     for (const [type, example] of Object.entries(EXAMPLES)) {
         console.log(`处理: Write / ${type}`);
         const phases = WRITE_PHASES[type];
@@ -316,21 +219,17 @@ function main() {
                     ? JSON.stringify(accumulated, null, 2)
                     : "";
 
-                // 尝试加载阶段专属模板，fallback 到默认模板
                 let phaseTemplateContent = loadPhaseTemplate(type, phase.id);
-                let templateSource = "phase-specific";
-                if (phaseTemplateContent) {
-                    phaseTemplateContent = injectBaseComponents(phaseTemplateContent, baseComponents);
-                } else {
-                    phaseTemplateContent = writeDefaultTemplate;
-                    templateSource = "write-default (fallback)";
+                if (!phaseTemplateContent) {
+                    throw new Error(`阶段 prompt 文件不存在: phases/${type}/${phase.id}.md`);
                 }
+                phaseTemplateContent = injectBaseComponents(phaseTemplateContent, baseComponents);
 
                 const slots = {
                     CTX_META: JSON.stringify(example.meta, null, 2),
                     CTX_LANGUAGE: "中文",
                     CONCEPT_TYPE: type,
-                    PHASE_SCHEMA: buildPhaseSchema(phase.fields),
+                    PHASE_SCHEMA: buildPhaseSchema(type, phase.fields),
                     CTX_PREVIOUS: previousContext,
                 };
 
@@ -339,7 +238,7 @@ function main() {
 
                 writeFileSync(join(OUTPUT_DIR, `prompt-${phaseId}.md`), prompt, "utf-8");
                 writeFileSync(join(OUTPUT_DIR, `api-payload-${phaseId}.json`), JSON.stringify(payload, null, 2), "utf-8");
-                console.log(`  ✓ 阶段 ${phase.id} (${phase.fields.join(", ")}) [${templateSource}]`);
+                console.log(`  ✓ 阶段 ${phase.id} (${phase.fields.join(", ")})`);
                 results.push({ id: phaseId, label, ok: true });
 
                 // 模拟本阶段生成了内容，供下一阶段的 CTX_PREVIOUS 使用

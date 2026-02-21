@@ -23,6 +23,7 @@ data.json
 .agent/
 .claude/
 scripts/output/
+scripts/.schema-registry-compiled.mjs
 .spec-workflow/
 
 .serena/

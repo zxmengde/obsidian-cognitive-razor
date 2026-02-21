@@ -107,7 +107,7 @@ export class TaskRunner {
   /** 执行任务 - 验证 Provider 能力后分发到具体执行方法 */
   async run(task: TaskRecord): Promise<Result<TaskResult>> {
     const startTime = Date.now();
-    
+
     const capabilityCheck = await this.validateProviderCapability(task);
     if (!capabilityCheck.ok) {
       this.logger.error("TaskRunner", "Provider 能力验证失败", undefined, {
@@ -151,7 +151,7 @@ export class TaskRunner {
       return result;
     } catch (error) {
       const elapsedTime = Date.now() - startTime;
-      
+
       this.logger.error("TaskRunner", `任务执行异常: ${task.id}`, error as Error, {
         taskType: task.taskType,
         elapsedTime
@@ -234,7 +234,7 @@ export class TaskRunner {
   /** 获取任务管线中的下一个任务类型 */
   getNextPipelineTask(currentTaskType: TaskType): TaskType | null {
     const currentIndex = TASK_PIPELINE_ORDER.indexOf(currentTaskType);
-    
+
     if (currentIndex === -1 || currentIndex >= TASK_PIPELINE_ORDER.length - 1) {
       return null;
     }
@@ -279,7 +279,7 @@ export class TaskRunner {
 
       // 调用 LLM（使用用户配置的模型）
       const chatRequest = this.buildChatRequest("define", prompt, task.providerRef);
-      
+
       const chatResult = await this.providerManager.chat(chatRequest, signal);
 
       if (!chatResult.ok) {
@@ -508,7 +508,7 @@ export class TaskRunner {
           ? JSON.stringify(accumulated, null, 2)
           : "";
 
-        // 加载阶段专属 prompt 模板（优先从文件，fallback 到默认模板）
+        // 加载阶段专属 prompt 模板
         const phaseTemplate = await this.loadPhasePromptTemplate(conceptType, phase.id);
 
         // 构建分阶段 prompt
@@ -519,7 +519,7 @@ export class TaskRunner {
           CTX_LANGUAGE: language,
           CONCEPT_TYPE: conceptType,
           PHASE_SCHEMA: phaseSchema,
-        }, phaseTemplate ?? undefined);
+        }, phaseTemplate);
 
         // 调用 LLM
         const chatResult = await this.providerManager.chat(
@@ -591,28 +591,21 @@ export class TaskRunner {
   /**
    * 加载阶段专属 prompt 模板
    * 
-   * 优先从 prompts/_phases/{Type}/{phaseId}.md 读取，
+   * 优先从 prompts/phases/{Type}/{phaseId}.md 读取，
    * 读取失败时返回 null（由调用方 fallback 到默认模板）。
    */
-  private async loadPhasePromptTemplate(conceptType: CRType, phaseId: string): Promise<string | null> {
-    try {
-      const filePath = `prompts/_phases/${conceptType}/${phaseId}.md`;
-      const file = this.app.vault.getFileByPath(filePath);
-      if (!file) {
-        this.logger.debug("TaskRunner", `阶段 prompt 文件不存在，使用默认模板: ${filePath}`);
-        return null;
-      }
-      const content = await this.app.vault.read(file);
-      if (!content.trim()) {
-        this.logger.warn("TaskRunner", `阶段 prompt 文件为空，使用默认模板: ${filePath}`);
-        return null;
-      }
-      this.logger.debug("TaskRunner", `已加载阶段 prompt: ${filePath}`);
-      return content;
-    } catch (e) {
-      this.logger.warn("TaskRunner", `加载阶段 prompt 失败，使用默认模板: ${conceptType}/${phaseId}`, { error: e });
-      return null;
+  private async loadPhasePromptTemplate(conceptType: CRType, phaseId: string): Promise<string> {
+    const filePath = `prompts/phases/${conceptType}/${phaseId}.md`;
+    const file = this.app.vault.getFileByPath(filePath);
+    if (!file) {
+      throw new CognitiveRazorError("E405_TEMPLATE_INVALID", `阶段 prompt 文件不存在: ${filePath}`);
     }
+    const content = await this.app.vault.read(file);
+    if (!content.trim()) {
+      throw new CognitiveRazorError("E405_TEMPLATE_INVALID", `阶段 prompt 文件为空: ${filePath}`);
+    }
+    this.logger.debug("TaskRunner", `已加载阶段 prompt: ${filePath}`);
+    return content;
   }
 
   /**
@@ -624,10 +617,12 @@ export class TaskRunner {
     if (!properties) return fields.map(f => `"${f}": "..."`).join(",\n");
 
     const lines: string[] = ["{"];
-    for (const field of fields) {
+    for (let i = 0; i < fields.length; i++) {
+      const field = fields[i];
       const prop = properties[field];
+      const comma = i < fields.length - 1 ? "," : "";
       if (!prop) {
-        lines.push(`  "${field}": "..."`);
+        lines.push(`  "${field}": "..."${comma}`);
         continue;
       }
       const desc = prop.description || field;
@@ -638,16 +633,16 @@ export class TaskRunner {
         if (items.type === "object" && items.properties) {
           const subProps = items.properties as Record<string, Record<string, unknown>>;
           const subFields = Object.keys(subProps).map(k => `"${k}": "${subProps[k].description || k}"`).join(", ");
-          lines.push(`  "${field}": [{ ${subFields} }, ...]  // ${desc}`);
+          lines.push(`  "${field}": [{ ${subFields} }, ...]${comma}  // ${desc}`);
         } else {
-          lines.push(`  "${field}": ["...", ...]  // ${desc}`);
+          lines.push(`  "${field}": ["...", ...]${comma}  // ${desc}`);
         }
       } else if (type === "object" && prop.properties) {
         const subProps = prop.properties as Record<string, Record<string, unknown>>;
         const subFields = Object.keys(subProps).map(k => `"${k}": "${subProps[k].description || k}"`).join(", ");
-        lines.push(`  "${field}": { ${subFields} }  // ${desc}`);
+        lines.push(`  "${field}": { ${subFields} }${comma}  // ${desc}`);
       } else {
-        lines.push(`  "${field}": "..."  // ${desc}`);
+        lines.push(`  "${field}": "..."${comma}  // ${desc}`);
       }
     }
     lines.push("}");
@@ -792,7 +787,7 @@ export class TaskRunner {
   } {
     const settings = this.settingsStore?.getSettings();
     const taskConfig = settings?.taskModels?.[taskType];
-    
+
     // 从 SSOT 默认配置获取回退值（DRY：消除与 settings-store.ts 的重复）
     const defaultConfig = DEFAULT_TASK_MODEL_CONFIGS[taskType];
 
@@ -896,7 +891,7 @@ export class TaskRunner {
       return {
         type: "object",
         properties: {
-          holistic_understanding: { type: "string", minLength: 10 }
+          holistic_understanding: { type: "string" }
         },
         required: ["holistic_understanding"]
       };
@@ -904,8 +899,8 @@ export class TaskRunner {
 
     // 从 SchemaRegistry 获取完整的 JSON Schema
     const schema = this.schemaRegistry.getSchema(conceptType as CRType);
-    this.logger.debug("TaskRunner", `获取 Schema: ${conceptType}`, { 
-      requiredFields: (schema as Record<string, unknown>).required 
+    this.logger.debug("TaskRunner", `获取 Schema: ${conceptType}`, {
+      requiredFields: (schema as Record<string, unknown>).required
     });
     return schema;
   }
@@ -943,7 +938,7 @@ export class TaskRunner {
     // 检查 Provider 是否存在
     const configuredProviders = this.providerManager.getConfiguredProviders();
     const providerExists = configuredProviders.some(p => p.id === providerId);
-    
+
     if (!providerExists) {
       // 如果没有配置任何 Provider，返回友好的错误消息
       if (configuredProviders.length === 0) {
@@ -953,7 +948,7 @@ export class TaskRunner {
           hint: "打开设置 → Cognitive Razor → Providers 进行配置"
         });
       }
-      
+
       // 如果配置了 Provider 但指定的不存在，建议使用已配置的
       const availableIds = configuredProviders.map(p => p.id).join(", ");
       return err("E401_PROVIDER_NOT_CONFIGURED", `Provider "${providerId}" 不存在。可用的 Provider: ${availableIds}`, {
@@ -965,7 +960,7 @@ export class TaskRunner {
 
     // 检查 Provider 可用性和能力
     const availabilityResult = await this.providerManager.checkAvailability(providerId);
-    
+
     if (!availabilityResult.ok) {
       return err(availabilityResult.error.code, `Provider 不可用: ${availabilityResult.error.message}`, {
         providerId,
