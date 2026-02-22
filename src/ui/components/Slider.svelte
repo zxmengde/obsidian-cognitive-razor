@@ -68,7 +68,9 @@
         onchange={handleInput}
     />
     {#if unit}
-        <span class="cr-slider__unit">{unit}</span>
+        <span class="cr-slider__unit">{value}{unit}</span>
+    {:else}
+        <span class="cr-slider__unit">{value}</span>
     {/if}
 </div>
 
@@ -118,5 +120,8 @@
         color: var(--cr-text-muted);
         font-size: var(--font-ui-small, 13px);
         white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+        min-width: 48px;
+        text-align: right;
     }
 </style>

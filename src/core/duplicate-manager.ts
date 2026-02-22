@@ -177,8 +177,7 @@ export class DuplicateManager {
         const page = candidates.slice(i, i + this.pageSize);
 
         for (const candidate of page) {
-          const normalizedCandidate = normalizeVector(candidate.embedding);
-          const similarity = dotProduct(normalizedNew, normalizedCandidate);
+          const similarity = dotProduct(normalizedNew, candidate.embedding);
 
           if (similarity >= threshold) {
             const pairId = this.generatePairId(nodeId, candidate.id);

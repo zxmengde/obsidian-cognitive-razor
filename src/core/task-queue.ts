@@ -220,14 +220,7 @@ export class TaskQueue {
       });
 
       // Requirements 8.4: 记录任务状态变更日志
-      this.logger.info("TaskQueue", `任务状态变更: ${taskId}`, {
-        event: "TASK_STATE_CHANGE",
-        taskId,
-        previousState: null,
-        newState: "Pending",
-        taskType: task.taskType,
-        nodeId: task.nodeId
-      });
+      this.logStateChange(fullTask, null, "Pending");
 
       // 事件驱动调度：入队后立即尝试调度
       this.tryScheduleAll();
@@ -298,12 +291,7 @@ export class TaskQueue {
       });
 
       // Requirements 8.4: 记录任务状态变更日志
-      this.logger.info("TaskQueue", `任务状态变更: ${taskId}`, {
-        event: "TASK_STATE_CHANGE",
-        taskId,
-        previousState,
-        newState: "Cancelled"
-      });
+      this.logStateChange(task, previousState, "Cancelled");
 
       return true;
     } catch (error) {
@@ -418,9 +406,17 @@ export class TaskQueue {
   /**
    * Plugin 卸载时强制刷新缓冲区（需求 17.3）
    *
-   * 清除待执行的定时器，立即将缓冲区数据写入磁盘。
+   * 取消正在执行的任务，清除定时器，立即将缓冲区数据写入磁盘。
    */
   async dispose(): Promise<void> {
+    // 取消所有正在执行的任务
+    if (this.taskRunner) {
+      for (const taskId of this.processingTasks) {
+        this.taskRunner.abort(taskId);
+      }
+    }
+    this.processingTasks.clear();
+
     if (this.writeTimer !== null) {
       clearTimeout(this.writeTimer);
       this.writeTimer = null;
@@ -428,6 +424,9 @@ export class TaskQueue {
     if (this.pendingWrite) {
       await this.flushSave();
     }
+
+    // 清理监听器
+    this.listeners.length = 0;
   }
 
   /** 获取所有任务 */
@@ -586,14 +585,7 @@ export class TaskQueue {
         });
 
         // Requirements 8.4: 记录任务状态变更日志
-        this.logger.info("TaskQueue", `任务状态变更: ${task.id}`, {
-          event: "TASK_STATE_CHANGE",
-          taskId: task.id,
-          previousState,
-          newState: "Running",
-          taskType: task.taskType,
-          nodeId: task.nodeId
-        });
+        this.logStateChange(task, previousState, "Running");
 
         // 异步执行任务（不阻塞调度）
         this.executeTask(task).catch((error) => {
@@ -695,14 +687,7 @@ export class TaskQueue {
     }
 
     // Requirements 8.4: 记录任务状态变更日志
-    this.logger.info("TaskQueue", `任务状态变更: ${task.id}`, {
-      event: "TASK_STATE_CHANGE",
-      taskId: task.id,
-      previousState,
-      newState: "Completed",
-      taskType: task.taskType,
-      nodeId: task.nodeId
-    });
+    this.logStateChange(task, previousState, "Completed");
 
     // 释放锁（必须先释放，再发布事件以便下游入队不被锁阻塞）
     this.releaseTaskLocks(task);
@@ -718,7 +703,7 @@ export class TaskQueue {
     this.processingTasks.delete(task.id);
 
     this.trimHistory();
-    this.scheduleSave();
+    await this.flushSave();
 
     // 事件驱动调度：任务完成后立即尝试调度下一个
     this.tryScheduleAll();
@@ -766,11 +751,7 @@ export class TaskQueue {
       task.updated = formatCRTimestamp();
 
       // Requirements 8.4: 记录任务状态变更日志（重试）
-      this.logger.warn("TaskQueue", `任务状态变更: ${task.id}`, {
-        event: "TASK_STATE_CHANGE",
-        taskId: task.id,
-        previousState,
-        newState: "Pending",
+      this.logStateChange(task, previousState, "Pending", "warn", {
         reason: "retry",
         attempt: task.attempt,
         maxAttempts: task.maxAttempts,
@@ -795,11 +776,7 @@ export class TaskQueue {
                            "max attempts reached";
 
       // Requirements 8.4: 记录任务状态变更日志（失败）
-      this.logger.error("TaskQueue", `任务状态变更: ${task.id}`, undefined, {
-        event: "TASK_STATE_CHANGE",
-        taskId: task.id,
-        previousState,
-        newState: "Failed",
+      this.logStateChange(task, previousState, "Failed", "error", {
         attempt: task.attempt,
         maxAttempts: task.maxAttempts,
         errorCode: error.code,
@@ -823,7 +800,8 @@ export class TaskQueue {
     }
 
     this.trimHistory();
-    this.scheduleSave();
+    // 关键状态变更（Failed）立即刷盘，防止数据丢失
+    await this.flushSave();
 
     // 事件驱动调度：任务失败后立即尝试调度下一个
     this.tryScheduleAll();
@@ -848,11 +826,7 @@ export class TaskQueue {
     });
 
     // Requirements 8.4: 记录任务状态变更日志（异常）
-    this.logger.error("TaskQueue", `任务状态变更: ${task.id}`, undefined, {
-      event: "TASK_STATE_CHANGE",
-      taskId: task.id,
-      previousState,
-      newState: "Failed",
+    this.logStateChange(task, previousState, "Failed", "error", {
       reason: "exception",
       errorCode: error.code,
       errorMessage: error.message
@@ -865,7 +839,8 @@ export class TaskQueue {
     this.processingTasks.delete(task.id);
 
     this.trimHistory();
-    this.scheduleSave();
+    // 关键状态变更（异常 Failed）立即刷盘
+    await this.flushSave();
 
     // 发布失败事件
     this.publishEvent({
@@ -887,6 +862,33 @@ export class TaskQueue {
     }
     if (task.typeLockKey) {
       this.lockManager.release(task.typeLockKey);
+    }
+  }
+
+  /**
+   * 记录任务状态变更日志（DRY：统一 8 处重复的日志格式）
+   */
+  private logStateChange(
+    task: TaskRecord,
+    previousState: string | null,
+    newState: string,
+    level: "info" | "warn" | "error" = "info",
+    extra?: Record<string, unknown>
+  ): void {
+    const context: Record<string, unknown> = {
+      event: "TASK_STATE_CHANGE",
+      taskId: task.id,
+      previousState,
+      newState,
+      taskType: task.taskType,
+      nodeId: task.nodeId,
+      ...extra,
+    };
+    const msg = `任务状态变更: ${task.id}`;
+    if (level === "error") {
+      this.logger.error("TaskQueue", msg, undefined, context);
+    } else {
+      this.logger[level]("TaskQueue", msg, context);
     }
   }
 

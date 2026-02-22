@@ -167,12 +167,16 @@
     .cr-advanced-tab {
         display: flex;
         flex-direction: column;
-        gap: var(--cr-space-4, 16px);
+        gap: var(--cr-space-5, 20px);
     }
 
     .cr-settings-group {
         display: flex;
         flex-direction: column;
+        background: var(--cr-bg-secondary);
+        border: 1px solid var(--cr-border);
+        border-radius: var(--cr-radius-md, 8px);
+        padding: var(--cr-space-4, 16px);
     }
 
     .cr-settings-group__title {
@@ -180,8 +184,10 @@
         padding-bottom: var(--cr-space-2, 8px);
         border-bottom: 1px solid var(--cr-border);
         color: var(--cr-text-normal);
-        font-size: var(--font-ui-medium, 14px);
+        font-size: 15px;
         font-weight: 600;
+        padding-left: var(--cr-space-2, 8px);
+        border-left: 3px solid var(--cr-interactive-accent);
     }
 
     .cr-settings-group__warning {

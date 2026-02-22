@@ -95,7 +95,7 @@
 <task_instruction>
 你将按以下步骤处理输入：
 
-1. **分析**：从输入中提取 `standard_name_cn` 和 `standard_name_en`
+1. **分析**：从输入的 `name` 字段中提取中英文名称（格式为 `中文名 (English Name)`）
   - **别名头脑风暴**：
     - 列出中文名、英文名、缩写
     - 思考人们实际使用的替代名称

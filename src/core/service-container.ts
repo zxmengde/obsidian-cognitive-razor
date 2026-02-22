@@ -18,7 +18,7 @@
  * 实现此接口的服务在 disposeAll() 时会被自动调用 dispose()
  */
 interface Disposable {
-    dispose(): void;
+    dispose(): void | Promise<void>;
 }
 
 /** 初始化层级，决定 disposeAll 的释放顺序 */
@@ -84,7 +84,10 @@ export class ServiceContainer {
         this.ensureNotDisposed();
         const entry = this.registry.get(token);
         if (!entry) {
-            throw new Error(`服务未注册: ${token.toString()}`);
+            const registered = [...this.registry.keys()].map(s => s.toString());
+            throw new Error(
+                `服务未注册: ${token.toString()}。已注册: [${registered.join(', ')}]`
+            );
         }
         return entry.instance as T;
     }
@@ -104,7 +107,7 @@ export class ServiceContainer {
      *
      * @see 需求 1.3
      */
-    disposeAll(): void {
+    async disposeAll(): Promise<void> {
         if (this.disposed) return;
 
         // 按层级逆序排列，同层内逆序
@@ -115,10 +118,13 @@ export class ServiceContainer {
             const instance = entry.instance as (Disposable & Record<string, unknown>) | null;
             if (instance && typeof instance.dispose === "function") {
                 try {
-                    instance.dispose();
+                    const result = instance.dispose();
+                    // 支持异步 dispose（兼容返回 Promise 的服务）
+                    if (result instanceof Promise) {
+                        await result;
+                    }
                 } catch {
                     // 释放阶段不抛出异常，静默处理
-                    // 生产环境中由 Logger 记录（如果 Logger 尚未被释放）
                 }
             }
         }
@@ -127,6 +133,7 @@ export class ServiceContainer {
         this.registrationOrder.length = 0;
         this.disposed = true;
     }
+
 
     // ========================================================================
     // 内部方法

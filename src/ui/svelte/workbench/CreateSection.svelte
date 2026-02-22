@@ -13,10 +13,12 @@
 -->
 <script lang="ts">
     import type { TFile } from 'obsidian';
-    import { Notice } from 'obsidian';
     import { getCRContext } from '../../bridge/context';
     import { SERVICE_TOKENS } from '../../../../main';
+    import { showSuccess, showError } from '../../feedback';
     import Button from '../../components/Button.svelte';
+    import Icon from '../../components/Icon.svelte';
+    import SectionCard from '../../components/SectionCard.svelte';
     import InlinePanel from '../../components/InlinePanel.svelte';
     import TypeTable from './TypeTable.svelte';
     import ExpandPanel from './ExpandPanel.svelte';
@@ -106,9 +108,9 @@
         if (!activeFile) return;
         const result = verifyOrch.startVerifyPipeline(activeFile.path);
         if (result.ok) {
-            new Notice(t.notices?.verifyStarted ?? '核查已启动');
+            showSuccess(t.notices?.verifyStarted ?? '核查已启动');
         } else {
-            new Notice(result.error.message);
+            showError(result.error.message);
         }
     }
 
@@ -119,81 +121,87 @@
         if (result.ok) {
             clearInput();
         } else {
-            new Notice(result.error.message);
+            showError(result.error.message);
         }
     }
 </script>
 
 <!-- 搜索输入区 -->
-<div class="cr-create-section">
-    <div class="cr-search-row">
-        <input
-            class="cr-search-input"
-            type="text"
-            placeholder={t.workbench?.createConcept?.placeholder ?? '输入概念描述...'}
-            bind:value={inputValue}
-            onkeydown={handleKeydown}
-            disabled={defining}
-            aria-label={t.workbench?.createConcept?.placeholder ?? '输入概念描述'}
-        />
-        {#if hasInput}
-            <button
-                class="cr-search-btn cr-search-clear"
-                onclick={clearInput}
+<SectionCard>
+    <div class="cr-create-section">
+        <div class="cr-search-row">
+            <input
+                class="cr-search-input"
+                type="text"
+                placeholder={t.workbench?.createConcept?.placeholder ?? '输入概念描述...'}
+                bind:value={inputValue}
+                onkeydown={handleKeydown}
                 disabled={defining}
-                aria-label={t.workbench?.createConcept?.clear ?? '清空输入'}
-            >✕</button>
-        {/if}
-        <Button
-            variant="primary"
-            size="icon"
-            disabled={!hasInput}
-            loading={defining}
-            onclick={() => void handleDefine()}
-            ariaLabel={t.workbench?.createConcept?.startButton ?? '开始'}
-        >
-            {#if !defining}↵{/if}
-        </Button>
-    </div>
-
-    <!-- Define 结果：类型置信度表格 -->
-    {#if defineResult}
-        <TypeTable
-            concept={defineResult}
-            oncreate={handleCreateType}
-        />
-    {/if}
-
-    <!-- 错误状态 -->
-    {#if error}
-        <div class="cr-error-inline">{error}</div>
-    {/if}
-
-    <!-- 操作按钮行：仅在有活跃 Markdown 笔记时显示 -->
-    {#if isMarkdown}
-        <div class="cr-action-row">
+                aria-label={t.workbench?.createConcept?.placeholder ?? '输入概念描述'}
+            />
+            {#if hasInput}
+                <button
+                    class="cr-search-btn cr-search-clear"
+                    onclick={clearInput}
+                    disabled={defining}
+                    aria-label={t.workbench?.createConcept?.clear ?? '清空输入'}
+                >
+                    <Icon name="x" size={16} />
+                </button>
+            {/if}
             <Button
-                variant={activePanel === 'expand' ? 'primary' : 'secondary'}
-                size="sm"
-                onclick={() => togglePanel('expand')}
+                variant="primary"
+                size="icon"
+                disabled={!hasInput}
+                loading={defining}
+                onclick={() => void handleDefine()}
+                ariaLabel={t.workbench?.createConcept?.startButton ?? '开始'}
             >
-                {t.workbench?.buttons?.expand ?? '拓展'}
-            </Button>
-            <Button variant="secondary" size="sm" onclick={handleVerify}>
-                {t.workbench?.buttons?.verify ?? '核查'}
+                {#if !defining}<Icon name="corner-down-left" size={16} />{/if}
             </Button>
         </div>
 
-        <!-- 内联展开面板区 -->
-        <InlinePanel expanded={activePanel === 'expand'} onclose={closePanel}>
-            <ExpandPanel {activeFile} onclose={closePanel} />
-        </InlinePanel>
-    {:else}
-        <div class="cr-hint-text">
-            {t.workbench?.buttons?.openNoteHint ?? '打开一篇 Markdown 笔记以使用改进、拓展等工具'}
-        </div>
-    {/if}
-</div>
+        <!-- 操作按钮行：仅在有活跃 Markdown 笔记时显示 -->
+        {#if isMarkdown}
+            <div class="cr-action-grid">
+                <Button
+                    variant={activePanel === 'expand' ? 'primary' : 'secondary'}
+                    size="sm"
+                    onclick={() => togglePanel('expand')}
+                >
+                    {t.workbench?.buttons?.expand ?? '拓展'}
+                </Button>
+                <Button variant="secondary" size="sm" onclick={handleVerify}>
+                    {t.workbench?.buttons?.verify ?? '核查'}
+                </Button>
+            </div>
+        {:else}
+            <div class="cr-hint-text">
+                {t.workbench?.buttons?.openNoteHint ?? '打开一篇 Markdown 笔记以使用改进、拓展等工具'}
+            </div>
+        {/if}
+    </div>
+</SectionCard>
+
+<!-- Define 结果：类型置信度表格 -->
+{#if defineResult}
+    <TypeTable
+        concept={defineResult}
+        oncreate={handleCreateType}
+    />
+{/if}
+
+<!-- 错误状态 -->
+{#if error}
+    <div class="cr-error-inline">{error}</div>
+{/if}
+
+<!-- 内联展开面板区 -->
+{#if isMarkdown}
+    <InlinePanel expanded={activePanel === 'expand'} onclose={closePanel}>
+        <ExpandPanel {activeFile} onclose={closePanel} />
+    </InlinePanel>
+{/if}
 
 <style>
     .cr-create-section {
@@ -210,19 +218,19 @@
 
     .cr-search-input {
         flex: 1;
-        height: 36px;
+        height: 40px;
         padding: 0 var(--cr-space-3);
         border: 1px solid var(--cr-border);
         border-radius: var(--cr-radius-md, 6px);
-        background: var(--cr-bg-primary);
-        color: var(--cr-text-primary);
+        background: var(--cr-bg-base);
+        color: var(--cr-text-normal);
         font-size: var(--cr-font-base, 14px);
         outline: none;
         transition: border-color 0.15s;
     }
 
     .cr-search-input:focus {
-        border-color: var(--cr-accent);
+        border-color: var(--cr-border-focus);
     }
 
     .cr-search-input:disabled {
@@ -250,12 +258,11 @@
         background: var(--cr-bg-hover);
     }
 
-    /* 操作按钮行 */
-    .cr-action-row {
-        display: flex;
-        justify-content: flex-end;
+    /* 操作按钮网格 */
+    .cr-action-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
         gap: var(--cr-space-2);
-        flex-wrap: wrap;
     }
 
     /* 引导文字 */
@@ -269,7 +276,7 @@
     /* 内联错误 */
     .cr-error-inline {
         font-size: var(--cr-font-sm, 13px);
-        color: var(--cr-status-error, #e53935);
+        color: var(--cr-status-error);
         padding: var(--cr-space-1) 0;
     }
 </style>

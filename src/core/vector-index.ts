@@ -455,8 +455,17 @@ export class VectorIndex {
       // 更新单条缓存（upsert 后立即可用于 getEntry）
       this.setRecentVector(entry.uid, conceptVector);
 
-      // 使该类型桶缓存失效（下次访问时重新加载，确保数据一致性）
-      this.buckets.delete(entry.type);
+      // 如果桶已加载，直接更新内存中的桶数据（避免失效后重新加载整个桶）
+      const bucket = this.buckets.get(entry.type);
+      if (bucket) {
+        const idx = bucket.vectors.findIndex(v => v.id === entry.uid);
+        if (idx !== -1) {
+          bucket.vectors[idx] = conceptVector;
+        } else {
+          bucket.vectors.push(conceptVector);
+        }
+        bucket.lastAccessedAt = Date.now();
+      }
 
       // 保存元数据索引
       const saveResult = await this.saveIndexMeta();
@@ -533,62 +542,7 @@ export class VectorIndex {
     embedding: number[],
     topK: number
   ): Promise<Result<SearchResult[]>> {
-    try {
-      if (!this.indexMeta) {
-        return err("E310_INVALID_STATE", "向量索引未加载");
-      }
-
-      // 验证向量维度
-      if (embedding.length !== this.dimension) {
-        return err(
-          "E305_VECTOR_MISMATCH",
-          `Invalid embedding dimension: expected ${this.dimension}, got ${embedding.length}`,
-          { expected: this.dimension, actual: embedding.length }
-        );
-      }
-
-      // 归一化查询向量
-      const normalizedQuery = normalize(embedding);
-
-      // 按需加载该类型的向量桶
-      const bucketResult = await this.ensureBucketLoaded(type);
-      if (!bucketResult.ok) {
-        return bucketResult as Result<SearchResult[]>;
-      }
-
-      const vectors = bucketResult.value.vectors;
-
-      // 使用局部排序，仅维护 topK
-      const topResults: Array<{ vector: ConceptVector; similarity: number }> = [];
-
-      for (const vector of vectors) {
-        const similarity = dotProduct(normalizedQuery, vector.embedding);
-
-        if (topResults.length < topK) {
-          topResults.push({ vector, similarity });
-          topResults.sort((a, b) => b.similarity - a.similarity);
-        } else if (similarity > topResults[topResults.length - 1].similarity) {
-          topResults[topResults.length - 1] = { vector, similarity };
-          topResults.sort((a, b) => b.similarity - a.similarity);
-        }
-      }
-
-      // 转换为 SearchResult 格式（name/path 运行时通过 CruidCache 解析）
-      const searchResults: SearchResult[] = topResults.map((r) => ({
-        uid: r.vector.id,
-        similarity: r.similarity,
-        name: this.cruidCache?.getName(r.vector.id) || r.vector.id,
-        path: this.cruidCache?.getPath(r.vector.id) || "",
-      }));
-
-      return ok(searchResults);
-    } catch (error) {
-      return err(
-        "E500_INTERNAL_ERROR",
-        "Failed to search vector index",
-        error
-      );
-    }
+    return this.searchInternal(type, embedding, { mode: "topK", topK });
   }
 
   /**
@@ -600,16 +554,29 @@ export class VectorIndex {
     embedding: number[],
     threshold: number
   ): Promise<Result<SearchResult[]>> {
+    if (Number.isNaN(threshold) || threshold < 0 || threshold > 1) {
+      return err("E101_INVALID_INPUT", `无效的相似度阈值: ${threshold}`, { threshold });
+    }
+    return this.searchInternal(type, embedding, { mode: "threshold", threshold });
+  }
+
+  /**
+   * 搜索内部实现（DRY：统一 topK 和 threshold 两种模式）
+   */
+  private async searchInternal(
+    type: CRType,
+    embedding: number[],
+    opts: { mode: "topK"; topK: number } | { mode: "threshold"; threshold: number }
+  ): Promise<Result<SearchResult[]>> {
     try {
       if (!this.indexMeta) {
         return err("E310_INVALID_STATE", "向量索引未加载");
       }
 
-      if (Number.isNaN(threshold) || threshold < 0 || threshold > 1) {
-        return err("E101_INVALID_INPUT", `无效的相似度阈值: ${threshold}`, { threshold });
+      if (this.indexMeta.needsRebuild) {
+        return err("E305_VECTOR_MISMATCH", "向量索引需要重建（embedding 模型或维度已变更），请先重建索引");
       }
 
-      // 验证向量维度
       if (embedding.length !== this.dimension) {
         return err(
           "E305_VECTOR_MISMATCH",
@@ -618,28 +585,52 @@ export class VectorIndex {
         );
       }
 
-      // 归一化查询向量
       const normalizedQuery = normalize(embedding);
 
-      // 按需加载该类型的向量桶
       const bucketResult = await this.ensureBucketLoaded(type);
       if (!bucketResult.ok) {
         return bucketResult as Result<SearchResult[]>;
       }
 
       const vectors = bucketResult.value.vectors;
+      let matched: Array<{ vector: ConceptVector; similarity: number }>;
 
-      const matched: Array<{ vector: ConceptVector; similarity: number }> = [];
-      for (const vector of vectors) {
-        const similarity = dotProduct(normalizedQuery, vector.embedding);
-        if (similarity > threshold) {
-          matched.push({ vector, similarity });
+      if (opts.mode === "topK") {
+        // 二分插入维护 topK 有序数组
+        matched = [];
+        for (const vector of vectors) {
+          const similarity = dotProduct(normalizedQuery, vector.embedding);
+          if (matched.length < opts.topK) {
+            let lo = 0, hi = matched.length;
+            while (lo < hi) {
+              const mid = (lo + hi) >>> 1;
+              if (matched[mid].similarity > similarity) lo = mid + 1;
+              else hi = mid;
+            }
+            matched.splice(lo, 0, { vector, similarity });
+          } else if (similarity > matched[matched.length - 1].similarity) {
+            matched.pop();
+            let lo = 0, hi = matched.length;
+            while (lo < hi) {
+              const mid = (lo + hi) >>> 1;
+              if (matched[mid].similarity > similarity) lo = mid + 1;
+              else hi = mid;
+            }
+            matched.splice(lo, 0, { vector, similarity });
+          }
         }
+      } else {
+        // 阈值过滤模式
+        matched = [];
+        for (const vector of vectors) {
+          const similarity = dotProduct(normalizedQuery, vector.embedding);
+          if (similarity > opts.threshold) {
+            matched.push({ vector, similarity });
+          }
+        }
+        matched.sort((a, b) => b.similarity - a.similarity);
       }
 
-      matched.sort((a, b) => b.similarity - a.similarity);
-
-      // 转换为 SearchResult 格式
       const searchResults: SearchResult[] = matched.map((r) => ({
         uid: r.vector.id,
         similarity: r.similarity,
@@ -801,7 +792,7 @@ export class VectorIndex {
     return ok(undefined);
   }
 
-  /** 释放资源：清除定时器和缓存 */
+  /** 释放资源：清除定时器、缓存和元数据 */
   dispose(): void {
     if (this.evictionTimer !== null) {
       clearInterval(this.evictionTimer);
@@ -809,6 +800,7 @@ export class VectorIndex {
     }
     this.buckets.clear();
     this.recentVectors.clear();
+    this.indexMeta = null;
   }
 
   /**

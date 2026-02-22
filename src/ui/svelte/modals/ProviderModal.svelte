@@ -9,8 +9,8 @@
   @see 需求 12.3, 12.5, 12.6
 -->
 <script lang="ts">
-    import { Notice } from 'obsidian';
     import { untrack } from 'svelte';
+    import { showError } from '../../feedback';
     import Button from '../../components/Button.svelte';
     import TextInput from '../../components/TextInput.svelte';
     import PasswordInput from '../../components/PasswordInput.svelte';
@@ -172,7 +172,7 @@
             await onsave(formId.trim(), config);
             restoreFocus();
         } catch (e) {
-            new Notice(t('modals.providerConfig.errors.saveFailed'));
+            showError(t('modals.providerConfig.errors.saveFailed'));
         } finally {
             saving = false;
         }

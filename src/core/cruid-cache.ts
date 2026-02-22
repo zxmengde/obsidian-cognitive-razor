@@ -151,10 +151,16 @@ export class CruidCache {
   }
 
   /**
-   * 通过 cruid 获取文件
+   * 通过 cruid 获取文件（LRU：访问时刷新到 Map 末尾）
    */
   getFile(cruid: string): TFile | null {
-    return this.cruidToFile.get(cruid) ?? null;
+    const file = this.cruidToFile.get(cruid) ?? null;
+    if (file) {
+      // delete-then-set 刷新到末尾，模拟 LRU
+      this.cruidToFile.delete(cruid);
+      this.cruidToFile.set(cruid, file);
+    }
+    return file;
   }
 
   /**
@@ -254,17 +260,19 @@ export class CruidCache {
       });
     }
 
-    // 容量检查：超出上限时驱逐最早插入的条目（需求 24.3）
+    // 容量检查：超出上限时驱逐最久未访问的条目（LRU，需求 24.3）
     if (!this.cruidToFile.has(cruid) && this.cruidToFile.size >= MAX_CRUID_CACHE_SIZE) {
       this.evictOldest();
     }
 
+    // delete-then-set 确保更新/插入都刷新到 Map 末尾（LRU）
+    this.cruidToFile.delete(cruid);
     this.cruidToFile.set(cruid, file);
     this.pathToCruid.set(file.path, cruid);
   }
 
   /**
-   * 驱逐最早插入的缓存条目（Map 迭代顺序 = 插入顺序）
+   * 驱逐最久未访问的缓存条目（LRU：Map 头部 = 最久未访问）
    * 当缓存超出 MAX_CRUID_CACHE_SIZE 时调用（需求 24.3）
    */
   private evictOldest(): void {

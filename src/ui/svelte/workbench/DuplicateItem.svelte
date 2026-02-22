@@ -10,6 +10,7 @@
 -->
 <script lang="ts">
     import { getCRContext } from '../../bridge/context';
+    import Icon from '../../components/Icon.svelte';
     import ProgressBar from '../../components/ProgressBar.svelte';
     import Button from '../../components/Button.svelte';
     import type { DuplicatePair, CRType } from '../../../types';
@@ -62,7 +63,9 @@
     <div class="cr-dup-item__body">
         <div class="cr-dup-item__concepts">
             <span class="cr-dup-item__name">{nameA}</span>
-            <span class="cr-dup-item__vs" aria-hidden="true">↔</span>
+            <span class="cr-dup-item__vs" aria-hidden="true">
+                <Icon name="arrow-left-right" size={16} />
+            </span>
             <span class="cr-dup-item__name">{nameB}</span>
         </div>
         <div class="cr-dup-item__meta">

@@ -428,6 +428,9 @@ export class ProviderManager {
     // 通过 updateSettings 正规路径更新，避免直接改写设置对象（DIP）
     this.settingsStore.updateSettings({ providers: { [id]: config } });
 
+    // 配置变更后清除该 Provider 的可用性缓存，避免使用过期信息
+    this.clearAvailabilityCache(id);
+
     this.logger.info("ProviderManager", `Provider 配置已更新: ${id}`, {
       event: "PROVIDER_UPDATED",
       type: "openai",
@@ -447,6 +450,9 @@ export class ProviderManager {
       });
       return result;
     }
+
+    // 移除后清除该 Provider 的可用性缓存
+    this.clearAvailabilityCache(id);
 
     this.logger.info("ProviderManager", `Provider 已移除: ${id}`, {
       event: "PROVIDER_REMOVED"
@@ -620,6 +626,12 @@ export class ProviderManager {
 
     // 其他客户端错误 → E204_PROVIDER_ERROR
     return err("E204_PROVIDER_ERROR", `API 请求失败 (${status})`, { status, rawResponse: rawDetail });
+  }
+
+  /** 释放资源：清除缓存和监听器 */
+  dispose(): void {
+    this.availabilityCache.clear();
+    this.networkListeners.length = 0;
   }
 
 }

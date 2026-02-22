@@ -10,9 +10,9 @@
   @see 需求 10.4, 10.7, 10.9
 -->
 <script lang="ts">
-    import { Notice } from 'obsidian';
     import { getCRContext } from '../../bridge/context';
     import { SERVICE_TOKENS } from '../../../../main';
+    import { showSuccess, showError, showWarning } from '../../feedback';
     import type { PluginSettings, TaskType, TaskModelConfig, ProviderConfig } from '../../../types';
     import type { SettingsStore } from '../../../data/settings-store';
     import type { ProviderManager } from '../../../core/provider-manager';
@@ -64,17 +64,17 @@
 
     /** 测试 Provider 连接 */
     async function handleTestConnection(id: string) {
-        new Notice(i18n.t('common.loading') || 'Testing...');
+        showSuccess(i18n.t('common.loading') || 'Testing...');
         const result = await providerManager.checkAvailability(id, true);
         if (result.ok) {
             const caps = result.value;
-            new Notice(i18n.format('notices.connectionSuccess', {
+            showSuccess(i18n.format('notices.connectionSuccess', {
                 chat: caps.chat ? 'OK' : 'X',
                 embedding: caps.embedding ? 'OK' : 'X',
                 models: caps.models.length,
             }));
         } else {
-            new Notice(i18n.format('notices.connectionFailed', {
+            showError(i18n.format('notices.connectionFailed', {
                 error: result.error.message,
             }));
         }
@@ -92,7 +92,7 @@
     async function handleDeleteProvider(id: string) {
         // 简单确认后删除
         await settingsStore.removeProvider(id);
-        new Notice(i18n.format('notices.providerDeleted', { id }));
+        showSuccess(i18n.format('notices.providerDeleted', { id }));
     }
 
     /** 添加 Provider（打开 ProviderModal） */
@@ -107,10 +107,10 @@
     async function handleModalSave(id: string, config: ProviderConfig) {
         if (modalMode === 'add') {
             await settingsStore.addProvider(id, config);
-            new Notice(i18n.format('notices.providerAdded', { id }));
+            showSuccess(i18n.format('notices.providerAdded', { id }));
         } else {
             await settingsStore.updateProvider(id, config);
-            new Notice(i18n.format('notices.providerUpdated', { id }));
+            showSuccess(i18n.format('notices.providerUpdated', { id }));
         }
         showModal = false;
     }
@@ -260,12 +260,16 @@
     .cr-providers-tab {
         display: flex;
         flex-direction: column;
-        gap: var(--cr-space-4, 16px);
+        gap: var(--cr-space-5, 20px);
     }
 
     .cr-settings-group {
         display: flex;
         flex-direction: column;
+        background: var(--cr-bg-secondary);
+        border: 1px solid var(--cr-border);
+        border-radius: var(--cr-radius-md, 8px);
+        padding: var(--cr-space-4, 16px);
     }
 
     .cr-settings-group__header {
@@ -280,8 +284,10 @@
     .cr-settings-group__title {
         margin: 0;
         color: var(--cr-text-normal);
-        font-size: var(--font-ui-medium, 14px);
+        font-size: 15px;
         font-weight: 600;
+        padding-left: var(--cr-space-2, 8px);
+        border-left: 3px solid var(--cr-interactive-accent);
     }
 
     .cr-settings-group__desc {

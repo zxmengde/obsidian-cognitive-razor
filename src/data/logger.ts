@@ -128,6 +128,13 @@ export class Logger implements ILogger {
   private initialized = false;
   private sessionId: string;
 
+  /** 防抖写入定时器 */
+  private writeTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 防抖写入间隔（毫秒） */
+  private readonly writeDebounceMs = 2000;
+  /** 是否有待写入的数据 */
+  private dirty = false;
+
 
   constructor(
     logFilePath: string,
@@ -314,9 +321,7 @@ export class Logger implements ILogger {
 
     this.outputToConsole(entry);
 
-    this.writeToFile().catch((err) => {
-      console.error("Failed to write log to file:", err);
-    });
+    this.scheduleWrite();
   }
 
 
@@ -367,6 +372,31 @@ export class Logger implements ILogger {
         const removedSize = new TextEncoder().encode(removedLine + "\n").length;
         this.currentSize -= removedSize;
       }
+    }
+  }
+
+  /** 防抖调度写入：合并高频日志的 I/O 操作 */
+  private scheduleWrite(): void {
+    this.dirty = true;
+    if (this.writeTimer !== null) return;
+    this.writeTimer = setTimeout(() => {
+      this.writeTimer = null;
+      this.dirty = false;
+      this.writeToFile().catch(err => {
+        console.error("Failed to write log to file:", err);
+      });
+    }, this.writeDebounceMs);
+  }
+
+  /** 强制刷新：立即写入所有缓冲日志（插件卸载时调用） */
+  async flush(): Promise<void> {
+    if (this.writeTimer !== null) {
+      clearTimeout(this.writeTimer);
+      this.writeTimer = null;
+    }
+    if (this.dirty) {
+      this.dirty = false;
+      await this.writeToFile();
     }
   }
 

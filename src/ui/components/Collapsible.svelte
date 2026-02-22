@@ -10,6 +10,7 @@
 -->
 <script lang="ts">
     import type { Snippet } from 'svelte';
+    import Icon from './Icon.svelte';
 
     let {
         title,
@@ -57,8 +58,8 @@
         onclick={toggle}
         onkeydown={handleKeydown}
     >
-        <span class="cr-collapse-icon" aria-hidden="true">
-            {collapsed ? '▸' : '▾'}
+        <span class="cr-collapse-icon" class:cr-collapse-icon--open={!collapsed} aria-hidden="true">
+            <Icon name="chevron-right" size={16} />
         </span>
         <span class="cr-section-title">{title}</span>
         {#if count != null && count > 0}
@@ -122,8 +123,17 @@
         font-size: 12px;
         line-height: 1;
         flex-shrink: 0;
-        width: 12px;
-        text-align: center;
+        width: 16px;
+        height: 16px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        transition: transform 200ms ease;
+        transform: rotate(0deg);
+    }
+
+    .cr-collapse-icon--open {
+        transform: rotate(90deg);
     }
 
     .cr-section-title {

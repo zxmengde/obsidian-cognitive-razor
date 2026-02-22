@@ -20,7 +20,7 @@ import type {
   TypedTaskRecord
 } from "../types";
 import { schemaRegistry, SchemaRegistry, WRITE_PHASES } from "./schema-registry";
-import { createConceptSignature, generateSignatureText } from "./naming-utils";
+import { createConceptSignature, generateSignatureText, renderNamingTemplate } from "./naming-utils";
 import { mapStandardizeOutput } from "./standardize-mapper";
 import type { ProviderManager } from "./provider-manager";
 import type { PromptManager } from "./prompt-manager";
@@ -31,7 +31,7 @@ import type { Validator } from "../data/validator";
 import { extractJsonFromResponse } from "../data/validator";
 import { App, TFile } from "obsidian";
 import { formatCRTimestamp } from "../utils/date-utils";
-import { NoteRepository } from "./note-repository";
+import { validateTaskRecordPayload } from "./task-queue";
 
 /** 任务管线顺序 */
 const TASK_PIPELINE_ORDER: TaskType[] = [
@@ -45,9 +45,6 @@ const TASK_PIPELINE_ORDER: TaskType[] = [
 
 /** 输入清洗：去除控制字符、合并空白 */
 function sanitizeInput(input: string): string {
-  if (typeof input !== "string") {
-    throw new CognitiveRazorError("E101_INVALID_INPUT", "输入必须是字符串");
-  }
   return input.replace(/[\x00-\x1F\x7F]/g, "").replace(/\s+/g, " ").trim();
 }
 
@@ -61,7 +58,6 @@ interface TaskRunnerDependencies {
   vectorIndex?: VectorIndex;
   schemaRegistry?: SchemaRegistry;
   settingsStore?: SettingsStore;
-  noteRepository?: NoteRepository;
   app: App;
 }
 
@@ -77,7 +73,6 @@ export class TaskRunner {
   private settingsStore?: SettingsStore;
   private abortControllers: Map<string, AbortController>;
   private app: App;
-  private noteRepository: NoteRepository;
   private taskHandlers: Map<TaskType, (task: TaskRecord, signal: AbortSignal) => Promise<Result<TaskResult>>>;
 
   constructor(deps: TaskRunnerDependencies) {
@@ -90,7 +85,6 @@ export class TaskRunner {
     this.schemaRegistry = deps.schemaRegistry || schemaRegistry;
     this.settingsStore = deps.settingsStore;
     this.app = deps.app;
-    this.noteRepository = deps.noteRepository ?? new NoteRepository(deps.app, deps.logger);
     this.abortControllers = new Map();
     this.taskHandlers = new Map([
       ["define", (task, signal) => this.executeDefine(task, signal)],
@@ -107,6 +101,17 @@ export class TaskRunner {
   /** 执行任务 - 验证 Provider 能力后分发到具体执行方法 */
   async run(task: TaskRecord): Promise<Result<TaskResult>> {
     const startTime = Date.now();
+
+    // 运行时 payload 校验：防止类型断言 as TypedTaskRecord 掩盖结构不一致
+    const payloadError = validateTaskRecordPayload(task.taskType, task.payload);
+    if (payloadError) {
+      this.logger.error("TaskRunner", "任务 payload 校验失败", undefined, {
+        taskId: task.id,
+        taskType: task.taskType,
+        reason: payloadError
+      });
+      return err("E100_INVALID_INPUT", payloadError, { taskId: task.id });
+    }
 
     const capabilityCheck = await this.validateProviderCapability(task);
     if (!capabilityCheck.ok) {
@@ -595,17 +600,11 @@ export class TaskRunner {
    * 读取失败时返回 null（由调用方 fallback 到默认模板）。
    */
   private async loadPhasePromptTemplate(conceptType: CRType, phaseId: string): Promise<string> {
-    const filePath = `prompts/phases/${conceptType}/${phaseId}.md`;
-    const file = this.app.vault.getFileByPath(filePath);
-    if (!file) {
-      throw new CognitiveRazorError("E405_TEMPLATE_INVALID", `阶段 prompt 文件不存在: ${filePath}`);
+    const result = await this.promptManager.loadPhaseTemplate(conceptType, phaseId);
+    if (!result.ok) {
+      throw new CognitiveRazorError(result.error.code, result.error.message);
     }
-    const content = await this.app.vault.read(file);
-    if (!content.trim()) {
-      throw new CognitiveRazorError("E405_TEMPLATE_INVALID", `阶段 prompt 文件为空: ${filePath}`);
-    }
-    this.logger.debug("TaskRunner", `已加载阶段 prompt: ${filePath}`);
-    return content;
+    return result.value;
   }
 
   /**
@@ -625,24 +624,34 @@ export class TaskRunner {
         lines.push(`  "${field}": "..."${comma}`);
         continue;
       }
-      const desc = prop.description || field;
+      const desc = String(prop.description || field);
       const type = prop.type || "string";
+      // 多行描述放在字段上方作为独立注释块，单行描述保持行尾注释
+      const isMultiLine = desc.includes("\n");
+
+      if (isMultiLine) {
+        // 多行描述：每行加 // 前缀，放在字段定义上方
+        const descLines = desc.split("\n").map((l: string) => `  // ${l}`);
+        lines.push(...descLines);
+      }
+
+      const inlineComment = isMultiLine ? "" : `  // ${desc}`;
 
       if (type === "array" && prop.items) {
         const items = prop.items as Record<string, unknown>;
         if (items.type === "object" && items.properties) {
           const subProps = items.properties as Record<string, Record<string, unknown>>;
           const subFields = Object.keys(subProps).map(k => `"${k}": "${subProps[k].description || k}"`).join(", ");
-          lines.push(`  "${field}": [{ ${subFields} }, ...]${comma}  // ${desc}`);
+          lines.push(`  "${field}": [{ ${subFields} }, ...]${comma}${inlineComment}`);
         } else {
-          lines.push(`  "${field}": ["...", ...]${comma}  // ${desc}`);
+          lines.push(`  "${field}": ["...", ...]${comma}${inlineComment}`);
         }
       } else if (type === "object" && prop.properties) {
         const subProps = prop.properties as Record<string, Record<string, unknown>>;
         const subFields = Object.keys(subProps).map(k => `"${k}": "${subProps[k].description || k}"`).join(", ");
-        lines.push(`  "${field}": { ${subFields} }${comma}  // ${desc}`);
+        lines.push(`  "${field}": { ${subFields} }${comma}${inlineComment}`);
       } else {
-        lines.push(`  "${field}": "..."${comma}  // ${desc}`);
+        lines.push(`  "${field}": "..."${comma}${inlineComment}`);
       }
     }
     lines.push("}");
@@ -809,11 +818,18 @@ export class TaskRunner {
     const standardNames = standardized?.standardNames;
     const selectedName = primaryType && standardNames ? standardNames[primaryType] : undefined;
 
+    // 按命名准则合并中英文名为单个 name 字段
+    const name = selectedName
+      ? renderNamingTemplate("{{chinese}} ({{english}})", {
+          chinese: selectedName.chinese,
+          english: selectedName.english,
+        })
+      : "";
+
     // 丰富的元数据格式：包含核心定义、别名、标签等上下文
     const meta: Record<string, unknown> = {
       Type: primaryType || "",
-      standard_name_cn: selectedName?.chinese || "",
-      standard_name_en: selectedName?.english || ""
+      name,
     };
 
     // 注入核心定义（Define 阶段已生成）

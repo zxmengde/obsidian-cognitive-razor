@@ -648,4 +648,25 @@ export class PromptManager {
   setTemplate(templateId: string, template: PromptTemplate): void {
     this.templateCache.set(templateId, template);
   }
+
+  /** 加载分阶段 Write 的阶段 prompt 模板（phases 目录） */
+  async loadPhaseTemplate(conceptType: string, phaseId: string): Promise<Result<string>> {
+    const filePath = `${this.promptsDir}/phases/${conceptType}/${phaseId}.md`;
+    const readResult = await this.fileStorage.read(filePath);
+    if (!readResult.ok) {
+      this.logger.error("PromptManager", `阶段 prompt 文件不存在: ${filePath}`);
+      return err("E405_TEMPLATE_INVALID", `阶段 prompt 文件不存在: ${filePath}`);
+    }
+    const content = readResult.value;
+    if (!content.trim()) {
+      return err("E405_TEMPLATE_INVALID", `阶段 prompt 文件为空: ${filePath}`);
+    }
+    // 注入基础组件（替换 {{BASE_*}} 占位符）
+    const injected = await this.injectBaseComponents(content);
+    if (!injected.ok) {
+      return injected as Result<string>;
+    }
+    this.logger.debug("PromptManager", `已加载阶段 prompt: ${filePath}`);
+    return ok(injected.value);
+  }
 }

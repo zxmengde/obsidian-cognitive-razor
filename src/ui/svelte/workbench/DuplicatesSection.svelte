@@ -4,15 +4,15 @@
   职责：
   - Collapsible 包装（默认展开，折叠持久化，header 显示数量 badge）
   - 列表按相似度降序排列
-  - 点击对比打开 Diff 标签页（Merge 模式），点击忽略 Notice 反馈
   - 空状态显示"暂无重复概念"
 
   @see 需求 7.1-7.8, 9.13
 -->
 <script lang="ts">
-    import { Notice } from 'obsidian';
+    import { fade } from 'svelte/transition';
     import { getCRContext } from '../../bridge/context';
     import { SERVICE_TOKENS } from '../../../../main';
+    import { showSuccess, showError } from '../../feedback';
     import Collapsible from '../../components/Collapsible.svelte';
     import EmptyState from '../../components/EmptyState.svelte';
     import DuplicateItem from './DuplicateItem.svelte';
@@ -61,10 +61,10 @@
     async function handleDismiss(pair: DuplicatePair): Promise<void> {
         const result = await duplicateManager.markAsNonDuplicate(pair.id);
         if (result.ok) {
-            new Notice(t.workbench?.notifications?.dismissSuccess ?? '已忽略重复对');
+            showSuccess(t.workbench?.notifications?.dismissSuccess ?? '已忽略重复对');
         } else {
             logger.error('DuplicatesSection', '忽略重复对失败', undefined, { pairId: pair.id });
-            new Notice(t.workbench?.notifications?.dismissFailed ?? '忽略失败');
+            showError(t.workbench?.notifications?.dismissFailed ?? '忽略失败');
         }
     }
 </script>
@@ -78,12 +78,14 @@
     {#if sortedPairs.length > 0}
         <div class="cr-dup-list">
             {#each sortedPairs as pair (pair.id)}
-                <DuplicateItem
-                    {pair}
-                    nameA={resolveName(pair.nodeIdA)}
-                    nameB={resolveName(pair.nodeIdB)}
-                    ondismiss={(p) => void handleDismiss(p)}
-                />
+                <div out:fade={{ duration: 150 }}>
+                    <DuplicateItem
+                        {pair}
+                        nameA={resolveName(pair.nodeIdA)}
+                        nameB={resolveName(pair.nodeIdB)}
+                        ondismiss={(p) => void handleDismiss(p)}
+                    />
+                </div>
             {/each}
         </div>
     {:else}

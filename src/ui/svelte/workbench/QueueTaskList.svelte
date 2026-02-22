@@ -7,9 +7,11 @@
   @see 需求 6.5, 6.6, 6.7, 6.8
 -->
 <script lang="ts">
+    import { fly, fade } from 'svelte/transition';
     import { getCRContext } from '../../bridge/context';
     import { SERVICE_TOKENS } from '../../../../main';
     import Button from '../../components/Button.svelte';
+    import Icon from '../../components/Icon.svelte';
     import type { TaskRecord, StandardizedConcept, CRType } from '../../../types';
     import { renderNamingTemplate } from '../../../core/naming-utils';
 
@@ -91,7 +93,7 @@
 
 <div class="cr-task-list" role="list">
     {#each tasks as task (task.id)}
-        <div class="cr-task-item" role="listitem">
+        <div class="cr-task-item" role="listitem" in:fly={{ x: 20, duration: 200 }} out:fade={{ duration: 150 }}>
             <!-- 概念名称 -->
             <span class="cr-task-name" title={getTaskDisplayName(task)}>
                 {getTaskDisplayName(task)}
@@ -111,7 +113,9 @@
                         class="cr-task-error-icon"
                         title={getErrorMessage(task)}
                         aria-label={getErrorMessage(task)}
-                    >⚠</span>
+                    >
+                        <Icon name="alert-triangle" size={16} />
+                    </span>
                 {/if}
                 {getStateLabel(task.state)}
             </span>
@@ -124,7 +128,9 @@
                         size="icon"
                         onclick={() => oncancel(task.id)}
                         ariaLabel={t.workbench?.queueStatus?.cancel ?? '取消'}
-                    >✕</Button>
+                    >
+                        <Icon name="x" size={16} />
+                    </Button>
                 {/if}
             </span>
         </div>
@@ -177,15 +183,15 @@
     }
 
     .cr-task-state--pending {
-        color: var(--cr-text-muted);
+        color: var(--cr-task-pending);
     }
 
     .cr-task-state--running {
-        color: var(--cr-interactive-accent);
+        color: var(--cr-task-running);
     }
 
     .cr-task-state--failed {
-        color: var(--cr-status-error);
+        color: var(--cr-task-failed);
     }
 
     .cr-task-error-icon {

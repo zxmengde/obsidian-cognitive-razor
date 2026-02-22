@@ -44,7 +44,7 @@
         align-items: center;
         justify-content: space-between;
         gap: var(--cr-space-4, 16px);
-        padding: var(--cr-space-3, 12px) 0;
+        padding: 14px 0;
         border-bottom: 1px solid var(--cr-border);
         min-height: 40px;
     }
@@ -63,7 +63,7 @@
     .cr-setting-item__desc {
         color: var(--cr-text-muted);
         font-size: var(--cr-font-sm, 13px);
-        line-height: 1.4;
+        line-height: var(--cr-line-height-body, 1.5);
         margin-top: var(--cr-space-half, 2px);
     }
 

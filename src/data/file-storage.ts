@@ -151,6 +151,106 @@ export class FileStorage {
     return this.initialized;
   }
 
+  /**
+   * 恢复未完成的原子写入残留文件（.bak / .tmp）
+   *
+   * 启动时调用，扫描 data 目录下的残留文件：
+   * - .tmp 文件：直接删除（写入未完成）
+   * - .bak 文件：如果对应的目标文件不存在，则恢复备份；否则删除备份
+   *
+   * @returns 恢复的文件数量
+   */
+  async recoverIncompleteWrites(): Promise<Result<number>> {
+    let recovered = 0;
+    try {
+      const residuals = await this.scanResidualFiles(DATA_DIR);
+      for (const file of residuals) {
+        if (file.endsWith(".tmp")) {
+          // 临时文件：写入未完成，直接删除
+          await this.cleanupResidual(file);
+        } else if (file.endsWith(".bak")) {
+          // 备份文件：检查目标文件是否存在
+          const targetPath = file.slice(0, -4); // 去掉 .bak
+          const targetExists = await this.existsByFullPath(targetPath);
+          if (!targetExists) {
+            // 目标文件丢失，从备份恢复
+            try {
+              const backupContent = await this.vault.adapter.read(file);
+              await this.vault.adapter.write(targetPath, backupContent);
+              recovered++;
+            } catch {
+              // 恢复失败，忽略
+            }
+          }
+          await this.cleanupResidual(file);
+        }
+      }
+      return ok(recovered);
+    } catch (error) {
+      return err("E500_INTERNAL_ERROR", "恢复未完成写入失败", error);
+    }
+  }
+
+  /** 扫描目录下的 .bak/.tmp 残留文件（递归） */
+  private async scanResidualFiles(dir: string): Promise<string[]> {
+    const results: string[] = [];
+    const fullDir = this.resolvePath(dir);
+    try {
+      const listing = await this.vault.adapter.list(fullDir);
+      for (const filePath of listing.files) {
+        if (filePath.endsWith(".tmp") || filePath.endsWith(".bak")) {
+          results.push(filePath);
+        }
+      }
+      for (const subDir of listing.folders) {
+        const subResults = await this.scanResidualFilesFullPath(subDir);
+        results.push(...subResults);
+      }
+    } catch {
+      // 目录不存在或无法读取，忽略
+    }
+    return results;
+  }
+
+  /** 递归扫描（使用完整路径） */
+  private async scanResidualFilesFullPath(fullDir: string): Promise<string[]> {
+    const results: string[] = [];
+    try {
+      const listing = await this.vault.adapter.list(fullDir);
+      for (const filePath of listing.files) {
+        if (filePath.endsWith(".tmp") || filePath.endsWith(".bak")) {
+          results.push(filePath);
+        }
+      }
+      for (const subDir of listing.folders) {
+        const subResults = await this.scanResidualFilesFullPath(subDir);
+        results.push(...subResults);
+      }
+    } catch {
+      // 忽略
+    }
+    return results;
+  }
+
+  /** 检查完整路径文件是否存在 */
+  private async existsByFullPath(fullPath: string): Promise<boolean> {
+    try {
+      const stat = await this.vault.adapter.stat(fullPath);
+      return stat !== null && stat !== undefined;
+    } catch {
+      return false;
+    }
+  }
+
+  /** 安全清理残留文件 */
+  private async cleanupResidual(fullPath: string): Promise<void> {
+    try {
+      await this.vault.adapter.remove(fullPath);
+    } catch {
+      // 忽略清理错误
+    }
+  }
+
   /** 如果文件不存在则初始化 */
   private async initializeFileIfNotExists<T>(
     path: string,
@@ -299,8 +399,9 @@ export class FileStorage {
 
       return ok(undefined);
     } catch (error) {
-      // 清理临时文件
+      // 清理临时文件和备份文件
       await this.cleanupTempFile(tempPath);
+      await this.cleanupTempFile(backupPath);
       
       return err(
         mapFsErrorToErrorCode(error),

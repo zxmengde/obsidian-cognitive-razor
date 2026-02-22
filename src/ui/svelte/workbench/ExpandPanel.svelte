@@ -10,10 +10,10 @@
   @see 需求 5.3, 5.10, 5.11
 -->
 <script lang="ts">
-    import { Notice } from 'obsidian';
     import type { TFile } from 'obsidian';
     import { getCRContext } from '../../bridge/context';
     import { SERVICE_TOKENS } from '../../../../main';
+    import { showSuccess, showError } from '../../feedback';
     import Button from '../../components/Button.svelte';
     import type { ExpandOrchestrator, ExpandPlan, HierarchicalCandidate, HierarchicalPlan, AbstractPlan } from '../../../core/expand-orchestrator';
     import type { Logger } from '../../../data/logger';
@@ -134,32 +134,32 @@
                 if (result.ok) {
                     const { started, failed } = result.value;
                     if (failed.length > 0) {
-                        new Notice((t.expand?.startedWithFailures ?? '已启动 {started} 个任务，{failed} 个未能启动')
+                        showSuccess((t.expand?.startedWithFailures ?? '已启动 {started} 个任务，{failed} 个未能启动')
                             .replace('{started}', String(started))
                             .replace('{failed}', String(failed.length)));
                     } else {
-                        new Notice((t.expand?.started ?? '已启动 {count} 个创建任务')
+                        showSuccess((t.expand?.started ?? '已启动 {count} 个创建任务')
                             .replace('{count}', String(started)));
                     }
                     onclose?.();
                 } else {
-                    new Notice(result.error.message);
+                    showError(result.error.message);
                 }
             } else {
                 // 抽象模式
                 const selectedCandidates = [...selected].map(i => (plan as AbstractPlan).candidates[i]);
                 const result = await expandOrch.createFromAbstract(plan as AbstractPlan, selectedCandidates);
                 if (result.ok) {
-                    new Notice((t.expand?.started ?? '已启动 {count} 个创建任务')
+                    showSuccess((t.expand?.started ?? '已启动 {count} 个创建任务')
                         .replace('{count}', '1'));
                     onclose?.();
                 } else {
-                    new Notice(result.error.message);
+                    showError(result.error.message);
                 }
             }
         } catch (e) {
             logger.error('ExpandPanel', '创建失败', e as Error);
-            new Notice('操作失败，请稍后重试');
+            showError('操作失败，请稍后重试');
         } finally {
             submitting = false;
         }
@@ -295,7 +295,7 @@
         display: flex;
         flex-direction: column;
         gap: var(--cr-space-2);
-        color: var(--cr-status-error, #e53935);
+        color: var(--cr-status-error);
         font-size: var(--cr-font-sm, 13px);
     }
 
@@ -316,9 +316,9 @@
         color: var(--cr-text-muted);
     }
 
-    .cr-expand-stat-creatable { color: var(--cr-status-success, #43a047); }
+    .cr-expand-stat-creatable { color: var(--cr-status-success); }
     .cr-expand-stat-existing { color: var(--cr-text-muted); }
-    .cr-expand-stat-invalid { color: var(--cr-status-error, #e53935); }
+    .cr-expand-stat-invalid { color: var(--cr-status-error); }
 
     .cr-expand-hint {
         font-size: var(--cr-font-sm, 13px);
@@ -327,7 +327,7 @@
     }
 
     .cr-expand-hint--warn {
-        color: var(--cr-status-warning, #f9a825);
+        color: var(--cr-status-warning);
     }
 
     .cr-expand-select-bar {
@@ -406,8 +406,8 @@
     }
 
     .cr-expand-badge--invalid {
-        background: color-mix(in srgb, var(--cr-status-error, #e53935) 15%, transparent);
-        color: var(--cr-status-error, #e53935);
+        background: color-mix(in srgb, var(--cr-status-error) 15%, transparent);
+        color: var(--cr-status-error);
     }
 
     .cr-expand-similarity {

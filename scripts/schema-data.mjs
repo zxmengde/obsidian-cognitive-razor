@@ -89,8 +89,17 @@ export function buildPhaseSchema(conceptType, fields) {
         const prop = schema.properties[field];
         const comma = i < fields.length - 1 ? "," : "";
         if (!prop) { lines.push(`  "${field}": "..."${comma}`); continue; }
-        const desc = prop.description || field;
+        const desc = String(prop.description || field);
         const type = prop.type || "string";
+        // 多行描述放在字段上方作为独立注释块，单行描述保持行尾注释
+        const isMultiLine = desc.includes("\n");
+
+        if (isMultiLine) {
+            const descLines = desc.split("\n").map(l => `  // ${l}`);
+            lines.push(...descLines);
+        }
+
+        const inlineComment = isMultiLine ? "" : `  // ${desc}`;
 
         if (type === "array" && prop.items) {
             const items = prop.items;
@@ -98,17 +107,17 @@ export function buildPhaseSchema(conceptType, fields) {
                 const subFields = Object.entries(items.properties)
                     .map(([k, v]) => `"${k}": "${v.description || k}"`)
                     .join(", ");
-                lines.push(`  "${field}": [{ ${subFields} }, ...]${comma}  // ${desc}`);
+                lines.push(`  "${field}": [{ ${subFields} }, ...]${comma}${inlineComment}`);
             } else {
-                lines.push(`  "${field}": ["...", ...]${comma}  // ${desc}`);
+                lines.push(`  "${field}": ["...", ...]${comma}${inlineComment}`);
             }
         } else if (type === "object" && prop.properties) {
             const subFields = Object.entries(prop.properties)
                 .map(([k, v]) => `"${k}": "${v.description || k}"`)
                 .join(", ");
-            lines.push(`  "${field}": { ${subFields} }${comma}  // ${desc}`);
+            lines.push(`  "${field}": { ${subFields} }${comma}${inlineComment}`);
         } else {
-            lines.push(`  "${field}": "..."${comma}  // ${desc}`);
+            lines.push(`  "${field}": "..."${comma}${inlineComment}`);
         }
     }
     lines.push("}");

@@ -128,6 +128,34 @@ export class Validator {
           location: key,
           fixInstruction: `请将 "${key}" 输出为数组`,
         });
+      } else if (expectedType === "array" && Array.isArray(value)) {
+        // 数组元素类型检查
+        const itemsSchema = (propSchema as Record<string, unknown>).items as { type?: string } | undefined;
+        if (itemsSchema?.type && value.length > 0) {
+          const expectedItemType = itemsSchema.type;
+          for (let i = 0; i < value.length; i++) {
+            const itemActualType = Array.isArray(value[i]) ? "array" : typeof value[i];
+            if (expectedItemType === "object" && (typeof value[i] !== "object" || Array.isArray(value[i]) || value[i] === null)) {
+              errors.push({
+                code: "E211_MODEL_SCHEMA_VIOLATION",
+                type: "SchemaError",
+                message: `字段 "${key}[${i}]" 应为对象，实际为 "${itemActualType}"`,
+                location: `${key}[${i}]`,
+                fixInstruction: `请将 "${key}" 数组中的元素输出为对象`,
+              });
+              break; // 仅报告第一个类型错误
+            } else if (expectedItemType !== "object" && expectedItemType !== "array" && itemActualType !== expectedItemType) {
+              errors.push({
+                code: "E211_MODEL_SCHEMA_VIOLATION",
+                type: "SchemaError",
+                message: `字段 "${key}[${i}]" 应为 "${expectedItemType}"，实际为 "${itemActualType}"`,
+                location: `${key}[${i}]`,
+                fixInstruction: `请将 "${key}" 数组中的元素输出为 "${expectedItemType}" 类型`,
+              });
+              break;
+            }
+          }
+        }
       } else if (
         expectedType === "object" &&
         (typeof value !== "object" || Array.isArray(value))
@@ -196,12 +224,8 @@ export class Validator {
 
 
 /**
- * 生成 UUID v4
+ * 生成 UUID v4（使用 Web Crypto API，加密安全）
  */
 export function generateUUID(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = Math.random() * 16 | 0;
-    const v = c === 'x' ? r : (r & 0x3 | 0x8);
-    return v.toString(16);
-  });
+  return crypto.randomUUID();
 }

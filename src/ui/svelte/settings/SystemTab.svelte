@@ -8,9 +8,9 @@
   @see 需求 10.4, 10.8, 10.9
 -->
 <script lang="ts">
-    import { Notice } from 'obsidian';
     import { getCRContext } from '../../bridge/context';
     import { SERVICE_TOKENS } from '../../../../main';
+    import { showSuccess, showError } from '../../feedback';
     import type { PluginSettings } from '../../../types';
     import type { LogLevel } from '../../../data/logger';
     import type { SettingsStore } from '../../../data/settings-store';
@@ -54,13 +54,13 @@
         const level = value as LogLevel;
         await settingsStore.updateSettings({ logLevel: level });
         logger.setLogLevel(level);
-        new Notice(i18n.format('notices.logLevelChanged', { level }));
+        showSuccess(i18n.format('notices.logLevelChanged', { level }));
     }
 
     /** 清空日志 */
     function handleClearLogs() {
         logger.clear();
-        new Notice(i18n.t('notices.logsCleared'));
+        showSuccess(i18n.t('notices.logsCleared'));
     }
 
     /** 导出设置 */
@@ -74,7 +74,7 @@
         a.download = 'cognitive-razor-settings.json';
         a.click();
         URL.revokeObjectURL(url);
-        new Notice(i18n.t('notices.settingsExported'));
+        showSuccess(i18n.t('notices.settingsExported'));
     }
 
     /** 导入设置 */
@@ -89,12 +89,12 @@
                 const json = await file.text();
                 const result = await settingsStore.importSettings(json);
                 if (result.ok) {
-                    new Notice(i18n.t('notices.settingsImported'));
+                    showSuccess(i18n.t('notices.settingsImported'));
                 } else {
-                    new Notice(`${result.error.code}: ${result.error.message}`);
+                    showError(`${result.error.code}: ${result.error.message}`);
                 }
             } catch (e) {
-                new Notice(i18n.t('notices.settingsImportFailed'));
+                showError(i18n.t('notices.settingsImportFailed'));
             }
         };
         input.click();
@@ -105,7 +105,7 @@
         showResetConfirm = false;
         const result = await settingsStore.resetToDefaults();
         if (result.ok) {
-            new Notice(i18n.t('notices.settingsReset'));
+            showSuccess(i18n.t('notices.settingsReset'));
         }
     }
 </script>
@@ -184,12 +184,16 @@
     .cr-system-tab {
         display: flex;
         flex-direction: column;
-        gap: var(--cr-space-4, 16px);
+        gap: var(--cr-space-5, 20px);
     }
 
     .cr-settings-group {
         display: flex;
         flex-direction: column;
+        background: var(--cr-bg-secondary);
+        border: 1px solid var(--cr-border);
+        border-radius: var(--cr-radius-md, 8px);
+        padding: var(--cr-space-4, 16px);
     }
 
     .cr-settings-group__title {
@@ -197,7 +201,9 @@
         padding-bottom: var(--cr-space-2, 8px);
         border-bottom: 1px solid var(--cr-border);
         color: var(--cr-text-normal);
-        font-size: var(--font-ui-medium, 14px);
+        font-size: 15px;
         font-weight: 600;
+        padding-left: var(--cr-space-2, 8px);
+        border-left: 3px solid var(--cr-interactive-accent);
     }
 </style>

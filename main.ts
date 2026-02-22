@@ -158,8 +158,13 @@ export default class CognitiveRazorPlugin extends Plugin {
 			}
 			this.unsubscribers = [];
 
-			// 5. 释放 ServiceContainer 中所有服务
-			this.container?.disposeAll();
+			// 5. 刷新 Logger 防抖缓冲区（确保所有日志写入磁盘）
+			if (logger) {
+				await logger.flush();
+			}
+
+			// 6. 释放 ServiceContainer 中所有服务
+			await this.container?.disposeAll();
 
 			logger?.info('CognitiveRazorPlugin', '插件卸载完成');
 		} catch (error) {
@@ -233,6 +238,12 @@ export default class CognitiveRazorPlugin extends Plugin {
 			throw new Error(`FileStorage 初始化失败: ${initResult.error.message}`);
 		}
 		this.container.registerInstance(SERVICE_TOKENS.fileStorage, fileStorage, 'data');
+
+		// 恢复未完成的原子写入残留文件
+		const recoveryResult = await fileStorage.recoverIncompleteWrites();
+		if (recoveryResult.ok && recoveryResult.value > 0) {
+			console.info(`[CR] 恢复了 ${recoveryResult.value} 个未完成写入的文件`);
+		}
 
 		// 3. Logger
 		const logFilePath = 'data/app.log';
@@ -311,6 +322,9 @@ export default class CognitiveRazorPlugin extends Plugin {
 		const lockManager = new SimpleLockManager();
 		this.container.registerInstance(SERVICE_TOKENS.lockManager, lockManager, 'core');
 
+		// LockManager 全局过期扫描（每 60 秒清理泄漏锁）
+		this.registerInterval(window.setInterval(() => lockManager.evictAllExpired(), 60_000));
+
 		// ProviderManager
 		const providerManager = new ProviderManager(this.settingsStore, logger);
 		const unsubNetwork = providerManager.subscribeNetworkStatus((online, error) => {
@@ -349,9 +363,10 @@ export default class CognitiveRazorPlugin extends Plugin {
 		});
 
 		// 订阅删除事件：清理向量索引与重复对
-		cruidCache.onDelete(({ cruid, path }) => {
+		const unsubDelete = cruidCache.onDelete(({ cruid, path }) => {
 			void this.cleanupAfterNoteDeleted(cruid, path);
 		});
+		this.unsubscribers.push(unsubDelete);
 
 		// TaskRunner
 		const taskRunner = new TaskRunner({
@@ -621,7 +636,7 @@ export default class CognitiveRazorPlugin extends Plugin {
 		try {
 			if (vectorIndex) {
 				const result = await vectorIndex.delete(cruid);
-				if (!result.ok && result.error.code !== 'E004') {
+				if (!result.ok && result.error.code !== 'E311_NOT_FOUND') {
 					logger?.warn('CognitiveRazorPlugin', '删除笔记后清理向量索引失败', {
 						cruid, path, error: result.error
 					});

@@ -74,7 +74,7 @@
         padding: var(--cr-space-4) var(--cr-space-3);
         display: flex;
         flex-direction: column;
-        gap: var(--cr-space-4);
+        gap: var(--cr-space-5);
     }
 
     .cr-section {

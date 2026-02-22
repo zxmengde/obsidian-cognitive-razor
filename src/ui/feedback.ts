@@ -107,4 +107,28 @@ export function showError(error: unknown, fallback?: string): void {
     new Notice(message, DURATION.error);
 }
 
+// ============================================================================
+// 内联反馈 API
+// ============================================================================
+
+/** 内联反馈数据 */
+export interface InlineFeedback {
+    level: FeedbackLevel;
+    message: string;
+    details?: string;
+    timestamp: number;
+}
+
+/**
+ * 创建内联反馈数据（供 Svelte 组件消费）
+ * 不使用 Notice，而是返回结构化数据用于渲染 InlineAlert
+ */
+export function createInlineFeedback(
+    level: FeedbackLevel,
+    message: string,
+    details?: string,
+): InlineFeedback {
+    return { level, message, details, timestamp: Date.now() };
+}
+
 

@@ -80,8 +80,23 @@
     --cr-shadow-lg: var(--shadow-l);
 }
 
-/* 浅色主题：10% 透明度 */
-.theme-light .cr-scope {
+    /* === 功能色：任务状态 === */
+    --cr-task-pending: var(--cr-text-muted);
+    --cr-task-running: var(--cr-interactive-accent);
+    --cr-task-completed: var(--cr-status-success);
+    --cr-task-failed: var(--cr-status-error);
+
+    /* === 功能色：置信度分级 === */
+    --cr-confidence-high: var(--cr-status-success);
+    --cr-confidence-medium: var(--cr-status-warning);
+    --cr-confidence-low: var(--cr-text-muted);
+
+    /* === 排版 === */
+    --cr-font-base: var(--font-text-size, 14px);
+    --cr-font-sm: 13px;
+    --cr-font-xs: 11px;
+    --cr-line-height-body: 1.5;
+    --cr-line-height-compact: 1.3;
 }
 
 /* ========================================
