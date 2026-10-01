@@ -2,6 +2,6 @@
 // 使 TypeScript 能够识别 .svelte 文件的导入
 declare module '*.svelte' {
     import type { Component } from 'svelte';
-    const component: Component<any, any>;
+    const component: Component<Record<string, unknown>, Record<string, unknown>>;
     export default component;
 }

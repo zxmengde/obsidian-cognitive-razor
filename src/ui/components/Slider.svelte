@@ -5,7 +5,6 @@
   滑块旁边有一个小的数字输入框，可以直接输入精确值。
   显示当前值 + 单位。
 
-  @see 需求 10.4, 10.5
 -->
 <script lang="ts">
     let {
@@ -17,6 +16,7 @@
         onchange,
         disabled = false,
         id = undefined,
+        ariaLabel = undefined,
     }: {
         value?: number;
         min?: number;
@@ -26,9 +26,10 @@
         onchange: (value: number) => void;
         disabled?: boolean;
         id?: string;
+        ariaLabel?: string;
     } = $props();
 
-    /** 滑块拖动 */
+    /** 滑块提交 */
     function handleSlider(e: Event) {
         const target = e.target as HTMLInputElement;
         onchange(Number(target.value));
@@ -50,21 +51,23 @@
         type="range"
         class="cr-slider__range"
         {id}
-        {value}
         {min}
         {max}
         {step}
+        {value}
         {disabled}
-        oninput={handleSlider}
+        aria-label={ariaLabel}
+        onchange={handleSlider}
     />
     <input
         type="number"
         class="cr-slider__number"
-        {value}
         {min}
         {max}
         {step}
+        {value}
         {disabled}
+        aria-label={ariaLabel}
         onchange={handleInput}
     />
     {#if unit}
@@ -78,7 +81,7 @@
     .cr-slider {
         display: flex;
         align-items: center;
-        gap: var(--cr-space-2, 8px);
+        gap: var(--cr-space-2);
     }
 
     .cr-slider--disabled {
@@ -98,12 +101,12 @@
 
     .cr-slider__number {
         width: 56px;
-        padding: var(--cr-space-1, 4px);
+        padding: var(--cr-space-1);
         border: 1px solid var(--cr-border);
-        border-radius: var(--cr-radius-sm, 4px);
+        border-radius: var(--cr-radius-sm);
         background: var(--cr-bg-base);
         color: var(--cr-text-normal);
-        font-size: var(--font-ui-small, 13px);
+        font-size: var(--font-ui-small);
         text-align: center;
     }
 
@@ -118,7 +121,7 @@
 
     .cr-slider__unit {
         color: var(--cr-text-muted);
-        font-size: var(--font-ui-small, 13px);
+        font-size: var(--font-ui-small);
         white-space: nowrap;
         font-variant-numeric: tabular-nums;
         min-width: 48px;

@@ -87,14 +87,17 @@ export function toErr(
         return err(error.code, error.message, error.details);
     }
     if (error instanceof Error) {
-        return err(fallbackCode, error.message || fallbackMessage, { stack: error.stack });
+        return err(fallbackCode, fallbackMessage, {
+            name: error.name,
+            stack: error.stack,
+        });
     }
     return err(fallbackCode, fallbackMessage, error);
 }
 
 /**
  * 从未知错误中提取安全的用户可见消息
- * 需求 23.4：不暴露堆栈信息或 API 响应原文
+ * 不暴露堆栈信息或 API 响应原文。
  */
 export function safeErrorMessage(error: unknown, fallback = "操作失败，请稍后重试"): string {
     if (isErrResult(error)) {

@@ -3,10 +3,9 @@
 
   header 设置 role="button"、tabindex="0"、aria-expanded、aria-controls。
   内容区设置 role="region"、aria-labelledby。
-  折叠/展开使用 max-height 过渡（200ms）。
+  折叠时隐藏内容，展开时保留完整内容高度，避免长列表被截断。
   数量 badge 显示在标题旁，actions 具名插槽用于放置操作按钮。
 
-  @see 需求 14.1, 14.2, 15.2
 -->
 <script lang="ts">
     import type { Snippet } from 'svelte';
@@ -97,8 +96,8 @@
     .cr-collapsible-header {
         display: flex;
         align-items: center;
-        gap: var(--cr-space-2, 8px);
-        padding: var(--cr-space-2, 8px) var(--cr-space-1, 4px);
+        gap: var(--cr-space-2);
+        padding: var(--cr-space-2) var(--cr-space-1);
         cursor: pointer;
         user-select: none;
         border: none;
@@ -107,7 +106,7 @@
         text-align: left;
         color: var(--cr-text-normal);
         font-size: var(--font-ui-medium);
-        border-radius: var(--cr-radius-sm, 4px);
+        border-radius: var(--cr-radius-sm);
     }
 
     .cr-collapsible-header:hover {
@@ -147,11 +146,11 @@
         justify-content: center;
         min-width: 18px;
         height: 18px;
-        padding: 0 var(--cr-space-1, 4px);
+        padding: 0 var(--cr-space-1);
         border-radius: 9px;
         background: var(--cr-bg-secondary);
         color: var(--cr-text-muted);
-        font-size: var(--font-ui-smaller, 11px);
+        font-size: var(--font-ui-smaller);
         font-weight: 600;
         line-height: 1;
     }
@@ -160,17 +159,17 @@
         margin-left: auto;
         display: flex;
         align-items: center;
-        gap: var(--cr-space-1, 4px);
+        gap: var(--cr-space-1);
     }
 
     .cr-collapsible-content {
         overflow: hidden;
-        max-height: 2000px;
-        transition: max-height 0.2s ease-out;
+        max-height: none;
     }
 
     .cr-collapsible-content--collapsed {
         max-height: 0;
+        overflow: hidden;
     }
 
     /* 减弱动效 */

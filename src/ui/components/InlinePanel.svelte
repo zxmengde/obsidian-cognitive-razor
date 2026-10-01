@@ -6,7 +6,6 @@
   设置 role="region"、aria-expanded。
   prefers-reduced-motion: reduce 时禁用动画。
 
-  @see 需求 15.1, 5.5, 5.8
 -->
 <script lang="ts">
     import type { Snippet } from 'svelte';
@@ -58,7 +57,7 @@
     }
 
     .cr-inline-panel__inner {
-        padding: var(--cr-space-3, 12px) 0;
+        padding: var(--cr-space-3) 0;
     }
 
     /* 减弱动效 */

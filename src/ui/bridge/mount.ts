@@ -7,11 +7,16 @@ import type { Component } from 'svelte';
  */
 export function mountSvelteComponent<T extends Record<string, unknown>>(
     target: HTMLElement,
-    component: Component,
+    component: Component<T>,
     props: T
-): { destroy: () => void } {
+): { destroy: () => Promise<void> } {
     const instance = mount(component, { target, props });
+    let destroyed = false;
     return {
-        destroy: () => unmount(instance)
+        destroy: async () => {
+            if (destroyed) return;
+            destroyed = true;
+            await unmount(instance);
+        }
     };
 }

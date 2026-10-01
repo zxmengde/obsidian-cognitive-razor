@@ -1,28 +1,61 @@
 import eslint from '@eslint/js';
 import tseslint from 'typescript-eslint';
+import svelte from 'eslint-plugin-svelte';
+import globals from 'globals';
 
 export default tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
+  ...svelte.configs.recommended,
   {
     languageOptions: {
+      globals: {
+        ...globals.browser,
+      },
       parserOptions: {
         project: ['./tsconfig.json', './tsconfig.test.json'],
         tsconfigRootDir: import.meta.dirname,
+        extraFileExtensions: ['.svelte'],
       },
     },
     rules: {
-      // 允许未使用的参数（常见于回调函数）
       'no-unused-vars': 'off',
-      '@typescript-eslint/no-unused-vars': ['error', { args: 'none' }],
+      '@typescript-eslint/no-unused-vars': ['error', {
+        args: 'all',
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        caughtErrors: 'all',
+        caughtErrorsIgnorePattern: '^_',
+        ignoreRestSiblings: true,
+      }],
       // 允许 @ts-ignore 等注释
       '@typescript-eslint/ban-ts-comment': 'off',
       // 允许空函数（常见于占位符）
       '@typescript-eslint/no-empty-function': 'off',
       // 允许使用 prototype 方法
       'no-prototype-builtins': 'off',
-      // 允许显式 any 类型（逐步迁移）
-      '@typescript-eslint/no-explicit-any': 'warn',
+      '@typescript-eslint/no-explicit-any': 'error',
+    },
+  },
+  {
+    files: ['**/*.svelte'],
+    languageOptions: {
+      parserOptions: {
+        parser: tseslint.parser,
+        project: ['./tsconfig.json', './tsconfig.test.json'],
+        tsconfigRootDir: import.meta.dirname,
+        extraFileExtensions: ['.svelte'],
+      },
+    },
+  },
+  {
+    files: ['**/*.svelte.ts'],
+    languageOptions: {
+      parser: tseslint.parser,
+      parserOptions: {
+        project: ['./tsconfig.json', './tsconfig.test.json'],
+        tsconfigRootDir: import.meta.dirname,
+      },
     },
   },
   {

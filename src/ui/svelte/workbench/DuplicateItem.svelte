@@ -4,12 +4,11 @@
   显示一对语义相似的概念：
   - 顶部相似度进度条（颜色分级：>90% 红、80-90% 橙、<80% 蓝）
   - 两个概念名称 + 类型标签 + 相似度百分比
-  - 操作按钮（对比/忽略），hover 淡入
+  - 忽略按钮，hover 淡入
 
-  @see 需求 7.3, 7.4, 7.5, 7.6, 7.7
 -->
 <script lang="ts">
-    import { getCRContext } from '../../bridge/context';
+    import { getWorkbenchContext } from '../../bridge/context';
     import Icon from '../../components/Icon.svelte';
     import ProgressBar from '../../components/ProgressBar.svelte';
     import Button from '../../components/Button.svelte';
@@ -21,16 +20,20 @@
         pair,
         nameA,
         nameB,
+        dismissing = false,
         ondismiss,
+        onmerge,
     }: {
         pair: DuplicatePair;
         nameA: string;
         nameB: string;
+        dismissing?: boolean;
         ondismiss: (pair: DuplicatePair) => void;
+        onmerge: (pair: DuplicatePair) => void;
     } = $props();
 
-    const ctx = getCRContext();
-    const t = ctx.i18n.t();
+    const ctx = getWorkbenchContext();
+    const t = ctx.i18n.messages;
 
     /** 相似度百分比 */
     let percent = $derived(Math.round(pair.similarity * 100));
@@ -44,15 +47,14 @@
 
     /** 类型标签（通过 i18n 获取） */
     function getTypeLabel(type: CRType): string {
-        return (t.crTypes as Record<string, string>)?.[type] ?? type;
+        return t.crTypes[type];
     }
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div
+    <div
     class="cr-dup-item"
     role="listitem"
-    aria-label={`${nameA} ↔ ${nameB}，相似度 ${Math.round(pair.similarity * 100)}%`}
+    aria-label={ctx.i18n.format('workbench.duplicates.ariaLabel', { nameA, nameB, percent })}
 >
     <!-- 相似度进度条 -->
     <div class="cr-dup-item__bar">
@@ -76,13 +78,18 @@
 
     <!-- 操作按钮 -->
     <div class="cr-dup-item__actions">
+        <Button variant="primary" size="sm" ariaLabel={t.workbench.duplicates.mergeAria} onclick={(e: MouseEvent) => { e.stopPropagation(); onmerge(pair); }}>
+            {t.workbench.duplicates.merge}
+        </Button>
         <Button
             variant="ghost"
             size="sm"
-            ariaLabel={t.workbench?.duplicates?.dismissAria ?? '忽略此重复对'}
-            onclick={(e: MouseEvent) => { e.stopPropagation(); ondismiss(pair); }}
+            loading={dismissing}
+            disabled={dismissing}
+            ariaLabel={t.workbench.duplicates.dismissAria}
+            onclick={(e: MouseEvent) => { e.stopPropagation(); if (!dismissing) ondismiss(pair); }}
         >
-            {t.workbench?.duplicates?.dismiss ?? '忽略'}
+            {t.workbench.duplicates.dismiss}
         </Button>
     </div>
 </div>
@@ -91,10 +98,9 @@
     .cr-dup-item {
         display: flex;
         flex-direction: column;
-        gap: var(--cr-space-1, 4px);
-        padding: var(--cr-space-2, 8px);
-        border-radius: var(--cr-radius-sm, 4px);
-        cursor: pointer;
+        gap: var(--cr-space-1);
+        padding: var(--cr-space-2);
+        border-radius: var(--cr-radius-sm);
         transition: background 0.15s;
     }
 
@@ -110,20 +116,20 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: var(--cr-space-2, 8px);
+        gap: var(--cr-space-2);
         min-width: 0;
     }
 
     .cr-dup-item__concepts {
         display: flex;
         align-items: center;
-        gap: var(--cr-space-1, 4px);
+        gap: var(--cr-space-1);
         min-width: 0;
         flex: 1;
     }
 
     .cr-dup-item__name {
-        font-size: var(--font-ui-small, 13px);
+        font-size: var(--font-ui-small);
         color: var(--cr-text-normal);
         white-space: nowrap;
         overflow: hidden;
@@ -140,20 +146,20 @@
     .cr-dup-item__meta {
         display: flex;
         align-items: center;
-        gap: var(--cr-space-2, 8px);
+        gap: var(--cr-space-2);
         flex-shrink: 0;
     }
 
     .cr-dup-item__type {
-        font-size: var(--font-ui-smaller, 11px);
+        font-size: var(--font-ui-smaller);
         color: var(--cr-text-muted);
         padding: 1px 6px;
-        border-radius: var(--cr-radius-sm, 4px);
+        border-radius: var(--cr-radius-sm);
         background: var(--cr-bg-secondary);
     }
 
     .cr-dup-item__similarity {
-        font-size: var(--font-ui-smaller, 11px);
+        font-size: var(--font-ui-smaller);
         color: var(--cr-text-muted);
         font-variant-numeric: tabular-nums;
     }
@@ -161,7 +167,7 @@
     /* 操作按钮：默认半透明，hover 淡入 */
     .cr-dup-item__actions {
         display: flex;
-        gap: var(--cr-space-1, 4px);
+        gap: var(--cr-space-1);
         justify-content: flex-end;
         opacity: 0.4;
         transition: opacity 0.15s;

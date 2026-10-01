@@ -1,34 +1,23 @@
-<!--
-  QueueSection.svelte — 工作台队列区
-
-  职责：
-  - 状态栏：StatusDot + 紧凑统计 + 暂停/恢复按钮
-  - 仅显示 Pending/Running/Failed 任务，不显示已完成
-  - 可展开任务列表（概念名称、类型、状态、操作）
-  - 批量操作（重试失败、清空等待中需确认 Modal）
-  - 状态文字 aria-live="polite"
-
-  @see 需求 6.1-6.10
--->
 <script lang="ts">
-    import { getCRContext } from '../../bridge/context';
-    import { SERVICE_TOKENS } from '../../../../main';
-    import { showSuccess, showError } from '../../feedback';
+    import { SvelteSet } from 'svelte/reactivity';
+    import { getWorkbenchContext } from '../../bridge/context';
     import StatusDot from '../../components/StatusDot.svelte';
     import Button from '../../components/Button.svelte';
     import Icon from '../../components/Icon.svelte';
     import SectionCard from '../../components/SectionCard.svelte';
     import EmptyState from '../../components/EmptyState.svelte';
-    import InlineAlert from '../../components/InlineAlert.svelte';
-    import MiniProgress from '../../components/MiniProgress.svelte';
     import ConfirmModal from '../../components/ConfirmModal.svelte';
+    import InlineAlert from '../../components/InlineAlert.svelte';
     import QueueTaskList from './QueueTaskList.svelte';
-    import type { QueueStatus, TaskRecord, TaskState } from '../../../types';
-    import type { TaskQueue } from '../../../core/task-queue';
-    import type { Logger } from '../../../data/logger';
+    import { TASK_STAGE_IDS } from '../../../types';
+    import type { QueueStatus, TaskRecord, TaskStageId, TaskState } from '../../../types';
+    import { toSafeErrorFeedback, type UiFeedback } from '../../error-feedback';
+    import { stageLabel } from '../../stage-labels';
 
-    /** 状态指示器颜色类型 */
     type DotStatus = 'idle' | 'running' | 'paused' | 'error';
+    type QueueFilter = 'all' | 'active' | TaskState;
+    type StageFilter = 'all' | TaskStageId;
+    type ConfirmAction = 'cancel-active' | 'clear-history' | null;
 
     let {
         status,
@@ -38,339 +27,372 @@
         tasks: TaskRecord[];
     } = $props();
 
-    // 从 Context 获取服务
-    const ctx = getCRContext();
-    const t = ctx.i18n.t();
-    const taskQueue = ctx.container.resolve<TaskQueue>(SERVICE_TOKENS.taskQueue);
-    const logger = ctx.container.resolve<Logger>(SERVICE_TOKENS.logger);
+    const ctx = getWorkbenchContext();
+    const t = ctx.i18n.messages;
+    const queue = ctx.application.queue;
 
-    // 组件状态
-    let expanded = $state(false);
-    let showClearConfirm = $state(false);
+    let expanded = $state(true);
+    let stateFilter = $state<QueueFilter>('all');
+    let stageFilter = $state<StageFilter>('all');
+    let selectedIds = new SvelteSet<string>();
+    let visibleLimit = $state(50);
+    let pendingConfirmation = $state<ConfirmAction>(null);
+    let uncertainRetryTaskId = $state<string | null>(null);
+    let feedback = $state<UiFeedback | null>(null);
+    let actionRunning = $state(false);
+    const detailsToggleLabels = {
+        expand: t.common.details.expand,
+        collapse: t.common.details.collapse,
+    };
 
-    // ========================================================================
-    // 派生状态
-    // ========================================================================
+    const filteredTasks = $derived.by(() => tasks.filter((task) => {
+        const stateMatches = stateFilter === 'all'
+            || (stateFilter === 'active' && (task.state === 'pending' || task.state === 'running'))
+            || task.state === stateFilter;
+        return stateMatches && (stageFilter === 'all' || task.stageId === stageFilter);
+    }));
+    const displayedTasks = $derived(filteredTasks.slice(0, visibleLimit));
+    const selectedTasks = $derived(tasks.filter((task) => selectedIds.has(task.id)));
+    const selectedActive = $derived(selectedTasks.filter((task) => task.state === 'pending' || task.state === 'running'));
+    const selectedFailed = $derived(selectedTasks.filter((task) => task.stageId !== 'cards' && task.state === 'failed' && task.error?.kind !== 'uncertain'));
+    const selectedRemovable = $derived(selectedTasks.filter((task) => task.state !== 'running'));
+    const retryableFailedCount = $derived(tasks.filter((task) => task.stageId !== 'cards' && task.state === 'failed' && task.error?.kind !== 'uncertain').length);
+    const allFilteredSelected = $derived(filteredTasks.length > 0 && filteredTasks.every((task) => selectedIds.has(task.id)));
+    const hasMore = $derived(displayedTasks.length < filteredTasks.length);
 
-    /** 仅显示 Pending/Running/Failed 任务 */
-    const VISIBLE_STATES: TaskState[] = ['Pending', 'Running', 'Failed'];
-
-    /** 过滤后的可见任务列表 */
-    let visibleTasks = $derived(
-        tasks.filter(task => VISIBLE_STATES.includes(task.state))
-    );
-
-    /** 状态指示器颜色映射 */
-    let dotStatus: DotStatus = $derived.by(() => {
-        if (status.failed > 0) return 'error';
+    const dotStatus: DotStatus = $derived.by(() => {
+        if (status.failed > 0 || status.interrupted > 0) return 'error';
         if (status.paused) return 'paused';
         if (status.running > 0) return 'running';
         return 'idle';
     });
 
-    /** 状态标签文字 */
-    let statusLabel: string = $derived.by(() => {
-        if (status.failed > 0) return t.workbench?.queueStatus?.failed ?? '失败';
-        if (status.paused) return t.workbench?.queueStatus?.paused ?? '已暂停';
-        if (status.running > 0) return t.workbench?.queueStatus?.active ?? '运行中';
-        return t.workbench?.queueStatus?.noTasks ?? '空闲';
+    const statusLabel: string = $derived.by(() => {
+        if (status.failed > 0) return t.workbench.queueStatus.hasFailures;
+        if (status.interrupted > 0) return t.cards.hasInterrupted;
+        if (status.paused) return t.workbench.queueStatus.paused;
+        if (status.running > 0) return t.workbench.queueStatus.running;
+        if (status.pending > 0) return t.workbench.queueStatus.pending;
+        return t.workbench.queueStatus.noTasks;
     });
 
-    /** 紧凑统计文字 */
-    let statsText: string = $derived.by(() => {
-        const parts: string[] = [];
-        if (status.pending > 0) {
-            parts.push(`${t.workbench?.queueStatus?.pending ?? '待处理'} ${status.pending}`);
+    const statsText: string = $derived(
+        `${t.workbench.queueStatus.total} ${status.total} · ${t.workbench.queueStatus.pending} ${status.pending} · ${t.workbench.queueStatus.running} ${status.running} · ${t.workbench.queueStatus.failed} ${status.failed} · ${t.cards.interrupted} ${status.interrupted}`,
+    );
+
+    $effect(() => {
+        const taskIds = new SvelteSet(tasks.map((task) => task.id));
+        const nextSelected = new SvelteSet([...selectedIds].filter((taskId) => taskIds.has(taskId)));
+        if (nextSelected.size !== selectedIds.size) {
+            selectedIds.clear();
+            for (const taskId of nextSelected) selectedIds.add(taskId);
         }
-        if (status.running > 0) {
-            parts.push(`${t.workbench?.queueStatus?.running ?? '执行中'} ${status.running}`);
-        }
-        if (status.failed > 0) {
-            parts.push(`${t.workbench?.queueStatus?.failed ?? '失败'} ${status.failed}`);
-        }
-        return parts.join(' · ');
     });
 
-    /** 是否有失败任务 */
-    let hasFailed = $derived(status.failed > 0);
-
-    /** 是否有等待中任务 */
-    let hasPending = $derived(status.pending > 0);
-
-    /** 失败任务的错误摘要（最近 3 条） */
-    let failedErrors = $derived.by(() => {
-        const failed = tasks.filter(t => t.state === 'Failed');
-        return failed.slice(-3).map(t => {
-            const last = t.errors?.[t.errors.length - 1];
-            return {
-                taskId: t.id,
-                code: last?.code ?? 'UNKNOWN',
-                message: last?.message ?? '未知错误',
-            };
-        });
-    });
-
-    /** 当前运行任务的进度（0-1） */
-    let runningProgress = $derived.by(() => {
-        const running = tasks.filter(t => t.state === 'Running');
-        if (running.length === 0) return 0;
-        const total = running.reduce((sum, t) => {
-            const p = (t as Record<string, unknown>).progress;
-            return sum + (typeof p === 'number' ? p : 0);
-        }, 0);
-        return total / running.length;
-    });
-
-    // ========================================================================
-    // 事件处理
-    // ========================================================================
-
-    /** 切换展开/收起任务列表 */
-    function toggleExpanded(): void {
-        expanded = !expanded;
+    function handleStateFilter(event: Event): void {
+        stateFilter = (event.currentTarget as HTMLSelectElement).value as QueueFilter;
+        visibleLimit = 50;
     }
 
-    /** 暂停/恢复队列 */
+    function handleStageFilter(event: Event): void {
+        stageFilter = (event.currentTarget as HTMLSelectElement).value as StageFilter;
+        visibleLimit = 50;
+    }
+
+    function toggleSelectAll(): void {
+        const next = new SvelteSet(selectedIds);
+        if (allFilteredSelected) {
+            for (const task of filteredTasks) next.delete(task.id);
+        } else {
+            for (const task of filteredTasks) next.add(task.id);
+        }
+        selectedIds.clear();
+        for (const taskId of next) selectedIds.add(taskId);
+    }
+
+    function selectTask(taskId: string, selected: boolean): void {
+        const next = new SvelteSet(selectedIds);
+        if (selected) next.add(taskId);
+        else next.delete(taskId);
+        selectedIds.clear();
+        for (const taskId of next) selectedIds.add(taskId);
+    }
+
+    type QueueActionOutcome = { ok: true } | { ok: false; error: unknown };
+
+    /** One place for the busy lock, Result unwrapping and safe error feedback. */
+    async function runQueueAction(action: () => Promise<QueueActionOutcome>, after?: () => void): Promise<void> {
+        if (actionRunning) return;
+        actionRunning = true;
+        feedback = null;
+        try {
+            const result = await action();
+            if (!result.ok) feedback = toSafeErrorFeedback(result.error, t.workbench.notifications.unknownFailure);
+        } catch (error) {
+            feedback = toSafeErrorFeedback(error, t.workbench.notifications.unknownFailure);
+        } finally {
+            actionRunning = false;
+        }
+        after?.();
+    }
+
+    /** First failure wins; an empty or all-successful batch reports success. */
+    function firstFailure(results: QueueActionOutcome[]): QueueActionOutcome {
+        return results.find((result) => !result.ok) ?? { ok: true };
+    }
+
     async function handleTogglePause(): Promise<void> {
-        try {
-            if (status.paused) {
-                await taskQueue.resume();
-                showSuccess(t.workbench?.notifications?.queueResumed ?? '队列已恢复运行');
-            } else {
-                await taskQueue.pause();
-                showSuccess(t.workbench?.notifications?.queuePaused ?? '队列已暂停');
-            }
-        } catch (e) {
-            logger.error('QueueSection', '暂停/恢复队列失败', e as Error);
-        }
+        await runQueueAction(() => (status.paused ? queue.resume() : queue.pause()));
     }
 
-    /** 重试所有失败任务 */
+    async function retryTask(taskId: string, confirmed = false): Promise<void> {
+        await runQueueAction(() => (confirmed ? queue.retryUncertain(taskId) : queue.retry(taskId)));
+    }
+
+    function handleRetry(taskId: string): void {
+        if (tasks.find((task) => task.id === taskId)?.error?.kind === 'uncertain') {
+            uncertainRetryTaskId = taskId;
+            return;
+        }
+        void retryTask(taskId);
+    }
+
+    function confirmUncertainRetry(): void {
+        const taskId = uncertainRetryTaskId;
+        uncertainRetryTaskId = null;
+        if (taskId) void retryTask(taskId, true);
+    }
+
+    async function handleCancel(taskId: string): Promise<void> {
+        await runQueueAction(() => queue.cancel(taskId));
+    }
+
+    async function handleRemove(taskId: string): Promise<void> {
+        await runQueueAction(() => queue.remove(taskId));
+    }
+
+    async function handleRetrySelected(): Promise<void> {
+        await runQueueAction(
+            async () => firstFailure(await Promise.all(selectedFailed.map((task) => queue.retry(task.id).catch((error) => ({ ok: false as const, error }))))),
+            () => selectedIds.clear(),
+        );
+    }
+
     async function handleRetryFailed(): Promise<void> {
-        try {
-            const result = await taskQueue.retryFailed();
-            if (result.ok) {
-                showSuccess(`${t.workbench?.notifications?.retryComplete ?? '已重试失败任务'} (${result.value})`);
-            }
-        } catch (e) {
-            logger.error('QueueSection', '重试失败任务异常', e as Error);
-        }
+        await runQueueAction(() => queue.retryFailed());
     }
 
-    /** 取消单个任务 */
-    function handleCancelTask(taskId: string): void {
-        try {
-            taskQueue.cancel(taskId);
-            showSuccess(t.workbench?.notifications?.taskCancelled ?? '任务已取消');
-        } catch (e) {
-            logger.error('QueueSection', '取消任务失败', e as Error);
-        }
+    async function handleCancelSelected(): Promise<void> {
+        await runQueueAction(
+            async () => firstFailure(await Promise.all(selectedActive.map((task) => queue.cancel(task.id).catch((error) => ({ ok: false as const, error }))))),
+            () => selectedIds.clear(),
+        );
     }
 
-    /** 清空等待中任务（需确认） */
-    function handleClearPending(): void {
-        showClearConfirm = true;
+    async function handleRemoveSelected(): Promise<void> {
+        await runQueueAction(
+            async () => firstFailure(await Promise.all(selectedRemovable.map((task) => queue.remove(task.id).catch((error) => ({ ok: false as const, error }))))),
+            () => selectedIds.clear(),
+        );
     }
 
-    /** 确认清空等待中 */
-    function confirmClearPending(): void {
-        showClearConfirm = false;
-        const allTasks = taskQueue.getAllTasks();
-        let cleared = 0;
-        for (const task of allTasks) {
-            if (task.state === 'Pending') {
-                try {
-                    taskQueue.cancel(task.id);
-                    cleared++;
-                } catch { /* 忽略单项失败 */ }
-            }
-        }
-        showSuccess(`${t.workbench?.notifications?.clearComplete ?? '已清空'} (${cleared})`);
-    }
-
-    /** 取消清空 */
-    function cancelClearPending(): void {
-        showClearConfirm = false;
+    async function confirmBatchAction(): Promise<void> {
+        const action = pendingConfirmation;
+        pendingConfirmation = null;
+        await runQueueAction(() => (action === 'cancel-active' ? queue.cancelAllActive() : queue.removeTerminal()));
     }
 </script>
 
-<!-- 队列区 -->
 <SectionCard>
     <div class="cr-queue-section">
-        <!-- 状态栏 -->
         <div class="cr-queue-status-bar">
-            <!-- 状态栏（可点击展开/折叠） -->
-            <div
-                class="cr-queue-status-info"
-                role="button"
-                tabindex="0"
-                onclick={toggleExpanded}
-                onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpanded(); } }}
-                aria-expanded={expanded}
-                aria-label={expanded ? '折叠队列' : '展开队列'}
-            >
+            <button class="cr-queue-status-info" type="button" onclick={() => expanded = !expanded} aria-expanded={expanded}>
                 <StatusDot status={dotStatus} label={statusLabel} />
-                {#if statsText}
-                    <span class="cr-queue-stats" aria-live="polite">{statsText}</span>
-                {/if}
-                <span
-                    class="cr-queue-expand-icon"
-                    class:cr-queue-expand-icon--open={expanded}
-                    aria-hidden="true"
-                >
-                    <Icon name="chevron-right" size={16} />
-                </span>
-            </div>
-
-            <!-- 迷你进度 + 暂停/恢复按钮 -->
-            <div class="cr-queue-controls">
-                {#if status.running > 0}
-                    <MiniProgress value={runningProgress} />
-                {/if}
+                <span class="cr-queue-title">{t.workbench.queueStatus.title}</span>
+                <span class="cr-queue-stats" aria-live="polite">{statsText}</span>
+                <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={16} />
+            </button>
+            {#if status.paused || status.pending > 0 || status.running > 0}
                 <Button
                     variant="ghost"
                     size="icon"
-                    onclick={() => void handleTogglePause()}
-                    ariaLabel={status.paused
-                        ? (t.workbench?.queueStatus?.resumeQueue ?? '恢复队列')
-                        : (t.workbench?.queueStatus?.pauseQueue ?? '暂停队列')}
+                    disabled={actionRunning}
+                    onclick={handleTogglePause}
+                    ariaLabel={status.paused ? t.workbench.queueStatus.resumeQueue : t.workbench.queueStatus.pauseQueue}
                 >
                     <Icon name={status.paused ? 'play' : 'pause'} size={16} />
                 </Button>
-            </div>
+            {/if}
         </div>
 
-        <!-- 展开的任务列表 -->
         {#if expanded}
             <div class="cr-queue-details">
-                {#if visibleTasks.length > 0}
+                <div class="cr-queue-summary" role="toolbar" aria-label={t.workbench.queueStatus.summary}>
+                    <button type="button" class:active={stateFilter === 'active'} onclick={() => stateFilter = 'active'}>
+                        <span>{t.workbench.queueStatus.active}</span><strong>{status.pending + status.running}</strong>
+                    </button>
+                    <button type="button" class:active={stateFilter === 'failed'} onclick={() => stateFilter = 'failed'}>
+                        <span>{t.workbench.queueStatus.failed}</span><strong>{status.failed}</strong>
+                    </button>
+                    <button type="button" class:active={stateFilter === 'completed'} onclick={() => stateFilter = 'completed'}>
+                        <span>{t.workbench.queueStatus.completed}</span><strong>{status.completed}</strong>
+                    </button>
+                    <button type="button" class:active={stateFilter === 'cancelled'} onclick={() => stateFilter = 'cancelled'}>
+                        <span>{t.workbench.queueStatus.cancelled}</span><strong>{status.cancelled}</strong>
+                    </button>
+                </div>
+
+                <div class="cr-queue-toolbar">
+                    <label class="cr-queue-select-label">
+                        <span>{t.workbench.queueStatus.filterState}</span>
+                        <select value={stateFilter} onchange={handleStateFilter}>
+                            <option value="all">{t.workbench.queueStatus.all}</option>
+                            <option value="active">{t.workbench.queueStatus.active}</option>
+                            <option value="pending">{t.workbench.queueStatus.pending}</option>
+                            <option value="running">{t.workbench.queueStatus.running}</option>
+                            <option value="interrupted">{t.cards.interrupted}</option>
+                            <option value="failed">{t.workbench.queueStatus.failed}</option>
+                            <option value="completed">{t.workbench.queueStatus.completed}</option>
+                            <option value="cancelled">{t.workbench.queueStatus.cancelled}</option>
+                        </select>
+                    </label>
+                    <label class="cr-queue-select-label">
+                        <span>{t.workbench.queueStatus.stage}</span>
+                        <select value={stageFilter} onchange={handleStageFilter}>
+                            <option value="all">{t.workbench.queueStatus.all}</option>
+                            {#each TASK_STAGE_IDS as stageId (stageId)}
+                                <option value={stageId}>{stageLabel(stageId, t)}</option>
+                            {/each}
+                        </select>
+                    </label>
+                    <label class="cr-queue-select-all">
+                        <input type="checkbox" checked={allFilteredSelected} onchange={toggleSelectAll} />
+                        <span>{t.workbench.queueStatus.selectAll}</span>
+                    </label>
+                </div>
+
+                <div class="cr-queue-actions" role="toolbar" aria-label={t.workbench.queueStatus.batchActions}>
+                    {#if selectedFailed.length > 0}
+                        <Button variant="secondary" size="sm" disabled={actionRunning} onclick={handleRetrySelected}>
+                            <Icon name="refresh-cw" size={16} />
+                            {t.workbench.queueStatus.retrySelected} ({selectedFailed.length})
+                        </Button>
+                    {/if}
+                    {#if selectedActive.length > 0}
+                        <Button variant="secondary" size="sm" disabled={actionRunning} onclick={handleCancelSelected}>
+                            <Icon name="x" size={16} />
+                            {t.workbench.queueStatus.cancelSelected} ({selectedActive.length})
+                        </Button>
+                    {/if}
+                    {#if selectedRemovable.length > 0}
+                        <Button variant="ghost" size="sm" disabled={actionRunning} onclick={handleRemoveSelected}>
+                            <Icon name="trash-2" size={16} />
+                            {t.workbench.queueStatus.deleteSelected} ({selectedRemovable.length})
+                        </Button>
+                    {/if}
+                    {#if retryableFailedCount > 0}
+                        <Button variant="ghost" size="sm" disabled={actionRunning} onclick={handleRetryFailed}>
+                            <Icon name="refresh-cw" size={16} />
+                            {t.workbench.queueStatus.retryFailed}
+                        </Button>
+                    {/if}
+                    {#if status.pending > 0 || status.running > 0}
+                        <Button variant="ghost" size="sm" disabled={actionRunning} onclick={() => pendingConfirmation = 'cancel-active'}>
+                            <Icon name="x-circle" size={16} />
+                            {t.workbench.queueStatus.cancelAllActive}
+                        </Button>
+                    {/if}
+                    {#if status.completed > 0 || status.failed > 0 || status.cancelled > 0 || status.interrupted > 0}
+                        <Button variant="ghost" size="sm" disabled={actionRunning} onclick={() => pendingConfirmation = 'clear-history'}>
+                            <Icon name="trash-2" size={16} />
+                            {t.workbench.queueStatus.clearHistory}
+                        </Button>
+                    {/if}
+                </div>
+
+                {#if displayedTasks.length > 0}
                     <QueueTaskList
-                        tasks={visibleTasks}
-                        oncancel={handleCancelTask}
+                        tasks={displayedTasks}
+                        {selectedIds}
+                        onselect={selectTask}
+                        onretry={handleRetry}
+                        oncancel={handleCancel}
+                        onremove={handleRemove}
+                        disabled={actionRunning}
                     />
-
-                    <!-- 批量操作 -->
-                    <div class="cr-queue-batch-actions">
-                        {#if hasFailed}
-                            <Button
-                                variant="secondary"
-                                size="sm"
-                                onclick={() => void handleRetryFailed()}
-                            >
-                                {t.workbench?.queueStatus?.retryFailed ?? '重试失败'}
-                            </Button>
-                        {/if}
-                        {#if hasPending}
-                            <Button
-                                variant="ghost"
-                                size="sm"
-                                onclick={handleClearPending}
-                            >
-                                {t.workbench?.queueStatus?.clearPending ?? '清除待处理'}
-                            </Button>
-                        {/if}
-                    </div>
+                    {#if hasMore}
+                        <Button variant="ghost" size="sm" onclick={() => visibleLimit += 50}>
+                            {t.workbench.queueStatus.showMore} ({filteredTasks.length - displayedTasks.length})
+                        </Button>
+                    {/if}
                 {:else}
-                    <EmptyState
-                        message={t.workbench?.queueStatus?.noTasks ?? '队列中暂无任务'}
-                        icon="inbox"
-                    />
+                    <EmptyState message={t.workbench.queueStatus.noFilteredTasks} icon="inbox" />
                 {/if}
-            </div>
-        {/if}
-
-        <!-- 内联错误摘要 -->
-        {#if failedErrors.length > 0}
-            <div class="cr-queue-errors" aria-live="assertive">
-                {#each failedErrors as err (err.taskId)}
-                    <InlineAlert
-                        level="error"
-                        message="[{err.code}] {err.message}"
-                    />
-                {/each}
             </div>
         {/if}
     </div>
 </SectionCard>
 
-<!-- 清空等待中确认 Modal -->
-{#if showClearConfirm}
+{#if feedback}
+    <InlineAlert level={feedback.level} message={feedback.message} details={feedback.details} {detailsToggleLabels} />
+{/if}
+
+{#if pendingConfirmation === 'cancel-active'}
     <ConfirmModal
-        title={t.workbench?.queueStatus?.clearPendingConfirmTitle ?? '确认清空待处理'}
-        message={t.workbench?.queueStatus?.clearPendingConfirmMessage ?? '是否取消所有待处理任务？'}
+        title={t.workbench.queueStatus.cancelAllConfirmTitle}
+        message={t.workbench.queueStatus.cancelAllConfirmMessage}
+        confirmLabel={t.workbench.queueStatus.cancel}
+        cancelLabel={t.common.cancel}
         danger={true}
-        onconfirm={confirmClearPending}
-        oncancel={cancelClearPending}
+        onconfirm={confirmBatchAction}
+        oncancel={() => pendingConfirmation = null}
+    />
+{:else if pendingConfirmation === 'clear-history'}
+    <ConfirmModal
+        title={t.workbench.queueStatus.clearHistoryConfirmTitle}
+        message={t.workbench.queueStatus.clearHistoryConfirmMessage}
+        confirmLabel={t.workbench.queueStatus.clearHistory}
+        cancelLabel={t.common.cancel}
+        danger={true}
+        onconfirm={confirmBatchAction}
+        oncancel={() => pendingConfirmation = null}
+    />
+{/if}
+
+{#if uncertainRetryTaskId}
+    <ConfirmModal
+        title={t.workbench.queueStatus.uncertainRetryConfirmTitle}
+        message={t.workbench.queueStatus.uncertainRetryConfirmMessage}
+        confirmLabel={t.workbench.queueStatus.retry}
+        cancelLabel={t.common.cancel}
+        danger={true}
+        onconfirm={confirmUncertainRetry}
+        oncancel={() => uncertainRetryTaskId = null}
     />
 {/if}
 
 <style>
-    .cr-queue-section {
-        display: flex;
-        flex-direction: column;
-        gap: var(--cr-space-2);
-    }
-
-    .cr-queue-status-bar {
-        display: flex;
-        align-items: center;
-        gap: var(--cr-space-2);
-    }
-
-    .cr-queue-status-info {
-        display: flex;
-        align-items: center;
-        gap: var(--cr-space-2);
-        flex: 1;
-        cursor: pointer;
-        padding: var(--cr-space-1) 0;
-        user-select: none;
-    }
-
-    .cr-queue-status-info:hover .cr-queue-expand-icon {
-        color: var(--cr-text-normal);
-    }
-
-    .cr-queue-stats {
-        font-size: var(--font-ui-small, 13px);
-        color: var(--cr-text-muted);
-    }
-
-    .cr-queue-expand-icon {
-        color: var(--cr-text-faint);
-        margin-left: auto;
-        transition: transform 200ms ease, color 0.15s;
-        display: inline-flex;
-    }
-
-    .cr-queue-expand-icon--open {
-        transform: rotate(90deg);
-    }
-
-    .cr-queue-controls {
-        display: flex;
-        align-items: center;
-        gap: var(--cr-space-1);
-    }
-
-    .cr-queue-details {
-        display: flex;
-        flex-direction: column;
-        gap: var(--cr-space-2);
-        padding-left: var(--cr-space-1);
-    }
-
-    .cr-queue-batch-actions {
-        display: flex;
-        gap: var(--cr-space-2);
-        justify-content: flex-end;
-        padding-top: var(--cr-space-1);
-    }
-
-    .cr-queue-errors {
-        display: flex;
-        flex-direction: column;
-        gap: var(--cr-space-1);
-        margin-top: var(--cr-space-2);
+    .cr-queue-section { display: flex; flex-direction: column; gap: var(--cr-space-2); }
+    .cr-queue-status-bar { display: flex; align-items: center; gap: var(--cr-space-2); }
+    .cr-queue-status-info { display: flex; align-items: center; gap: var(--cr-space-2); flex: 1; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+    .cr-queue-title { font-weight: 600; color: var(--cr-text-normal); }
+    .cr-queue-stats { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cr-text-muted); font-size: var(--font-ui-smaller); }
+    .cr-queue-details { display: flex; flex-direction: column; gap: var(--cr-space-3); margin-top: var(--cr-space-3); }
+    .cr-queue-summary { display: grid; grid-template-columns: repeat(4, 1fr); border-block: 1px solid var(--cr-border); }
+    .cr-queue-summary button { display: flex; justify-content: space-between; gap: var(--cr-space-2); padding: var(--cr-space-2); border: 0; border-right: 1px solid var(--cr-border); background: transparent; color: var(--cr-text-muted); cursor: pointer; }
+    .cr-queue-summary button:last-child { border-right: 0; }
+    .cr-queue-summary button:hover, .cr-queue-summary button.active { background: var(--cr-bg-hover); color: var(--cr-text-normal); }
+    .cr-queue-summary strong { color: var(--cr-text-normal); }
+    .cr-queue-toolbar, .cr-queue-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--cr-space-2); }
+    .cr-queue-select-label { display: inline-flex; align-items: center; gap: var(--cr-space-1); color: var(--cr-text-muted); font-size: var(--font-ui-smaller); }
+    .cr-queue-select-label select { min-height: 28px; max-width: 150px; }
+    .cr-queue-select-all { display: inline-flex; align-items: center; gap: var(--cr-space-1); margin-left: auto; color: var(--cr-text-muted); font-size: var(--font-ui-smaller); }
+    .cr-queue-actions { padding-block: var(--cr-space-1); }
+    .cr-queue-actions :global(button) { display: inline-flex; align-items: center; gap: var(--cr-space-1); }
+    @media (max-width: 620px) {
+        .cr-queue-summary { grid-template-columns: repeat(2, 1fr); }
+        .cr-queue-summary button:nth-child(2) { border-right: 0; }
+        .cr-queue-summary button:nth-child(-n + 2) { border-bottom: 1px solid var(--cr-border); }
+        .cr-queue-select-all { margin-left: 0; }
     }
 </style>

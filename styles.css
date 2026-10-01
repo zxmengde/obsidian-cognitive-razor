@@ -35,6 +35,7 @@
     --cr-bg-accent-subtle: var(--interactive-accent-hover);
     --cr-bg-border-hover: var(--background-modifier-border-hover, var(--background-modifier-border));
     --cr-bg-focus-ring: var(--background-modifier-border-focus);
+    --cr-bg-cover: var(--background-modifier-cover);
 
     /* 文字 */
     --cr-text-normal: var(--text-normal);
@@ -78,7 +79,6 @@
     /* === 阴影 === */
     --cr-shadow-sm: var(--shadow-s);
     --cr-shadow-lg: var(--shadow-l);
-}
 
     /* === 功能色：任务状态 === */
     --cr-task-pending: var(--cr-text-muted);

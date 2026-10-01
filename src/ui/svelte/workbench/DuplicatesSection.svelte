@@ -2,25 +2,23 @@
   DuplicatesSection.svelte — 工作台重复对区
 
   职责：
-  - Collapsible 包装（默认展开，折叠持久化，header 显示数量 badge）
+  - Collapsible 包装（默认展开，header 显示数量 badge）
   - 列表按相似度降序排列
   - 空状态显示"暂无重复概念"
 
-  @see 需求 7.1-7.8, 9.13
 -->
 <script lang="ts">
     import { fade } from 'svelte/transition';
-    import { getCRContext } from '../../bridge/context';
-    import { SERVICE_TOKENS } from '../../../../main';
-    import { showSuccess, showError } from '../../feedback';
+    import { SvelteSet } from 'svelte/reactivity';
+    import { getWorkbenchContext } from '../../bridge/context';
     import Collapsible from '../../components/Collapsible.svelte';
     import EmptyState from '../../components/EmptyState.svelte';
+    import Button from '../../components/Button.svelte';
+    import InlineAlert from '../../components/InlineAlert.svelte';
     import DuplicateItem from './DuplicateItem.svelte';
     import type { DuplicatePair } from '../../../types';
-    import type { DuplicateManager } from '../../../core/duplicate-manager';
-    import type { SettingsStore } from '../../../data/settings-store';
-    import type { CruidCache } from '../../../core/cruid-cache';
-    import type { Logger } from '../../../data/logger';
+    import { toSafeErrorFeedback, type UiFeedback } from '../../error-feedback';
+    import MergeModal from './MergeModal.svelte';
 
     let {
         pairs,
@@ -29,17 +27,20 @@
     } = $props();
 
     // 从 Context 获取服务
-    const ctx = getCRContext();
-    const t = ctx.i18n.t();
-    const duplicateManager = ctx.container.resolve<DuplicateManager>(SERVICE_TOKENS.duplicateManager);
-    const settingsStore = ctx.container.resolve<SettingsStore>(SERVICE_TOKENS.settingsStore);
-    const cruidCache = ctx.container.resolve<CruidCache>(SERVICE_TOKENS.cruidCache);
-    const logger = ctx.container.resolve<Logger>(SERVICE_TOKENS.logger);
+    const ctx = getWorkbenchContext();
+    const t = ctx.i18n.messages;
+    const duplicates = ctx.application.duplicates;
+    const detailsToggleLabels = {
+        expand: t.common.details.expand,
+        collapse: t.common.details.collapse,
+    };
 
-    // 折叠状态（从设置持久化读取，默认展开）
-    let collapsed = $state(
-        settingsStore.getSettings().uiState?.sectionCollapsed?.duplicates ?? false
-    );
+    let collapsed = $state(false);
+    let feedback = $state<UiFeedback | null>(null);
+    const dismissingIds = new SvelteSet<string>();
+    let activeMergePair = $state<DuplicatePair | null>(null);
+    let recovery = $state(duplicates.getRecoveryOperations());
+    const recoveryIds = new SvelteSet<string>();
 
     /** 按相似度降序排列 */
     let sortedPairs = $derived(
@@ -48,29 +49,95 @@
 
     /** 通过 CruidCache 解析概念名称 */
     function resolveName(nodeId: string): string {
-        return cruidCache.getName(nodeId) ?? nodeId;
+        return duplicates.getConceptName(nodeId) ?? nodeId;
     }
 
-    /** 折叠状态变化时持久化 */
     function handleToggle(newCollapsed: boolean): void {
         collapsed = newCollapsed;
-        void settingsStore.updateSectionCollapsed('duplicates', newCollapsed);
+    }
+
+    /**
+     * The recovery log is a service read model, not an event stream: a merge
+     * that fails mid-way must show its continuation entry without reopening
+     * the workbench.
+     */
+    function refreshRecovery(): void {
+        recovery = duplicates.getRecoveryOperations();
     }
 
     /** 点击忽略：标记为非重复 + Notice 反馈 */
     async function handleDismiss(pair: DuplicatePair): Promise<void> {
-        const result = await duplicateManager.markAsNonDuplicate(pair.id);
-        if (result.ok) {
-            showSuccess(t.workbench?.notifications?.dismissSuccess ?? '已忽略重复对');
-        } else {
-            logger.error('DuplicatesSection', '忽略重复对失败', undefined, { pairId: pair.id });
-            showError(t.workbench?.notifications?.dismissFailed ?? '忽略失败');
+        if (dismissingIds.has(pair.id)) return;
+        dismissingIds.add(pair.id);
+        feedback = null;
+        try {
+            const result = await duplicates.dismiss(pair.id);
+            if (result.ok) {
+                feedback = { level: 'success', message: t.workbench.notifications.dismissSuccess };
+            } else {
+                feedback = toSafeErrorFeedback(result.error, t.workbench.notifications.dismissFailed);
+            }
+        } catch (e) {
+            feedback = toSafeErrorFeedback(e, t.workbench.notifications.dismissFailed);
+        } finally {
+            dismissingIds.delete(pair.id);
+        }
+    }
+
+    async function handleRecovery(operationId: string): Promise<void> {
+        if (recoveryIds.has(operationId)) return;
+        recoveryIds.add(operationId);
+        feedback = null;
+        try {
+            const result = await duplicates.resumeMerge(operationId);
+            if (result.ok) {
+                recovery = recovery.filter((operation) => operation.id !== operationId);
+                feedback = { level: 'success', message: t.workbench.recovery.actionCompleted };
+            } else {
+                recovery = duplicates.getRecoveryOperations();
+                feedback = toSafeErrorFeedback(result.error, t.workbench.notifications.mergeFailed);
+            }
+        } catch (error) {
+            feedback = toSafeErrorFeedback(error, t.workbench.notifications.mergeFailed);
+        } finally {
+            recoveryIds.delete(operationId);
+        }
+    }
+
+    async function handleDiscardRecovery(operationId: string): Promise<void> {
+        if (recoveryIds.has(operationId)) return;
+        recoveryIds.add(operationId);
+        try {
+            const result = await duplicates.discardRecovery(operationId);
+            if (result.ok) recovery = recovery.filter((operation) => operation.id !== operationId);
+            else feedback = toSafeErrorFeedback(result.error, t.workbench.notifications.mergeFailed);
+        } finally {
+            recoveryIds.delete(operationId);
         }
     }
 </script>
 
+{#if recovery.length > 0}
+    <section class="cr-dup-recovery" aria-live="polite">
+        <div class="cr-dup-recovery__heading">
+            <strong>{t.workbench.recovery.title}</strong>
+            <span>{t.workbench.recovery.summary.replace('{count}', String(recovery.length))}</span>
+        </div>
+        {#each recovery as operation (operation.id)}
+            <div class="cr-dup-recovery__item">
+                <span>{operation.preview.canonical.path} → {operation.preview.redundant.path}</span>
+                <span class="cr-dup-recovery__phase">{operation.phase}</span>
+                <div class="cr-dup-recovery__actions">
+                    <Button size="sm" variant="primary" loading={recoveryIds.has(operation.id)} disabled={recoveryIds.has(operation.id)} onclick={() => void handleRecovery(operation.id)}>{t.workbench.recovery.continueMerge}</Button>
+                    <Button size="sm" variant="ghost" disabled={recoveryIds.has(operation.id)} onclick={() => void handleDiscardRecovery(operation.id)}>{t.workbench.recovery.discard}</Button>
+                </div>
+            </div>
+        {/each}
+    </section>
+{/if}
+
 <Collapsible
-    title={t.workbench?.duplicates?.title ?? '重复概念'}
+    title={t.workbench.duplicates.title}
     count={pairs.length}
     {collapsed}
     onToggle={handleToggle}
@@ -83,20 +150,69 @@
                         {pair}
                         nameA={resolveName(pair.nodeIdA)}
                         nameB={resolveName(pair.nodeIdB)}
+                        dismissing={dismissingIds.has(pair.id)}
                         ondismiss={(p) => void handleDismiss(p)}
+                        onmerge={(p) => { activeMergePair = p; }}
                     />
                 </div>
             {/each}
         </div>
     {:else}
-        <EmptyState message={t.workbench?.duplicates?.empty ?? '暂无重复概念'} />
+        <EmptyState message={t.workbench.duplicates.empty} />
     {/if}
 </Collapsible>
+
+{#if activeMergePair}
+    <MergeModal
+        pair={activeMergePair}
+        onclose={() => { activeMergePair = null; refreshRecovery(); }}
+        onsuccess={() => {
+            activeMergePair = null;
+            refreshRecovery();
+            feedback = { level: 'success', message: t.workbench.notifications.mergeSuccess };
+        }}
+    />
+{/if}
+
+{#if feedback}
+    <InlineAlert level={feedback.level} message={feedback.message} details={feedback.details} {detailsToggleLabels} />
+{/if}
 
 <style>
     .cr-dup-list {
         display: flex;
         flex-direction: column;
-        gap: var(--cr-space-1, 4px);
+        gap: var(--cr-space-1);
+    }
+
+    .cr-dup-recovery {
+        display: flex;
+        flex-direction: column;
+        gap: var(--cr-space-1);
+        margin-bottom: var(--cr-space-2);
+        padding: var(--cr-space-2);
+        border: 1px solid var(--cr-border);
+        border-radius: var(--cr-radius-sm);
+    }
+
+    .cr-dup-recovery__heading,
+    .cr-dup-recovery__item,
+    .cr-dup-recovery__actions {
+        display: flex;
+        align-items: center;
+        gap: var(--cr-space-2);
+        flex-wrap: wrap;
+    }
+
+    .cr-dup-recovery__heading span,
+    .cr-dup-recovery__phase {
+        color: var(--cr-text-muted);
+        font-size: var(--font-ui-smaller);
+    }
+
+    .cr-dup-recovery__item {
+        justify-content: space-between;
+        padding-top: var(--cr-space-1);
+        border-top: 1px solid var(--cr-border);
     }
 </style>

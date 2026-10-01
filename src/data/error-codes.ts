@@ -50,10 +50,10 @@ export const ERROR_CODE_INFO = {
   E201_PROVIDER_TIMEOUT: {
     code: "E201_PROVIDER_TIMEOUT",
     name: "PROVIDER_TIMEOUT",
-    description: "Provider 请求超时",
+    description: "Provider 请求超时，结果未知",
     category: "PROVIDER_AI",
-    retryable: true,
-    fixSuggestion: "可稍后重试，或在设置中提高超时时间/切换模型。",
+    retryable: false,
+    fixSuggestion: "请先确认 Provider 请求记录或账单，再从工作台手动重试；不要自动重复长请求。",
   },
   E202_RATE_LIMITED: {
     code: "E202_RATE_LIMITED",
@@ -74,10 +74,42 @@ export const ERROR_CODE_INFO = {
   E204_PROVIDER_ERROR: {
     code: "E204_PROVIDER_ERROR",
     name: "PROVIDER_ERROR",
-    description: "Provider 调用失败（非超时/非鉴权/非限流）",
+    description: "Provider、中转或模型上游调用失败（非超时/非鉴权/非限流）",
     category: "PROVIDER_AI",
     retryable: true,
-    fixSuggestion: "请重试；若持续失败请检查 Provider 状态与网络。",
+    fixSuggestion: "请检查网络及 Provider/中转状态后重试。",
+  },
+  E205_PROVIDER_REQUEST_INVALID: {
+    code: "E205_PROVIDER_REQUEST_INVALID",
+    name: "PROVIDER_REQUEST_INVALID",
+    description: "Provider 明确拒绝了请求参数或协议",
+    category: "PROVIDER_AI",
+    retryable: false,
+    fixSuggestion: "请检查协议、模型名称、请求参数与 Provider 兼容性。",
+  },
+  E206_PROVIDER_REQUEST_UNCERTAIN: {
+    code: "E206_PROVIDER_REQUEST_UNCERTAIN",
+    name: "PROVIDER_REQUEST_UNCERTAIN",
+    description: "请求超时、连接中断或网关错误后无法确认 Provider 是否已处理请求",
+    category: "PROVIDER_AI",
+    retryable: false,
+    fixSuggestion: "请先检查 Provider 账单或请求记录，再从工作台手动重试；不要让插件自动重复长请求。",
+  },
+  E207_PROVIDER_RESPONSE_UNSUPPORTED: {
+    code: "E207_PROVIDER_RESPONSE_UNSUPPORTED",
+    name: "PROVIDER_RESPONSE_UNSUPPORTED",
+    description: "Provider 返回了插件无法继续处理的状态、工具调用或响应结构",
+    category: "PROVIDER_AI",
+    retryable: false,
+    fixSuggestion: "请检查所选协议与中转服务兼容性；该响应不会自动重试，以避免重复计费。",
+  },
+  E208_PROVIDER_STREAM_FAILED: {
+    code: "E208_PROVIDER_STREAM_FAILED",
+    name: "PROVIDER_STREAM_FAILED",
+    description: "流式连接已建立，但 Provider 通过标准错误事件明确终止请求",
+    category: "PROVIDER_AI",
+    retryable: false,
+    fixSuggestion: "请查看上游错误代码和服务状态；确认后可从任务工作台手动重试。",
   },
   E210_MODEL_OUTPUT_PARSE_FAILED: {
     code: "E210_MODEL_OUTPUT_PARSE_FAILED",
@@ -85,7 +117,7 @@ export const ERROR_CODE_INFO = {
     description: "模型输出非 JSON 或解析失败",
     category: "PROVIDER_AI",
     retryable: true,
-    fixSuggestion: "系统将自动重试并强化输出约束。",
+    fixSuggestion: "可从任务队列手动重试；若持续失败，请检查模型的结构化输出能力。",
   },
   E211_MODEL_SCHEMA_VIOLATION: {
     code: "E211_MODEL_SCHEMA_VIOLATION",
@@ -93,7 +125,7 @@ export const ERROR_CODE_INFO = {
     description: "模型输出不符合 Schema",
     category: "PROVIDER_AI",
     retryable: true,
-    fixSuggestion: "系统将自动重试并提示模型修正结构。",
+    fixSuggestion: "可从任务队列手动重试；若持续失败，请更换结构化输出更稳定的模型。",
   },
   E212_MODEL_CONSTRAINT_VIOLATION: {
     code: "E212_MODEL_CONSTRAINT_VIOLATION",
@@ -101,7 +133,15 @@ export const ERROR_CODE_INFO = {
     description: "模型输出违反业务约束",
     category: "PROVIDER_AI",
     retryable: true,
-    fixSuggestion: "系统将自动重试；若持续失败请检查输入是否过于含混。",
+    fixSuggestion: "可从任务队列手动重试；若持续失败，请检查输入是否过于含混。",
+  },
+  E214_MODEL_OUTPUT_TRUNCATED: {
+    code: "E214_MODEL_OUTPUT_TRUNCATED",
+    name: "MODEL_OUTPUT_TRUNCATED",
+    description: "模型输出因长度限制被截断",
+    category: "PROVIDER_AI",
+    retryable: true,
+    fixSuggestion: "请提高 maxTokens、缩小输入范围或更换上下文长度更充足的模型。",
   },
   E213_SAFETY_VIOLATION: {
     code: "E213_SAFETY_VIOLATION",
@@ -207,9 +247,9 @@ export const ERROR_CODE_INFO = {
   },
 } as const satisfies Record<string, ErrorCodeInfo>;
 
-export type ErrorCode = keyof typeof ERROR_CODE_INFO;
+type ErrorCode = keyof typeof ERROR_CODE_INFO;
 
-export function isValidErrorCode(code: string): code is ErrorCode {
+function isValidErrorCode(code: string): code is ErrorCode {
   return code in ERROR_CODE_INFO;
 }
 
@@ -227,4 +267,3 @@ export function getErrorCategory(code: string): ErrorCategory | "UNKNOWN" {
 export function isRetryableErrorCode(code: string): boolean {
   return getErrorCodeInfo(code)?.retryable ?? false;
 }
-

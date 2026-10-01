@@ -1,7 +1,7 @@
 /**
  * 领域模型类型定义
  *
- * 知识类型、笔记状态、Frontmatter 元数据、标准化概念
+ * 知识类型、笔记状态、Frontmatter 元数据和概念输入
  */
 
 // ============================================================================
@@ -9,10 +9,11 @@
 // ============================================================================
 
 /** 知识类型：五种核心概念类型 */
-export type CRType = "Domain" | "Issue" | "Theory" | "Entity" | "Mechanism";
+export const CR_TYPES = ["domain", "issue", "theory", "entity", "mechanism"] as const;
+export type CRType = typeof CR_TYPES[number];
 
-/** 笔记状态：从 Stub 到 Evergreen 的演进 */
-export type NoteState = "Stub" | "Draft" | "Evergreen";
+/** 笔记状态：新内容从 draft 开始，可由用户提升为 evergreen。 */
+export type NoteState = "seed" | "draft" | "evergreen";
 
 // ============================================================================
 // Frontmatter 数据模型
@@ -40,29 +41,39 @@ export interface CRFrontmatter {
     parents: string[];
     /** 来源概念 UIDs */
     sourceUids?: string[];
-    /** 未知字段保留（解析时不丢弃未知字段） */
-    [key: string]: unknown;
 }
 
 
 // ============================================================================
-// 标准化概念
+// Define 预览与已确认概念
 // ============================================================================
 
-/** 标准化概念结果 */
-export interface StandardizedConcept {
-    /** 所有类型的标准名称 */
-    standardNames: {
-        Domain: { chinese: string; english: string };
-        Issue: { chinese: string; english: string };
-        Theory: { chinese: string; english: string };
-        Entity: { chinese: string; english: string };
-        Mechanism: { chinese: string; english: string };
-    };
-    /** 类型置信度 */
-    typeConfidences: Record<CRType, number>;
-    /** 主要类型 */
-    primaryType?: CRType;
-    /** 核心定义 */
-    coreDefinition?: string;
+/** A name proposed by Define or confirmed for a note. */
+export interface ConceptName {
+    chinese: string;
+    english: string;
+}
+
+/** One type candidate in a transient Define preview. */
+export interface DefineCandidate {
+    name: ConceptName;
+    confidence: number;
+}
+
+/** Define output shown to the user before any durable side effect. */
+export interface DefinePreview {
+    candidates: Record<CRType, DefineCandidate>;
+    coreDefinition: string;
+}
+
+/** The origin of a concept that has passed an explicit confirmation gate. */
+export type ConfirmedConceptSource = "define" | "hierarchical-expand" | "abstract-expand";
+
+/** The only concept input accepted by a durable Create workflow. */
+export interface ConfirmedConcept {
+    type: CRType;
+    name: ConceptName;
+    coreDefinition: string;
+    source: ConfirmedConceptSource;
+    parents: string[];
 }

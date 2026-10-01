@@ -4,28 +4,25 @@
   职责：
   - 全宽搜索输入框（含清除/提交按钮、Enter 键触发 Define）
   - Define 加载状态（按钮动画 + 输入框禁用）
-  - Define 成功后显示类型置信度表格（TypeTable，任务 6.3 实现）
-  - 操作按钮行（拓展、配图、核查），右对齐，Secondary 样式
+  - Define 成功后显示类型置信度表格
+  - 操作按钮行（拓展、核查）
   - 无活跃笔记时隐藏按钮行显示引导文字
-  - 图片未启用时隐藏配图按钮
 
-  @see 需求 4.1-4.6, 4.10-4.13
 -->
 <script lang="ts">
+    import { extractFrontmatter } from '../../../core/frontmatter-utils';
     import type { TFile } from 'obsidian';
-    import { getCRContext } from '../../bridge/context';
-    import { SERVICE_TOKENS } from '../../../../main';
-    import { showSuccess, showError } from '../../feedback';
+    import { getWorkbenchContext } from '../../bridge/context';
     import Button from '../../components/Button.svelte';
     import Icon from '../../components/Icon.svelte';
     import SectionCard from '../../components/SectionCard.svelte';
     import InlinePanel from '../../components/InlinePanel.svelte';
+    import InlineAlert from '../../components/InlineAlert.svelte';
     import TypeTable from './TypeTable.svelte';
     import ExpandPanel from './ExpandPanel.svelte';
-    import type { StandardizedConcept, CRType } from '../../../types';
-    import type { CreateOrchestrator } from '../../../core/create-orchestrator';
-    import type { VerifyOrchestrator } from '../../../core/verify-orchestrator';
-    import type { Logger } from '../../../data/logger';
+    import type { DefinePreview, CRType } from '../../../types';
+    import { confirmDefinePreview } from '../../../domain/concept';
+    import { toSafeErrorFeedback, type UiFeedback } from '../../error-feedback';
 
     /** 当前展开的面板类型 */
     type ActivePanel = 'none' | 'expand';
@@ -37,18 +34,44 @@
     } = $props();
 
     // 从 Context 获取服务
-    const ctx = getCRContext();
-    const t = ctx.i18n.t();
-    const createOrch = ctx.container.resolve<CreateOrchestrator>(SERVICE_TOKENS.createOrchestrator);
-    const verifyOrch = ctx.container.resolve<VerifyOrchestrator>(SERVICE_TOKENS.verifyOrchestrator);
-    const logger = ctx.container.resolve<Logger>(SERVICE_TOKENS.logger);
+    const ctx = getWorkbenchContext();
+    const t = ctx.i18n.messages;
+    const application = ctx.application;
+    const detailsToggleLabels = {
+        expand: t.common.details.expand,
+        collapse: t.common.details.collapse,
+    };
 
     // 组件状态
     let inputValue = $state('');
     let defining = $state(false);
-    let defineResult = $state<StandardizedConcept | null>(null);
-    let error = $state<string | null>(null);
+    let defineResult = $state<DefinePreview | null>(null);
+    let feedback = $state<UiFeedback | null>(null);
     let activePanel = $state<ActivePanel>('none');
+    let verifying = $state(false);
+    let generatingCards = $state(false);
+    let isCRNode = $state(false);
+    let defineAbortController: AbortController | undefined;
+    $effect(() => () => defineAbortController?.abort('create panel unmounted'));
+    $effect(() => {
+        const file = activeFile;
+        let disposed = false;
+        isCRNode = false;
+        const refresh = async () => {
+            if (!file || file.extension !== 'md') return;
+            try {
+                const content = await ctx.app.vault.cachedRead(file);
+                if (!disposed) isCRNode = !!extractFrontmatter(content);
+            } catch { if (!disposed) isCRNode = false; }
+        };
+        void refresh();
+        const event = ctx.app.vault.on('modify', (changed) => { if (changed === file) void refresh(); });
+        return () => { disposed = true; ctx.app.vault.offref(event); };
+    });
+    const unsubscribeQueue = application.queue.subscribe((event) => {
+        if (event.type === 'task-completed' && event.task.stageId === 'cards') reportSuccess(ctx.i18n.format("cards.completed", { path: event.task.payload.targetPath }));
+    });
+    $effect(() => () => unsubscribeQueue());
 
     // 派生状态
     let hasInput = $derived(inputValue.trim().length > 0);
@@ -68,7 +91,15 @@
     function clearInput(): void {
         inputValue = '';
         defineResult = null;
-        error = null;
+        feedback = null;
+    }
+
+    function reportError(errorValue: unknown, fallback: string): void {
+        feedback = toSafeErrorFeedback(errorValue, fallback);
+    }
+
+    function reportSuccess(message: string): void {
+        feedback = { level: 'success', message };
     }
 
     /** 触发 Define 流程 */
@@ -76,53 +107,86 @@
         if (!hasInput || defining) return;
 
         defining = true;
-        error = null;
+        feedback = null;
         defineResult = null;
+        const controller = new AbortController();
+        defineAbortController = controller;
 
         try {
-            const result = await createOrch.defineDirect(inputValue.trim());
+            const result = await application.create.define(inputValue.trim(), controller.signal);
+            if (controller.signal.aborted) return;
             if (result.ok) {
                 defineResult = result.value;
             } else {
-                error = result.error.message;
-                logger.warn('CreateSection', 'Define 失败', { error: result.error });
+                reportError(result.error, t.workbench.notifications.defineFailed);
             }
-        } catch (e) {
-            error = t.workbench?.createConcept?.defining ?? '定义失败';
-            logger.error('CreateSection', 'Define 异常', e as Error);
+        } catch (_error) {
+            if (controller.signal.aborted) return;
+            reportError(_error, t.workbench.notifications.defineFailed);
         } finally {
-            defining = false;
+            if (defineAbortController === controller) {
+                defineAbortController = undefined;
+                defining = false;
+            }
         }
     }
 
     /** 键盘事件：Enter 触发 Define */
     function handleKeydown(e: KeyboardEvent): void {
-        if (e.key === 'Enter' && hasInput && !defining) {
+        if (e.key === 'Enter' && !e.isComposing && !e.defaultPrevented && hasInput && !defining) {
             e.preventDefault();
             void handleDefine();
         }
     }
 
     /** 触发 Verify 流程 */
-    function handleVerify(): void {
-        if (!activeFile) return;
-        const result = verifyOrch.startVerifyPipeline(activeFile.path);
-        if (result.ok) {
-            showSuccess(t.notices?.verifyStarted ?? '核查已启动');
-        } else {
-            showError(result.error.message);
+    async function handleVerify(): Promise<void> {
+        if (!activeFile || verifying) return;
+        const filePath = activeFile.path;
+        verifying = true;
+        feedback = null;
+        try {
+            const result = await application.verify.start(filePath);
+            if (result.ok) {
+                reportSuccess(t.workbench.notifications.verifyStarted);
+            } else {
+                reportError(result.error, t.workbench.notifications.unknownFailure);
+            }
+        } catch (e) {
+            reportError(e, t.workbench.notifications.unknownFailure);
+        } finally {
+            verifying = false;
         }
     }
 
     /** 选择类型并创建（TypeTable 回调） */
-    function handleCreateType(type: CRType): void {
+    async function handleCreateType(type: CRType): Promise<void> {
         if (!defineResult) return;
-        const result = createOrch.startCreatePipelineWithStandardized(defineResult, type);
+        const confirmed = confirmDefinePreview(defineResult, type);
+        if (!confirmed.ok) {
+            reportError(confirmed.error, t.workbench.notifications.defineFailed);
+            return;
+        }
+        const result = await application.create.confirm(confirmed.value);
         if (result.ok) {
             clearInput();
         } else {
-            showError(result.error.message);
+            reportError(result.error, t.workbench.notifications.unknownFailure);
         }
+    }
+
+    async function handleCards(): Promise<void> {
+        if (!activeFile || !isCRNode || generatingCards) return;
+        const path = activeFile.path;
+        generatingCards = true;
+        feedback = null;
+        try {
+            const result = await application.cards.start(path);
+            if (result.ok) reportSuccess(ctx.i18n.format("cards.queued", { path: result.value }));
+            else if (result.error.code === "E401_PROVIDER_NOT_CONFIGURED") feedback = { level: "error", message: t.cards.configureFirst };
+            else reportError(result.error, t.cards.failed);
+        } catch (error) { reportError(error, t.cards.failed); }
+        finally { generatingCards = false; }
     }
 </script>
 
@@ -133,21 +197,22 @@
             <input
                 class="cr-search-input"
                 type="text"
-                placeholder={t.workbench?.createConcept?.placeholder ?? '输入概念描述...'}
+                placeholder={t.workbench.createConcept.placeholder}
                 bind:value={inputValue}
                 onkeydown={handleKeydown}
                 disabled={defining}
-                aria-label={t.workbench?.createConcept?.placeholder ?? '输入概念描述'}
+                aria-label={t.workbench.createConcept.placeholder}
             />
             {#if hasInput}
-                <button
-                    class="cr-search-btn cr-search-clear"
+                <Button
+                    variant="ghost"
+                    size="icon"
                     onclick={clearInput}
                     disabled={defining}
-                    aria-label={t.workbench?.createConcept?.clear ?? '清空输入'}
+                    ariaLabel={t.workbench.createConcept.clear}
                 >
                     <Icon name="x" size={16} />
-                </button>
+                </Button>
             {/if}
             <Button
                 variant="primary"
@@ -155,7 +220,7 @@
                 disabled={!hasInput}
                 loading={defining}
                 onclick={() => void handleDefine()}
-                ariaLabel={t.workbench?.createConcept?.startButton ?? '开始'}
+                ariaLabel={t.workbench.createConcept.startButton}
             >
                 {#if !defining}<Icon name="corner-down-left" size={16} />{/if}
             </Button>
@@ -169,15 +234,32 @@
                     size="sm"
                     onclick={() => togglePanel('expand')}
                 >
-                    {t.workbench?.buttons?.expand ?? '拓展'}
+                    {t.workbench.buttons.expand}
                 </Button>
-                <Button variant="secondary" size="sm" onclick={handleVerify}>
-                    {t.workbench?.buttons?.verify ?? '核查'}
+                <Button
+                    variant="secondary"
+                    size="sm"
+                    loading={verifying}
+                    disabled={verifying}
+                    onclick={() => void handleVerify()}
+                >
+                    {t.workbench.buttons.verify}
                 </Button>
+                {#if isCRNode}
+                <Button
+                    variant="secondary"
+                    size="sm"
+                    loading={generatingCards}
+                    disabled={generatingCards}
+                    onclick={() => void handleCards()}
+                >
+                    {t.cards.generate}
+                </Button>
+                {/if}
             </div>
         {:else}
             <div class="cr-hint-text">
-                {t.workbench?.buttons?.openNoteHint ?? '打开一篇 Markdown 笔记以使用改进、拓展等工具'}
+                {t.workbench.buttons.openNoteHint}
             </div>
         {/if}
     </div>
@@ -191,9 +273,9 @@
     />
 {/if}
 
-<!-- 错误状态 -->
-{#if error}
-    <div class="cr-error-inline">{error}</div>
+<!-- 操作反馈 -->
+{#if feedback}
+    <InlineAlert level={feedback.level} message={feedback.message} details={feedback.details} {detailsToggleLabels} />
 {/if}
 
 <!-- 内联展开面板区 -->
@@ -218,13 +300,14 @@
 
     .cr-search-input {
         flex: 1;
+        min-width: 0;
         height: 40px;
         padding: 0 var(--cr-space-3);
         border: 1px solid var(--cr-border);
-        border-radius: var(--cr-radius-md, 6px);
+        border-radius: var(--cr-radius-md);
         background: var(--cr-bg-base);
         color: var(--cr-text-normal);
-        font-size: var(--cr-font-base, 14px);
+        font-size: var(--cr-font-base);
         outline: none;
         transition: border-color 0.15s;
     }
@@ -238,45 +321,23 @@
         cursor: not-allowed;
     }
 
-    .cr-search-btn {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 28px;
-        height: 28px;
-        border: none;
-        border-radius: var(--cr-radius-sm, 4px);
-        background: transparent;
-        color: var(--cr-text-muted);
-        cursor: pointer;
-        font-size: 14px;
-        padding: 0;
-    }
-
-    .cr-search-btn:hover {
-        color: var(--cr-text-primary);
-        background: var(--cr-bg-hover);
-    }
-
     /* 操作按钮网格 */
     .cr-action-grid {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: var(--cr-space-2);
+    }
+
+    @media (max-width: 600px) {
+        .cr-action-grid { grid-template-columns: 1fr; }
     }
 
     /* 引导文字 */
     .cr-hint-text {
-        font-size: var(--cr-font-sm, 13px);
+        font-size: var(--cr-font-sm);
         color: var(--cr-text-muted);
         text-align: center;
         padding: var(--cr-space-2) 0;
     }
 
-    /* 内联错误 */
-    .cr-error-inline {
-        font-size: var(--cr-font-sm, 13px);
-        color: var(--cr-status-error);
-        padding: var(--cr-space-1) 0;
-    }
 </style>

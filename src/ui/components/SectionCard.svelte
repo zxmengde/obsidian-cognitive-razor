@@ -26,7 +26,7 @@
     .cr-section-card {
         background: var(--cr-bg-secondary);
         border: 1px solid var(--cr-border);
-        border-radius: var(--cr-radius-md, 8px);
-        padding: var(--cr-space-3, 12px);
+        border-radius: var(--cr-radius-md);
+        padding: var(--cr-space-3);
     }
 </style>

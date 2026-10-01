@@ -10,7 +10,6 @@
     "inlineSources": true,
     "module": "ESNext",
     "target": "ES2022",
-    "allowJs": true,
     "noImplicitAny": true,
     "moduleResolution": "bundler",
     "importHelpers": true,
@@ -30,8 +29,7 @@
     "src/**/*.ts",
     "src/**/*.json",
     "src/**/*.svelte",
-    "main.ts",
-    "eslint.config.js"
+    "main.ts"
   ],
   "exclude": [
     "node_modules",

@@ -4,7 +4,6 @@
   用于设置页中的 API Key 等敏感信息输入。
   眼睛图标按钮切换 type="password" / type="text"。
 
-  @see 需求 10.6
 -->
 <script lang="ts">
     let {
@@ -13,12 +12,18 @@
         onchange,
         disabled = false,
         id = undefined,
+        ariaLabel = undefined,
+        showLabel,
+        hideLabel,
     }: {
         value?: string;
         placeholder?: string;
         onchange: (value: string) => void;
         disabled?: boolean;
         id?: string;
+        ariaLabel?: string;
+        showLabel: string;
+        hideLabel: string;
     } = $props();
 
     /** 是否显示明文 */
@@ -27,7 +32,9 @@
     /** 输入类型 */
     let inputType = $derived(visible ? 'text' : 'password');
 
-    function handleInput(e: Event) {
+    // API keys are persisted only after the field is committed, not per
+    // keystroke, to avoid a save storm while typing.
+    function handleChange(e: Event) {
         const target = e.target as HTMLInputElement;
         onchange(target.value);
     }
@@ -48,12 +55,13 @@
         {placeholder}
         {disabled}
         aria-disabled={disabled ? 'true' : undefined}
-        oninput={handleInput}
+        aria-label={ariaLabel}
+        onchange={handleChange}
     />
     <button
         type="button"
         class="cr-password-input__toggle"
-        aria-label={visible ? '隐藏密码' : '显示密码'}
+        aria-label={visible ? hideLabel : showLabel}
         tabindex={disabled ? -1 : 0}
         {disabled}
         onclick={toggleVisibility}
@@ -87,7 +95,7 @@
         display: flex;
         align-items: center;
         border: 1px solid var(--cr-border);
-        border-radius: var(--cr-radius-sm, 4px);
+        border-radius: var(--cr-radius-sm);
         background: var(--cr-bg-base);
         overflow: hidden;
     }
@@ -109,9 +117,9 @@
         flex: 1;
         border: none;
         background: transparent;
-        padding: var(--cr-space-1, 4px) var(--cr-space-2, 8px);
+        padding: var(--cr-space-1) var(--cr-space-2);
         color: var(--cr-text-normal);
-        font-size: var(--font-ui-small, 13px);
+        font-size: var(--font-ui-small);
         min-height: 28px;
         outline: none;
     }

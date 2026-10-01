@@ -3,7 +3,7 @@
  *
  * 验证：
  * - 各级别通知的正确创建
- * - safeErrorMessage 过滤
+ * - UI 错误映射过滤
  * - 同级去重逻辑
  */
 
@@ -12,7 +12,6 @@ import {
     showSuccess,
     showWarning,
     showError,
-    resetDedupeState,
 } from "./feedback";
 
 // ============================================================================
@@ -78,31 +77,17 @@ vi.mock("obsidian", () => {
 });
 
 // ============================================================================
-// Mock types 模块中的 safeErrorMessage
-// ============================================================================
-
-vi.mock("../types", () => {
-    return {
-        safeErrorMessage: (error: unknown, fallback?: string) => {
-            // 模拟真实行为：CognitiveRazorError 返回 [code] message
-            if (error && typeof error === "object" && "code" in error && "message" in error) {
-                return `[${(error as { code: string }).code}] ${(error as { message: string }).message}`;
-            }
-            // 普通 Error 返回 fallback
-            return fallback ?? "操作失败，请稍后重试";
-        },
-    };
-});
-
-// ============================================================================
 // 测试
 // ============================================================================
 
 describe("feedback 统一反馈服务", () => {
+    let testTime = Date.UTC(2026, 7, 16);
+
     beforeEach(() => {
         mockNoticeInstances.length = 0;
-        resetDedupeState();
         vi.useFakeTimers();
+        testTime += 3000;
+        vi.setSystemTime(testTime);
     });
 
     afterEach(() => {
@@ -129,7 +114,7 @@ describe("feedback 统一反馈服务", () => {
 
     describe("showError", () => {
         it("字符串错误直接显示，持续 6s", () => {
-            showError("自定义错误消息");
+            showError("自定义错误消息", "操作失败");
             expect(mockNoticeInstances).toHaveLength(1);
             expect(mockNoticeInstances[0].message).toBe("自定义错误消息");
             expect(mockNoticeInstances[0].duration).toBe(6000);
@@ -141,10 +126,10 @@ describe("feedback 统一反馈服务", () => {
             expect(mockNoticeInstances[0].message).toBe("操作失败");
         });
 
-        it("CognitiveRazorError 风格对象显示 [code] message", () => {
-            showError({ code: "E201", message: "超时" });
+        it("CognitiveRazorError 风格对象显示安全错误描述", () => {
+            showError({ code: "E201_PROVIDER_TIMEOUT", message: "超时" }, "操作失败");
             expect(mockNoticeInstances).toHaveLength(1);
-            expect(mockNoticeInstances[0].message).toBe("[E201] 超时");
+            expect(mockNoticeInstances[0].message).toBe("Provider 请求超时，结果未知");
         });
     });
 

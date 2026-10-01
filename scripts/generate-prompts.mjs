@@ -12,7 +12,23 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { buildPhaseSchema, WRITE_PHASES } from "./schema-data.mjs";
+import {
+    DEFINE_SCHEMA,
+    TAG_SCHEMA,
+    getWriteStages,
+    getWriteStage,
+    getOperationPromptTemplateKey,
+    buildPhaseJsonSchema,
+    buildPromptMetaContext,
+    BASE_COMPONENT_MAP,
+    injectPromptBaseComponents,
+    renderPromptTemplate,
+    splitPromptIntoMessages,
+    addPromptSchemaConstraint,
+    OPENAI_CHAT_COMPLETIONS_ADAPTER,
+    OPENAI_RESPONSES_ADAPTER,
+    GEMINI_GENERATIVE_LANGUAGE_ADAPTER,
+} from "./schema-data.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
@@ -31,10 +47,12 @@ function readPromptFile(relativePath) {
 
 /**
  * 加载阶段专属 prompt 模板
- * 优先从 phases/{Type}/{phaseId}.md 读取，不存在时返回 null
+ * 只从 StageCatalog 声明的模板路径读取。
  */
-function loadPhaseTemplate(type, phaseId) {
-    const fullPath = join(PROMPTS_DIR, "phases", type, `${phaseId}.md`);
+function loadStageTemplate(type, stageId) {
+    const stage = getWriteStage(type, stageId);
+    if (!stage) return null;
+    const fullPath = join(PROMPTS_DIR, `${stage.promptTemplateKey}.md`);
     if (!existsSync(fullPath)) return null;
     return readFileSync(fullPath, "utf-8");
 }
@@ -43,66 +61,49 @@ function loadPhaseTemplate(type, phaseId) {
 // 基础组件注入
 // ============================================================================
 
-const BASE_COMPONENT_MAP = {
-    "{{BASE_WRITING_STYLE}}": "writing-style",
-    "{{BASE_ANTI_PATTERNS}}": "anti-patterns",
-    "{{BASE_OUTPUT_FORMAT}}": "output-format",
-};
-
 function loadBaseComponents() {
     const cache = {};
     for (const [, name] of Object.entries(BASE_COMPONENT_MAP)) {
         const path = join(PROMPTS_DIR, "base", name + ".md");
-        cache[name] = existsSync(path) ? readFileSync(path, "utf-8") : `<!-- ${name} not found -->`;
+        if (!existsSync(path)) throw new Error(`基础组件文件不存在: ${path}`);
+        cache[name] = readFileSync(path, "utf-8");
     }
     return cache;
 }
 
 function injectBaseComponents(content, baseComponents) {
-    let result = content;
-    for (const [placeholder, name] of Object.entries(BASE_COMPONENT_MAP)) {
-        result = result.split(placeholder).join(baseComponents[name] ?? "");
-    }
-    return result;
+    const injected = injectPromptBaseComponents(content, baseComponents);
+    if (injected.missingComponents.length > 0) throw new Error(`基础组件缺失: ${injected.missingComponents.join(", ")}`);
+    return injected.content;
 }
-
-// ============================================================================
-// 变量替换
-// ============================================================================
 
 function renderTemplate(content, slots, optionalSlots = []) {
-    let result = content;
-    for (const [key, value] of Object.entries(slots)) {
-        result = result.split(`{{${key}}}`).join(value);
-    }
-    for (const key of optionalSlots) {
-        if (!(key in slots)) result = result.split(`{{${key}}}`).join("");
-    }
-    const unreplaced = [...result.matchAll(/\{\{([^}]+)\}\}/g)].map((m) => m[0]);
-    if (unreplaced.length > 0) console.warn(`  ⚠ 未替换变量: ${unreplaced.join(", ")}`);
-    return result;
+    const rendered = renderPromptTemplate(content, slots, optionalSlots);
+    if (rendered.unreplacedVariables.length > 0) throw new Error(`存在未替换变量: ${rendered.unreplacedVariables.join(", ")}`);
+    return rendered.prompt;
 }
 
 // ============================================================================
-// system/user 分割（复现 task-runner.ts buildChatRequest 逻辑）
+// 请求构建使用运行时共享的消息拆分和协议适配器。
 // ============================================================================
-
-function splitSystemUser(prompt) {
-    const sysMatch = prompt.match(/<system_instructions>([\s\S]*?)<\/system_instructions>/);
-    if (sysMatch) {
-        const systemContent = sysMatch[1].trim();
-        const userContent = prompt.replace(/<system_instructions>[\s\S]*?<\/system_instructions>/, "").trim();
-        return { system: systemContent, user: userContent };
-    }
-    return { system: null, user: prompt };
-}
-
-function buildApiPayload(prompt, model = "gemini-2.5-flash-preview") {
-    const { system, user } = splitSystemUser(prompt);
-    const messages = [];
-    if (system) messages.push({ role: "system", content: system });
-    messages.push({ role: "user", content: user });
-    return { model, messages, temperature: 0.5 };
+function buildApiPayloads(prompt, model = "configured-model", schema, schemaName) {
+    const baseMessages = splitPromptIntoMessages(prompt);
+    const request = {
+        providerId: "prompt-export",
+        model,
+        messages: schema
+            ? addPromptSchemaConstraint(baseMessages, schema, "prompt")
+            : baseMessages,
+        response_format: undefined,
+        capabilities: { temperature: false, topP: false, reasoning: false,
+            structuredOutput: "prompt", nativeWebSearch: false,
+            promptCaching: false, responseContinuation: false },
+    };
+    return {
+        "openai-chat-completions": OPENAI_CHAT_COMPLETIONS_ADAPTER.buildRequestBody(request),
+        "openai-responses": OPENAI_RESPONSES_ADAPTER.buildRequestBody(request),
+        "gemini-generative-language": GEMINI_GENERATIVE_LANGUAGE_ADAPTER.buildRequestPlan(request).body,
+    };
 }
 
 // ============================================================================
@@ -110,24 +111,24 @@ function buildApiPayload(prompt, model = "gemini-2.5-flash-preview") {
 // ============================================================================
 
 const EXAMPLES = {
-    Domain: {
-        meta: { cruid: "1640bddd", type: "Domain", standard_name_cn: "量子信息科学", standard_name_en: "Quantum Information Science", noteState: "Stub" },
+    domain: {
+        meta: { standard_name_cn: "量子信息科学", type: "domain", standard_name_en: "Quantum Information Science" },
         label: "量子信息科学",
     },
-    Issue: {
-        meta: { cruid: "91b5c16a", type: "Issue", standard_name_cn: "测量问题", standard_name_en: "The Measurement Problem", noteState: "Stub" },
+    issue: {
+        meta: { standard_name_cn: "测量问题", type: "issue", standard_name_en: "The Measurement Problem" },
         label: "测量问题",
     },
-    Theory: {
-        meta: { cruid: "944d43db", type: "Theory", standard_name_cn: "哥本哈根诠释", standard_name_en: "Copenhagen Interpretation", noteState: "Stub" },
+    theory: {
+        meta: { standard_name_cn: "哥本哈根诠释", type: "theory", standard_name_en: "Copenhagen Interpretation" },
         label: "哥本哈根诠释",
     },
-    Entity: {
-        meta: { cruid: "03d10972", type: "Entity", standard_name_cn: "量子纠缠", standard_name_en: "Quantum Entanglement", noteState: "Stub" },
+    entity: {
+        meta: { standard_name_cn: "量子纠缠", type: "entity", standard_name_en: "Quantum Entanglement" },
         label: "量子纠缠",
     },
-    Mechanism: {
-        meta: { cruid: "bbc4affe", type: "Mechanism", standard_name_cn: "波函数坍缩", standard_name_en: "Wave Function Collapse", noteState: "Stub" },
+    mechanism: {
+        meta: { standard_name_cn: "波函数坍缩", type: "mechanism", standard_name_en: "Wave Function Collapse" },
         label: "波函数坍缩",
     },
 };
@@ -150,30 +151,41 @@ function main() {
         {
             id: "define",
             label: "Define",
-            templateId: "base/operations/define",
+            templateId: getOperationPromptTemplateKey("define"),
             slots: { CTX_INPUT: "量子纠缠" },
-            optionalSlots: ["CTX_LANGUAGE"],
+            optionalSlots: [],
             userMessage: "量子纠缠",
+            schema: DEFINE_SCHEMA,
+            schemaName: "define_output",
         },
         {
             id: "tag",
             label: "Tag",
-            templateId: "base/operations/tag",
-            slots: { CTX_META: JSON.stringify(EXAMPLES.Entity.meta, null, 2) },
-            optionalSlots: ["CTX_LANGUAGE"],
+            templateId: getOperationPromptTemplateKey("tag"),
+            slots: { CTX_META: buildPromptMetaContext(EXAMPLES.entity.meta) },
+            optionalSlots: [],
             userMessage: "请为以上概念生成别名和标签。",
+            schema: TAG_SCHEMA,
+            schemaName: "tag_output",
         },
         {
             id: "verify",
             label: "Verify",
-            templateId: "base/operations/verify",
+            templateId: getOperationPromptTemplateKey("verify"),
             slots: {
-                CTX_META: JSON.stringify(EXAMPLES.Entity.meta, null, 2),
+                CTX_META: buildPromptMetaContext(EXAMPLES.entity.meta),
                 CTX_CURRENT: "## 定义\n量子纠缠是量子力学中两个或多个粒子之间的特殊关联状态。",
-                CTX_LANGUAGE: "中文",
             },
-            optionalSlots: ["CTX_SOURCES"],
+            optionalSlots: [],
             userMessage: "请对以上内容进行事实核查。",
+        },
+        {
+            id: "merge",
+            label: "Merge",
+            templateId: getOperationPromptTemplateKey("merge"),
+            slots: { CTX_CURRENT: JSON.stringify({ canonical: EXAMPLES.entity, redundant: EXAMPLES.entity }) },
+            optionalSlots: [],
+            userMessage: "请生成合并草稿。",
         },
     ];
 
@@ -183,7 +195,7 @@ function main() {
             let content = readPromptFile(task.templateId);
             content = injectBaseComponents(content, baseComponents);
             const prompt = renderTemplate(content, task.slots, task.optionalSlots);
-            const payload = buildApiPayload(prompt);
+            const payload = buildApiPayloads(prompt, undefined, task.schema, task.schemaName);
 
             writeFileSync(join(OUTPUT_DIR, `prompt-${task.id}.md`), prompt, "utf-8");
             writeFileSync(join(OUTPUT_DIR, `api-payload-${task.id}.json`), JSON.stringify(payload, null, 2), "utf-8");
@@ -199,8 +211,8 @@ function main() {
     // --- Write 任务：每个类型的每个阶段 ---
     for (const [type, example] of Object.entries(EXAMPLES)) {
         console.log(`处理: Write / ${type}`);
-        const phases = WRITE_PHASES[type];
-        if (!phases) {
+        const stages = getWriteStages(type);
+        if (!stages) {
             console.error(`  ✗ 未找到 ${type} 的分阶段配置`);
             results.push({ id: `write-${type.toLowerCase()}`, label: `Write/${type}`, ok: false, error: "无分阶段配置" });
             console.log();
@@ -209,45 +221,48 @@ function main() {
 
         const accumulated = {};  // 模拟累积的已生成内容
 
-        for (let i = 0; i < phases.length; i++) {
-            const phase = phases[i];
-            const phaseId = `write-${type.toLowerCase()}-${phase.id}`;
-            const label = `Write/${type} — ${phase.id}（${i + 1}/${phases.length}）`;
+        for (let i = 0; i < stages.length; i++) {
+            const stage = stages[i];
+            const outputId = `write-${type}-${stage.id}`;
+            const label = `Write/${type} — ${stage.id}（${i + 1}/${stages.length}）`;
 
             try {
                 const previousContext = Object.keys(accumulated).length > 0
                     ? JSON.stringify(accumulated, null, 2)
                     : "";
 
-                let phaseTemplateContent = loadPhaseTemplate(type, phase.id);
-                if (!phaseTemplateContent) {
-                    throw new Error(`阶段 prompt 文件不存在: phases/${type}/${phase.id}.md`);
+                let stageTemplateContent = loadStageTemplate(type, stage.id);
+                if (!stageTemplateContent) {
+                    throw new Error(`阶段 prompt 文件不存在: ${stage.promptTemplateKey}.md`);
                 }
-                phaseTemplateContent = injectBaseComponents(phaseTemplateContent, baseComponents);
+                stageTemplateContent = injectBaseComponents(stageTemplateContent, baseComponents);
 
                 const slots = {
-                    CTX_META: JSON.stringify(example.meta, null, 2),
-                    CTX_LANGUAGE: "中文",
+                    CTX_META: buildPromptMetaContext(example.meta),
                     CONCEPT_TYPE: type,
-                    PHASE_SCHEMA: buildPhaseSchema(type, phase.fields),
                     CTX_PREVIOUS: previousContext,
                 };
 
-                const prompt = renderTemplate(phaseTemplateContent, slots, ["CTX_SOURCES"]);
-                const payload = buildApiPayload(prompt, null);
+                const prompt = renderTemplate(stageTemplateContent, slots, []);
+                const payload = buildApiPayloads(
+                    prompt,
+                    undefined,
+                    buildPhaseJsonSchema(type, stage.fields),
+                    `write_${type}_${stage.id}`,
+                );
 
-                writeFileSync(join(OUTPUT_DIR, `prompt-${phaseId}.md`), prompt, "utf-8");
-                writeFileSync(join(OUTPUT_DIR, `api-payload-${phaseId}.json`), JSON.stringify(payload, null, 2), "utf-8");
-                console.log(`  ✓ 阶段 ${phase.id} (${phase.fields.join(", ")})`);
-                results.push({ id: phaseId, label, ok: true });
+                writeFileSync(join(OUTPUT_DIR, `prompt-${outputId}.md`), prompt, "utf-8");
+                writeFileSync(join(OUTPUT_DIR, `api-payload-${outputId}.json`), JSON.stringify(payload, null, 2), "utf-8");
+                console.log(`  ✓ 阶段 ${stage.id} (${stage.fields.join(", ")})`);
+                results.push({ id: outputId, label, ok: true });
 
                 // 模拟本阶段生成了内容，供下一阶段的 CTX_PREVIOUS 使用
-                for (const f of phase.fields) {
+                for (const f of stage.fields) {
                     accumulated[f] = `[${f} 的示例内容]`;
                 }
             } catch (err) {
-                console.error(`  ✗ 阶段 ${phase.id} 失败: ${err.message}`);
-                results.push({ id: phaseId, label, ok: false, error: err.message });
+                console.error(`  ✗ 阶段 ${stage.id} 失败: ${err.message}`);
+                results.push({ id: outputId, label, ok: false, error: err.message });
             }
         }
         console.log();
@@ -259,8 +274,8 @@ function main() {
         tasks: results,
         usage: {
             md: "prompt-{id}.md 包含完整 prompt（含 system/user 分割标记），可直接在编辑器中查看和修改",
-            json: "api-payload-{id}.json 可直接作为 OpenAI 兼容 API 请求体",
-            note: "system 消息来自 <system_instructions> 标签内容，user 消息为其余部分",
+            json: "api-payload-{id}.json 同时包含三种协议适配器生成的请求体",
+            note: "消息拆分和协议字段来自运行时共享实现；默认使用提示词 Schema 约束",
         },
     }, null, 2), "utf-8");
 

@@ -1,207 +1,142 @@
-<!--
-  QueueTaskList.svelte — 队列任务列表
-
-  显示过滤后的任务项：概念名称、任务类型、状态、操作按钮。
-  Pending 任务提供取消按钮，Failed 任务显示错误图标（hover 显示错误信息）。
-
-  @see 需求 6.5, 6.6, 6.7, 6.8
--->
 <script lang="ts">
-    import { fly, fade } from 'svelte/transition';
-    import { getCRContext } from '../../bridge/context';
-    import { SERVICE_TOKENS } from '../../../../main';
+    import { getWorkbenchContext } from '../../bridge/context';
     import Button from '../../components/Button.svelte';
     import Icon from '../../components/Icon.svelte';
-    import type { TaskRecord, StandardizedConcept, CRType } from '../../../types';
-    import { renderNamingTemplate } from '../../../core/naming-utils';
+    import type { TaskRecord, TaskState } from '../../../types';
+    import { formatStandardName } from '../../../core/naming-utils';
+    import { stageLabel } from '../../stage-labels';
 
     let {
         tasks,
+        selectedIds,
+        onselect,
+        onretry,
         oncancel,
+        onremove,
+        disabled = false,
     }: {
         tasks: TaskRecord[];
+        selectedIds: Set<string>;
+        onselect: (taskId: string, selected: boolean) => void;
+        onretry: (taskId: string) => void;
         oncancel: (taskId: string) => void;
+        onremove: (taskId: string) => void;
+        disabled?: boolean;
     } = $props();
 
-    const ctx = getCRContext();
-    const t = ctx.i18n.t();
+    const ctx = getWorkbenchContext();
+    const t = ctx.i18n.messages;
 
-    /** 硬编码命名模板 */
-    const NAMING_TEMPLATE = '{{chinese}} ({{english}})';
-
-    /** 任务类型 → 显示标签映射 */
-    const TYPE_LABELS: Record<string, string> = {
-        define: 'Define',
-        tag: 'Tag',
-        write: 'Write',
-        index: 'Index',
-        verify: 'Verify',
-    };
-
-    /** 获取任务显示名称（复用旧逻辑） */
     function getTaskDisplayName(task: TaskRecord): string {
-        const payload = task.payload as Record<string, unknown>;
-
-        const standardizedData = payload?.standardizedData as StandardizedConcept | undefined;
-        const conceptType = (payload?.conceptType as CRType) || standardizedData?.primaryType;
-
-        if (standardizedData?.standardNames && conceptType) {
-            const nameData = standardizedData.standardNames[conceptType];
-            if (nameData?.chinese || nameData?.english) {
-                const name = renderNamingTemplate(NAMING_TEMPLATE, {
-                    chinese: nameData.chinese || '',
-                    english: nameData.english || '',
-                    type: conceptType,
-                });
-                return name.length > 30 ? name.substring(0, 30) + '...' : name;
-            }
+        if (task.noteTitle?.trim()) return task.noteTitle;
+        const payload = task.payload;
+        if ('concept' in payload && payload.concept) return formatStandardName(payload.concept.name);
+        if ('filePath' in payload && payload.filePath) {
+            return (payload.filePath.split('/').pop() || payload.filePath).replace(/\.md$/, '');
         }
-
-        if (payload?.filePath && typeof payload.filePath === 'string') {
-            const fileName = payload.filePath.split('/').pop() || payload.filePath;
-            const noteName = fileName.replace(/\.md$/, '');
-            return noteName.length > 30 ? noteName.substring(0, 30) + '...' : noteName;
-        }
-
-        if (payload?.userInput && typeof payload.userInput === 'string') {
-            const input = payload.userInput;
-            return input.length > 20 ? input.substring(0, 20) + '...' : input;
-        }
-
-        return task.id.substring(0, 8);
+        return t.workbench.queueStatus.unnamedNote;
     }
 
-    /** 获取任务最后一条错误信息 */
-    function getErrorMessage(task: TaskRecord): string {
-        if (task.errors && task.errors.length > 0) {
-            const last = task.errors[task.errors.length - 1];
-            return `[${last.code}] ${last.message}`;
-        }
-        return t.workbench?.queueStatus?.failed ?? '失败';
+    function getStateLabel(state: TaskState): string {
+        return {
+            interrupted: t.cards.interrupted,
+            pending: t.workbench.queueStatus.pending,
+            running: t.workbench.queueStatus.running,
+            completed: t.workbench.queueStatus.completed,
+            failed: t.workbench.queueStatus.failed,
+            cancelled: t.workbench.queueStatus.cancelled,
+        }[state];
     }
 
-    /** 状态标签 */
-    function getStateLabel(state: string): string {
-        const map: Record<string, string> = {
-            Pending: t.workbench?.queueStatus?.pending ?? '待处理',
-            Running: t.workbench?.queueStatus?.running ?? '执行中',
-            Failed: t.workbench?.queueStatus?.failed ?? '失败',
-        };
-        return map[state] ?? state;
+    function getStateIcon(state: TaskState): string {
+        return {
+            interrupted: 'circle-pause',
+            pending: 'clock',
+            running: 'loader-circle',
+            completed: 'check-circle-2',
+            failed: 'alert-triangle',
+            cancelled: 'ban',
+        }[state];
     }
 </script>
 
 <div class="cr-task-list" role="list">
     {#each tasks as task (task.id)}
-        <div class="cr-task-item" role="listitem" in:fly={{ x: 20, duration: 200 }} out:fade={{ duration: 150 }}>
-            <!-- 概念名称 -->
-            <span class="cr-task-name" title={getTaskDisplayName(task)}>
-                {getTaskDisplayName(task)}
-            </span>
+        {@const displayName = getTaskDisplayName(task)}
+        <div class="cr-task-item cr-task-item--{task.state}" role="listitem">
+            <input
+                class="cr-task-select"
+                type="checkbox"
+                checked={selectedIds.has(task.id)}
+                onchange={(event) => onselect(task.id, event.currentTarget.checked)}
+                aria-label={`${t.workbench.queueStatus.selectTask} ${displayName}`}
+            />
 
-            <!-- 任务类型 -->
-            <span class="cr-task-type">
-                {TYPE_LABELS[task.taskType] ?? task.taskType}
+            <span class="cr-task-name" title={task.stageId === "cards" ? `${displayName} → ${task.payload.targetPath ?? ""}` : displayName}>{displayName}</span>
+            <span class="cr-task-stage" title={task.stageId}>{stageLabel(task.stageId, t)}</span>
+            <span class="cr-task-state cr-task-state--{task.state}">
+                <Icon name={getStateIcon(task.state)} size={16} />
+                <span>{getStateLabel(task.state)}</span>
             </span>
-
-            <!-- 状态 -->
-            <span
-                class="cr-task-state cr-task-state--{task.state.toLowerCase()}"
-            >
-                {#if task.state === 'Failed'}
-                    <span
-                        class="cr-task-error-icon"
-                        title={getErrorMessage(task)}
-                        aria-label={getErrorMessage(task)}
-                    >
-                        <Icon name="alert-triangle" size={16} />
-                    </span>
-                {/if}
-                {getStateLabel(task.state)}
-            </span>
-
-            <!-- 操作 -->
             <span class="cr-task-actions">
-                {#if task.state === 'Pending'}
-                    <Button
-                        variant="ghost"
-                        size="icon"
-                        onclick={() => oncancel(task.id)}
-                        ariaLabel={t.workbench?.queueStatus?.cancel ?? '取消'}
-                    >
+                {#if task.stageId !== 'cards' && (task.state === 'failed' || task.state === 'interrupted')}
+                    <Button variant="ghost" size="icon" disabled={disabled} onclick={() => onretry(task.id)} ariaLabel={t.workbench.queueStatus.retry}>
+                        <Icon name="refresh-cw" size={16} />
+                    </Button>
+                {/if}
+                {#if task.state === 'pending' || task.state === 'running'}
+                    <Button variant="ghost" size="icon" disabled={disabled} onclick={() => oncancel(task.id)} ariaLabel={t.workbench.queueStatus.cancel}>
                         <Icon name="x" size={16} />
+                    </Button>
+                {:else}
+                    <Button variant="ghost" size="icon" disabled={disabled} onclick={() => onremove(task.id)} ariaLabel={t.workbench.queueStatus.delete}>
+                        <Icon name="trash-2" size={16} />
                     </Button>
                 {/if}
             </span>
+            {#if task.stageId === 'cards' && task.state === 'completed'}
+                <span class="cr-task-detail">{ctx.i18n.format('cards.completed', { path: task.payload.targetPath ?? task.filePath ?? '' })}</span>
+            {:else if task.stageId === 'cards' && (task.state === 'failed' || task.state === 'interrupted')}
+                <span class="cr-task-detail">{t.cards.regenerateHint}</span>
+            {/if}
         </div>
     {/each}
 </div>
 
 <style>
-    .cr-task-list {
-        display: flex;
-        flex-direction: column;
-        gap: var(--cr-space-1);
-    }
-
+    .cr-task-list { display: flex; flex-direction: column; gap: 1px; }
     .cr-task-item {
-        display: flex;
+        display: grid;
+        grid-template-columns: 20px minmax(0, 1fr) minmax(64px, auto) minmax(86px, auto) 56px;
         align-items: center;
         gap: var(--cr-space-2);
-        padding: var(--cr-space-1h, 6px) var(--cr-space-2);
-        border-radius: var(--cr-radius-sm, 4px);
-        font-size: var(--font-ui-small, 13px);
+        min-height: 40px;
+        padding: var(--cr-space-1) var(--cr-space-2);
+        border-bottom: 1px solid var(--cr-border);
+        font-size: var(--font-ui-small);
     }
-
-    .cr-task-item:hover {
-        background: var(--cr-bg-hover);
+    .cr-task-detail { grid-column: 2 / -1; color: var(--cr-text-muted); overflow-wrap: anywhere; }
+    .cr-task-item:last-child { border-bottom: 0; }
+    .cr-task-item:hover { background: var(--cr-bg-hover); }
+    .cr-task-select { width: 16px; height: 16px; margin: 0; }
+    .cr-task-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cr-text-normal); }
+    .cr-task-stage { color: var(--cr-text-muted); font-family: var(--font-monospace); font-size: var(--font-ui-smaller); }
+    .cr-task-state { display: inline-flex; align-items: center; gap: var(--cr-space-1); min-width: 86px; font-size: var(--font-ui-smaller); }
+    .cr-task-state--pending { color: var(--cr-task-pending); }
+    .cr-task-state--running { color: var(--cr-task-running); }
+    .cr-task-state--completed { color: var(--cr-status-success); }
+    .cr-task-state--interrupted { color: var(--cr-task-failed); }
+    .cr-task-state--failed { color: var(--cr-task-failed); }
+    .cr-task-state--cancelled { color: var(--cr-text-muted); }
+    .cr-task-state--running :global(svg) { animation: cr-queue-spin 1s linear infinite; }
+    .cr-task-actions { display: grid; grid-auto-flow: column; grid-auto-columns: 28px; justify-content: end; min-width: 28px; }
+    @keyframes cr-queue-spin { to { transform: rotate(360deg); } }
+    @media (max-width: 620px) {
+        .cr-task-item { grid-template-columns: 20px minmax(0, 1fr) minmax(56px, auto) 56px; }
+        .cr-task-state { grid-column: 2 / 4; grid-row: 2; }
     }
-
-    .cr-task-name {
-        flex: 1;
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        color: var(--cr-text-normal);
-    }
-
-    .cr-task-type {
-        flex-shrink: 0;
-        color: var(--cr-text-muted);
-        font-size: var(--font-ui-smaller, 11px);
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-
-    .cr-task-state {
-        flex-shrink: 0;
-        display: inline-flex;
-        align-items: center;
-        gap: var(--cr-space-1, 4px);
-        font-size: var(--font-ui-smaller, 11px);
-    }
-
-    .cr-task-state--pending {
-        color: var(--cr-task-pending);
-    }
-
-    .cr-task-state--running {
-        color: var(--cr-task-running);
-    }
-
-    .cr-task-state--failed {
-        color: var(--cr-task-failed);
-    }
-
-    .cr-task-error-icon {
-        cursor: help;
-    }
-
-    .cr-task-actions {
-        flex-shrink: 0;
-        width: 28px;
-        display: flex;
-        justify-content: center;
+    @container cr-workbench (max-width: 620px) {
+        .cr-task-item { grid-template-columns: 20px minmax(0, 1fr) minmax(56px, auto) 56px; }
+        .cr-task-state { grid-column: 2 / 4; grid-row: 2; }
     }
 </style>

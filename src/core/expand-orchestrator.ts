@@ -1,29 +1,39 @@
 import { TFile } from "obsidian";
+import type { App } from "obsidian";
 import {
   ok,
   err,
 } from "../types";
 import type {
+  ConfirmedConcept,
   CRType,
+  DefinePreview,
+  DirectoryScheme,
   ILogger,
   Result,
-  StandardizedConcept,
 } from "../types";
-import { extractFrontmatter } from "./frontmatter-utils";
+import { confirmConcept } from "../domain/concept";
+import { extractFrontmatter, hasUppercaseCognitiveRazorFields } from "./frontmatter-utils";
 import { schemaRegistry } from "./schema-registry";
-import { generateFilePath, sanitizeFileName } from "./naming-utils";
-import type { ExpandOrchestratorDeps } from "./orchestrator-deps";
-import type { CreateOrchestrator, CreatePresetOptions } from "./create-orchestrator";
+import { generateFilePath, hasIllegalFileNameChars, sanitizeFileName } from "./naming-utils";
+import type { CreateOrchestrator } from "./create-orchestrator";
 import type { FileStorage } from "../data/file-storage";
+import type { SettingsStore } from "../data/settings-store";
+import type { VectorIndex } from "./vector-index";
 
-type ExpandMode = "hierarchical" | "abstract";
+interface ExpandOrchestratorDeps {
+  settingsStore: SettingsStore;
+  logger: ILogger;
+  app: App;
+  vectorIndex: VectorIndex;
+}
 
 export interface HierarchicalCandidate {
   name: string;
   description?: string;
   targetType: CRType;
   targetPath: string;
-  status: "creatable" | "existing" | "invalid";
+  status: "creatable" | "existing" | "queued" | "invalid";
   reason?: string;
 }
 
@@ -33,14 +43,14 @@ export interface HierarchicalPlan {
   currentPath: string;
   currentType: CRType;
   candidates: HierarchicalCandidate[];
-  looseStructure?: boolean;
 }
 
-interface AbstractCandidate {
+export interface AbstractCandidate {
   uid: string;
   name: string;
   path: string;
   similarity: number;
+  status?: "creatable" | "queued";
 }
 
 export interface AbstractPlan {
@@ -65,22 +75,36 @@ interface ExpandExtraDeps {
   fileStorage: FileStorage;
 }
 
+/** Model-generated abstract concept preview awaiting explicit confirmation. */
+export interface AbstractExpandPreview {
+  preview: DefinePreview;
+  type: CRType;
+  parents: string[];
+  targetPath: string;
+}
+
+interface RawHierarchicalCandidate {
+  name: string;
+  description?: string;
+  targetType: CRType;
+}
+
 const HIERARCHICAL_FIELD_MAP: Record<CRType, Array<{ field: string; target: CRType }>> = {
-  Domain: [
-    { field: "sub_domains", target: "Domain" },
-    { field: "issues", target: "Issue" }
+  domain: [
+    { field: "sub_domains", target: "domain" },
+    { field: "issues", target: "issue" }
   ],
-  Issue: [
-    { field: "sub_issues", target: "Issue" },
-    { field: "theories", target: "Theory" }
+  issue: [
+    { field: "sub_issues", target: "issue" },
+    { field: "theories", target: "theory" }
   ],
-  Theory: [
-    { field: "sub_theories", target: "Theory" },
-    { field: "entities", target: "Entity" },
-    { field: "mechanisms", target: "Mechanism" }
+  theory: [
+    { field: "sub_theories", target: "theory" },
+    { field: "entities", target: "entity" },
+    { field: "mechanisms", target: "mechanism" }
   ],
-  Entity: [],
-  Mechanism: []
+  entity: [],
+  mechanism: []
 };
 
 const MAX_CREATABLE = 200;
@@ -90,6 +114,9 @@ export class ExpandOrchestrator {
   private logger: ILogger;
   private createOrchestrator: CreateOrchestrator;
   private fileStorage: FileStorage;
+  private disposed = false;
+  private readonly activeOperations = new Set<Promise<unknown>>();
+  private disposePromise?: Promise<void>;
 
   constructor(deps: ExpandOrchestratorDeps, extra: ExpandExtraDeps) {
     this.deps = deps;
@@ -102,10 +129,29 @@ export class ExpandOrchestrator {
    * 准备拓展计划：根据当前笔记类型选择层级或抽象模式
    */
   async prepare(file: TFile): Promise<Result<ExpandPlan>> {
+    if (this.disposed) {
+      return err("E310_INVALID_STATE", "拓展服务已停止");
+    }
+    return this.trackOperation(this.prepareInternal(file));
+  }
+
+  private async prepareInternal(file: TFile): Promise<Result<ExpandPlan>> {
+    if (this.disposed) {
+      return err("E310_INVALID_STATE", "拓展服务已停止");
+    }
     try {
       const content = await this.deps.app.vault.cachedRead(file);
+      if (this.disposed) {
+        return err("E310_INVALID_STATE", "拓展服务已停止");
+      }
       const extracted = extractFrontmatter(content);
       if (!extracted) {
+        if (hasUppercaseCognitiveRazorFields(content)) {
+          return err(
+            "E101_INVALID_INPUT",
+            "当前笔记的 type 和 status 必须使用小写规范值（例如 type: domain、status: draft）；插件不会自动改写现有笔记",
+          );
+        }
         return err("E310_INVALID_STATE", "当前笔记缺少 frontmatter，无法执行拓展");
       }
 
@@ -117,7 +163,7 @@ export class ExpandOrchestrator {
         return err("E310_INVALID_STATE", "当前笔记类型不支持拓展");
       }
 
-      if (noteType === "Domain" || noteType === "Issue" || noteType === "Theory") {
+      if (noteType === "domain" || noteType === "issue" || noteType === "theory") {
         const plan = this.buildHierarchicalPlan({
           parentTitle,
           currentPath: file.path,
@@ -130,14 +176,17 @@ export class ExpandOrchestrator {
         return ok(plan);
       }
 
-      // 抽象拓展（Entity / Mechanism）
-      if (noteType === "Entity" || noteType === "Mechanism") {
+      // 抽象拓展（entity / mechanism）
+      if (noteType === "entity" || noteType === "mechanism") {
         const planResult = await this.buildAbstractPlan({
           currentTitle: parentTitle,
           currentUid: frontmatter.cruid,
           currentPath: file.path,
           currentType: noteType
         });
+        if (this.disposed) {
+          return err("E310_INVALID_STATE", "拓展服务已停止");
+        }
         return planResult;
       }
 
@@ -151,27 +200,39 @@ export class ExpandOrchestrator {
   /**
    * 批量启动层级拓展的创建管线
    */
-  async createFromHierarchical(
+  async confirmHierarchical(
     plan: HierarchicalPlan,
     selected: HierarchicalCandidate[]
   ): Promise<Result<{ started: number; failed: Array<{ name: string; message: string }> }>> {
+    if (this.disposed) {
+      return err("E310_INVALID_STATE", "拓展服务已停止");
+    }
     const failures: Array<{ name: string; message: string }> = [];
     let started = 0;
 
     for (const candidate of selected) {
+      if (this.disposed) {
+        return err("E310_INVALID_STATE", "拓展服务已停止");
+      }
       if (candidate.status !== "creatable") continue;
-      const sc = this.buildStandardizedConcept(candidate.name, candidate.targetType, candidate.description);
       const parentLink = this.wrapAsWikilink(plan.parentTitle);
-      const options: CreatePresetOptions = {
+      const concept = confirmConcept({
+        type: candidate.targetType,
+        name: { chinese: candidate.name, english: "" },
+        coreDefinition: candidate.description,
+        source: "hierarchical-expand",
         parents: [parentLink],
-        targetPathOverride: candidate.targetPath
-      };
-      // 委托给 CreateOrchestrator 启动独立创建管线
-      const result = this.createOrchestrator.startCreatePipelineWithPreset(
-        sc,
-        candidate.targetType,
-        options
-      );
+      });
+      if (!concept.ok) {
+        failures.push({ name: candidate.name, message: concept.error.message });
+        continue;
+      }
+      const result = await this.createOrchestrator.confirmCreate(concept.value, {
+        targetPathOverride: candidate.targetPath,
+      });
+      if (this.disposed) {
+        return err("E310_INVALID_STATE", "拓展服务已停止");
+      }
       if (result.ok) {
         started += 1;
       } else {
@@ -186,29 +247,53 @@ export class ExpandOrchestrator {
     return ok({ started, failed: failures });
   }
 
-  /**
-   * 启动抽象拓展（生成 1 个同类型更抽象概念）
-   */
-  async createFromAbstract(
+  /** Generate an abstract Define preview; this method never creates a workflow. */
+  async prepareAbstractPreview(
     plan: AbstractPlan,
     selected: AbstractCandidate[]
+  ): Promise<Result<AbstractExpandPreview>> {
+    if (this.disposed) {
+      return err("E310_INVALID_STATE", "拓展服务已停止");
+    }
+    return this.trackOperation(this.prepareAbstractPreviewInternal(plan, selected));
+  }
+
+  /** Create an abstract concept only after the UI confirms the preview. */
+  async confirmAbstract(
+    abstractPreview: AbstractExpandPreview,
+    concept: ConfirmedConcept,
   ): Promise<Result<string>> {
+    if (this.disposed) return err("E310_INVALID_STATE", "拓展服务已停止");
+    if (concept.source !== "abstract-expand" || concept.type !== abstractPreview.type) {
+      return err("E101_INVALID_INPUT", "抽象拓展确认结果无效");
+    }
+    return this.trackOperation(this.createOrchestrator.confirmCreate(concept, {
+      targetPathOverride: abstractPreview.targetPath,
+    }));
+  }
+
+  private async prepareAbstractPreviewInternal(
+    plan: AbstractPlan,
+    selected: AbstractCandidate[],
+  ): Promise<Result<AbstractExpandPreview>> {
+    if (this.disposed) {
+      return err("E310_INVALID_STATE", "拓展服务已停止");
+    }
     if (selected.length === 0) {
       return err("E101_INVALID_INPUT", "请至少选择一个相似概念");
     }
+    selected = selected.filter((item) => item.status !== "queued" && !this.isPathActive(item.path));
+    if (selected.length === 0) return err("E320_TASK_CONFLICT", "所选笔记已在队列中");
 
     try {
-      // 汇总来源笔记内容
-    const sourceTitles: string[] = [];
-    const sourceSections: string[] = [];
+      // Resolve source titles again so a stale selection cannot silently create parents.
+      const sourceTitles: string[] = [];
 
       const currentFile = this.deps.app.vault.getAbstractFileByPath(plan.currentPath);
       if (!(currentFile instanceof TFile)) {
         return err("E311_NOT_FOUND", "当前笔记不存在或已被移动");
       }
-      const currentContent = await this.deps.app.vault.cachedRead(currentFile);
       sourceTitles.push(plan.currentTitle);
-      sourceSections.push(this.wrapSource(plan.currentTitle, currentFile.path, currentContent));
 
       for (const item of selected) {
         const file = this.deps.app.vault.getAbstractFileByPath(item.path);
@@ -216,37 +301,32 @@ export class ExpandOrchestrator {
           this.logger.warn("ExpandOrchestrator", "相似概念文件未找到，已跳过", { path: item.path });
           continue;
         }
-        const content = await this.deps.app.vault.cachedRead(file);
-        const extracted = extractFrontmatter(content);
-        const title = extracted?.frontmatter.name || item.name;
-        sourceTitles.push(title);
-        sourceSections.push(this.wrapSource(title, file.path, content));
+        sourceTitles.push(file.basename || item.name);
       }
 
-      const sources = sourceSections.join("\n\n---\n\n");
+      if (sourceTitles.length === 1) {
+        return err("E311_NOT_FOUND", "所选相似概念均不存在或已被移动");
+      }
+
       const abstractInput = `抽象以下${plan.currentType}：${sourceTitles.join("、")}，生成一个更高层的 ${plan.currentType} 概念。`;
-      // 委托给 CreateOrchestrator 执行 Define
-      const standardizeResult = await this.createOrchestrator.defineDirect(abstractInput);
-      if (!standardizeResult.ok) {
-        return err(standardizeResult.error.code, standardizeResult.error.message);
+      const defineResult = await this.createOrchestrator.defineDirect(abstractInput);
+      if (this.disposed) {
+        return err("E310_INVALID_STATE", "拓展服务已停止");
+      }
+      if (!defineResult.ok) {
+        return err(defineResult.error.code, defineResult.error.message);
       }
 
-      // 强制使用当前类型
-      const standardized = {
-        ...standardizeResult.value,
-        primaryType: plan.currentType,
-        typeConfidences: {
-          ...standardizeResult.value.typeConfidences,
-          [plan.currentType]: 1
-        }
-      };
-
-      const targetName = standardized.standardNames[plan.currentType]?.chinese;
-      if (!targetName) {
-        return err("E310_INVALID_STATE", "标准化结果缺少目标名称");
+      const targetCandidate = defineResult.value.candidates[plan.currentType];
+      const targetName = targetCandidate?.name.chinese || targetCandidate?.name.english;
+      if (!targetName?.trim()) {
+        return err("E310_INVALID_STATE", "Define 预览缺少目标类型名称");
       }
 
       const settings = this.deps.settingsStore.getSettings();
+      if (this.disposed) {
+        return err("E310_INVALID_STATE", "拓展服务已停止");
+      }
       const targetPath = generateFilePath(
         targetName,
         settings.directoryScheme,
@@ -254,32 +334,42 @@ export class ExpandOrchestrator {
       );
 
       const parentLinks = sourceTitles.map((t) => this.wrapAsWikilink(t));
-      // 委托给 CreateOrchestrator 启动独立创建管线
-      const startResult = this.createOrchestrator.startCreatePipelineWithPreset(
-        standardized,
-        plan.currentType,
-        {
-          parents: parentLinks,
-          targetPathOverride: targetPath,
-          sources
-        }
-      );
-
-      if (!startResult.ok) {
-        return err(startResult.error.code, startResult.error.message);
-      }
-
-      // 将 sources 写入上下文，确保 write 可用
-      const context = this.createOrchestrator.getContext(startResult.value);
-      if (context) {
-        context.sources = sources;
-      }
-
-      return ok(startResult.value);
+      return ok({
+        preview: defineResult.value,
+        type: plan.currentType,
+        parents: parentLinks,
+        targetPath,
+      });
     } catch (error) {
-      this.logger.error("ExpandOrchestrator", "抽象拓展启动失败", error as Error);
-      return err("E500_INTERNAL_ERROR", "抽象拓展启动失败", error);
+      this.logger.error("ExpandOrchestrator", "抽象拓展预览失败", error as Error);
+      return err("E500_INTERNAL_ERROR", "抽象拓展预览失败", error);
     }
+  }
+
+  async dispose(): Promise<void> {
+    this.disposed = true;
+    if (!this.disposePromise) {
+      const active = [...this.activeOperations];
+      this.disposePromise = Promise.all(active.map((operation) => operation.catch(() => undefined))).then(() => {
+        this.activeOperations.clear();
+      });
+    }
+    return this.disposePromise;
+  }
+
+  private trackOperation<T>(operation: Promise<T>): Promise<T> {
+    this.activeOperations.add(operation);
+    operation.then(
+      () => this.activeOperations.delete(operation),
+      () => this.activeOperations.delete(operation),
+    );
+    return operation;
+  }
+
+  private isPathActive(path: string): boolean {
+    return typeof this.createOrchestrator.isPathActive === "function"
+      ? this.createOrchestrator.isPathActive(path)
+      : false;
   }
 
   private buildHierarchicalPlan(input: {
@@ -289,8 +379,44 @@ export class ExpandOrchestrator {
     body: string;
   }): HierarchicalPlan {
     const candidates: HierarchicalCandidate[] = [];
-    const mappings = HIERARCHICAL_FIELD_MAP[input.currentType];
-    const descriptors = schemaRegistry.getFieldDescriptions(input.currentType);
+    const rawCandidates = this.collectHierarchicalCandidates(input.currentType, input.body);
+    const seen = new Set<string>();
+    let creatableCount = 0;
+    const directoryScheme = this.deps.settingsStore.getSettings().directoryScheme;
+
+    for (const item of rawCandidates) {
+      const candidate = this.buildHierarchicalCandidate(item, directoryScheme);
+      if (!candidate) continue;
+      if (this.isPathActive(candidate.targetPath) && candidate.status === "creatable") {
+        candidate.status = "queued";
+        candidate.reason = "已在队列中";
+      }
+
+      const key = `${candidate.targetType}::${candidate.name.toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      if (candidate.status === "creatable" && creatableCount >= MAX_CREATABLE) {
+        candidate.status = "invalid";
+        candidate.reason = "超过批量创建上限（200），请分批执行";
+      } else if (candidate.status === "creatable") {
+        creatableCount += 1;
+      }
+      candidates.push(candidate);
+    }
+
+    return {
+      mode: "hierarchical",
+      parentTitle: input.parentTitle,
+      currentPath: input.currentPath,
+      currentType: input.currentType,
+      candidates,
+    };
+  }
+
+  private collectHierarchicalCandidates(currentType: CRType, body: string): RawHierarchicalCandidate[] {
+    const mappings = HIERARCHICAL_FIELD_MAP[currentType];
+    const descriptors = schemaRegistry.getFieldDescriptions(currentType);
     const headingMap = new Map<string, string>();
     for (const { field } of mappings) {
       const desc = descriptors.find((d) => d.name === field);
@@ -300,12 +426,10 @@ export class ExpandOrchestrator {
       headingMap.set(field.toLowerCase(), field);
     }
 
-    const lines = input.body.split(/\r?\n/);
+    const lines = body.split(/\r?\n/);
     let currentField: string | null = null;
-    const rawCandidates: Array<{ name: string; description?: string; targetType: CRType }> = [];
+    const candidates: RawHierarchicalCandidate[] = [];
     const fieldTargets = new Map<string, CRType>(mappings.map((m) => [m.field, m.target]));
-    let looseStructure = false;
-
     for (const line of lines) {
       const headingMatch = line.match(/^#{1,6}\s*(.+?)\s*$/);
       if (headingMatch) {
@@ -320,82 +444,38 @@ export class ExpandOrchestrator {
 
       const parsed = this.parseLineForField(currentField, line);
       if (parsed) {
-        rawCandidates.push({ ...parsed, targetType });
+        candidates.push({ ...parsed, targetType });
       }
     }
+    return candidates;
+  }
 
-    // 找不到任何匹配章节，回退全局扫描
-    if (rawCandidates.length === 0) {
-      looseStructure = true;
-      const fallbackTarget = mappings[0]?.target;
-      if (fallbackTarget) {
-        for (const line of lines) {
-          const parsed = this.parseLineForField("fallback", line);
-          if (parsed) {
-            rawCandidates.push({ ...parsed, targetType: fallbackTarget });
-          }
-        }
-      }
-    }
+  private buildHierarchicalCandidate(
+    item: RawHierarchicalCandidate,
+    directoryScheme: DirectoryScheme,
+  ): HierarchicalCandidate | undefined {
+    const name = this.normalizeLinkName(item.name);
+    if (!name) return undefined;
 
-    const seen = new Set<string>();
-    let creatableCount = 0;
-    const settings = this.deps.settingsStore.getSettings();
-
-    for (const item of rawCandidates) {
-      const normalizedName = this.normalizeLinkName(item.name);
-      const key = `${item.targetType}::${normalizedName.toLowerCase()}`;
-      if (!normalizedName || seen.has(key)) continue;
-      seen.add(key);
-
-      let status: HierarchicalCandidate["status"] = "creatable";
-      let reason: string | undefined;
-      const sanitized = sanitizeFileName(normalizedName);
-      if (!sanitized) {
-        status = "invalid";
-        reason = "名称包含非法字符";
-      } else if (normalizedName.length > 256) {
-        status = "invalid";
-        reason = "名称过长";
-      }
-
-      const targetPath = generateFilePath(
-        normalizedName,
-        settings.directoryScheme,
-        item.targetType
-      );
-
-      if (status === "creatable") {
-        const exists = !!this.deps.app.vault.getAbstractFileByPath(targetPath);
-        if (exists) {
-          status = "existing";
-          reason = "已存在";
-        } else if (creatableCount >= MAX_CREATABLE) {
-          status = "invalid";
-          reason = "超过批量创建上限（200），请分批执行";
-        } else {
-          creatableCount += 1;
-        }
-      }
-
-      candidates.push({
-        name: normalizedName,
-        description: item.description,
-        targetType: item.targetType,
-        targetPath,
-        status,
-        reason
-      });
-    }
-
-    return {
-      mode: "hierarchical",
-      parentTitle: input.parentTitle,
-      currentPath: input.currentPath,
-      currentType: input.currentType,
-      candidates,
-      looseStructure
+    const targetPath = generateFilePath(name, directoryScheme, item.targetType);
+    const candidate: HierarchicalCandidate = {
+      name,
+      description: item.description,
+      targetType: item.targetType,
+      targetPath,
+      status: "creatable",
     };
+    if (hasIllegalFileNameChars(name) || !sanitizeFileName(name)) {
+      candidate.status = "invalid";
+      candidate.reason = "名称包含非法字符";
+    } else if (name.length > 256) {
+      candidate.status = "invalid";
+      candidate.reason = "名称过长";
+    } else if (this.deps.app.vault.getAbstractFileByPath(targetPath)) {
+      candidate.status = "existing";
+      candidate.reason = "已存在";
+    }
+    return candidate;
   }
 
   private async buildAbstractPlan(input: {
@@ -409,6 +489,9 @@ export class ExpandOrchestrator {
     }
     try {
       const vectorResult = await this.fileStorage.readVectorFile(input.currentType, input.currentUid);
+      if (this.disposed) {
+        return err("E310_INVALID_STATE", "拓展服务已停止");
+      }
       if (!vectorResult.ok) {
         return err("E310_INVALID_STATE", "当前笔记尚未生成向量嵌入，请先完成创建或重建索引");
       }
@@ -422,6 +505,9 @@ export class ExpandOrchestrator {
         vector.embedding,
         15
       );
+      if (this.disposed) {
+        return err("E310_INVALID_STATE", "拓展服务已停止");
+      }
       if (!searchResult.ok) {
         return err(searchResult.error.code, searchResult.error.message);
       }
@@ -432,7 +518,8 @@ export class ExpandOrchestrator {
           uid: item.uid,
           name: item.name,
           path: item.path,
-          similarity: item.similarity
+          similarity: item.similarity,
+          status: this.isPathActive(item.path) ? "queued" as const : "creatable" as const,
         }));
 
       if (candidates.length === 0) {
@@ -465,23 +552,15 @@ export class ExpandOrchestrator {
 
     // theories 列表：- [[Name]] (Status)：Brief
     const theoryMatch = line.match(/^\s*[-*]\s+\[\[([^\]]+)\]\]\s*(?:\(([^)]+)\))?\s*[：:]\s*(.+)?$/);
-    if (theoryMatch && (field === "theories" || field === "fallback")) {
+    if (theoryMatch && field === "theories") {
       const descParts = [theoryMatch[2], theoryMatch[3]].filter(Boolean).join(" / ");
       return { name: theoryMatch[1].trim(), description: descParts || undefined };
     }
 
     // entities/mechanisms：- [[Name]]
     const entityMatch = line.match(/^\s*[-*]\s+\[\[([^\]]+)\]\]/);
-    if (entityMatch && (field === "entities" || field === "mechanisms" || field === "fallback")) {
+    if (entityMatch && (field === "entities" || field === "mechanisms")) {
       return { name: entityMatch[1].trim() };
-    }
-
-    // 回退：任何包含 [[...]] 的列表行
-    if (field === "fallback") {
-      const genericMatch = line.match(/^\s*[-*]\s+\[\[([^\]]+)\]\]/);
-      if (genericMatch) {
-        return { name: genericMatch[1].trim() };
-      }
     }
 
     return null;
@@ -490,32 +569,6 @@ export class ExpandOrchestrator {
   private normalizeLinkName(raw: string): string {
     const name = raw.split("|")[0]?.trim() || "";
     return name;
-  }
-
-  private buildStandardizedConcept(name: string, targetType: CRType, description?: string): StandardizedConcept {
-    const build = (n: string) => ({ chinese: n, english: "" });
-    return {
-      standardNames: {
-        Domain: build(name),
-        Issue: build(name),
-        Theory: build(name),
-        Entity: build(name),
-        Mechanism: build(name)
-      },
-      typeConfidences: {
-        Domain: targetType === "Domain" ? 1 : 0,
-        Issue: targetType === "Issue" ? 1 : 0,
-        Theory: targetType === "Theory" ? 1 : 0,
-        Entity: targetType === "Entity" ? 1 : 0,
-        Mechanism: targetType === "Mechanism" ? 1 : 0
-      },
-      primaryType: targetType,
-      coreDefinition: description
-    };
-  }
-
-  private wrapSource(title: string, path: string, content: string): string {
-    return `# 来源：${title}\n路径: ${path}\n\n${content}`;
   }
 
   private wrapAsWikilink(title: string): string {

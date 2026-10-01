@@ -1,39 +1,30 @@
-<!--
-  ProvidersTab.svelte — AI 服务设置 Tab
-
-  两个设置组：
-  1. Provider 管理：Provider 卡片列表 + 添加按钮、默认 Provider 下拉、请求超时滑块
-  2. 任务模型：各任务类型的模型配置卡片列表
-
-  注意：嵌入维度设置仅在高级 Tab 保留一处，此处不重复。
-
-  @see 需求 10.4, 10.7, 10.9
--->
+<!-- AI 服务与任务模型设置。 -->
 <script lang="ts">
-    import { getCRContext } from '../../bridge/context';
-    import { SERVICE_TOKENS } from '../../../../main';
-    import { showSuccess, showError, showWarning } from '../../feedback';
-    import type { PluginSettings, TaskType, TaskModelConfig, ProviderConfig } from '../../../types';
-    import type { SettingsStore } from '../../../data/settings-store';
-    import type { ProviderManager } from '../../../core/provider-manager';
-    import { TASK_TYPES } from '../../../data/settings-store';
+    import { getSettingsContext } from '../../bridge/context';
+    import type { PluginSettings, ProviderConfig, Result, TaskType } from '../../../types';
+    import type { ProviderProbeAttemptReason, ProviderProbeRequest } from '../../../core/model-gateway';
+    import {
+        toProviderProbeReadModel,
+        type ProviderProbeReadModel,
+    } from '../../provider-probe-result';
     import SettingItem from './SettingItem.svelte';
+    import SettingsSection from './SettingsSection.svelte';
     import ProviderCard from './ProviderCard.svelte';
-    import TaskModelCard from './TaskModelCard.svelte';
     import ProviderModal from '../modals/ProviderModal.svelte';
     import Select from '../../components/Select.svelte';
-    import Slider from '../../components/Slider.svelte';
+    import ConfirmModal from '../../components/ConfirmModal.svelte';
+    import Button from '../../components/Button.svelte';
+    import { resolveTaskModelSnapshot } from '../../../core/task-model-resolver';
 
-    const ctx = getCRContext();
+    const ctx = getSettingsContext();
     const i18n = ctx.i18n;
-    const settingsStore = ctx.container.resolve<SettingsStore>(SERVICE_TOKENS.settingsStore);
-    const providerManager = ctx.container.resolve<ProviderManager>(SERVICE_TOKENS.providerManager);
+    const settingsApplication = ctx.settingsApplication;
 
     /** 当前设置（响应式） */
-    let settings = $state<PluginSettings>(settingsStore.getSettings());
+    let settings = $state<PluginSettings>(settingsApplication.getSettings());
 
     /** 订阅设置变化 */
-    const unsubscribe = settingsStore.subscribe((s: PluginSettings) => {
+    const unsubscribe = settingsApplication.subscribeSettings((s: PluginSettings) => {
         settings = s;
     });
 
@@ -48,36 +39,92 @@
     let modalMode = $state<'add' | 'edit'>('add');
     let modalProviderId = $state('');
     let modalConfig = $state<ProviderConfig | undefined>(undefined);
+    let deleteProviderId = $state<string | undefined>(undefined);
 
     /** Provider ID 列表 */
     let providerIds = $derived(Object.keys(settings.providers));
+    let enabledChatProviderIds = $derived(
+        providerIds.filter(pid => settings.providers[pid]?.enabled && settings.providers[pid]?.apiFormat !== 'disabled'),
+    );
 
     /** 默认 Provider 下拉选项 */
-    let defaultProviderOptions = $derived(
-        providerIds.map(pid => ({ value: pid, label: pid }))
-    );
+    let defaultProviderOptions = $derived.by(() => {
+        const options = enabledChatProviderIds.map(pid => ({ value: pid, label: pid }));
+        const current = settings.defaultProviderId;
+        if (current && !options.some(option => option.value === current)) {
+            options.push({
+                value: current,
+                label: `${current} (${i18n.t('taskModels.fields.providerUnavailable')})`,
+            });
+        }
+        return options;
+    });
 
     /** 切换 Provider 启用状态 */
     async function handleToggleEnabled(id: string, enabled: boolean) {
-        await settingsStore.updateProvider(id, { enabled });
+        await ctx.settingsApplication.updateProvider(id, { enabled });
     }
 
     /** 测试 Provider 连接 */
-    async function handleTestConnection(id: string) {
-        showSuccess(i18n.t('common.loading') || 'Testing...');
-        const result = await providerManager.checkAvailability(id, true);
-        if (result.ok) {
-            const caps = result.value;
-            showSuccess(i18n.format('notices.connectionSuccess', {
-                chat: caps.chat ? 'OK' : 'X',
-                embedding: caps.embedding ? 'OK' : 'X',
-                models: caps.models.length,
-            }));
-        } else {
-            showError(i18n.format('notices.connectionFailed', {
-                error: result.error.message,
-            }));
+    async function probeProvider(
+        request: ProviderProbeRequest,
+        config: ProviderConfig,
+        signal?: AbortSignal,
+    ): Promise<ProviderProbeReadModel | undefined> {
+        const result = await ctx.settingsApplication.testProvider(request, signal);
+        if (signal?.aborted) return undefined;
+        return toProviderProbeReadModel(result, config);
+    }
+
+    async function handleTestConnection(
+        id: string,
+        attemptReason: ProviderProbeAttemptReason,
+        signal?: AbortSignal,
+    ): Promise<ProviderProbeReadModel | undefined> {
+        const current = settings.providers[id];
+        if (!current) {
+            return undefined;
         }
+        // Keep the explanation tied to the exact configuration that was tested.
+        // Settings may change while the network request is in flight.
+        const config = { ...current };
+        return probeProvider({
+            providerId: id,
+            configOverride: config,
+            attemptReason,
+        }, config, signal);
+    }
+
+    async function handleTestTaskConnection(
+        id: string,
+        taskType: Exclude<TaskType, 'index'>,
+        attemptReason: ProviderProbeAttemptReason,
+        signal?: AbortSignal,
+    ): Promise<ProviderProbeReadModel | undefined> {
+        const current = settings.providers[id];
+        if (!current) return undefined;
+        // Resolve through the same parser used by real task execution. The
+        // saved Provider is forced as the target while retaining task overrides.
+        const snapshot = resolveTaskModelSnapshot(
+            { ...settings, providers: { ...settings.providers, [id]: current } },
+            taskType,
+            id,
+        );
+        return probeProvider({
+            providerId: id,
+            configOverride: { ...current },
+            attemptReason,
+            taskConfig: snapshot,
+        }, { ...current }, signal);
+    }
+
+    async function handleModalTest(
+        request: ProviderProbeRequest,
+        signal?: AbortSignal,
+    ): Promise<ProviderProbeReadModel | undefined> {
+        const config = request.configOverride;
+        if (!config) return undefined;
+        return probeProvider(request, config, signal);
     }
 
     /** 编辑 Provider（打开 ProviderModal） */
@@ -88,11 +135,15 @@
         showModal = true;
     }
 
-    /** 删除 Provider */
-    async function handleDeleteProvider(id: string) {
-        // 简单确认后删除
-        await settingsStore.removeProvider(id);
-        showSuccess(i18n.format('notices.providerDeleted', { id }));
+    function handleDeleteProvider(id: string) {
+        deleteProviderId = id;
+    }
+
+    async function confirmDeleteProvider() {
+        const id = deleteProviderId;
+        if (!id) return;
+        deleteProviderId = undefined;
+        await ctx.settingsApplication.removeProvider(id);
     }
 
     /** 添加 Provider（打开 ProviderModal） */
@@ -104,15 +155,17 @@
     }
 
     /** Modal 保存回调 */
-    async function handleModalSave(id: string, config: ProviderConfig) {
+    async function handleModalSave(id: string, config: ProviderConfig): Promise<Result<void>> {
+        let result: Result<void>;
         if (modalMode === 'add') {
-            await settingsStore.addProvider(id, config);
-            showSuccess(i18n.format('notices.providerAdded', { id }));
+            result = await ctx.settingsApplication.addProvider(id, config);
         } else {
-            await settingsStore.updateProvider(id, config);
-            showSuccess(i18n.format('notices.providerUpdated', { id }));
+            result = await ctx.settingsApplication.updateProvider(id, config);
         }
-        showModal = false;
+        if (result.ok) {
+            showModal = false;
+        }
+        return result;
     }
 
     /** Modal 取消回调 */
@@ -122,49 +175,26 @@
 
     /** 切换默认 Provider */
     async function handleDefaultProviderChange(value: string) {
-        await settingsStore.setDefaultProvider(value);
+        await ctx.settingsApplication.updateSettings({ defaultProviderId: value });
     }
 
-    /** 更新请求超时 */
-    async function handleTimeoutChange(value: number) {
-        await settingsStore.updateSettings({ providerTimeoutMs: value });
-    }
-
-    // ---- 任务模型 ----
-
-    /** 更新任务模型配置 */
-    async function handleTaskModelUpdate(taskType: TaskType, partial: Partial<TaskModelConfig>) {
-        const taskModels = {
-            ...settings.taskModels,
-            [taskType]: { ...settings.taskModels[taskType], ...partial },
-        };
-        await settingsStore.updateSettings({ taskModels });
-    }
-
-    /** 重置任务模型配置 */
-    async function handleTaskModelReset(taskType: TaskType) {
-        await settingsStore.resetTaskModel(taskType);
-    }
 </script>
 
 <div class="cr-providers-tab">
     <!-- Provider 管理组 -->
-    <div class="cr-settings-group">
-        <div class="cr-settings-group__header">
-            <h3 class="cr-settings-group__title">
-                {i18n.t('settings.provider.title')}
-            </h3>
-            <button
-                type="button"
-                class="cr-btn-primary cr-btn--sm"
+    <SettingsSection
+        title={i18n.t('settings.provider.title')}
+        description={i18n.t('settings.provider.addDesc')}
+    >
+        {#snippet actions()}
+            <Button
+                variant="primary"
+                size="sm"
                 onclick={handleAddProvider}
             >
                 {i18n.t('settings.provider.addButton')}
-            </button>
-        </div>
-        <p class="cr-settings-group__desc">
-            {i18n.t('settings.provider.addDesc')}
-        </p>
+            </Button>
+        {/snippet}
 
         <!-- Provider 卡片列表 -->
         {#if providerIds.length === 0}
@@ -181,6 +211,7 @@
                         {i18n}
                         onToggleEnabled={handleToggleEnabled}
                         onTestConnection={handleTestConnection}
+                        onTestTaskConnection={handleTestTaskConnection}
                         onEdit={handleEditProvider}
                         onDelete={handleDeleteProvider}
                     />
@@ -188,8 +219,8 @@
             </div>
         {/if}
 
-        <!-- 默认 Provider + 请求超时 -->
-        {#if providerIds.length > 0}
+        <!-- 默认 Provider -->
+        {#if defaultProviderOptions.length > 0}
             <SettingItem
                 name={i18n.t('settings.provider.defaultProvider')}
                 description={i18n.t('settings.provider.defaultProviderDesc')}
@@ -197,50 +228,13 @@
                 <Select
                     value={settings.defaultProviderId}
                     options={defaultProviderOptions}
+                    ariaLabel={i18n.t('settings.provider.defaultProvider')}
                     onchange={handleDefaultProviderChange}
                 />
             </SettingItem>
         {/if}
 
-        <SettingItem
-            name={i18n.t('settings.advanced.queue.providerTimeout')}
-            description={i18n.t('settings.advanced.queue.providerTimeoutDesc')}
-        >
-            <Slider
-                value={settings.providerTimeoutMs}
-                min={10000}
-                max={3600000}
-                step={10000}
-                unit="ms"
-                onchange={handleTimeoutChange}
-            />
-        </SettingItem>
-    </div>
-
-    <!-- 任务模型组 -->
-    <div class="cr-settings-group">
-        <h3 class="cr-settings-group__title">
-            {i18n.t('settings.groups.taskModels')}
-        </h3>
-        <p class="cr-settings-group__desc">
-            {i18n.t('settings.advanced.taskModels.desc')}
-        </p>
-
-        <div class="cr-task-model-list">
-            {#each TASK_TYPES as tt (tt)}
-                <TaskModelCard
-                    taskType={tt}
-                    config={settings.taskModels[tt]}
-                    providers={settings.providers}
-                    defaultProviderId={settings.defaultProviderId}
-                    isDefault={settingsStore.isTaskModelDefault(tt)}
-                    {i18n}
-                    onUpdate={handleTaskModelUpdate}
-                    onReset={handleTaskModelReset}
-                />
-            {/each}
-        </div>
-    </div>
+    </SettingsSection>
 
     <!-- ProviderModal -->
     {#if showModal}
@@ -248,10 +242,22 @@
             mode={modalMode}
             providerId={modalProviderId}
             currentConfig={modalConfig}
-            {providerManager}
+            ontest={handleModalTest}
             {i18n}
             onsave={handleModalSave}
             oncancel={handleModalCancel}
+        />
+    {/if}
+
+    {#if deleteProviderId}
+        <ConfirmModal
+            title={i18n.t('confirmDialogs.deleteProvider.title')}
+            message={i18n.format('confirmDialogs.deleteProvider.message', { id: deleteProviderId })}
+            confirmLabel={i18n.t('common.delete')}
+            cancelLabel={i18n.t('common.cancel')}
+            danger={true}
+            onconfirm={() => void confirmDeleteProvider()}
+            oncancel={() => deleteProviderId = undefined}
         />
     {/if}
 </div>
@@ -260,58 +266,23 @@
     .cr-providers-tab {
         display: flex;
         flex-direction: column;
-        gap: var(--cr-space-5, 20px);
+        gap: var(--cr-space-5);
     }
 
-    .cr-settings-group {
+    .cr-provider-list {
         display: flex;
         flex-direction: column;
-        background: var(--cr-bg-secondary);
-        border: 1px solid var(--cr-border);
-        border-radius: var(--cr-radius-md, 8px);
-        padding: var(--cr-space-4, 16px);
-    }
-
-    .cr-settings-group__header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin-bottom: var(--cr-space-2, 8px);
-        padding-bottom: var(--cr-space-2, 8px);
-        border-bottom: 1px solid var(--cr-border);
-    }
-
-    .cr-settings-group__title {
-        margin: 0;
-        color: var(--cr-text-normal);
-        font-size: 15px;
-        font-weight: 600;
-        padding-left: var(--cr-space-2, 8px);
-        border-left: 3px solid var(--cr-interactive-accent);
-    }
-
-    .cr-settings-group__desc {
-        margin: 0 0 var(--cr-space-2, 8px) 0;
-        color: var(--cr-text-muted);
-        font-size: var(--cr-font-sm, 13px);
-        line-height: 1.4;
-    }
-
-    .cr-provider-list,
-    .cr-task-model-list {
-        display: flex;
-        flex-direction: column;
-        gap: var(--cr-space-2, 8px);
-        margin-bottom: var(--cr-space-3, 12px);
+        gap: var(--cr-space-2);
+        margin-bottom: var(--cr-space-3);
     }
 
     .cr-empty-hint {
         color: var(--cr-text-muted);
-        font-size: var(--cr-font-sm, 13px);
+        font-size: var(--cr-font-sm);
         text-align: center;
-        padding: var(--cr-space-4, 16px) 0;
+        padding: var(--cr-space-4) 0;
         border: 1px dashed var(--cr-border);
-        border-radius: var(--cr-radius-md, 6px);
-        margin-bottom: var(--cr-space-3, 12px);
+        border-radius: var(--cr-radius-md);
+        margin-bottom: var(--cr-space-3);
     }
 </style>

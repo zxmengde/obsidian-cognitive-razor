@@ -6,25 +6,31 @@
  * - 可选字段：sourceUids
  */
 
+import { CR_TYPES } from "../types";
 import type { CRFrontmatter, CRType, NoteState } from "../types";
 import YAML from "yaml";
 import { formatCRTimestamp } from "../utils/date-utils";
 
 const FRONTMATTER_DELIMITER = "---";
-const REQUIRED_STRING_FIELDS: Array<keyof CRFrontmatter> = [
-  "cruid",
-  "type",
-  "name",
-  "status",
-  "created",
-  "updated"
-];
-const REQUIRED_ARRAY_FIELDS: Array<keyof CRFrontmatter> = [
-  "aliases",
-  "tags",
-  "parents"
-];
-const ARRAY_FIELDS: Array<keyof CRFrontmatter> = ["aliases", "tags", "sourceUids", "parents"];
+const CR_TYPE_SET: ReadonlySet<string> = new Set(CR_TYPES);
+const NOTE_STATES: ReadonlySet<string> = new Set(["seed", "draft", "evergreen"]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function readRequiredString(record: Record<string, unknown>, field: string): string | null {
+  const value = record[field];
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function readCrType(value: string): CRType | null {
+  return CR_TYPE_SET.has(value) ? value as CRType : null;
+}
+
+function readNoteState(value: string): NoteState | null {
+  return NOTE_STATES.has(value) ? value as NoteState : null;
+}
 
 function formatYamlString(value: string): string {
   const escaped = value
@@ -65,7 +71,7 @@ function normalizeParentLink(value: string): string | null {
   return `[[${title}]]`;
 }
 
-function normalizeParents(parents: string[]): string[] {
+export function normalizeParents(parents: string[]): string[] {
   const normalized: string[] = [];
   const seen = new Set<string>();
   for (const item of parents) {
@@ -104,7 +110,7 @@ export function generateFrontmatter(options: {
     cruid: options.cruid,
     type: options.type,
     name: options.name,
-    status: options.status || "Stub",
+    status: options.status || "draft",
     created: now,
     updated: now,
     parents: normalizeParents(options.parents || []),
@@ -119,7 +125,7 @@ export function generateFrontmatter(options: {
  */
 function formatArrayInline(arr: string[]): string {
   if (arr.length === 0) return '[]';
-  // ?????????? YAML ? "00"?true?null ???????????????
+  // 始终加引号，避免 YAML 把 "00"、"true" 或 "null" 解析成其他类型。
   const formatted = arr.map((item) => formatYamlString(item));
   return `[${formatted.join(', ')}]`;
 }
@@ -161,19 +167,6 @@ function frontmatterToYaml(frontmatter: CRFrontmatter): string {
     lines.push(`sourceUids: ${formatArrayInline(frontmatter.sourceUids)}`);
   }
 
-  // 未知字段保留（需求 29.4：序列化时不丢弃未知字段）
-  const KNOWN_FIELDS = new Set<string>([
-    "cruid", "type", "name", "status",
-    "created", "updated", "aliases", "tags", "parents", "sourceUids"
-  ]);
-  for (const [key, value] of Object.entries(frontmatter)) {
-    if (KNOWN_FIELDS.has(key)) continue;
-    if (value === undefined || value === null) continue;
-    // 使用 YAML 库序列化未知字段值，确保格式正确
-    const yamlValue = YAML.stringify(value).trimEnd();
-    lines.push(`${key}: ${yamlValue}`);
-  }
-
   return `${FRONTMATTER_DELIMITER}\n${lines.join('\n')}\n${FRONTMATTER_DELIMITER}\n\n`;
 }
 
@@ -187,80 +180,49 @@ function parseFrontmatter(yaml: string): CRFrontmatter | null {
       ? trimmed.replace(/^---\s*/, "").replace(/\s*---$/, "")
       : trimmed;
 
-    const document = YAML.parse(cleanYaml, { uniqueKeys: true }) as Record<string, unknown> | null;
-    if (!document || typeof document !== "object") {
-      return null;
-    }
-
-    const normalized: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(document)) {
-      if (ARRAY_FIELDS.includes(key as keyof CRFrontmatter) && Array.isArray(value)) {
-        normalized[key] = value.map((v) => String(v));
-        continue;
-      }
-      normalized[key] = value;
-    }
-
-    // 验证必填字段
-    for (const field of REQUIRED_STRING_FIELDS) {
-      if (typeof normalized[field] !== "string" || normalized[field]?.toString().trim() === "") {
-        return null;
-      }
-    }
-
-    for (const field of REQUIRED_ARRAY_FIELDS) {
-      if (!Object.prototype.hasOwnProperty.call(normalized, field)) {
-        return null;
-      }
-      if (!Array.isArray(normalized[field])) {
-        return null;
-      }
-    }
-
-    const aliases = normalizeStringArray(normalized.aliases) || [];
-    const tags = normalizeStringArray(normalized.tags) || [];
-    const sourceUids = normalizeStringArray(normalized.sourceUids);
-    const parents = normalizeParents(normalizeStringArray(normalized.parents) || []);
-    const name = typeof normalized.name === "string" ? normalized.name : "";
-
-    const rawCruid = typeof normalized.cruid === "string"
-      ? normalized.cruid
-      : typeof normalized.crUid === "string"
-        ? normalized.crUid
-        : undefined;
-
-    if (!rawCruid) {
-      return null;
-    }
-
-    // 收集未知字段（需求 29.4：保留未知字段不丢弃）
-    const KNOWN_FIELDS = new Set<string>([
-      "cruid", "crUid", "type", "name", "status",
-      "created", "updated", "aliases", "tags", "parents", "sourceUids"
-    ]);
-    const extras: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(normalized)) {
-      if (!KNOWN_FIELDS.has(key)) {
-        extras[key] = value;
-      }
-    }
-
-    return {
-      cruid: rawCruid,
-      type: normalized.type as CRType,
-      name,
-      status: normalized.status as NoteState,
-      created: normalized.created as string,
-      updated: normalized.updated as string,
-      aliases,
-      tags,
-      parents,
-      sourceUids,
-      ...extras,
-    };
-  } catch (error) {
+    return parseFrontmatterDocument(YAML.parse(cleanYaml, { uniqueKeys: true }));
+  } catch {
     return null;
   }
+}
+
+function parseFrontmatterDocument(value: unknown): CRFrontmatter | null {
+  if (!isRecord(value)) return null;
+
+  const cruid = readRequiredString(value, "cruid");
+  const rawType = readRequiredString(value, "type");
+  const name = readRequiredString(value, "name");
+  const rawStatus = readRequiredString(value, "status");
+  const created = readRequiredString(value, "created");
+  const updated = readRequiredString(value, "updated");
+  if (!cruid || !rawType || !name || !rawStatus || !created || !updated) return null;
+
+  const type = readCrType(rawType);
+  const status = readNoteState(rawStatus);
+  if (!type || !status) return null;
+
+  const aliases = readStringArray(value.aliases);
+  const tags = readStringArray(value.tags);
+  const rawParents = readStringArray(value.parents);
+  if (!aliases || !tags || !rawParents) return null;
+
+  const sourceUids = value.sourceUids === undefined
+    ? undefined
+    : readStringArray(value.sourceUids);
+  if (sourceUids === null) return null;
+
+  return {
+    cruid,
+    type,
+    name,
+    status,
+    created,
+    updated,
+    aliases,
+    tags,
+    parents: normalizeParents(rawParents),
+    sourceUids,
+  };
 }
 
 /**
@@ -304,40 +266,25 @@ export function extractFrontmatter(content: string): {
 }
 
 /**
- * 更新 Markdown 内容中的 frontmatter（内部使用）
+ * Detect the one legacy form we can explain safely without accepting it.
+ * Parsing remains strict: callers must never use this to normalize or rewrite
+ * an existing note.
  */
-function updateFrontmatter(
-  content: string,
-  updates: Partial<CRFrontmatter>
-): string {
-  const now = formatCRTimestamp();
-  const extracted = extractFrontmatter(content);
-  
-  if (!extracted) {
-    // 没有 frontmatter，添加一个
-    const newFrontmatter = generateFrontmatter({
-      cruid: updates.cruid || "",
-      type: updates.type || "Entity",
-      name: updates.name || "Unnamed Concept",
-      parents: updates.parents || [],
-      status: updates.status,
-      aliases: updates.aliases || [],
-      tags: updates.tags || [],
-      sourceUids: updates.sourceUids,
-    });
-    
-    return frontmatterToYaml(newFrontmatter) + content;
+export function hasUppercaseCognitiveRazorFields(content: string): boolean {
+  const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  if (!normalized.startsWith(`${FRONTMATTER_DELIMITER}\n`)) return false;
+  const end = normalized.indexOf(`\n${FRONTMATTER_DELIMITER}\n`, FRONTMATTER_DELIMITER.length + 1);
+  if (end < 0) return false;
+  try {
+    const value = YAML.parse(normalized.slice(FRONTMATTER_DELIMITER.length + 1, end), { uniqueKeys: true });
+    if (!isRecord(value)) return false;
+    const rawType = value.type;
+    const rawStatus = value.status;
+    return (typeof rawType === "string" && CR_TYPE_SET.has(rawType.toLowerCase()) && rawType !== rawType.toLowerCase())
+      || (typeof rawStatus === "string" && NOTE_STATES.has(rawStatus.toLowerCase()) && rawStatus !== rawStatus.toLowerCase());
+  } catch {
+    return false;
   }
-
-  // 合并更新
-  const merged: CRFrontmatter = {
-    ...extracted.frontmatter,
-    ...updates,
-    parents: normalizeParents(updates.parents ?? extracted.frontmatter.parents ?? []),
-    updated: now // 总是更新时间戳
-  };
-
-  return frontmatterToYaml(merged) + extracted.body;
 }
 
 /**
@@ -349,26 +296,32 @@ function updateFrontmatter(
  */
 export function generateMarkdownContent(
   frontmatter: CRFrontmatter,
-  body: string
+  body: string,
+  originalContent?: string,
 ): string {
-  return frontmatterToYaml(frontmatter) + body;
+  let header = frontmatterToYaml(frontmatter);
+  // CR parsing intentionally exposes only owned fields. When rewriting an
+  // existing note, retain other plugins' and the user's YAML properties.
+  if (originalContent) {
+    const normalized = originalContent.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    const match = /^---\n([\s\S]*?)\n[ \t]*---[ \t]*(?:\n|$)/.exec(normalized);
+    if (match) {
+      const original: unknown = YAML.parse(match[1], { uniqueKeys: true });
+      if (isRecord(original)) {
+        const owned = new Set(["cruid", "type", "name", "status", "created", "updated", "aliases", "tags", "parents", "sourceUids"]);
+        const extra = Object.fromEntries(Object.entries(original).filter(([key]) => !owned.has(key)));
+        if (Object.keys(extra).length > 0) {
+          header = header.slice(0, -5) + YAML.stringify(extra) + "---\n\n";
+        }
+      }
+    }
+  }
+  return header + body;
 }
 
-function normalizeStringArray(value: unknown): string[] | undefined {
-  if (!value) {
-    return undefined;
+function readStringArray(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    return null;
   }
-
-  if (Array.isArray(value)) {
-    return value.map((item) => String(item));
-  }
-
-  return undefined;
-}
-
-function normalizeOptionalString(value: unknown): string | undefined {
-  if (typeof value === "string") {
-    return value;
-  }
-  return undefined;
+  return [...value];
 }

@@ -1,832 +1,793 @@
-/** SettingsStore - 管理插件配置，支持版本兼容性检查和导入导出 */
-
-import { ok, err } from "../types";
-import type { PluginSettings, ProviderConfig, Result, DirectoryScheme, TaskType, TaskModelConfig } from "../types";
-import { DEFAULT_UI_STATE } from "../types";
 import { Plugin } from "obsidian";
+import { CR_TYPES, err, ok } from "../types";
+import type {
+  DirectoryScheme,
+  EmbeddingApiFormat,
+  LogLevel,
+  PluginSettings,
+  ProviderApiFormat,
+  ProviderConfig,
+  ReasoningEffort,
+  Result,
+  TaskModelConfig,
+  ModelCapabilities,
+  ModelParameterOverrides,
+  TaskType,
+  ILogger,
+} from "../types";
+import { DEFAULT_MODEL_CAPABILITIES } from "../types";
 
-/**
- * 默认目录方案
- */
 const DEFAULT_DIRECTORY_SCHEME: DirectoryScheme = {
-  Domain: "1-领域",
-  Issue: "2-议题",
-  Theory: "3-理论",
-  Entity: "4-实体",
-  Mechanism: "5-机制",
+  domain: "1-领域",
+  issue: "2-议题",
+  theory: "3-理论",
+  entity: "4-实体",
+  mechanism: "5-机制",
 };
 
-/** 默认任务超时时间（毫秒） */
 export const DEFAULT_TASK_TIMEOUT_MS = 3 * 60 * 1000;
 
-type ScalarSettingsKey = keyof Pick<
-  PluginSettings,
-  | "version"
-  | "similarityThreshold"
-  | "concurrency"
-  | "autoRetry"
-  | "maxRetryAttempts"
-  | "enableAutoVerify"
-  | "defaultProviderId"
-  | "logLevel"
-  | "embeddingDimension"
-  | "providerTimeoutMs"
-  | "taskTimeoutMs"
->;
+export const TASK_TYPES: TaskType[] = ["define", "tag", "write", "index", "verify", "merge", "cards"];
 
-interface ScalarSettingsSpec {
-  key: ScalarSettingsKey;
-  type: "string" | "number" | "boolean";
-  required: boolean;
-  allowed?: readonly string[];
-  integer?: boolean;
-  min?: number;
-  max?: number;
-}
-
-const SCALAR_SETTINGS_SPECS: ScalarSettingsSpec[] = [
-  { key: "version", type: "string", required: true },
-  { key: "similarityThreshold", type: "number", required: true, min: 0, max: 1 },
-  { key: "concurrency", type: "number", required: true, integer: true, min: 1 },
-  { key: "autoRetry", type: "boolean", required: true },
-  { key: "maxRetryAttempts", type: "number", required: true, integer: true, min: 0 },
-  { key: "enableAutoVerify", type: "boolean", required: true },
-  { key: "defaultProviderId", type: "string", required: true },
-  { key: "logLevel", type: "string", required: true, allowed: ["debug", "info", "warn", "error"] },
-  { key: "embeddingDimension", type: "number", required: true, integer: true, min: 1 },
-  { key: "providerTimeoutMs", type: "number", required: true, integer: true, min: 1000 },
-  // 历史版本兼容：这些字段允许缺失，由 mergeSettings/ensureBackwardCompatibility 补齐默认值
-  { key: "taskTimeoutMs", type: "number", required: false, integer: true, min: 1000 },
-];
-
-/**
- * TaskType 列表
- */
-export const TASK_TYPES: TaskType[] = [
-  "define",
-  "tag",
-  "write",
-  "index",
-  "verify",
-];
-
-/** 任务模型默认配置 */
-export const DEFAULT_TASK_MODEL_CONFIGS: Record<TaskType, TaskModelConfig> = {
-  define: {
-    providerId: "",
-    model: "gemini-3-flash-preview",
-    temperature: 0.3,
-    topP: 1.0,
-  },
-  tag: {
-    providerId: "",
-    model: "gemini-3-flash-preview",
-    temperature: 0.5,
-    topP: 1.0,
-  },
-  write: {
-    providerId: "",
-    model: "gemini-3-flash-preview",
-    temperature: 0.7,
-    topP: 1.0,
-  },
-  index: {
-    providerId: "",
-    model: "text-embedding-3-small",
-    embeddingDimension: 1536,
-  },
-  verify: {
-    providerId: "",
-    model: "gemini-3-flash-preview",
-    temperature: 0.3,
-    topP: 1.0,
-  },
+const DEFAULT_TASK_MODEL_CONFIGS: Record<TaskType, TaskModelConfig> = {
+  define: { providerId: "", model: "" },
+  tag: { providerId: "", model: "" },
+  write: { providerId: "", model: "" },
+  index: { providerId: "", model: "" },
+  verify: { providerId: "", model: "" },
+  merge: { providerId: "", model: "" },
+  cards: { providerId: "", model: "" },
 };
 
-/** 生成新的默认任务模型配置副本 */
-function createDefaultTaskModels(): Record<TaskType, TaskModelConfig> {
-  const taskModels = {} as Record<TaskType, TaskModelConfig>;
-  for (const taskType of TASK_TYPES) {
-    taskModels[taskType] = { ...DEFAULT_TASK_MODEL_CONFIGS[taskType] };
-  }
-  return taskModels;
-}
-
-/**
- * 验证错误接口
- */
-/** 默认设置 */
 export const DEFAULT_SETTINGS: PluginSettings = {
-  version: "1.0.0",
-  
-  // 存储设置
-  directoryScheme: DEFAULT_DIRECTORY_SCHEME,
-  
-  // 去重设置 (G-02: 语义唯一性公理, A-FUNC-04: 语义去重检测)
+  directoryScheme: { ...DEFAULT_DIRECTORY_SCHEME },
+  cardsSourceRoot: "C-知识库",
+  cardsTargetRoot: "D-习题库",
+  enableSemanticIndexing: true,
+  enableDuplicateDetection: true,
   similarityThreshold: 0.85,
-  
-  // 队列设置
   concurrency: 1,
-  autoRetry: true,
-  maxRetryAttempts: 3,
   taskTimeoutMs: DEFAULT_TASK_TIMEOUT_MS,
-  
-  // 功能开关
+  logLevel: "info",
   enableAutoVerify: false,
-  
-  // Provider 配置
   providers: {},
   defaultProviderId: "",
-  
-  // 任务模型配置
-  taskModels: createDefaultTaskModels(),
-  
-  // 日志级别
-  logLevel: "info",
-  
-  // 嵌入向量维度（text-embedding-3-small 支持 512-3072，默认 1536）
-  embeddingDimension: 1536,
-  
-  // Provider 请求超时（毫秒，默认 60000 = 60秒）
-  providerTimeoutMs: 60000,
-
-  // 工作台 UI 状态
-  uiState: { ...DEFAULT_UI_STATE, sectionCollapsed: { ...DEFAULT_UI_STATE.sectionCollapsed }, sortPreferences: {} },
+  taskModels: cloneTaskModels(DEFAULT_TASK_MODEL_CONFIGS),
+  providerTimeoutMs: 60_000,
+  providerMaxAttempts: 3,
+  enableStreamingKeepalive: false,
 };
 
-/** SettingsStore 实现类 */
+const API_FORMATS = new Set<ProviderApiFormat>([
+  "openai-chat-completions",
+  "openai-responses",
+  "gemini-generative-language",
+  "disabled",
+]);
+const EMBEDDING_FORMATS = new Set<EmbeddingApiFormat>(["openai-embeddings", "disabled"]);
+
+const LOG_LEVELS = new Set<LogLevel>(["silent", "debug", "info", "warn", "error"]);
+const RESERVED_PROVIDER_IDS = new Set(["__proto__", "prototype", "constructor"]);
+
+export function isValidProviderId(value: string): boolean {
+  return value.length > 0 && value === value.trim() &&
+    !RESERVED_PROVIDER_IDS.has(value.toLowerCase()) &&
+    !Array.from(value).some((char) => {
+      const code = char.charCodeAt(0);
+      return code <= 31 || code === 127;
+    });
+}
+
+export type SettingsUpdate = Omit<Partial<PluginSettings>, "directoryScheme" | "providers" | "taskModels"> & {
+  directoryScheme?: Partial<DirectoryScheme>;
+  providers?: Record<string, ProviderConfig>;
+  taskModels?: Partial<Record<TaskType, TaskModelConfig>>;
+};
+
+const NUMERIC_SETTING_RULES = [
+  { key: "similarityThreshold", integer: false, min: 0, max: 1 },
+  { key: "concurrency", integer: true, min: 1, max: 10 },
+  { key: "taskTimeoutMs", integer: true, min: 30_000, max: 3_600_000 },
+  { key: "providerTimeoutMs", integer: true, min: 10_000, max: 3_600_000 },
+  { key: "providerMaxAttempts", integer: true, min: 1, max: 3, defaultValue: DEFAULT_SETTINGS.providerMaxAttempts },
+] as const;
+const BOOLEAN_SETTING_RULES = [
+  { key: "enableAutoVerify", defaultValue: DEFAULT_SETTINGS.enableAutoVerify },
+  { key: "enableSemanticIndexing", defaultValue: DEFAULT_SETTINGS.enableSemanticIndexing },
+  { key: "enableDuplicateDetection", defaultValue: DEFAULT_SETTINGS.enableDuplicateDetection },
+  { key: "enableStreamingKeepalive", defaultValue: DEFAULT_SETTINGS.enableStreamingKeepalive },
+] as const;
+type NumericSettingKey = typeof NUMERIC_SETTING_RULES[number]["key"];
+type BooleanSettingKey = typeof BOOLEAN_SETTING_RULES[number]["key"];
+type ScalarSettings = Pick<
+  PluginSettings,
+  NumericSettingKey | BooleanSettingKey | "logLevel"
+>;
+
 export class SettingsStore {
-  private plugin: Plugin;
-  private settings: PluginSettings;
-  private listeners: Array<(settings: PluginSettings) => void> = [];
+  private settings = cloneSettings(DEFAULT_SETTINGS);
+  private readonly listeners = new Set<(settings: PluginSettings) => void>();
+  private mutationQueue: Promise<void> = Promise.resolve();
+  private logger?: ILogger;
+  private pendingListenerErrors: Error[] = [];
 
-  /**
-   * 构造函数
-   * @param plugin Obsidian Plugin 实例
-   */
-  constructor(plugin: Plugin) {
-    this.plugin = plugin;
-    this.settings = this.createDefaultSettingsSnapshot();
+  constructor(private readonly plugin: Plugin, logger?: ILogger) {
+    this.logger = logger;
   }
 
-  /** 加载设置 */
+  setLogger(logger: ILogger): void {
+    this.logger = logger;
+    const pending = this.pendingListenerErrors.splice(0);
+    for (const error of pending) {
+      this.logListenerError(error);
+    }
+  }
+
   async loadSettings(): Promise<Result<void>> {
-    try {
-      const raw = await this.plugin.loadData();
-      
-      if (!raw) {
-        // 首次使用，使用默认设置
-        this.settings = { ...DEFAULT_SETTINGS };
-        await this.saveSettings();
-        return ok(undefined);
-      }
-
-      const data = this.normalizeLegacySettings(raw as unknown);
-
-      // 检查版本兼容性
-      const compatibilityResult = this.checkVersionCompatibility(data.version);
-      if (!compatibilityResult.ok) {
-        // 版本不兼容时重置为默认值 (O-05 开发阶段版本策略)
-        this.settings = { ...DEFAULT_SETTINGS };
-        await this.saveSettings();
-        return ok(undefined);
-      }
-
-      // 先 merge（保留用户数据），再验证合并后的结果
-      // 避免旧版本缺少新字段时整包重置用户配置
-      const merged = this.mergeSettings(DEFAULT_SETTINGS, data);
-      if (!this.validateSettings(merged)) {
-        // 合并后仍有阻断性错误，记录警告并回退默认值
-        this.settings = { ...DEFAULT_SETTINGS };
-        await this.saveSettings();
-        return ok(undefined);
-      }
-
-      this.settings = merged;
-      this.ensureBackwardCompatibility();
-      
-      return ok(undefined);
-    } catch (error) {
-      return err(
-        "E500_INTERNAL_ERROR",
-        "Failed to load settings",
-        error
-      );
-    }
-  }
-
-  /**
-   * 获取设置
-   */
-  getSettings(): PluginSettings {
-    return { ...this.settings };
-  }
-
-  /**
-   * 更新设置
-   */
-  async updateSettings(partial: Partial<PluginSettings>): Promise<Result<void>> {
-    try {
-      const mergeResult = this.mergePartialSettings(partial);
-      if (!mergeResult.ok) {
-        return mergeResult;
-      }
-
-      const validation = this.validateSettings(mergeResult.value);
-      if (!validation) {
-        return err(
-          "E101_INVALID_INPUT",
-          "设置校验失败"
-        );
-      }
-
-      this.settings = mergeResult.value;
-
-      // 保存到磁盘
-      await this.saveSettings();
-
-      // 通知监听器
-      this.notifyListeners();
-
-      return ok(undefined);
-    } catch (error) {
-      return err(
-        "E500_INTERNAL_ERROR",
-        "Failed to update settings",
-        error
-      );
-    }
-  }
-
-  /**
-   * 更新工作台区块折叠状态（避免深层 Partial 类型问题）
-   */
-  async updateSectionCollapsed(key: string, value: boolean): Promise<Result<void>> {
-    const current = this.settings.uiState ?? { ...DEFAULT_UI_STATE };
-    const updated: PluginSettings = {
-      ...this.settings,
-      uiState: {
-        ...current,
-        sectionCollapsed: {
-          ...current.sectionCollapsed,
-          [key]: value,
-        },
-      },
-    };
-    this.settings = updated;
-    await this.saveSettings();
-    this.notifyListeners();
-    return ok(undefined);
-  }
-
-  /**
-   * 导出设置
-   */
-  exportSettings(): string {
-    return JSON.stringify(this.serializeSettings(true), null, 2);
-  }
-
-  /**
-   * 导入设置
-   */
-  async importSettings(json: string): Promise<Result<void>> {
-    try {
-      const raw = JSON.parse(json) as unknown;
-      const data = this.normalizeLegacySettings(raw);
-
-      // 验证设置结构
-      if (!this.validateSettings(data)) {
-        return err(
-          "E101_INVALID_INPUT",
-          "Invalid settings format",
-          { json }
-        );
-      }
-
-      // 检查版本兼容性
-      const compatibilityResult = this.checkVersionCompatibility(data.version);
-      if (!compatibilityResult.ok) {
-        return compatibilityResult;
-      }
-
-      // 合并设置
-      this.settings = this.mergeSettings(DEFAULT_SETTINGS, data);
-
-      // 保存到磁盘
-      await this.saveSettings();
-
-      // 通知监听器
-      this.notifyListeners();
-
-      return ok(undefined);
-    } catch (error) {
-      return err(
-        "E101_INVALID_INPUT",
-        "Failed to parse settings JSON",
-        error
-      );
-    }
-  }
-
-  /**
-   * 重置为默认值
-   */
-  async resetToDefaults(): Promise<Result<void>> {
-    try {
-      this.settings = { ...DEFAULT_SETTINGS };
-
-      // 保存到磁盘
-      await this.saveSettings();
-
-      // 通知监听器
-      this.notifyListeners();
-
-      return ok(undefined);
-    } catch (error) {
-      return err(
-        "E500_INTERNAL_ERROR",
-        "Failed to reset settings",
-        error
-      );
-    }
-  }
-
-  /**
-   * 订阅设置变更
-   */
-  subscribe(listener: (settings: PluginSettings) => void): () => void {
-    this.listeners.push(listener);
-
-    // 返回取消订阅函数
-    return () => {
-      const index = this.listeners.indexOf(listener);
-      if (index > -1) {
-        this.listeners.splice(index, 1);
-      }
-    };
-  }
-
-  /**
-   * 保存设置到磁盘
-   */
-  private async saveSettings(): Promise<void> {
-    await this.plugin.saveData(this.serializeSettings());
-  }
-
-  /**
-   * 通知所有监听器
-   */
-  private notifyListeners(): void {
-    const settingsCopy = { ...this.settings };
-    for (const listener of this.listeners) {
-      listener(settingsCopy);
-    }
-  }
-
-  /** 创建默认设置快照，避免引用共享 */
-  private createDefaultSettingsSnapshot(): PluginSettings {
-    return {
-      ...DEFAULT_SETTINGS,
-      directoryScheme: { ...DEFAULT_SETTINGS.directoryScheme },
-      providers: { ...DEFAULT_SETTINGS.providers },
-      taskModels: createDefaultTaskModels(),
-      uiState: { ...DEFAULT_UI_STATE, sectionCollapsed: { ...DEFAULT_UI_STATE.sectionCollapsed }, sortPreferences: {} },
-    };
-  }
-
-  /**
-   * 序列化设置
-   */
-  private serializeSettings(redactAllApiKeys = false): PluginSettings {
-    const providers: Record<string, ProviderConfig> = {};
-    for (const [id, config] of Object.entries(this.settings.providers)) {
-      providers[id] = {
-        ...config,
-        apiKey: redactAllApiKeys ? "" : config.apiKey
-      };
-    }
-
-    return {
-      ...this.settings,
-      providers
-    };
-  }
-
-  /**
-   * 检查版本兼容性
-   */
-  private checkVersionCompatibility(version: string): Result<void> {
-    // 简单的版本检查：主版本号必须匹配
-    const currentMajor = DEFAULT_SETTINGS.version.split(".")[0];
-    const loadedMajor = version.split(".")[0];
-
-    if (currentMajor !== loadedMajor) {
-      return err(
-        "E101_INVALID_INPUT",
-        `Incompatible settings version: ${version} (current: ${DEFAULT_SETTINGS.version})`,
-        { version, currentVersion: DEFAULT_SETTINGS.version }
-      );
-    }
-
-    return ok(undefined);
-  }
-
-  /**
-   * 验证设置结构（简单布尔返回）
-   * @param data 待验证的数据
-   * @returns 是否为有效的 PluginSettings
-   */
-  private validateSettings(data: unknown): data is PluginSettings {
-    if (data === null || typeof data !== "object") return false;
-    const obj = data as Record<string, unknown>;
-    return typeof obj.version === "string"
-      && typeof obj.directoryScheme === "object" && obj.directoryScheme !== null
-      && typeof obj.providers === "object" && obj.providers !== null
-      && typeof obj.taskModels === "object" && obj.taskModels !== null;
-  }
-
-
-
-  private applyScalarUpdates(partial: Partial<PluginSettings>, target: PluginSettings): Result<void> {
-    for (const spec of SCALAR_SETTINGS_SPECS) {
-      const value = partial[spec.key] as unknown;
-      if (value === undefined) {
-        continue;
-      }
-
-      if (spec.type === "string") {
-        if (typeof value !== "string") {
-          return err("E101_INVALID_INPUT", `${spec.key} 必须是字符串`);
+    return this.enqueueMutation(async () => {
+      try {
+        const raw = await this.plugin.loadData();
+        // Obsidian yields null when data.json is absent. undefined means the
+        // existing file was unreadable or not valid JSON; keep memory intact.
+        if (raw === null) {
+          this.settings = cloneSettings(DEFAULT_SETTINGS);
+          this.notifyListeners();
+          return ok(undefined);
         }
-        if (spec.allowed && !spec.allowed.includes(value)) {
-          return err("E101_INVALID_INPUT", `${spec.key} 不合法`);
+        if (raw === undefined) {
+          return err(
+            "E101_INVALID_INPUT",
+            "设置文件暂时无法读取或不是有效 JSON；已保留当前内存中的配置，未覆盖磁盘",
+          );
         }
-        Reflect.set(target, spec.key, value);
-        continue;
-      }
 
-      if (spec.type === "boolean") {
-        if (typeof value !== "boolean") {
-          return err("E101_INVALID_INPUT", `${spec.key} 必须是布尔值`);
-        }
-        Reflect.set(target, spec.key, value);
-        continue;
-      }
-
-      if (typeof value !== "number" || Number.isNaN(value)) {
-        return err("E101_INVALID_INPUT", `${spec.key} 必须是数字`);
-      }
-
-      if (spec.integer && !Number.isInteger(value)) {
-        return err("E101_INVALID_INPUT", `${spec.key} 必须是整数`);
-      }
-
-      if (spec.min !== undefined && value < spec.min) {
-        return err("E101_INVALID_INPUT", `${spec.key} 必须 >= ${spec.min}`);
-      }
-
-      if (spec.max !== undefined && value > spec.max) {
-        return err("E101_INVALID_INPUT", `${spec.key} 必须 <= ${spec.max}`);
-      }
-
-      Reflect.set(target, spec.key, value);
-    }
-
-    return ok(undefined);
-  }
-
-
-
-
-  /** 合并部分设置并进行类型检查 */
-  private mergePartialSettings(partial: Partial<PluginSettings>): Result<PluginSettings> {
-    const next: PluginSettings = {
-      ...this.settings,
-      directoryScheme: { ...this.settings.directoryScheme },
-      providers: { ...this.settings.providers },
-      taskModels: { ...this.settings.taskModels },
-    };
-
-    const scalarResult = this.applyScalarUpdates(partial, next);
-    if (!scalarResult.ok) {
-      return scalarResult;
-    }
-
-    // 目录方案
-    if (partial.directoryScheme !== undefined) {
-      if (!this.isPlainObject(partial.directoryScheme)) {
-        return err("E101_INVALID_INPUT", "directoryScheme 必须是对象");
-      }
-      next.directoryScheme = {
-        ...next.directoryScheme,
-        ...partial.directoryScheme
-      };
-    }
-
-    // Provider 配置
-    if (partial.providers !== undefined) {
-      if (!this.isPlainObject(partial.providers)) {
-        return err("E101_INVALID_INPUT", "providers 必须是对象");
-      }
-      const mergedProviders: Record<string, ProviderConfig> = { ...next.providers };
-      for (const [providerId, providerConfig] of Object.entries(partial.providers)) {
-        const existing = mergedProviders[providerId];
-        const normalized = this.normalizeProviderConfig(existing, providerConfig);
+        const normalized = normalizeSettings(raw);
         if (!normalized.ok) {
+          // Do not replace a good in-memory snapshot with defaults; a later
+          // unrelated save would otherwise wipe providers and API keys on disk.
           return normalized;
         }
-        mergedProviders[providerId] = normalized.value;
-      }
-      next.providers = mergedProviders;
-    }
 
-    // 任务模型
-    if (partial.taskModels !== undefined) {
-      if (!this.isPlainObject(partial.taskModels)) {
-        return err("E101_INVALID_INPUT", "taskModels 必须是对象");
+        this.settings = normalized.value;
+        this.notifyListeners();
+        return ok(undefined);
+      } catch (error) {
+        return err("E500_INTERNAL_ERROR", "读取设置失败", error);
       }
-      const mergedTaskModels: Record<TaskType, TaskModelConfig> = { ...next.taskModels };
-      for (const [taskType, config] of Object.entries(partial.taskModels)) {
-        const existing = mergedTaskModels[taskType as TaskType];
-        if (!existing) {
-          continue;
-        }
-        if (!this.isPlainObject(config)) {
-          return err("E101_INVALID_INPUT", `taskModels.${taskType} 必须是对象`);
-        }
-        mergedTaskModels[taskType as TaskType] = {
-          ...existing,
-          ...(config as TaskModelConfig)
-        };
-      }
-      next.taskModels = mergedTaskModels;
-    }
-
-    // UI 状态（折叠/排序偏好）
-    if (partial.uiState !== undefined) {
-      if (!this.isPlainObject(partial.uiState)) {
-        return err("E101_INVALID_INPUT", "uiState 必须是对象");
-      }
-      const currentUI = next.uiState ?? { ...DEFAULT_UI_STATE };
-      next.uiState = {
-        ...currentUI,
-        ...(partial.uiState as PluginSettings["uiState"]),
-        sectionCollapsed: {
-          ...(currentUI.sectionCollapsed ?? {}),
-          ...((partial.uiState as PluginSettings["uiState"])?.sectionCollapsed ?? {}),
-        },
-        sortPreferences: {
-          ...(currentUI.sortPreferences ?? {}),
-          ...((partial.uiState as PluginSettings["uiState"])?.sortPreferences ?? {}),
-        },
-      };
-    }
-
-    return ok(next);
+    });
   }
 
-  /**
-   * 合并设置（深度合并）
-   */
-  private mergeSettings(defaults: PluginSettings, loaded: Partial<PluginSettings>): PluginSettings {
-    const merged = { ...defaults };
-
-    // 合并顶层字段
-    for (const key in loaded) {
-      if (Object.prototype.hasOwnProperty.call(loaded, key)) {
-        const value = loaded[key as keyof PluginSettings];
-        const defaultValue = defaults[key as keyof PluginSettings];
-        
-        if (value !== undefined) {
-          if (typeof value === "object" && value !== null && !Array.isArray(value) && typeof defaultValue === "object") {
-            // 深度合并对象
-            Object.assign(merged, {
-              [key]: {
-                ...defaultValue as object,
-                ...value as object,
-              }
-            });
-          } else {
-            // 直接赋值
-            Object.assign(merged, { [key]: value });
-          }
-        }
-      }
-    }
-
-    return merged;
+  getSettings(): PluginSettings {
+    return cloneSettings(this.settings);
   }
 
-  /**
-   * 兼容旧版设置字段：enableGrounding → enableAutoVerify
-   *
-   * 说明：
-   * - 文档 SSOT 以 enableAutoVerify 为准
-   * - 旧字段仍可能存在于用户的 data.json / 导入文件中
-   */
-  private normalizeLegacySettings(raw: unknown): Record<string, any> {
-    if (!this.isPlainObject(raw)) {
-      return raw as Record<string, any>;
+  async updateSettings(partial: SettingsUpdate): Promise<Result<void>> {
+    if (!isRecord(partial)) {
+      return err("E101_INVALID_INPUT", "设置更新必须是对象");
     }
 
-    const normalized: Record<string, any> = { ...raw };
-
-    if (!Object.prototype.hasOwnProperty.call(normalized, "enableAutoVerify") &&
-        typeof normalized.enableGrounding === "boolean") {
-      normalized.enableAutoVerify = normalized.enableGrounding;
-    }
-
-    if (Object.prototype.hasOwnProperty.call(normalized, "enableGrounding")) {
-      delete normalized.enableGrounding;
-    }
-
-    // 兼容旧版去重参数：topK 已从设置中移除（按阈值全量过滤）
-    if (Object.prototype.hasOwnProperty.call(normalized, "topK")) {
-      delete normalized.topK;
-    }
-
-    return normalized;
+    return this.enqueueMutation(async () => {
+      const merged = mergeSettings(this.settings, partial);
+      if (!merged.ok) {
+        return merged;
+      }
+      if (settingsEqual(this.settings, merged.value)) {
+        return ok(undefined);
+      }
+      return this.persist(merged.value);
+    });
   }
 
-  /** 向后兼容：填充新字段缺省值，修复缺失的任务模型配置 */
-  private ensureBackwardCompatibility(): void {
-    // 确保 taskModels 包含新增的任务类型
-    const taskModels: Record<TaskType, TaskModelConfig> = {
-      ...createDefaultTaskModels(),
-      ...this.settings.taskModels
-    };
-    for (const taskType of TASK_TYPES) {
-      if (!taskModels[taskType]) {
-        taskModels[taskType] = { ...DEFAULT_TASK_MODEL_CONFIGS[taskType] };
-      } else {
-        taskModels[taskType] = {
-          ...DEFAULT_TASK_MODEL_CONFIGS[taskType],
-          ...taskModels[taskType]
-        };
-      }
+  exportSettings(): string {
+    const exported = cloneSettings(this.settings);
+    for (const provider of Object.values(exported.providers)) {
+      provider.apiKey = "";
     }
-    this.settings.taskModels = taskModels;
+    return JSON.stringify(exported, null, 2);
   }
 
-  private normalizeProviderConfig(
-    existing: ProviderConfig | undefined,
-    incoming: unknown
-  ): Result<ProviderConfig> {
-    if (!this.isPlainObject(incoming)) {
-      return err("E101_INVALID_INPUT", "provider 配置必须是对象");
+  async importSettings(json: string): Promise<Result<void>> {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(json);
+    } catch {
+      return err("E101_INVALID_INPUT", "导入内容不是有效 JSON");
     }
-    const incomingConfig = incoming as Partial<ProviderConfig>;
-    const base: ProviderConfig = existing
-      ? { ...existing }
-      : {
-          apiKey: "",
-          baseUrl: undefined,
-          defaultChatModel: "gpt-4o",
-          defaultEmbedModel: "text-embedding-3-small",
-          enabled: true
-        };
 
-    if (incomingConfig.apiKey !== undefined) {
-      if (typeof incomingConfig.apiKey !== "string") {
-        return err("E101_INVALID_INPUT", "provider.apiKey 必须是字符串");
+    return this.enqueueMutation(async () => {
+      const normalized = normalizeSettings(parsed);
+      if (!normalized.ok) {
+        return normalized;
       }
-      base.apiKey = incomingConfig.apiKey.trim();
-    }
-
-    if (incomingConfig.baseUrl !== undefined) {
-      if (incomingConfig.baseUrl !== null && typeof incomingConfig.baseUrl !== "string") {
-        return err("E101_INVALID_INPUT", "provider.baseUrl 必须是字符串");
-      }
-      base.baseUrl = incomingConfig.baseUrl?.trim() || undefined;
-    }
-
-    if (incomingConfig.defaultChatModel !== undefined) {
-      if (typeof incomingConfig.defaultChatModel !== "string") {
-        return err("E101_INVALID_INPUT", "provider.defaultChatModel 必须是字符串");
-      }
-      base.defaultChatModel = incomingConfig.defaultChatModel.trim();
-    }
-
-    if (incomingConfig.defaultEmbedModel !== undefined) {
-      if (typeof incomingConfig.defaultEmbedModel !== "string") {
-        return err("E101_INVALID_INPUT", "provider.defaultEmbedModel 必须是字符串");
-      }
-      base.defaultEmbedModel = incomingConfig.defaultEmbedModel.trim();
-    }
-
-    if (incomingConfig.enabled !== undefined) {
-      if (typeof incomingConfig.enabled !== "boolean") {
-        return err("E101_INVALID_INPUT", "provider.enabled 必须是布尔值");
-      }
-      base.enabled = incomingConfig.enabled;
-    }
-
-    return ok(base);
+      return this.persist(normalized.value);
+    });
   }
 
-  private isPlainObject(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
+  async resetToDefaults(): Promise<Result<void>> {
+    return this.enqueueMutation(() => this.persist(cloneSettings(DEFAULT_SETTINGS)));
   }
 
-  /**
-   * 重置指定任务模型配置到默认值
-   */
+  subscribe(listener: (settings: PluginSettings) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
   async resetTaskModel(taskType: TaskType): Promise<Result<void>> {
-    if (!DEFAULT_TASK_MODEL_CONFIGS[taskType]) {
-      return err("E101_INVALID_INPUT", `未知的任务类型: ${taskType}`);
-    }
-    const taskModels = {
-      ...this.settings.taskModels,
-      [taskType]: { ...DEFAULT_TASK_MODEL_CONFIGS[taskType] }
-    };
-    return this.updateSettings({ taskModels });
+    return this.updateSettings({
+      taskModels: {
+        [taskType]: { ...DEFAULT_TASK_MODEL_CONFIGS[taskType] },
+      } as PluginSettings["taskModels"],
+    });
   }
 
-  /**
-   * 判断任务模型配置是否为默认值
-   */
+  async updateTaskModel(taskType: TaskType, updates: Partial<TaskModelConfig>): Promise<Result<void>> {
+    return this.enqueueMutation(() => {
+      const current = this.settings.taskModels[taskType];
+      const next = { ...current, ...updates };
+      // UI edits carry only the changed leaf. Merge after previous saves have
+      // finished; undefined removes that override so the Provider is inherited.
+      if (isRecord(updates.parameters)) {
+        next.parameters = mergeTaskOverrides(current.parameters, updates.parameters);
+      }
+      if (isRecord(updates.capabilities)) {
+        next.capabilities = mergeTaskOverrides(current.capabilities, updates.capabilities);
+      }
+      return this.updateSettingsInQueue({ taskModels: { [taskType]: next } });
+    });
+  }
+
   isTaskModelDefault(taskType: TaskType): boolean {
-    const current = this.settings.taskModels[taskType];
-    const defaults = DEFAULT_TASK_MODEL_CONFIGS[taskType];
-    if (!current || !defaults) return false;
-
-    return (
-      current.providerId === defaults.providerId &&
-      current.model === defaults.model &&
-      current.temperature === defaults.temperature &&
-      current.topP === defaults.topP &&
-      current.reasoning_effort === defaults.reasoning_effort &&
-      current.maxTokens === defaults.maxTokens &&
-      current.embeddingDimension === defaults.embeddingDimension
-    );
+    return JSON.stringify(this.settings.taskModels[taskType]) ===
+      JSON.stringify(DEFAULT_TASK_MODEL_CONFIGS[taskType]);
   }
 
-  /**
-   * 设置默认 Provider
-   */
-  async setDefaultProvider(providerId: string): Promise<Result<void>> {
-    return this.updateSettings({ defaultProviderId: providerId });
-  }
-
-  /**
-   * 添加 Provider
-   */
   async addProvider(id: string, config: ProviderConfig): Promise<Result<void>> {
-    const providers = { ...this.settings.providers, [id]: config };
-    const updates: Partial<PluginSettings> = { providers };
-    
-    // 如果是第一个 Provider，设为默认并更新所有任务配置
-    if (Object.keys(this.settings.providers).length === 0) {
-      updates.defaultProviderId = id;
-      
-      // 更新所有任务的 providerId 为新添加的 Provider
-      const taskModels = { ...this.settings.taskModels };
+    const normalizedId = id.trim();
+    if (!isValidProviderId(normalizedId)) {
+      return err("E101_INVALID_INPUT", "Provider ID 不能为空、包含控制字符或使用保留名称");
+    }
+
+    return this.enqueueMutation(async () => {
+      if (Object.hasOwn(this.settings.providers, normalizedId)) {
+        return err("E310_INVALID_STATE", `Provider 已存在: ${normalizedId}`);
+      }
+      return this.updateSettingsInQueue({
+        providers: { [normalizedId]: config },
+        defaultProviderId: this.settings.defaultProviderId ||
+          (config.enabled && config.apiFormat !== "disabled" ? normalizedId : ""),
+      });
+    });
+  }
+
+  async updateProvider(id: string, updates: Partial<ProviderConfig>): Promise<Result<void>> {
+    return this.enqueueMutation(async () => {
+      if (!Object.hasOwn(this.settings.providers, id)) {
+        return err("E311_NOT_FOUND", `Provider 不存在: ${id}`);
+      }
+      const current = this.settings.providers[id];
+
+      return this.updateSettingsInQueue({
+        providers: { [id]: { ...current, ...updates } },
+      });
+    });
+  }
+
+  async removeProvider(id: string): Promise<Result<void>> {
+    return this.enqueueMutation(async () => {
+      if (!Object.hasOwn(this.settings.providers, id)) {
+        return err("E311_NOT_FOUND", `Provider 不存在: ${id}`);
+      }
+
+      const next = cloneSettings(this.settings);
+      delete next.providers[id];
+      if (next.defaultProviderId === id) {
+        next.defaultProviderId = "";
+      }
       for (const taskType of TASK_TYPES) {
-        if (taskModels[taskType] && !taskModels[taskType].providerId) {
-          taskModels[taskType] = {
-            ...taskModels[taskType],
-            providerId: id
-          };
+        if (next.taskModels[taskType].providerId === id) {
+          next.taskModels[taskType].providerId = "";
         }
       }
-      updates.taskModels = taskModels;
-    }
-    
-    return this.updateSettings(updates);
+      return this.persist(next);
+    });
   }
 
-  /**
-   * 更新 Provider
-   */
-  async updateProvider(id: string, updates: Partial<ProviderConfig>): Promise<Result<void>> {
-    const currentConfig = this.settings.providers[id];
-    if (!currentConfig) {
-      return err("E401_PROVIDER_NOT_CONFIGURED", `Provider 不存在: ${id}`);
+  /** Execute an update while the mutation queue is already held. */
+  private async updateSettingsInQueue(partial: SettingsUpdate): Promise<Result<void>> {
+    const merged = mergeSettings(this.settings, partial);
+    if (!merged.ok) {
+      return merged;
     }
-    
-    const providers = {
-      ...this.settings.providers,
-      [id]: { ...currentConfig, ...updates }
-    };
-    
-    return this.updateSettings({ providers });
+    if (settingsEqual(this.settings, merged.value)) {
+      return ok(undefined);
+    }
+    return this.persist(merged.value);
   }
 
-  /**
-   * 移除 Provider
-   */
-  async removeProvider(id: string): Promise<Result<void>> {
-    const providers = { ...this.settings.providers };
-    delete providers[id];
-    
-    const updates: Partial<PluginSettings> = { providers };
-    
-    // 如果删除的是默认 Provider，重新选择一个
-    if (this.settings.defaultProviderId === id) {
-      const remainingIds = Object.keys(providers);
-      updates.defaultProviderId = remainingIds.length > 0 ? remainingIds[0] : "";
-    }
-    
-    return this.updateSettings(updates);
+  private enqueueMutation(operation: () => Promise<Result<void>>): Promise<Result<void>> {
+    const run = this.mutationQueue.then(operation, operation);
+    this.mutationQueue = run.then(() => undefined, () => undefined);
+    return run;
   }
+
+  private async persist(settings: PluginSettings): Promise<Result<void>> {
+    try {
+      const snapshot = cloneSettings(settings);
+      await this.plugin.saveData(snapshot);
+      this.settings = snapshot;
+      this.notifyListeners();
+      return ok(undefined);
+    } catch (error) {
+      return err("E500_INTERNAL_ERROR", "保存设置失败", error);
+    }
+  }
+
+  private notifyListeners(): void {
+    for (const listener of this.listeners) {
+      try {
+        listener(cloneSettings(this.settings));
+      } catch (error) {
+        // Persistence already succeeded, so isolate the listener without hiding the fault.
+        const cause = error instanceof Error ? error : new Error(String(error));
+        if (this.logger) {
+          this.logListenerError(cause);
+        } else {
+          this.pendingListenerErrors.push(cause);
+        }
+      }
+    }
+  }
+
+  private logListenerError(error: Error): void {
+    try {
+      this.logger?.error("SettingsStore", "设置监听器执行失败", error);
+    } catch {
+      // Diagnostics must never change the result of the settings mutation.
+    }
+  }
+}
+
+function mergeTaskOverrides<T extends object>(current: T | undefined, updates: T): T {
+  const merged = { ...current, ...updates };
+  for (const [key, value] of Object.entries(updates)) {
+    if (value === undefined) Reflect.deleteProperty(merged, key);
+  }
+  return merged;
+}
+
+function mergeSettings(
+  current: PluginSettings,
+  partial: SettingsUpdate,
+): Result<PluginSettings> {
+  if (partial.directoryScheme !== undefined && !isRecord(partial.directoryScheme)) {
+    return err("E101_INVALID_INPUT", "directoryScheme 必须是对象");
+  }
+  if (partial.providers !== undefined && !isRecord(partial.providers)) {
+    return err("E101_INVALID_INPUT", "providers 必须是对象");
+  }
+  if (partial.taskModels !== undefined && !isRecord(partial.taskModels)) {
+    return err("E101_INVALID_INPUT", "taskModels 必须是对象");
+  }
+
+  const candidate = {
+    ...cloneSettings(current),
+    ...partial,
+    directoryScheme: {
+      ...current.directoryScheme,
+      ...(partial.directoryScheme ?? {}),
+    },
+    providers: {
+      ...current.providers,
+      ...(partial.providers ?? {}),
+    },
+    taskModels: {
+      ...current.taskModels,
+      ...(partial.taskModels ?? {}),
+    },
+  };
+  return normalizeSettings(candidate);
+}
+
+function normalizeScalarSettings(raw: Record<string, unknown>): Result<ScalarSettings> {
+  const numeric = {} as Pick<PluginSettings, NumericSettingKey>;
+  for (const rule of NUMERIC_SETTING_RULES) {
+    const rawValue = raw[rule.key] ?? ("defaultValue" in rule ? rule.defaultValue : undefined);
+    const result = rule.integer
+      ? validInteger(rawValue, rule.key, rule.min, rule.max)
+      : validNumber(rawValue, rule.key, rule.min, rule.max);
+    if (!result.ok) return result;
+    numeric[rule.key] = result.value;
+  }
+
+  const booleans = {} as Pick<PluginSettings, BooleanSettingKey>;
+  for (const rule of BOOLEAN_SETTING_RULES) {
+    const result = validBoolean(raw[rule.key] ?? rule.defaultValue, rule.key);
+    if (!result.ok) return result;
+    booleans[rule.key] = result.value;
+  }
+
+  const logLevel = raw.logLevel ?? DEFAULT_SETTINGS.logLevel;
+  if (typeof logLevel !== "string" || !LOG_LEVELS.has(logLevel as LogLevel)) {
+    return err("E101_INVALID_INPUT", "logLevel 必须是 silent、debug、info、warn 或 error");
+  }
+  return ok({
+    ...numeric,
+    ...booleans,
+    logLevel: logLevel as LogLevel,
+  });
+}
+
+function normalizeTaskProviderAssignments(
+  taskModels: Record<TaskType, TaskModelConfig>,
+  providers: Record<string, ProviderConfig>,
+  defaultProviderId: string,
+): Result<Record<TaskType, TaskModelConfig>> {
+  for (const taskType of TASK_TYPES) {
+    const providerId = taskModels[taskType].providerId;
+    if (providerId && !providers[providerId]) {
+      return err("E311_NOT_FOUND", `任务 ${taskType} 引用了不存在的 Provider: ${providerId}`);
+    }
+  }
+
+  const normalized = cloneTaskModels(taskModels);
+  sanitizeTaskModelsForProviders(normalized, providers, defaultProviderId);
+  return ok(normalized);
+}
+
+function normalizeSettings(raw: unknown): Result<PluginSettings> {
+  if (!isRecord(raw)) {
+    return err("E101_INVALID_INPUT", "设置必须是对象");
+  }
+
+  const roots: Record<string, string> = {};
+  for (const key of ["cardsSourceRoot", "cardsTargetRoot"] as const) {
+    const value = raw[key] ?? DEFAULT_SETTINGS[key];
+    if (typeof value !== "string" || !isSafeDirectory(value.trim()) || value.includes(":") || Array.from(value).some((char) => char.charCodeAt(0) <= 31)) return err("E101_INVALID_INPUT", `${key} 必须是 Vault 内的相对目录`);
+    roots[key] = value.trim();
+  }
+  const directoryResult = normalizeDirectoryScheme(raw.directoryScheme);
+  if (!directoryResult.ok) return directoryResult;
+  const providersResult = normalizeProviders(raw.providers);
+  if (!providersResult.ok) return providersResult;
+  const taskModelsResult = normalizeTaskModels(raw.taskModels);
+  if (!taskModelsResult.ok) return taskModelsResult;
+  const scalarResult = normalizeScalarSettings(raw);
+  if (!scalarResult.ok) return scalarResult;
+  if (typeof raw.defaultProviderId !== "string") {
+    return err("E101_INVALID_INPUT", "defaultProviderId 必须是字符串");
+  }
+  if (raw.defaultProviderId && !Object.hasOwn(providersResult.value, raw.defaultProviderId)) {
+    return err("E311_NOT_FOUND", `默认 Provider 不存在: ${raw.defaultProviderId}`);
+  }
+
+  // Preserve the user's explicit route even while that Provider is disabled.
+  // Runtime validation will fail visibly instead of silently spending through
+  // a different Provider; re-enabling restores the same route.
+  const defaultProviderId = raw.defaultProviderId;
+
+  const taskModelsResultWithProviders = normalizeTaskProviderAssignments(
+    taskModelsResult.value,
+    providersResult.value,
+    defaultProviderId,
+  );
+  if (!taskModelsResultWithProviders.ok) return taskModelsResultWithProviders;
+  const scalar = scalarResult.value;
+
+  return ok({
+    directoryScheme: directoryResult.value,
+    cardsSourceRoot: roots.cardsSourceRoot!,
+    cardsTargetRoot: roots.cardsTargetRoot!,
+    enableSemanticIndexing: scalar.enableSemanticIndexing,
+    enableDuplicateDetection: scalar.enableDuplicateDetection,
+    similarityThreshold: scalar.similarityThreshold,
+    concurrency: scalar.concurrency,
+    taskTimeoutMs: scalar.taskTimeoutMs,
+    logLevel: scalar.logLevel,
+    enableAutoVerify: scalar.enableAutoVerify,
+    providers: providersResult.value,
+    defaultProviderId,
+    taskModels: taskModelsResultWithProviders.value,
+    providerTimeoutMs: scalar.providerTimeoutMs,
+    providerMaxAttempts: scalar.providerMaxAttempts,
+    enableStreamingKeepalive: scalar.enableStreamingKeepalive,
+  });
+}
+
+function sanitizeTaskModelsForProviders(
+  taskModels: Record<TaskType, TaskModelConfig>,
+  providers: Record<string, ProviderConfig>,
+  defaultProviderId: string,
+): void {
+  for (const taskType of TASK_TYPES) {
+    const taskModel = taskModels[taskType];
+    const provider = providers[taskModel.providerId || defaultProviderId];
+    if (!provider) continue;
+  }
+}
+
+function normalizeDirectoryScheme(raw: unknown): Result<DirectoryScheme> {
+  if (!isRecord(raw)) {
+    return err("E101_INVALID_INPUT", "directoryScheme 必须是对象");
+  }
+  const result = {} as DirectoryScheme;
+  for (const type of CR_TYPES) {
+    if (typeof raw[type] !== "string") {
+      return err("E101_INVALID_INPUT", `directoryScheme.${type} 必须是字符串`);
+    }
+    const directory = raw[type].trim();
+    if (!isSafeDirectory(directory)) {
+      return err("E101_INVALID_INPUT", `directoryScheme.${type} 必须是 Vault 内的相对目录`);
+    }
+    result[type] = directory;
+  }
+  return ok(result);
+}
+
+function isSafeDirectory(value: string): boolean {
+  if (!value || value.includes("\\") || value.includes("\0") || value.startsWith("/") || /^[A-Za-z]:/.test(value)) {
+    return false;
+  }
+  return value.split("/").every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
+}
+
+function normalizeProviders(raw: unknown): Result<Record<string, ProviderConfig>> {
+  if (!isRecord(raw)) {
+    return err("E101_INVALID_INPUT", "providers 必须是对象");
+  }
+  const providers = Object.create(null) as Record<string, ProviderConfig>;
+  for (const [id, value] of Object.entries(raw)) {
+    if (!isValidProviderId(id)) {
+      return err("E101_INVALID_INPUT", "Provider ID 不能为空、包含首尾空格或控制字符，且不能使用保留名称");
+    }
+    const provider = normalizeProvider(value, id);
+    if (!provider.ok) return provider;
+    providers[id] = provider.value;
+  }
+  return ok(providers);
+}
+
+function validateProviderBooleans(raw: Record<string, unknown>, id: string): Result<void> {
+  for (const key of ["enabled"] as const) {
+    if (typeof raw[key] !== "boolean") {
+      return err("E101_INVALID_INPUT", `Provider ${id}.${key} 必须是布尔值`);
+    }
+  }
+  if (raw.enableWebSearch !== undefined && typeof raw.enableWebSearch !== "boolean") {
+    return err("E101_INVALID_INPUT", `Provider ${id}.enableWebSearch 必须是布尔值`);
+  }
+  return ok(undefined);
+}
+
+function normalizeProviderBaseUrl(value: unknown, id: string): Result<string | undefined> {
+  if (value === undefined || value === "") return ok(undefined);
+  if (typeof value !== "string") {
+    return err("E101_INVALID_INPUT", `Provider ${id}.baseUrl 必须是字符串`);
+  }
+  const baseUrl = value.trim();
+  if (!baseUrl) return ok(undefined);
+  try {
+    const parsed = new URL(baseUrl);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return err("E101_INVALID_INPUT", `Provider ${id}.baseUrl 必须使用 HTTP 或 HTTPS`);
+    }
+  } catch {
+    return err("E101_INVALID_INPUT", `Provider ${id}.baseUrl 不是有效 URL`);
+  }
+  return ok(baseUrl.replace(/\/+$/, ""));
+}
+
+function normalizeProvider(raw: unknown, id: string): Result<ProviderConfig> {
+  if (!isRecord(raw)) {
+    return err("E101_INVALID_INPUT", `Provider ${id} 必须是对象`);
+  }
+  if (typeof raw.apiKey !== "string" ||
+    typeof raw.defaultChatModel !== "string" ||
+    typeof raw.defaultEmbedModel !== "string") {
+    return err("E101_INVALID_INPUT", `Provider ${id} 的密钥和模型必须是字符串`);
+  }
+  if (!API_FORMATS.has(raw.apiFormat as ProviderApiFormat)) {
+    return err("E101_INVALID_INPUT", `Provider ${id} 的聊天协议无效`);
+  }
+  if (!EMBEDDING_FORMATS.has(raw.embeddingApiFormat as EmbeddingApiFormat)) {
+    return err("E101_INVALID_INPUT", `Provider ${id} 的嵌入协议无效`);
+  }
+  if (raw.apiFormat === "disabled" && raw.embeddingApiFormat === "disabled") {
+    return err("E101_INVALID_INPUT", `Provider ${id} 必须至少启用聊天或嵌入能力`);
+  }
+  const booleans = validateProviderBooleans(raw, id);
+  if (!booleans.ok) return booleans;
+  const baseUrl = normalizeProviderBaseUrl(raw.baseUrl, id);
+  if (!baseUrl.ok) return baseUrl;
+  const apiFormat = raw.apiFormat as ProviderApiFormat;
+  const embeddingApiFormat = raw.embeddingApiFormat as EmbeddingApiFormat;
+  const capabilitiesResult = normalizeCapabilities(raw.capabilities, `providers.${id}.capabilities`);
+  if (!capabilitiesResult.ok) return capabilitiesResult;
+  const capabilities = capabilitiesResult.value;
+  // Only imported legacy settings may contribute this value. New settings use
+  // capabilities and default all optional abilities to disabled.
+  if (raw.capabilities === undefined && raw.enableWebSearch === true) capabilities.nativeWebSearch = true;
+  const parametersResult = normalizeProviderParameters(raw.parameters, `providers.${id}.parameters`);
+  if (!parametersResult.ok) return parametersResult;
+  const normalized: ProviderConfig = {
+    apiKey: raw.apiKey.trim(),
+    apiFormat,
+    embeddingApiFormat,
+    defaultChatModel: apiFormat === "disabled" ? "" : raw.defaultChatModel.trim(),
+    defaultEmbedModel: embeddingApiFormat === "disabled" ? "" : raw.defaultEmbedModel.trim(),
+    enabled: raw.enabled as boolean,
+    capabilities,
+    ...(parametersResult.value ? { parameters: parametersResult.value } : {}),
+  };
+  if (baseUrl.value) normalized.baseUrl = baseUrl.value;
+  return ok(normalized);
+}
+
+function normalizeTaskModels(raw: unknown): Result<Record<TaskType, TaskModelConfig>> {
+  if (!isRecord(raw)) {
+    return err("E101_INVALID_INPUT", "taskModels 必须是对象");
+  }
+  const result = {} as Record<TaskType, TaskModelConfig>;
+  for (const taskType of TASK_TYPES) {
+    // Merge was introduced after the initial task-model format. Missing it is
+    // a safe migration: the action remains unavailable until configured.
+    const normalized = normalizeTaskModel(raw[taskType] ?? ((taskType === "merge" || taskType === "cards") ? DEFAULT_TASK_MODEL_CONFIGS[taskType] : undefined), taskType);
+    if (!normalized.ok) return normalized;
+    result[taskType] = normalized.value;
+  }
+  return ok(result);
+}
+
+function normalizeTaskModel(raw: unknown, taskType: TaskType): Result<TaskModelConfig> {
+  if (!isRecord(raw) || typeof raw.providerId !== "string" || typeof raw.model !== "string") {
+    return err("E101_INVALID_INPUT", `taskModels.${taskType} 必须包含字符串 providerId 和 model`);
+  }
+
+  const config: TaskModelConfig = {
+    providerId: raw.providerId,
+    model: raw.model.trim(),
+  };
+  const capabilitiesResult = normalizeCapabilities(raw.capabilities, `taskModels.${taskType}.capabilities`, true);
+  if (!capabilitiesResult.ok) return capabilitiesResult;
+  if (Object.keys(capabilitiesResult.value).length > 0) config.capabilities = capabilitiesResult.value;
+  const overridesResult = normalizeParameterOverrides(raw.parameters, `taskModels.${taskType}.parameters`);
+  if (!overridesResult.ok) return overridesResult;
+  if (overridesResult.value) config.parameters = overridesResult.value;
+  if (raw.temperature !== undefined) {
+    const value = validNumber(raw.temperature, `taskModels.${taskType}.temperature`, 0, 2);
+    if (!value.ok) return value;
+    config.temperature = value.value;
+  }
+  if (raw.topP !== undefined) {
+    const value = validNumber(raw.topP, `taskModels.${taskType}.topP`, 0, 1);
+    if (!value.ok) return value;
+    config.topP = value.value;
+  }
+  if (raw.reasoning_effort !== undefined) {
+    if (typeof raw.reasoning_effort !== "string" || !raw.reasoning_effort.trim()) {
+      return err("E101_INVALID_INPUT", `taskModels.${taskType}.reasoning_effort 无效`);
+    }
+    config.reasoning_effort = raw.reasoning_effort as ReasoningEffort;
+  }
+  if (raw.maxTokens !== undefined) {
+    const value = validInteger(raw.maxTokens, `taskModels.${taskType}.maxTokens`, 1);
+    if (!value.ok) return value;
+    config.maxTokens = value.value;
+  }
+  if (taskType === "index" && raw.embeddingDimension !== undefined) {
+    const value = validInteger(raw.embeddingDimension, `taskModels.${taskType}.embeddingDimension`, 1);
+    if (!value.ok) return value;
+    config.embeddingDimension = value.value;
+  }
+  return ok(config);
+}
+
+function normalizeCapabilities(raw: unknown, field: string, partial = false): Result<Partial<ModelCapabilities>> {
+  if (raw === undefined) return ok({});
+  if (!isRecord(raw)) return err("E101_INVALID_INPUT", `${field} 必须是对象`);
+  const result: Partial<ModelCapabilities> = {};
+  for (const key of ["temperature", "topP", "reasoning", "nativeWebSearch", "promptCaching", "responseContinuation"] as const) {
+    if (raw[key] !== undefined) {
+      if (typeof raw[key] !== "boolean") return err("E101_INVALID_INPUT", `${field}.${key} 必须是布尔值`);
+      result[key] = raw[key] as boolean;
+    }
+  }
+  if (raw.structuredOutput !== undefined) {
+    if (!new Set(["prompt", "json_object", "json_schema"]).has(raw.structuredOutput as string)) return err("E101_INVALID_INPUT", `${field}.structuredOutput 无效`);
+    result.structuredOutput = raw.structuredOutput as ModelCapabilities["structuredOutput"];
+  }
+  if (raw.promptCacheMode !== undefined) {
+    if (raw.promptCacheMode !== "implicit" && raw.promptCacheMode !== "explicit") {
+      return err("E101_INVALID_INPUT", `${field}.promptCacheMode 无效`);
+    }
+    result.promptCacheMode = raw.promptCacheMode;
+  }
+  if (raw.promptCacheTtl !== undefined) {
+    if (raw.promptCacheTtl !== "30m") return err("E101_INVALID_INPUT", `${field}.promptCacheTtl 无效`);
+    result.promptCacheTtl = raw.promptCacheTtl;
+  }
+  return ok(partial ? result : { ...DEFAULT_MODEL_CAPABILITIES, ...result });
+}
+
+function normalizeProviderParameters(raw: unknown, field: string): Result<ProviderConfig["parameters"]> {
+  if (raw === undefined) return ok(undefined);
+  if (!isRecord(raw)) return err("E101_INVALID_INPUT", `${field} 必须是对象`);
+  const result: NonNullable<ProviderConfig["parameters"]> = {};
+  for (const key of ["temperature", "topP", "maxTokens", "embeddingDimension", "thinkingBudget"] as const) {
+    if (raw[key] === undefined) continue;
+    if (key === "temperature" && !validNumber(raw[key], `${field}.${key}`, 0, 2).ok) return err("E101_INVALID_INPUT", `${field}.${key} 无效`);
+    if (key === "topP" && !validNumber(raw[key], `${field}.${key}`, 0, 1).ok) return err("E101_INVALID_INPUT", `${field}.${key} 无效`);
+    if (["maxTokens", "embeddingDimension", "thinkingBudget"].includes(key) && !validInteger(raw[key], `${field}.${key}`, 1).ok) return err("E101_INVALID_INPUT", `${field}.${key} 无效`);
+    if (key === "temperature" || key === "topP") (result as Record<string, unknown>)[key] = raw[key];
+    else (result as Record<string, unknown>)[key] = raw[key];
+  }
+  if (raw.reasoning_effort !== undefined) {
+    if (typeof raw.reasoning_effort !== "string" || !raw.reasoning_effort.trim()) return err("E101_INVALID_INPUT", `${field}.reasoning_effort 无效`);
+    result.reasoning_effort = raw.reasoning_effort.trim();
+  }
+  if (raw.thinkingLevel !== undefined) {
+    if (typeof raw.thinkingLevel !== "string" || !raw.thinkingLevel.trim()) return err("E101_INVALID_INPUT", `${field}.thinkingLevel 无效`);
+    result.thinkingLevel = raw.thinkingLevel.trim();
+  }
+  return ok(result);
+}
+
+function normalizeParameterOverrides(raw: unknown, field: string): Result<ModelParameterOverrides | undefined> {
+  if (raw === undefined) return ok(undefined);
+  if (!isRecord(raw)) return err("E101_INVALID_INPUT", `${field} 必须是对象`);
+  const result: ModelParameterOverrides = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (!["temperature", "topP", "reasoning_effort", "thinkingLevel", "thinkingBudget", "maxTokens", "embeddingDimension"].includes(key)) return err("E101_INVALID_INPUT", `${field}.${key} 不支持`);
+    if (value === null) { (result as Record<string, unknown>)[key] = null; continue; }
+    if (key === "temperature" && !validNumber(value, `${field}.${key}`, 0, 2).ok) return err("E101_INVALID_INPUT", `${field}.${key} 无效`);
+    if (key === "topP" && !validNumber(value, `${field}.${key}`, 0, 1).ok) return err("E101_INVALID_INPUT", `${field}.${key} 无效`);
+    if (["maxTokens", "embeddingDimension", "thinkingBudget"].includes(key) && !validInteger(value, `${field}.${key}`, 1).ok) return err("E101_INVALID_INPUT", `${field}.${key} 无效`);
+    if (["reasoning_effort", "thinkingLevel"].includes(key) && (typeof value !== "string" || !value.trim())) return err("E101_INVALID_INPUT", `${field}.${key} 无效`);
+    (result as Record<string, unknown>)[key] = typeof value === "string" ? value.trim() : value;
+  }
+  return ok(result);
+}
+
+function validBoolean(value: unknown, field: string): Result<boolean> {
+  return typeof value === "boolean"
+    ? ok(value)
+    : err("E101_INVALID_INPUT", `${field} 必须是布尔值`);
+}
+
+function validNumber(value: unknown, field: string, min: number, max = Number.POSITIVE_INFINITY): Result<number> {
+  return typeof value === "number" && Number.isFinite(value) && value >= min && value <= max
+    ? ok(value)
+    : err("E101_INVALID_INPUT", `${field} 必须是 ${min} 到 ${max} 之间的数字`);
+}
+
+function validInteger(value: unknown, field: string, min: number, max = Number.POSITIVE_INFINITY): Result<number> {
+  return Number.isSafeInteger(value) && Number(value) >= min && Number(value) <= max
+    ? ok(Number(value))
+    : err("E101_INVALID_INPUT", `${field} 必须是 ${min} 到 ${max} 之间的整数`);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function cloneTaskModels(models: Record<TaskType, TaskModelConfig>): Record<TaskType, TaskModelConfig> {
+  const result = {} as Record<TaskType, TaskModelConfig>;
+  for (const taskType of TASK_TYPES) {
+    result[taskType] = JSON.parse(JSON.stringify(models[taskType]));
+  }
+  return result;
+}
+
+function cloneSettings(settings: PluginSettings): PluginSettings {
+  return {
+    ...settings,
+    directoryScheme: { ...settings.directoryScheme },
+    providers: Object.fromEntries(
+      Object.entries(settings.providers).map(([id, provider]) => [id, JSON.parse(JSON.stringify(provider))]),
+    ),
+    taskModels: cloneTaskModels(settings.taskModels),
+  };
+}
+
+function settingsEqual(a: PluginSettings, b: PluginSettings): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
 }

@@ -9,15 +9,17 @@ import type {
   ILogger,
   TaskType,
   Result,
+  CRType,
 } from "../types";
 import type { FileStorage } from "../data/file-storage";
+import { getOperationPromptTemplateKey, getOperationPromptTemplateKeys, getWritePromptTemplateKey } from "./prompt-catalog";
+import { getWriteStageDefinition } from "./stage-catalog";
+import { BASE_COMPONENT_MAP, injectPromptBaseComponents, renderPromptTemplate } from "./prompt-template";
+export { splitPromptIntoMessages } from "./prompt-message-builder";
 
 /** 提示词模板结构 */
 interface PromptTemplate {
-  id: string;
   content: string;
-  requiredSlots: string[];
-  optionalSlots: string[];
 }
 
 /** 必需的提示词区块 */
@@ -27,61 +29,64 @@ const REQUIRED_BLOCKS = [
   "<output_schema>"
 ] as const;
 
-/** 任务指令区块（至少需要其中之一） */
-const TASK_BLOCKS = [
-  "<task_instruction>",
-  "<task>"
-] as const;
+const TASK_BLOCK_TAG = "task_instruction";
 
-/** 任务-槽位映射表：定义每种任务类型允许使用的槽位
- * 
- * 遵循设计文档 7.4 槽位契约：
- * - 通用槽位：CTX_LANGUAGE（可选；默认 Chinese）
- * - 操作模块槽位：用于 create
- * - 任务型模板槽位：用于现有 TaskType
+/** 将模板中的系统指令与用户输入拆成统一的聊天消息。 */
+/**
+ * 将运行时上下文插入最终任务之前，使长上下文之后仍有明确的任务锚点。
  */
-const TASK_SLOT_MAPPING: Record<TaskType, { required: string[]; optional: string[] }> = {
-  "index": {
-    required: ["CTX_INPUT"],
-    optional: ["CTX_LANGUAGE"]
-  },
-  "define": {
-    required: ["CTX_INPUT"],
-    optional: ["CTX_LANGUAGE"]
-  },
-  "tag": {
-    required: ["CTX_META"],
-    optional: ["CTX_LANGUAGE"]
-  },
-  "write": {
-    required: ["CTX_META"],
-    optional: ["CTX_SOURCES", "CTX_LANGUAGE"]
-  },
-  "verify": {
-    required: ["CTX_META", "CTX_CURRENT"],
-    optional: ["CTX_SOURCES", "CTX_LANGUAGE"]
-  },
+export function insertContextBeforeTask(prompt: string, context: string): string {
+  const normalizedContext = context.trim();
+  if (!normalizedContext) return prompt;
+
+  const taskPosition = prompt.indexOf(`<${TASK_BLOCK_TAG}>`);
+  if (taskPosition < 0) {
+    throw new CognitiveRazorError(
+      "E101_INVALID_INPUT",
+      "提示词缺少 <task_instruction> 区块",
+    );
+  }
+  return `${prompt.slice(0, taskPosition).trimEnd()}\n\n${normalizedContext}\n\n${prompt.slice(taskPosition).trimStart()}`;
+}
+
+/** 操作模板的槽位契约；Write 使用下方独立的阶段契约。 */
+const TASK_REQUIRED_SLOTS: Record<TaskType, string[]> = {
+  index: [],
+  define: ["CTX_INPUT"],
+  tag: ["CTX_META"],
+  write: ["CTX_META"],
+  verify: ["CTX_META", "CTX_CURRENT"],
+  merge: ["CTX_CURRENT"],
+  cards: ["CTX_CURRENT"],
 };
 
+const PHASE_REQUIRED_SLOTS = ["CTX_META", "CONCEPT_TYPE"];
+const PHASE_OPTIONAL_SLOTS = ["CTX_PREVIOUS"];
 
+function hasRequiredBlock(content: string, block: typeof REQUIRED_BLOCKS[number]): boolean {
+  return block === "<output_schema>"
+    ? content.includes("<output_schema>") || content.includes("<output_format>")
+    : content.includes(block);
+}
 
-
-
+function getBlockPositions(content: string): {
+  system: number;
+  context: number;
+  task: number;
+} | null {
+  const system = content.indexOf("<system_instructions>");
+  const systemEnd = content.indexOf("</system_instructions>", system);
+  const context = content.indexOf("<context_slots>", systemEnd);
+  const task = content.indexOf(`<${TASK_BLOCK_TAG}>`, context);
+  const output = Math.max(content.indexOf("<output_schema>"), content.indexOf("<output_format>"));
+  return [system, systemEnd, context, task, output].some((position) => position < 0)
+    ? null
+    : { system, context, task };
+}
 
 /** 验证模板区块结构 */
 function validateBlockOrder(content: string): { valid: boolean; error?: string; missingBlocks?: string[] } {
-  // 检查所有必需区块是否存在
-  const missingBlocks: string[] = [];
-  for (const block of REQUIRED_BLOCKS) {
-    // <output_schema> 和 <output_format> 互为替代（verify 模板直接输出 Markdown 报告）
-    if (block === "<output_schema>") {
-      if (!content.includes("<output_schema>") && !content.includes("<output_format>")) {
-        missingBlocks.push(block);
-      }
-    } else if (!content.includes(block)) {
-      missingBlocks.push(block);
-    }
-  }
+  const missingBlocks = REQUIRED_BLOCKS.filter((block) => !hasRequiredBlock(content, block));
 
   if (missingBlocks.length > 0) {
     return {
@@ -91,23 +96,16 @@ function validateBlockOrder(content: string): { valid: boolean; error?: string; 
     };
   }
 
-  // 检查任务区块（至少需要一个）
-  const hasTaskBlock = TASK_BLOCKS.some(block => content.includes(block));
-  if (!hasTaskBlock) {
+  if (!content.includes(`<${TASK_BLOCK_TAG}>`)) {
     return {
       valid: false,
-      error: `模板缺少任务区块，需要 ${TASK_BLOCKS.join(" 或 ")} 中的至少一个`,
-      missingBlocks: [...TASK_BLOCKS]
+      error: "模板缺少 <task_instruction> 区块",
+      missingBlocks: ["<task_instruction>"]
     };
   }
 
-  // 验证基本顺序：system_instructions 应该在最前面
-  const systemPos = content.indexOf("<system_instructions>");
-  const contextPos = content.indexOf("<context_slots>");
-  // 兼容两种输出区块
-  const schemaPos = Math.max(content.indexOf("<output_schema>"), content.indexOf("<output_format>"));
-
-  if (systemPos === -1 || contextPos === -1 || schemaPos === -1) {
+  const positions = getBlockPositions(content);
+  if (!positions) {
     return {
       valid: false,
       error: "无法找到必需区块的位置"
@@ -115,10 +113,26 @@ function validateBlockOrder(content: string): { valid: boolean; error?: string; 
   }
 
   // system_instructions 应该在 context_slots 之前
-  if (systemPos > contextPos) {
+  if (positions.system > positions.context) {
     return {
       valid: false,
       error: "<system_instructions> 应该在 <context_slots> 之前"
+    };
+  }
+
+  if (positions.context > positions.task) {
+    return {
+      valid: false,
+      error: "<context_slots> 应该在最终任务区块之前"
+    };
+  }
+
+  const taskEndTag = `</${TASK_BLOCK_TAG}>`;
+  const taskEnd = content.indexOf(taskEndTag, positions.task);
+  if (taskEnd === -1 || content.slice(taskEnd + taskEndTag.length).trim().length > 0) {
+    return {
+      valid: false,
+      error: "任务区块必须完整且是模板最后一个顶层区块"
     };
   }
 
@@ -126,51 +140,18 @@ function validateBlockOrder(content: string): { valid: boolean; error?: string; 
 }
 
 
-/** 检测未替换的变量 */
-function findUnreplacedVariables(content: string): string[] {
-  const regex = /\{\{([^}]+)\}\}/g;
-  const unreplaced: string[] = [];
-  let match;
-
-  while ((match = regex.exec(content)) !== null) {
-    unreplaced.push(match[0]);
-  }
-
-  return unreplaced;
-}
-
-/** 提取模板中引用的槽位名（去重） */
-function extractPlaceholderNames(content: string): string[] {
-  const regex = /\{\{([^}]+)\}\}/g;
-  const slots = new Set<string>();
-  let match: RegExpExecArray | null;
-
-  while ((match = regex.exec(content)) !== null) {
-    const name = match[1].trim();
-    if (!name) continue;
-    slots.add(name);
-  }
-
-  return Array.from(slots);
-}
-
 /** 验证槽位是否符合任务-槽位映射表 */
 function validateSlots(
-  taskType: TaskType,
+  requiredSlots: string[],
+  optionalSlots: string[],
   providedSlots: string[]
 ): { valid: boolean; missingRequired?: string[]; extraSlots?: string[] } {
-  const mapping = TASK_SLOT_MAPPING[taskType];
-  if (!mapping) {
-    return { valid: false, extraSlots: providedSlots };
-  }
-
-  // 允许的槽位包括：必需槽位 + 可选槽位
-  const allowedSlots = new Set([...mapping.required, ...mapping.optional]);
+  const allowedSlots = new Set([...requiredSlots, ...optionalSlots]);
   const missingRequired: string[] = [];
   const extraSlots: string[] = [];
 
   // 检查必需槽位
-  for (const required of mapping.required) {
+  for (const required of requiredSlots) {
     if (!providedSlots.includes(required)) {
       missingRequired.push(required);
     }
@@ -191,19 +172,13 @@ function validateSlots(
   };
 }
 
-/** 替换模板中的变量 */
-function replaceVariable(template: string, varName: string, value: string): string {
-  const placeholder = "{{" + varName + "}}";
-  // 使用 split + join 替代正则表达式，避免特殊字符问题
-  return template.split(placeholder).join(value);
-}
-
-
 export class PromptManager {
   private fileStorage: FileStorage;
   private logger: ILogger;
   private promptsDir: string;
   private templateCache: Map<string, PromptTemplate>;
+  private phaseTemplateCache: Map<string, string>;
+  private phaseTemplateLoads: Map<string, Promise<Result<string>>>;
   private baseComponentsCache: Map<string, string>;
 
   constructor(
@@ -215,6 +190,8 @@ export class PromptManager {
     this.logger = logger;
     this.promptsDir = promptsDir;
     this.templateCache = new Map();
+    this.phaseTemplateCache = new Map();
+    this.phaseTemplateLoads = new Map();
     this.baseComponentsCache = new Map();
 
     this.logger.debug("PromptManager", "PromptManager 初始化完成", {
@@ -223,17 +200,17 @@ export class PromptManager {
   }
 
   /** 构建 prompt */
-  build(taskType: TaskType, slots: Record<string, string>, conceptType?: string): string {
+  build(taskType: TaskType, slots: Record<string, string>): string {
     try {
-      // 获取模板 ID（对于 write 任务，根据知识类型选择模板）
-      const templateId = this.resolveTemplateId(taskType, conceptType);
+      // 获取任务模板 ID；Write 阶段由 buildPhasedWrite 单独加载阶段模板。
+      const templateId = this.resolveTemplateId(taskType);
 
       // 加载模板
       const template = this.loadTemplate(templateId);
 
-      // A-PDD-04: 验证槽位是否符合任务-槽位映射表
+      // 验证槽位是否符合当前操作模板契约。
       const providedSlotKeys = Object.keys(slots);
-      const slotValidation = validateSlots(taskType, providedSlotKeys);
+      const slotValidation = validateSlots(TASK_REQUIRED_SLOTS[taskType], [], providedSlotKeys);
 
       if (!slotValidation.valid) {
         if (slotValidation.missingRequired && slotValidation.missingRequired.length > 0) {
@@ -258,9 +235,7 @@ export class PromptManager {
         }
       }
 
-      // 委托共享渲染管线（M-01 DRY）
-      const optionalKeys = TASK_SLOT_MAPPING[taskType]?.optional ?? [];
-      const prompt = this.renderTemplate(template.content, slots, optionalKeys, `build:${taskType}`);
+          const prompt = this.renderTemplate(template.content, slots, [], `build:${taskType}`);
 
       this.logger.debug("PromptManager", "Prompt 构建成功", {
         taskType,
@@ -278,60 +253,9 @@ export class PromptManager {
     }
   }
 
-  /** 验证模板 */
-  validateTemplate(templateId: string): boolean {
-    try {
-      const template = this.loadTemplate(templateId);
-
-      // A-PDD-01: 验证区块顺序
-      const blockValidation = validateBlockOrder(template.content);
-      if (!blockValidation.valid) {
-        this.logger.error("PromptManager", "模板区块验证失败", undefined, {
-          templateId,
-          error: blockValidation.error,
-          missingBlocks: blockValidation.missingBlocks
-        });
-        throw new CognitiveRazorError("E405_TEMPLATE_INVALID", blockValidation.error || "模板区块验证失败", {
-          templateId,
-          missingBlocks: blockValidation.missingBlocks
-        });
-      }
-
-      this.logger.debug("PromptManager", "模板验证通过", {
-        templateId
-      });
-
-      return true;
-    } catch (error) {
-      if (error instanceof CognitiveRazorError) {
-        throw error;
-      }
-      this.logger.error("PromptManager", "验证模板失败", error as Error, { templateId });
-      throw new CognitiveRazorError("E500_INTERNAL_ERROR", "验证模板失败", error);
-    }
-  }
-
-  /** 获取必需槽位 */
-  getRequiredSlots(taskType: TaskType): string[] {
-    const mapping = TASK_SLOT_MAPPING[taskType];
-    return mapping ? mapping.required : [];
-  }
-
-  /** 获取可选槽位 */
-  getOptionalSlots(taskType: TaskType): string[] {
-    const mapping = TASK_SLOT_MAPPING[taskType];
-    return mapping ? mapping.optional : [];
-  }
-
   /** 获取模板 ID */
-  resolveTemplateId(taskType: TaskType, conceptType?: string): string {
-    const mapping: Partial<Record<TaskType, string>> = {
-      "define": "base/operations/define",
-      "tag": "base/operations/tag",
-      "index": "index",
-      "verify": "base/operations/verify",
-    };
-    return mapping[taskType] || taskType;
+  resolveTemplateId(taskType: TaskType): string {
+    return getOperationPromptTemplateKey(taskType) ?? taskType;
   }
 
   /** 判断模板是否已缓存（用于入队前硬校验） */
@@ -390,22 +314,15 @@ export class PromptManager {
 
   /** 替换模板中的基础组件引用 */
   private async injectBaseComponents(content: string): Promise<Result<string>> {
-    let processedContent = content;
-    const componentMapping: Record<string, string> = {
-      "{{BASE_WRITING_STYLE}}": "writing-style",
-      "{{BASE_ANTI_PATTERNS}}": "anti-patterns",
-      "{{BASE_OUTPUT_FORMAT}}": "output-format"
-    };
-
-    for (const [placeholder, componentName] of Object.entries(componentMapping)) {
-      if (processedContent.includes(placeholder)) {
+    const components: Record<string, string> = {};
+    for (const [placeholder, componentName] of Object.entries(BASE_COMPONENT_MAP)) {
+      if (content.includes(placeholder)) {
         const componentResult = await this.preloadBaseComponent(componentName);
-
         if (componentResult.ok) {
-          processedContent = processedContent.split(placeholder).join(componentResult.value);
+          components[componentName] = componentResult.value;
           this.logger.debug("PromptManager", `已注入基础组件: ${componentName}`);
         } else {
-          // 基础组件加载失败时返回错误，不保留未解析占位符（需求 32.4）
+          // 基础组件加载失败时返回错误，不保留未解析占位符。
           this.logger.error("PromptManager", `基础组件缺失: ${componentName}`, undefined, {
             placeholder,
             error: componentResult.error
@@ -414,12 +331,15 @@ export class PromptManager {
         }
       }
     }
-
-    return ok(processedContent);
+    const injected = injectPromptBaseComponents(content, components);
+    if (injected.missingComponents.length > 0) {
+      return err("E404_TEMPLATE_NOT_FOUND", `基础组件文件缺失: ${injected.missingComponents.join(", ")}，模板无法完整构建`);
+    }
+    return ok(injected.content);
   }
 
   /** 预加载模板（应在初始化时调用） */
-  async preloadTemplate(templateId: string): Promise<Result<void>> {
+  private async preloadTemplate(templateId: string): Promise<Result<void>> {
     try {
       const templatePath = `${this.promptsDir}/${templateId}.md`;
       const readResult = await this.fileStorage.read(templatePath);
@@ -452,23 +372,13 @@ export class PromptManager {
         return err("E405_TEMPLATE_INVALID", blockValidation.error || "模板结构验证失败");
       }
 
-      // 提取槽位
-      const slots = this.extractSlots(content);
-
-      // 创建模板对象
-      const template: PromptTemplate = {
-        id: templateId,
-        content,
-        requiredSlots: slots.required,
-        optionalSlots: slots.optional
-      };
+      const template: PromptTemplate = { content };
 
       // 缓存模板
       this.templateCache.set(templateId, template);
 
       this.logger.info("PromptManager", `模板已加载: ${templateId}`, {
-        requiredSlots: slots.required.length,
-        optionalSlots: slots.optional.length
+        templateLength: content.length,
       });
 
       return ok(undefined);
@@ -482,16 +392,14 @@ export class PromptManager {
 
   /** 预加载所有模板 */
   async preloadAllTemplates(): Promise<Result<void>> {
-    const templateIds = [
-      "base/operations/define",
-      "base/operations/tag",
-      "base/operations/verify",
-    ];
+    const templateIds = getOperationPromptTemplateKeys();
 
     const errors: string[] = [];
 
-    for (const templateId of templateIds) {
-      const result = await this.preloadTemplate(templateId);
+    const results = await Promise.all(templateIds.map((templateId) => this.preloadTemplate(templateId)));
+    for (let index = 0; index < templateIds.length; index++) {
+      const templateId = templateIds[index];
+      const result = results[index];
       if (!result.ok) {
         this.logger.error("PromptManager", `加载模板失败: ${templateId}`, undefined, {
           error: result.error,
@@ -516,36 +424,15 @@ export class PromptManager {
     return ok(undefined);
   }
 
-  /** 提取槽位 */
-  private extractSlots(content: string): { required: string[]; optional: string[] } {
-    const allSlots = new Set<string>();
-    const regex = /\{\{([^}]+)\}\}/g;
-    let match;
-
-    while ((match = regex.exec(content)) !== null) {
-      const slotName = match[1].trim();
-      // 排除特殊变量（如 previous_errors, raw_user_input 等模板内部变量）
-      if (slotName.startsWith("CTX_") || slotName === "SHARED_CONSTRAINTS") {
-        allSlots.add(slotName);
-      }
-    }
-
-    // 简化实现：所有 CTX_ 开头的槽位都视为必需
-    return {
-      required: Array.from(allSlots).filter(s => s.startsWith("CTX_")),
-      optional: []
-    };
-  }
-
-
-
   /** 预加载所有基础组件 */
   async preloadAllBaseComponents(): Promise<Result<void>> {
-    const componentNames = ["writing-style", "anti-patterns", "output-format"];
+    const componentNames = ["knowledge-policy", "writing-style", "anti-patterns", "output-format"];
     const errors: string[] = [];
 
-    for (const componentName of componentNames) {
-      const result = await this.preloadBaseComponent(componentName);
+    const results = await Promise.all(componentNames.map((componentName) => this.preloadBaseComponent(componentName)));
+    for (let index = 0; index < componentNames.length; index++) {
+      const componentName = componentNames[index];
+      const result = results[index];
       if (!result.ok) {
         errors.push(`${componentName}: ${result.error.message}`);
       }
@@ -556,7 +443,8 @@ export class PromptManager {
         failedCount: errors.length,
         errors
       });
-      // 不返回错误，因为基础组件是可选的
+      // 基础组件由已加载模板直接依赖，缺失时让运行时在初始化阶段明确失败。
+      return err("E405_TEMPLATE_INVALID", `${errors.length} 个基础组件加载失败: ${errors.join("; ")}`);
     }
 
     this.logger.info("PromptManager", "基础组件预加载完成", {
@@ -570,17 +458,34 @@ export class PromptManager {
   /**
    * 构建分阶段 Write prompt
    * 
-   * 使用阶段专属 prompt 模板（从 phases/{Type}/{phaseId}.md 加载）
+   * 使用 StageCatalog 声明的阶段 prompt 模板。
    * 
-   * @param slots 槽位值（CTX_META, CTX_PREVIOUS, CTX_SOURCES, CTX_LANGUAGE, CONCEPT_TYPE, PHASE_SCHEMA）
+    * @param slots 槽位值（CTX_META, CTX_PREVIOUS, CONCEPT_TYPE）
    * @param templateContent 阶段专属模板内容
    * @returns 构建的 prompt
    */
   buildPhasedWrite(slots: Record<string, string>, templateContent: string): string {
     try {
-      // 委托共享渲染管线（M-01 DRY）
-      const optionalSlots = ["CTX_PREVIOUS", "CTX_SOURCES"];
-      const prompt = this.renderTemplate(templateContent, slots, optionalSlots, "buildPhasedWrite");
+      const slotValidation = validateSlots(PHASE_REQUIRED_SLOTS, PHASE_OPTIONAL_SLOTS, Object.keys(slots));
+      if (!slotValidation.valid) {
+        const missing = slotValidation.missingRequired ?? [];
+        const extra = slotValidation.extraSlots ?? [];
+        const detail = missing.length > 0
+          ? `缺少必需槽位: ${missing.join(", ")}`
+          : `存在不允许的槽位: ${extra.join(", ")}`;
+        throw new CognitiveRazorError("E102_MISSING_FIELD", detail, {
+          context: "buildPhasedWrite",
+          missingRequired: missing,
+          extraSlots: extra,
+        });
+      }
+
+      const prompt = this.renderTemplate(
+        templateContent,
+        slots,
+        PHASE_OPTIONAL_SLOTS,
+        "buildPhasedWrite",
+      );
 
       this.logger.debug("PromptManager", "分阶段 Write Prompt 构建成功", {
         promptLength: prompt.length,
@@ -596,15 +501,10 @@ export class PromptManager {
     }
   }
 
-  /** 清除模板缓存（用于测试） */
-  clearCache(): void {
-    this.templateCache.clear();
-    this.baseComponentsCache.clear();
-  }
   /**
    * 共享模板渲染管线：变量替换 → 可选槽位清理 → 未替换变量校验
    *
-   * 提取自 build / buildOperation / buildPhasedWrite 的公共逻辑（M-01 DRY）。
+   * 统一渲染已解析模板并校验必需槽位。
    */
   private renderTemplate(
     templateContent: string,
@@ -612,22 +512,8 @@ export class PromptManager {
     optionalSlots: string[],
     context: string
   ): string {
-    let prompt = templateContent;
-
-    // 替换所有传入的槽位
-    for (const [key, value] of Object.entries(slots)) {
-      prompt = replaceVariable(prompt, key, value);
-    }
-
-    // 可选槽位未提供时按空字符串处理
-    for (const optionalKey of optionalSlots) {
-      if (!(optionalKey in slots)) {
-        prompt = replaceVariable(prompt, optionalKey, "");
-      }
-    }
-
-    // 验证是否还有未替换的变量
-    const unreplacedVars = findUnreplacedVariables(prompt);
+    const rendered = renderPromptTemplate(templateContent, slots, optionalSlots);
+    const unreplacedVars = rendered.unreplacedVariables;
     if (unreplacedVars.length > 0) {
       this.logger.error("PromptManager", "存在未替换的变量", undefined, {
         context,
@@ -639,19 +525,42 @@ export class PromptManager {
       });
     }
 
-    return prompt;
+    return rendered.prompt;
+  }
+  /** 加载 StageCatalog 声明的分阶段 Write prompt 模板。 */
+  async loadPhaseTemplate(conceptType: CRType, stageId: string): Promise<Result<string>> {
+    const stage = getWriteStageDefinition(conceptType, stageId);
+    if (!stage) {
+      return err("E405_TEMPLATE_INVALID", `未找到 ${conceptType} 的写作阶段: ${stageId}`);
+    }
+    const cacheKey = `${conceptType}/${stage.id}`;
+    const cached = this.phaseTemplateCache.get(cacheKey);
+    if (cached !== undefined) {
+      return ok(cached);
+    }
+
+    const inFlight = this.phaseTemplateLoads.get(cacheKey);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const load = this.loadPhaseTemplateFromDisk(conceptType, stage.id);
+    this.phaseTemplateLoads.set(cacheKey, load);
+    try {
+      return await load;
+    } finally {
+      if (this.phaseTemplateLoads.get(cacheKey) === load) {
+        this.phaseTemplateLoads.delete(cacheKey);
+      }
+    }
   }
 
-
-
-  /** 直接设置模板（用于测试） */
-  setTemplate(templateId: string, template: PromptTemplate): void {
-    this.templateCache.set(templateId, template);
-  }
-
-  /** 加载分阶段 Write 的阶段 prompt 模板（phases 目录） */
-  async loadPhaseTemplate(conceptType: string, phaseId: string): Promise<Result<string>> {
-    const filePath = `${this.promptsDir}/phases/${conceptType}/${phaseId}.md`;
+  private async loadPhaseTemplateFromDisk(conceptType: CRType, stageId: string): Promise<Result<string>> {
+    const templateKey = getWritePromptTemplateKey(conceptType, stageId);
+    if (!templateKey) {
+      return err("E405_TEMPLATE_INVALID", `未找到 ${conceptType} 的写作阶段: ${stageId}`);
+    }
+    const filePath = `${this.promptsDir}/${templateKey}.md`;
     const readResult = await this.fileStorage.read(filePath);
     if (!readResult.ok) {
       this.logger.error("PromptManager", `阶段 prompt 文件不存在: ${filePath}`);
@@ -666,6 +575,11 @@ export class PromptManager {
     if (!injected.ok) {
       return injected as Result<string>;
     }
+    const blockValidation = validateBlockOrder(injected.value);
+    if (!blockValidation.valid) {
+      return err("E405_TEMPLATE_INVALID", `${filePath}: ${blockValidation.error || "模板结构无效"}`);
+    }
+    this.phaseTemplateCache.set(`${conceptType}/${stageId}`, injected.value);
     this.logger.debug("PromptManager", `已加载阶段 prompt: ${filePath}`);
     return ok(injected.value);
   }

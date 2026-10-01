@@ -1,65 +1,80 @@
-<!--
-  SettingsRoot — 设置页根组件
-
-  职责：
-  - 管理当前激活的 Tab 状态
-  - 渲染 SettingsNav 导航栏
-  - 根据 activeTab 条件渲染对应 Tab 内容
-  - 通过 plugin 引用获取 i18n 服务
-
-  @see 需求 10.1, 10.10
--->
 <script lang="ts">
     import { untrack } from 'svelte';
-    import type CognitiveRazorPlugin from '../../../../main';
-    import { setCRContext } from '../../bridge/context';
+    import type { App } from 'obsidian';
+    import type { I18n } from '../../../core/i18n';
+    import type { SettingsApplication } from '../../../app/settings-application';
+    import { setSettingsContext } from '../../bridge/context';
     import SettingsNav from './SettingsNav.svelte';
-    import GeneralTab from './GeneralTab.svelte';
     import ProvidersTab from './ProvidersTab.svelte';
-    import AdvancedTab from './AdvancedTab.svelte';
-    import SystemTab from './SystemTab.svelte';
+    import WorkflowTab from './WorkflowTab.svelte';
+    import BackupTab from './BackupTab.svelte';
+    import Button from '../../components/Button.svelte';
 
-    /** Tab 类型定义 */
-    type SettingsTab = 'general' | 'providers' | 'advanced' | 'system';
+    type SettingsTab = 'providers' | 'workflow' | 'backup';
 
-    let { plugin }: { plugin: CognitiveRazorPlugin } = $props();
+    let {
+        app,
+        i18n,
+        settingsApplication,
+    }: {
+        app: App;
+        i18n: I18n;
+        settingsApplication: SettingsApplication;
+    } = $props();
 
-    // untrack：plugin 是挂载时单次传入的稳定引用，不需要响应式追踪
-    const components = untrack(() => plugin.getComponents());
-    const i18n = components.i18n;
+    untrack(() => setSettingsContext({
+        app,
+        i18n,
+        settingsApplication,
+    }));
 
-    /** 设置 Context，供子组件通过 getCRContext() 获取 */
-    setCRContext({
-        container: components.container,
-        i18n: components.i18n,
-        app: untrack(() => plugin.app),
-    });
+    let activeTab = $state<SettingsTab>('providers');
+    let saveState = $state(untrack(() => settingsApplication.getSaveState()));
+    const unsubscribeSaveState = untrack(() => settingsApplication.subscribeSaveState((state) => {
+        saveState = state;
+    }));
 
-    /** 当前激活的 Tab */
-    let activeTab = $state<SettingsTab>('general');
-
-    /** 切换 Tab */
-    function handleTabChange(tab: SettingsTab) {
-        activeTab = tab;
-    }
+    $effect(() => () => unsubscribeSaveState());
 </script>
 
 <div class="cr-settings-root">
-    <SettingsNav {activeTab} onTabChange={handleTabChange} {i18n} />
+    <SettingsNav {activeTab} onTabChange={(tab) => activeTab = tab} {i18n} />
+
+    {#if saveState.status !== 'idle'}
+        <div
+            class="cr-settings-save-state"
+            class:cr-settings-save-state--failed={saveState.status === 'save-failed'}
+            role={saveState.status === 'save-failed' ? 'alert' : 'status'}
+            aria-live="polite"
+        >
+            {#if saveState.status === 'saving'}
+                {i18n.t('settings.save.saving')}
+            {:else if saveState.status === 'saved'}
+                {i18n.t('settings.save.saved')}
+            {:else}
+                <span>{saveState.error?.message || i18n.t('settings.save.failed')}</span>
+                <Button
+                    variant="ghost"
+                    size="sm"
+                    onclick={() => void settingsApplication.retryLastSave()}
+                >
+                    {i18n.t('settings.save.retry')}
+                </Button>
+            {/if}
+        </div>
+    {/if}
 
     <div
         class="cr-settings-content"
         role="tabpanel"
         aria-label={i18n.t(`settings.tabs.${activeTab}`)}
     >
-        {#if activeTab === 'general'}
-            <GeneralTab />
-        {:else if activeTab === 'providers'}
+        {#if activeTab === 'providers'}
             <ProvidersTab />
-        {:else if activeTab === 'advanced'}
-            <AdvancedTab />
-        {:else if activeTab === 'system'}
-            <SystemTab />
+        {:else if activeTab === 'workflow'}
+            <WorkflowTab />
+        {:else}
+            <BackupTab />
         {/if}
     </div>
 </div>
@@ -74,6 +89,17 @@
     .cr-settings-content {
         padding: var(--cr-space-4) var(--cr-space-3);
         flex: 1;
+    }
+
+    .cr-settings-save-state {
+        align-self: flex-end;
+        color: var(--text-muted);
+        font-size: var(--font-ui-small);
+        min-height: 1.4em;
+    }
+
+    .cr-settings-save-state--failed {
+        color: var(--text-error);
     }
 
 </style>

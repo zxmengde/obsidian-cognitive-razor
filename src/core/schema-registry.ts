@@ -4,19 +4,23 @@
  */
 
 import type { CRType } from "../types";
+import { cloneJson } from "../utils/clone";
 
 /** JSON Schema 类型定义 */
-type JSONSchema = {
+export type JSONSchema = {
   $schema?: string;
   type: string;
-  required?: string[];
+  required?: readonly string[];
   properties?: Record<string, JSONSchemaProperty>;
   additionalProperties?: boolean;
+  items?: JSONSchemaProperty;
 };
 
 type JSONSchemaProperty = {
   type: string;
+  minLength?: number;
   description?: string;
+  additionalProperties?: boolean;
   minItems?: number;
   maxItems?: number;
   minimum?: number;
@@ -24,9 +28,63 @@ type JSONSchemaProperty = {
   pattern?: string;
   items?: JSONSchemaProperty;
   properties?: Record<string, JSONSchemaProperty>;
-  required?: string[];
+  required?: readonly string[];
   enum?: string[];
 };
+
+const cloneJsonSchema = cloneJson;
+
+function applyStrictAdditionalProperties(schema: JSONSchemaProperty | JSONSchema): void {
+  delete (schema as { $schema?: string }).$schema;
+
+  if ("description" in schema && typeof schema.description === "string") {
+    schema.description = schema.description.replace(/\.\.\./g, "等");
+  }
+
+  if (schema.type === "object") {
+    schema.additionalProperties = false;
+    if (schema.properties) {
+      for (const prop of Object.values(schema.properties)) {
+        applyStrictAdditionalProperties(prop);
+      }
+    }
+  }
+
+  if (schema.type === "array" && schema.items) {
+    applyStrictAdditionalProperties(schema.items);
+  }
+}
+
+/** 构建只包含指定字段的严格 JSON Schema。 */
+export function buildPhaseJsonSchema(fullSchema: object, fields: readonly string[]): JSONSchema {
+  const full = fullSchema as JSONSchema;
+  const sourceProperties = full.properties ?? {};
+  const phaseProperties: Record<string, JSONSchemaProperty> = {};
+
+  for (const field of fields) {
+    const property = sourceProperties[field];
+    if (property) {
+      phaseProperties[field] = cloneJsonSchema(property);
+    }
+  }
+
+  const schema: JSONSchema = {
+    type: "object",
+    required: fields,
+    additionalProperties: false,
+    properties: phaseProperties
+  };
+
+  applyStrictAdditionalProperties(schema);
+  return schema;
+}
+
+/** 构建用于最终整体验证的严格 JSON Schema。 */
+export function buildStrictJsonSchema(fullSchema: object): JSONSchema {
+  const schema = cloneJsonSchema(fullSchema as JSONSchema);
+  applyStrictAdditionalProperties(schema);
+  return schema;
+}
 
 /** 字段描述接口 */
 export interface FieldDescription {
@@ -35,17 +93,16 @@ export interface FieldDescription {
   required: boolean;
   description: string;
   example?: string;
-  philosophicalBasis?: string;
 }
 
-// Domain Schema
+// domain Schema
 
 const DOMAIN_SCHEMA: JSONSchema = {
   $schema: "http://json-schema.org/draft-07/schema#",
   type: "object",
   required: [
     "definition",
-    "teleology",
+    "core_questions",
     "methodology",
     "boundaries",
     "historical_genesis",
@@ -56,57 +113,57 @@ const DOMAIN_SCHEMA: JSONSchema = {
   properties: {
     definition: {
       type: "string",
-      description: "形式定义：严格遵循'属+种差'逻辑，必须包含加粗的核心术语。结构：形式定义 → 智识危机（在此领域确立前，什么知识散落在哪些学科边缘？什么问题因缺乏统一框架而无法被系统性提出？）→ 核心特征"
+      description: "形式定义：说明该领域的最近上位范围、区别于邻近领域的特征和核心研究对象。只有资料充分时才补充其形成背景。"
     },
-    teleology: {
+    core_questions: {
       type: "string",
-      description: "目的论：基于'智识危机驱动'原则，深刻剖析它诞生前试图填补什么悬而未决的认知缺口，或解决了什么不可调和的矛盾——不是泛泛的'需要研究'，而是具体的'什么问题无法被回答'"
+      description: "研究目标与问题：说明该领域主要试图理解、解释或解决什么。若不存在统一目标，区分主要传统及其适用范围。"
     },
     methodology: {
       type: "string",
-      description: "认识论基础：这个领域如何验证真理？必须锚定具体的理论、实验范式或逻辑推演方法，而非笼统的'科学方法'"
+      description: "认识论与方法：说明该领域形成、检验或论证知识的主要方法；区分经验、形式、解释性等方法，不虚构具体范式。"
     },
     boundaries: {
       type: "array",
-      description: "适用边界：每一条必须指向一个具体的'容易越界的方向'或'容易混淆的邻近概念'，并论证为什么那里是边界",
+      description: "适用边界：列出有依据的范围限制或容易混淆的邻近概念，并说明区分依据；没有可靠条目时使用空数组。",
       items: { type: "string" }
     },
     historical_genesis: {
       type: "string",
-      description: "按辩证法结构（正题→反题→合题）追溯其起源、危机、范式转换和关键人物。必须使用带层级的有序列表按时间顺序组织，顶层为辩证法阶段，子层为具体事件，每个事件锚定具体的人名和年份。格式示例：\n1. **正题：[阶段名]**\n   1. [年份] — [人物]：[事件与意义]\n   2. ...\n2. **反题：[阶段名]**\n   1. ..."
+      description: "历史形成：按实际时间与因果关系概述有可靠依据的关键阶段、争论或转折，不预设固定叙事结构。人名、年份和文献无法高置信确认时省略或标为待核实。"
     },
     holistic_understanding: {
       type: "string",
-      description: "完整的认知地图，必须使用###三级标题严格划分为六个维度：本体论、认识论、目的论、实践论、价值论、额外补充。前五个维度各自聚焦一个哲学视角，额外补充由模型自由发挥，重点补充那些应该被说明但未被前五个维度覆盖的内容"
+      description: "综合理解：整合该领域的对象、方法、目标、实践影响、争议与边界。"
     },
     sub_domains: {
       type: "array",
-      description: "子领域（严格遵循 MECE 原则——相互独立，完全穷尽），每一项都是重建领域认知版图的最小充分集的一个元素",
+      description: "选择有区分度且边界清楚的分支子领域，优先选择边界清楚、彼此尽量少重叠的分类；说明分类边界与可能重叠，不声称穷尽或满足 MECE。",
       items: {
         type: "object",
         required: ["name", "description"],
         properties: {
-          name: { type: "string", description: "子领域名称（严格遵循 naming_morphology）" },
-          description: { type: "string", description: "严格遵循 core_principles，深刻剖析该子领域在整体认知版图中的功能角色——它填补了什么认知缺口？去掉它，领域的哪一块理解会坍塌？" }
+          name: { type: "string", description: "已确立的子领域名称。" },
+          description: { type: "string", description: "说明该子领域的研究范围及其与整体领域的关系。" }
         }
       }
     },
     issues: {
       type: "array",
-      description: "核心议题（仅限涌现性议题——由子领域交互或整体结构产生的问题，不包括子领域自身内部的议题）",
+      description: "跨分支或影响领域整体的代表性核心议题；说明其问题边界，不把一般相关主题伪装成核心议题。",
       items: {
         type: "object",
         required: ["name", "description"],
         properties: {
-          name: { type: "string", description: "议题名称（严格遵循 naming_morphology）" },
-          description: { type: "string", description: "严格遵循 core_principles，深刻剖析该涌现性议题的矛盾根源——它为什么不能被还原为某个子领域的内部问题？" }
+          name: { type: "string", description: "已确立的议题名称。" },
+          description: { type: "string", description: "说明该议题的核心问题、来源及其与领域整体的关系。" }
         }
       }
     }
   }
 };
 
-// Issue Schema
+// issue Schema
 
 const ISSUE_SCHEMA: JSONSchema = {
   $schema: "http://json-schema.org/draft-07/schema#",
@@ -127,82 +184,82 @@ const ISSUE_SCHEMA: JSONSchema = {
   properties: {
     definition: {
       type: "string",
-      description: "形式定义：严格遵循'属+种差'逻辑，必须包含加粗的核心术语。结构：形式定义 → 智识危机（这个议题为什么必须被提出？忽视它会导致什么认知盲区？）→ 核心特征"
+      description: "形式定义：说明该议题属于哪类问题、争议对象、关键限定和区别于邻近议题的特征。"
     },
     core_tension: {
       type: "string",
-      description: "核心张力：必须表达为'二元对立'（A vs B）、'多极博弈'（分号分隔）或'悖论'，严禁写成简单的 How-to 问题"
+      description: "核心张力：准确说明冲突的主张、目标、约束或未决关系；可为二元、多方、条件性张力或悖论，不强行二分。"
     },
     significance: {
       type: "string",
-      description: "不可回避性：如果不解决这个议题会怎样？它对整个领域的认知推进构成什么具体阻碍？"
+      description: "重要性：说明该议题对理解、研究或实践的已知影响，并限定影响范围；没有依据时不夸大后果。"
     },
     epistemic_barrier: {
       type: "string",
-      description: "认识论障碍：为什么至今未解决？必须剖析根本层面的障碍——是概念框架不足、测量手段缺失、还是价值立场不可调和？"
+      description: "认识论障碍：说明造成争议或限制解答的证据、测量、概念、计算或方法障碍；区分已知障碍与推断。"
     },
     counter_intuition: {
       type: "string",
-      description: "反直觉性：大众直觉与学术共识之间的裂缝在哪里？它如何挑战常识？"
+      description: "反直觉性：说明该议题与常见直觉之间有依据的差异。"
     },
     historical_genesis: {
       type: "string",
-      description: "按辩证法结构（正题→反题→合题）追溯矛盾何时变得明显，什么具体事件或发现触发了它。必须使用带层级的有序列表按时间顺序组织，顶层为辩证法阶段，子层为具体事件，每个事件锚定具体的人名和年份"
+      description: "历史形成：按实际时间与因果关系概述议题何时出现、如何演变及关键转折，不预设固定阶段。具体人名、年份和事件不确定时省略或标为待核实。"
     },
     sub_issues: {
       type: "array",
-      description: "子议题（严格遵循 MECE 原则），每一项都是重建议题张力的最小充分集的一个元素",
+      description: "子议题应彼此可区分并直接组成核心议题，优先选择边界清楚、彼此尽量少重叠的分类；说明分类边界与可能重叠，不声称穷尽或满足 MECE。",
       items: {
         type: "object",
         required: ["name", "description"],
         properties: {
-          name: { type: "string", description: "子议题名称（严格遵循 naming_morphology）" },
-          description: { type: "string", description: "严格遵循 core_principles，深刻剖析该子议题在整体张力中的功能角色——它聚焦的是核心矛盾的哪个具体维度？去掉它，对整体张力的理解会丧失什么？" }
+          name: { type: "string", description: "已确立的子议题名称。" },
+          description: { type: "string", description: "说明该子议题处理的具体问题及其与总体议题的关系。" }
         }
       }
     },
     stakeholder_perspectives: {
       type: "array",
-      description: "各利益相关方的立场，每个立场必须剖析其认识论基础和价值预设",
+      description: "有明确依据的利益相关方、学派或立场群体及其公开主张；不要从身份推断未表达的价值预设。",
       items: {
         type: "object",
         required: ["stakeholder", "perspective"],
         properties: {
-          stakeholder: { type: "string", description: "利益相关者（具体的学派、机构或立场群体，严格遵循 naming_morphology）" },
-          perspective: { type: "string", description: "该立场的核心主张、认识论基础和价值预设——他们为什么这样看？推理链条建立在什么前提之上？" }
+          stakeholder: { type: "string", description: "有明确依据的具体学派、机构或立场群体。" },
+          perspective: { type: "string", description: "该立场有依据的核心主张、论据、前提和适用语境。" }
         }
       }
     },
     boundary_conditions: {
       type: "array",
-      description: "适用边界：在什么条件下这个议题不相关或不适用？指出张力消失或变得无关紧要的具体语境",
+      description: "适用边界：议题不相关或不适用的具体条件，张力消失或变得无关紧要的具体语境等",
       items: { type: "string" }
     },
     theories: {
       type: "array",
-      description: "试图解决该议题的理论，每个理论必须标注学术地位并说明其解释力的边界",
+      description: "直接回应该议题的代表性理论。只有能够高置信判断枚举所列学术状态时才收录，并说明该状态所依赖的语境；否则使用空数组。",
       items: {
         type: "object",
         required: ["name", "status", "brief"],
         properties: {
-          name: { type: "string", description: "理论名称（严格遵循 naming_morphology）" },
+          name: { type: "string", description: "已确立的理论名称。" },
           status: {
             type: "string",
-            enum: ["mainstream", "marginal", "falsified"],
-            description: "学术地位：mainstream（主流）/ marginal（边缘）/ falsified（已证伪）"
+            enum: ["mainstream", "marginal", "unclear", "contested", "falsified"],
+            description: "学术地位：mainstream/ marginal/ unclear/ contested/ falsified"
           },
-          brief: { type: "string", description: "该理论如何回应核心张力？它解决了什么，又留下了什么？解释力的边界在哪里？" }
+          brief: { type: "string", description: "说明该理论如何回应核心张力、能够解释什么及其边界。" }
         }
       }
     },
     holistic_understanding: {
       type: "string",
-      description: "完整的认知地图，必须使用###三级标题严格划分为六个维度：本体论、认识论、目的论、实践论、价值论、额外补充。前五个维度各自聚焦一个哲学视角，额外补充由模型自由发挥，重点补充那些应该被说明但未被前五个维度覆盖的内容"
+      description: "综合理解：整合议题的对象、证据结构、主要立场、实践影响和适用边界。只写相关且有依据的维度。"
     }
   }
 };
 
-// Theory Schema
+// theory Schema
 
 const THEORY_SCHEMA: JSONSchema = {
   $schema: "http://json-schema.org/draft-07/schema#",
@@ -222,84 +279,84 @@ const THEORY_SCHEMA: JSONSchema = {
   properties: {
     definition: {
       type: "string",
-      description: "形式定义：严格遵循'属+种差'逻辑，必须包含加粗的核心术语。结构：形式定义 → 智识危机（旧范式在解释什么现象时遭遇了什么困境或失败？什么问题悬而未决？）→ 核心特征"
+      description: "形式定义：说明该理论属于哪类解释框架、核心主张、适用对象及区别于邻近理论的特征。"
     },
     axioms: {
       type: "array",
-      description: "基本公理及其理由：每条公理必须论证其不可或缺性——去掉它理论会如何崩塌？",
+      description: "理论明确采用的公理、经验假设或模型前提及其理由；准确标明性质，不把假设写成已证明事实。",
       items: {
         type: "object",
         required: ["statement", "justification"],
         properties: {
-          statement: { type: "string", description: "公理陈述——必须是不可再分解的基本假设" },
-          justification: { type: "string", description: "为什么这个公理是必要的？去掉它理论的哪一段推理链会断裂？" }
+          statement: { type: "string", description: "前提陈述及其性质，例如公理、经验假设或模型前提。" },
+          justification: { type: "string", description: "说明采用该前提的依据、用途或限制；不要声称其必然或不可替代。" }
         }
       }
     },
     sub_theories: {
       type: "array",
-      description: "子理论（严格遵循 MECE 原则），每一项都是重建理论逻辑的最小充分集的一个元素",
+      description: "有明确名称和边界的子理论或变体，优先选择边界清楚、彼此尽量少重叠的分类；说明分类边界与可能重叠，不声称穷尽或满足 MECE。",
       items: {
         type: "object",
         required: ["name", "description"],
         properties: {
-          name: { type: "string", description: "子理论名称（严格遵循 naming_morphology）" },
-          description: { type: "string", description: "严格遵循 core_principles，深刻剖析该子理论在整体逻辑中的功能角色——它负责解释什么？去掉它，母理论的哪一段推理链会断裂？" }
+          name: { type: "string", description: "已确立的子理论或变体名称。" },
+          description: { type: "string", description: "说明该子理论或变体的主张、范围及其与总体理论的关系。" }
         }
       }
     },
     logical_structure: {
       type: "string",
-      description: "从公理到结论的完整推理链：公理 A + 公理 B → 中间引理 → 机制激活 → 最终结论/预测。关键术语必须加粗，不得有逻辑跳跃"
+      description: "从已列前提到主要结论的推导结构。显式标出缺失前提、经验跳步和条件性关系，不把相关性改写为因果性。"
     },
     entities: {
       type: "array",
-      description: "构成性实体：理论成立所需的最小充分集，每个实体必须是理论成立的必要且充分的组成部分",
+      description: "理论明确引用或假定的代表性实体、变量或构件；只收录与理论结构直接相关的项目，不声称必要且充分。",
       items: {
         type: "object",
         required: ["name", "role", "attributes"],
         properties: {
-          name: { type: "string", description: "实体名称（严格遵循 naming_morphology）" },
-          role: { type: "string", description: "该实体在理论中扮演的不可替代的功能角色——去掉它，理论无法解释什么？" },
+          name: { type: "string", description: "理论明确引用的实体、变量或构件名称。" },
+          role: { type: "string", description: "该实体、变量或构件在理论中的具体作用。" },
           attributes: { type: "string", description: "与理论直接相关的关键属性，而非该实体的百科全书式描述" }
         }
       }
     },
     mechanisms: {
       type: "array",
-      description: "因果机制：每个机制必须作用于具体实体，解释实体间如何通过因果律产生联系",
+      description: "理论明确提出的机制或关系；经验因果、形式关系和解释性机制应准确区分。",
       items: {
         type: "object",
         required: ["name", "process", "function"],
         properties: {
-          name: { type: "string", description: "机制名称（严格遵循 naming_morphology）" },
-          process: { type: "string", description: "机制的运作过程——什么作用于什么，产生什么变化？必须有明确的因果方向" },
-          function: { type: "string", description: "该机制在理论中的功能——它解释了什么现象或连接了哪些实体？去掉它，理论的哪一段因果链会断裂？" }
+          name: { type: "string", description: "理论明确提出或引用的机制或关系名称。" },
+          process: { type: "string", description: "按理论说明运作过程或关系方向；若并非因果关系应明确标注。" },
+          function: { type: "string", description: "该机制或关系在理论解释、推导或预测中的作用。" }
         }
       }
     },
     core_predictions: {
       type: "array",
-      description: "可检验的核心预测：每条预测必须是可证伪的——指出什么实验结果会推翻这个理论",
-      items: { type: "string", description: "可证伪的预测——必须指出什么具体的实验结果或观测数据会推翻这个理论" }
+      description: "该理论实际提出的预测、可检验推论或判别性结论。非经验理论可写形式推论或适用判据；没有可靠条目时使用空数组。",
+      items: { type: "string", description: "预测或推论及其成立条件、检验方式或判别标准。" }
     },
     limitations: {
       type: "array",
-      description: "理论的局限性：具体指出在什么条件下理论失效、什么现象它无法解释——不是泛泛的'还需要更多研究'",
-      items: { type: "string", description: "具体的局限——在什么条件下失效？什么现象无法解释？什么边界条件下理论的预测与观测不符？" }
+      description: "理论的局限性：指出理论失效的具体条件、无法解释的现象，不能是泛泛的还需要更多研究",
+      items: { type: "string", description: "具体的局限——失效的条件，无法解释的现象，理论的预测与观测不符的边界条件等" }
     },
     historical_genesis: {
       type: "string",
-      description: "按辩证法结构（正题/前范式→反题/反常→合题/火花与战斗）重建理论的诞生过程。必须使用带层级的有序列表按时间顺序组织，顶层为辩证法阶段，子层为具体事件，每个事件锚定具体的人名、论文和年份"
+      description: "历史形成：按实际时间与证据概述理论提出、修订和争论的关键阶段，不预设固定叙事。人名、论文和年份不确定时省略或标为待核实。"
     },
     holistic_understanding: {
       type: "string",
-      description: "完整的认知地图，必须使用###三级标题严格划分为六个维度：本体论、认识论、目的论、实践论、价值论、额外补充。前五个维度各自聚焦一个哲学视角，额外补充由模型自由发挥，重点补充那些应该被说明但未被前五个维度覆盖的内容"
+      description: "综合理解：整合理论的前提、推导、解释对象、预测、证据状态、争议和适用边界。只写相关且有依据的维度。"
     }
   }
 };
 
-// Entity Schema
+// entity Schema
 
 const ENTITY_SCHEMA: JSONSchema = {
   $schema: "http://json-schema.org/draft-07/schema#",
@@ -319,45 +376,45 @@ const ENTITY_SCHEMA: JSONSchema = {
   properties: {
     definition: {
       type: "string",
-      description: "形式定义：严格遵循'属+种差'逻辑，必须包含加粗的核心术语。结构：形式定义 → 智识危机（如果没有对这个实体的认识，什么现象无法被解释？什么技术无法被实现？）→ 核心特征"
+      description: "形式定义：说明该实体的最近上位类、区分特征和适用语境。只有资料充分时才补充认识或应用背景。"
     },
     classification: {
       type: "object",
       required: ["genus", "differentia"],
       properties: {
-        genus: { type: "string", description: "直接父类别——这个实体属于什么更大的范畴？必须是最近的上位概念" },
-        differentia: { type: "string", description: "区分特征——是什么使它区别于同属的其他实体？必须指向本质差异而非表面特征" }
+        genus: { type: "string", description: "有依据的最近上位类；无法确定时标为待核实。" },
+        differentia: { type: "string", description: "将该实体与同属邻近实体区分开的关键特征，并限定适用语境。" }
       }
     },
     properties: {
       type: "array",
-      description: "属性：内在属性（intrinsic，不依赖外部关系的固有属性）和外在属性（extrinsic，依赖于与其他实体关系的属性），每个属性必须论证其在整体中的功能角色",
+      description: "有依据的内在属性（intrinsic）或关系性属性（extrinsic）；说明属性内容和成立条件，不为数量补写。",
       items: {
         type: "object",
         required: ["name", "type", "description"],
         properties: {
           name: { type: "string", description: "属性名称" },
           type: { type: "string", enum: ["intrinsic", "extrinsic"], description: "intrinsic（固有）/ extrinsic（关系性）" },
-          description: { type: "string", description: "严格遵循 core_principles，深刻剖析该属性在整体架构中的功能角色——论证其存在的必要性" }
+          description: { type: "string", description: "说明属性的含义、条件及与实体的关系，不虚构必要性或目的。" }
         }
       }
     },
     states: {
       type: "array",
-      description: "动态可变的模式或状态，每个状态必须说明触发条件和表现特征——properties 是'它是什么'，states 是'它可以变成什么'",
+      description: "实体有依据的动态状态或模式；有已知触发条件时说明，没有时不要推测因果。",
       items: {
         type: "object",
         required: ["name", "description"],
         properties: {
           name: { type: "string", description: "状态名称" },
-          description: { type: "string", description: "触发条件（什么导致进入此状态）和表现特征（此状态下实体的行为有何不同）" }
+          description: { type: "string", description: "说明状态的表现、进入或退出条件；未知的因果条件标为待核实。" }
         }
       }
     },
     constraints: {
       type: "array",
-      description: "约束条件——这个实体的存在或运作受到什么限制？每条约束必须说明其来源（物理定律、逻辑必然、经验规律）",
-      items: { type: "string", description: "具体的约束条件、其来源及违反时的后果" }
+      description: "实体存在、适用或运作的已知限制；能够确认时说明来源和违反后的结果。",
+      items: { type: "string", description: "具体约束、适用条件及有依据的来源或后果。" }
     },
     composition: {
       type: "object",
@@ -368,32 +425,32 @@ const ENTITY_SCHEMA: JSONSchema = {
           items: { type: "string" },
           description: "向下分解——它由什么组成？列出构成性部分，而非任意关联物"
         },
-        part_of: { type: "string", description: "向上归属——它属于什么更大的系统？指出最直接的上位系统" }
+        part_of: { type: "string", description: "有明确组成关系时指出最直接的上位系统；按知识类型确实不适用时写“不适用”，材料不足时写“目前依据不足”或“待核实”。" }
       }
     },
     distinguishing_features: {
       type: "array",
-      description: "与相似概念的严格对比——每条必须指向一个具体的'容易混淆的邻近概念'，并论证本质差异",
+      description: "与确实容易混淆的邻近概念进行有依据的对比；没有可靠对象时使用空数组。",
       items: { type: "string", description: "与具体邻近概念的区分：为什么 X 不是 Y？本质差异在哪里？" }
     },
     examples: {
       type: "array",
-      description: "具体的正例，必须是可验证的实例（有名字、有出处），不是泛泛的类别",
-      items: { type: "string", description: "可验证的具体实例——必须锚定到具体的名称、场景或数据" }
+      description: "能够高置信确认属于该实体类别或体现该概念的具体正例；不确定时不收录。",
+      items: { type: "string", description: "具体正例及必要的判定依据或场景。" }
     },
     counter_examples: {
       type: "array",
-      description: "具体的反例——看起来像但实际不是的东西，每条必须指向一个具体的'容易混淆的邻近概念'并解释区分理由",
+      description: "具体的反例——看起来像但实际不是的东西，每条必须指向一个具体的容易混淆的邻近概念并解释区分理由",
       items: { type: "string", description: "容易混淆的邻近概念及区分理由——为什么它看起来像但实际不是？" }
     },
     holistic_understanding: {
       type: "string",
-      description: "完整的认知地图，必须使用###三级标题严格划分为六个维度：本体论、认识论、目的论、实践论、价值论、额外补充。前五个维度各自聚焦一个哲学视角，额外补充由模型自由发挥，重点补充那些应该被说明但未被前五个维度覆盖的内容"
+      description: "综合理解：整合实体的分类、属性、状态、组成、约束、实例和认知边界。只写相关且有依据的维度，不赋予无依据的目的或价值。"
     }
   }
 };
 
-// Mechanism Schema
+// mechanism Schema
 
 const MECHANISM_SCHEMA: JSONSchema = {
   $schema: "http://json-schema.org/draft-07/schema#",
@@ -413,41 +470,41 @@ const MECHANISM_SCHEMA: JSONSchema = {
   properties: {
     definition: {
       type: "string",
-      description: "形式定义：必须包含加粗的核心术语。结构：形式定义 → 智识危机（在这个机制被揭示之前，什么因果关系无法被解释？什么过程被视为黑箱？）→ 核心特征"
+      description: "形式定义：说明该机制是什么类型的过程、作用对象、输入输出及区别于邻近过程的特征。"
     },
     trigger_conditions: {
       type: "array",
-      description: "什么条件下这个机制被激活？必须区分必要条件（没有它机制不会启动）和充分条件（有了它机制必然启动）",
-      items: { type: "string", description: "触发条件及其必要/充分性质——明确标注是必要条件还是充分条件" }
+      description: "有依据的启动条件或前置状态。只有证据支持时才标为必要条件或充分条件；否则说明关联或条件性。",
+      items: { type: "string", description: "触发条件、适用范围及能够确认的条件性质。" }
     },
     operates_on: {
       type: "array",
-      description: "作用对象及其角色——每个对象必须说明它在机制中扮演的具体角色（主体/客体/介质/催化剂等）",
+      description: "机制直接作用的对象及其有依据的角色；不把仅相关的对象列为作用对象。",
       items: {
         type: "object",
         required: ["entity", "role"],
         properties: {
           entity: { type: "string", description: "作用对象名称" },
-          role: { type: "string", description: "在机制中扮演的具体角色（主体/客体/介质/催化剂等）——它为什么不可或缺？" }
+          role: { type: "string", description: "该对象在机制中的具体角色，例如主体、客体、介质或催化因素；不要虚构不可替代性。" }
         }
       }
     },
     causal_chain: {
       type: "array",
-      description: "离散的原子步骤（触发→步骤1→...→结果），必须具备时间线上的连续性，不得有逻辑跳跃——每个步骤都是因果链的一个不可省略的环节",
+      description: "按已知顺序描述机制的关键步骤、交互和结果，缺口应明确标为待核实。",
       items: {
         type: "object",
         required: ["step", "description", "interaction"],
         properties: {
           step: { type: "number", description: "步骤序号" },
-          description: { type: "string", description: "该步骤的具体操作和因果逻辑——不能只写一句话概括，必须说明输入什么、发生什么、输出什么" },
-          interaction: { type: "string", description: "什么与什么发生了什么类型的相互作用？必须有明确的因果方向" }
+          description: { type: "string", description: "该步骤发生的变化、输入和输出；无法确认的细节标为待核实。" },
+          interaction: { type: "string", description: "参与对象之间有依据的交互或关系方向；非因果关系应明确标注。" }
         }
       }
     },
     modulation: {
       type: "array",
-      description: "调节因素——什么加速/减速/调节这个机制？每个因素必须说明具体的调节途径",
+      description: "有依据的促进、抑制或调节因素；只有能够确认时才说明具体作用途径。",
       items: {
         type: "object",
         required: ["factor", "effect", "mechanism"],
@@ -460,32 +517,51 @@ const MECHANISM_SCHEMA: JSONSchema = {
     },
     inputs: {
       type: "array",
-      description: "机制运作所需的输入——原料、信号、能量或信息，每项必须说明其在机制中的具体用途",
-      items: { type: "string", description: "输入项及其在机制中的具体用途——它被消耗还是被转化？" }
+      description: "机制已知需要的原料、信号、能量或信息，以及能够确认的用途。",
+      items: { type: "string", description: "输入项、用途及能够确认的消耗或转化方式。" }
     },
     outputs: {
       type: "array",
-      description: "机制产生的直接结果——必须与因果链的终点逻辑一致",
-      items: { type: "string", description: "输出项及其性质——它是新生成的还是转化而来的？" }
+      description: "机制直接产生的已知结果，并与因果链终点保持一致。",
+      items: { type: "string", description: "输出项及能够确认的生成、转化或状态变化性质。" }
     },
     side_effects: {
       type: "array",
-      description: "非预期的附带效应——机制运作时不可避免但非目标的产物，必须说明产生原因",
-      items: { type: "string", description: "副作用及其产生原因——它在因果链的哪个环节产生？为什么不可避免？" }
+      description: "有证据支持的附带效应或非主要结果；不预设其不可避免，没有可靠条目时使用空数组。",
+      items: { type: "string", description: "附带效应、发生条件及能够确认的产生环节或原因。" }
     },
     termination_conditions: {
       type: "array",
-      description: "什么条件下机制停止运作？必须区分自限性（机制自身耗尽条件）和外部干预（需要外力终止）",
-      items: { type: "string", description: "终止条件及其性质——是自限性的还是需要外部干预？终止后系统处于什么状态？" }
+      description: "机制停止、失活或退出的已知条件；能够确认时区分自限、环境变化和外部干预。",
+      items: { type: "string", description: "终止条件、性质及能够确认的终止后状态。" }
     },
     holistic_understanding: {
       type: "string",
-      description: "完整的认知地图，必须使用###三级标题严格划分为六个维度：本体论、认识论、目的论、实践论、价值论、额外补充。前五个维度各自聚焦一个哲学视角，额外补充由模型自由发挥，重点补充那些应该被说明但未被前五个维度覆盖的内容"
+      description: "综合理解：整合机制的条件、对象、过程、调节、输入输出、附带效应、终止与证据边界。只写相关且有依据的维度。"
     }
   }
 };
 
 // Define 任务 Schema（原 StandardizeClassify）
+
+const DEFINE_CLASSIFICATION_TYPES: CRType[] = ["domain", "issue", "theory", "entity", "mechanism"];
+
+function createDefineCandidateSchema(): JSONSchemaProperty {
+  return {
+    type: "object",
+    required: ["standard_name_cn", "standard_name_en", "confidence_score"],
+    properties: {
+      standard_name_cn: { type: "string", minLength: 0, description: "此类型的公认中文名；没有独立且可靠的术语时使用空字符串。" },
+      standard_name_en: { type: "string", minLength: 0, description: "此类型能够高置信确认的公认英文名；无法确认时使用空字符串。" },
+      confidence_score: {
+        type: "number",
+        minimum: 0,
+        maximum: 1,
+        description: "输入直接属于该类型的置信度。",
+      },
+    },
+  };
+}
 
 const DEFINE_TASK_SCHEMA: JSONSchema = {
   $schema: "http://json-schema.org/draft-07/schema#",
@@ -494,54 +570,30 @@ const DEFINE_TASK_SCHEMA: JSONSchema = {
   properties: {
     classification_result: {
       type: "object",
-      required: ["Domain", "Issue", "Theory", "Entity", "Mechanism"],
-      properties: {
-        Domain: {
-          type: "object",
-          required: ["standard_name_cn", "standard_name_en", "confidence_score"],
-          properties: {
-            standard_name_cn: { type: "string" },
-            standard_name_en: { type: "string" },
-            confidence_score: { type: "number", minimum: 0, maximum: 1 }
-          }
-        },
-        Issue: {
-          type: "object",
-          required: ["standard_name_cn", "standard_name_en", "confidence_score"],
-          properties: {
-            standard_name_cn: { type: "string" },
-            standard_name_en: { type: "string" },
-            confidence_score: { type: "number", minimum: 0, maximum: 1 }
-          }
-        },
-        Theory: {
-          type: "object",
-          required: ["standard_name_cn", "standard_name_en", "confidence_score"],
-          properties: {
-            standard_name_cn: { type: "string" },
-            standard_name_en: { type: "string" },
-            confidence_score: { type: "number", minimum: 0, maximum: 1 }
-          }
-        },
-        Entity: {
-          type: "object",
-          required: ["standard_name_cn", "standard_name_en", "confidence_score"],
-          properties: {
-            standard_name_cn: { type: "string" },
-            standard_name_en: { type: "string" },
-            confidence_score: { type: "number", minimum: 0, maximum: 1 }
-          }
-        },
-        Mechanism: {
-          type: "object",
-          required: ["standard_name_cn", "standard_name_en", "confidence_score"],
-          properties: {
-            standard_name_cn: { type: "string" },
-            standard_name_en: { type: "string" },
-            confidence_score: { type: "number", minimum: 0, maximum: 1 }
-          }
-        }
-      }
+      description: "五种互斥的候选分类。",
+      required: [...DEFINE_CLASSIFICATION_TYPES],
+      properties: Object.fromEntries(
+        DEFINE_CLASSIFICATION_TYPES.map((type) => [type, createDefineCandidateSchema()]),
+      ),
+    },
+  },
+};
+
+const TAG_TASK_SCHEMA: JSONSchema = {
+  $schema: "http://json-schema.org/draft-07/schema#",
+  type: "object",
+  required: ["aliases", "tags"],
+  additionalProperties: false,
+  properties: {
+    aliases: {
+      type: "array",
+      description: "同一概念的已确立替代名称；没有可靠候选时使用空数组。",
+      items: { type: "string" }
+    },
+    tags: {
+      type: "array",
+      description: "用于检索和筛选的少量稳定关键词；没有可靠候选时使用空数组。",
+      items: { type: "string" }
     }
   }
 };
@@ -553,11 +605,11 @@ export class SchemaRegistry {
 
   constructor() {
     this.schemas = new Map([
-      ["Domain", DOMAIN_SCHEMA],
-      ["Issue", ISSUE_SCHEMA],
-      ["Theory", THEORY_SCHEMA],
-      ["Entity", ENTITY_SCHEMA],
-      ["Mechanism", MECHANISM_SCHEMA]
+      ["domain", DOMAIN_SCHEMA],
+      ["issue", ISSUE_SCHEMA],
+      ["theory", THEORY_SCHEMA],
+      ["entity", ENTITY_SCHEMA],
+      ["mechanism", MECHANISM_SCHEMA]
     ]);
   }
 
@@ -571,6 +623,10 @@ export class SchemaRegistry {
 
   getDefineSchema(): JSONSchema {
     return DEFINE_TASK_SCHEMA;
+  }
+
+  getTagSchema(): JSONSchema {
+    return TAG_TASK_SCHEMA;
   }
 
   getFieldDescriptions(type: CRType): FieldDescription[] {
@@ -604,15 +660,15 @@ export class SchemaRegistry {
     };
 
     const typeSpecificLabels: Record<CRType, Record<string, string>> = {
-      Domain: {
+      domain: {
         ...commonLabels,
-        teleology: "目的论",
+        core_questions: "目的论",
         methodology: "方法论",
         boundaries: "边界",
         sub_domains: "子领域",
         issues: "核心议题"
       },
-      Issue: {
+      issue: {
         ...commonLabels,
         core_tension: "核心张力",
         significance: "重要性",
@@ -623,7 +679,7 @@ export class SchemaRegistry {
         boundary_conditions: "边界条件",
         theories: "相关理论"
       },
-      Theory: {
+      theory: {
         ...commonLabels,
         axioms: "公理",
         sub_theories: "子理论",
@@ -633,7 +689,7 @@ export class SchemaRegistry {
         core_predictions: "核心预测",
         limitations: "局限性"
       },
-      Entity: {
+      entity: {
         ...commonLabels,
         classification: "分类",
         properties: "属性",
@@ -644,7 +700,7 @@ export class SchemaRegistry {
         examples: "示例",
         counter_examples: "反例"
       },
-      Mechanism: {
+      mechanism: {
         ...commonLabels,
         trigger_conditions: "触发条件",
         operates_on: "作用对象",
@@ -660,37 +716,29 @@ export class SchemaRegistry {
     return typeSpecificLabels[type] || commonLabels;
   }
 
-  getAllTypes(): CRType[] {
-    return Array.from(this.schemas.keys());
-  }
-
-  isValidType(type: string): type is CRType {
-    return this.schemas.has(type as CRType);
-  }
-
   private getExampleForField(type: CRType, fieldName: string): string | undefined {
     // 提供一些示例
     const examples: Record<string, Record<string, string>> = {
-      Domain: {
+      domain: {
         definition: "量子力学是物理学的一个基础分支...",
-        teleology: "揭示宇宙物质基底的'语法规则'...",
+        core_questions: "揭示宇宙物质基底的'语法规则'...",
         methodology: "利用线性代数、复数域上的希尔伯特空间..."
       },
-      Issue: {
+      issue: {
         definition: "测量问题是量子力学中最核心的认识论危机...",
         core_tension: "确定性演化 vs 非确定性坍缩；观察者角色；退相干解释",
         significance: "理论本身无法解释这种从'可能性'到'确定性'的突变机制..."
       },
-      Theory: {
+      theory: {
         definition: "狭义相对论是描述时空结构的理论框架...",
         logical_structure: "从光速不变原理和相对性原理出发..."
       },
-      Entity: {
+      entity: {
         definition: "波函数是量子力学中描述粒子状态的数学对象...",
         genus: "数学函数",
         differentia: "定义在希尔伯特空间中，模方表示概率密度"
       },
-      Mechanism: {
+      mechanism: {
         definition: "自然选择是生物进化的核心机制...",
         trigger_conditions: "种群内存在遗传变异，环境资源有限"
       }
@@ -701,53 +749,3 @@ export class SchemaRegistry {
 }
 
 export const schemaRegistry = new SchemaRegistry();
-
-// ============================================================================
-// 分阶段写入配置（模块级导出）
-// ============================================================================
-
-/**
- * 分阶段写入配置
- *
- * 每种知识类型的字段被分为多个阶段（phase），每个阶段聚焦少量字段。
- * 后续阶段可以引用前面阶段已生成的内容作为上下文，避免注意力稀释。
- *
- * 设计原则：
- * - 叙事性字段（historical_genesis, holistic_understanding）单独一个阶段
- * - 结构化列表字段归为一组
- * - 框架性字段归为一组
- */
-export interface WritePhase {
-  /** 阶段 ID */
-  id: string;
-  /** 本阶段要生成的字段名列表 */
-  fields: string[];
-}
-
-/** 各知识类型的分阶段配置（阶段和字段分组固定，prompt 内容从文件加载） */
-export const WRITE_PHASES: Record<CRType, WritePhase[]> = {
-  Domain: [
-    { id: "core", fields: ["definition", "teleology", "methodology", "boundaries"] },
-    { id: "narrative", fields: ["historical_genesis", "holistic_understanding"] },
-    { id: "structure", fields: ["sub_domains", "issues"] },
-  ],
-  Issue: [
-    { id: "core", fields: ["definition", "core_tension", "significance", "epistemic_barrier", "counter_intuition"] },
-    { id: "narrative", fields: ["historical_genesis", "holistic_understanding", "boundary_conditions"] },
-    { id: "structure", fields: ["sub_issues", "stakeholder_perspectives", "theories"] },
-  ],
-  Theory: [
-    { id: "core", fields: ["definition", "axioms", "logical_structure", "core_predictions", "limitations"] },
-    { id: "narrative", fields: ["historical_genesis", "holistic_understanding"] },
-    { id: "structure", fields: ["sub_theories", "entities", "mechanisms"] },
-  ],
-  Entity: [
-    { id: "core", fields: ["definition", "classification", "properties", "states", "constraints", "distinguishing_features"] },
-    { id: "synthesis", fields: ["holistic_understanding", "composition", "examples", "counter_examples"] },
-  ],
-  Mechanism: [
-    { id: "core", fields: ["definition", "trigger_conditions", "operates_on", "inputs", "outputs", "side_effects", "termination_conditions"] },
-    { id: "process", fields: ["causal_chain", "modulation"] },
-    { id: "synthesis", fields: ["holistic_understanding"] },
-  ],
-};

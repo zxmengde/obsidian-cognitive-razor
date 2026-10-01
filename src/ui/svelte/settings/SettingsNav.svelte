@@ -2,21 +2,20 @@
   SettingsNav — 设置页顶部水平 Tab 导航
 
   职责：
-  - 渲染 4 个 Tab 按钮（通用、AI 服务、高级、系统）
+  - 渲染 3 个按工作流组织的 Tab 按钮（AI 服务、工作流、备份与重置）
   - sticky 定位，当前 tab 下划线高亮
   - ArrowLeft/Right 键盘快捷键切换 Tab
   - 正确的 ARIA 属性（role="tablist", role="tab"）
 
-  @see 需求 10.1, 10.10
 -->
 <script lang="ts">
     import type { I18n } from '@/core/i18n';
 
     /** Tab 类型定义 */
-    type SettingsTab = 'general' | 'providers' | 'advanced' | 'system';
+    type SettingsTab = 'providers' | 'workflow' | 'backup';
 
     /** Tab 顺序（用于键盘导航） */
-    const TAB_ORDER: SettingsTab[] = ['general', 'providers', 'advanced', 'system'];
+    const TAB_ORDER: SettingsTab[] = ['providers', 'workflow', 'backup'];
 
     let { activeTab, onTabChange, i18n }: {
         activeTab: SettingsTab;
@@ -84,7 +83,7 @@
         display: flex;
         gap: var(--cr-space-1);
         border-bottom: 1px solid var(--cr-border);
-        background: var(--cr-bg-primary);
+        background: var(--cr-bg-base);
         padding: 0 var(--cr-space-2);
     }
 
@@ -94,25 +93,25 @@
         border: none;
         background: none;
         color: var(--cr-text-muted);
-        font-size: var(--cr-font-sm, 13px);
+        font-size: var(--cr-font-sm);
         cursor: pointer;
         transition: color 0.15s ease;
         white-space: nowrap;
     }
 
     .cr-settings-nav-tab:hover {
-        color: var(--cr-text-primary);
+        color: var(--cr-text-normal);
     }
 
     .cr-settings-nav-tab:focus-visible {
-        outline: 2px solid var(--cr-accent);
+        outline: 2px solid var(--cr-interactive-accent);
         outline-offset: -2px;
         border-radius: var(--cr-radius-sm);
     }
 
     /* 当前 tab 下划线高亮 */
     .cr-settings-nav-tab.is-active {
-        color: var(--cr-accent);
+        color: var(--cr-interactive-accent);
         font-weight: 500;
     }
 
@@ -123,7 +122,7 @@
         left: var(--cr-space-2);
         right: var(--cr-space-2);
         height: 2px;
-        background: var(--cr-accent);
+        background: var(--cr-interactive-accent);
         border-radius: 1px 1px 0 0;
     }
 </style>

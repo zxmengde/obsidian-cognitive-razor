@@ -1,13 +1,21 @@
 /**
  * 类型 Barrel 文件
  *
- * 所有子模块的 re-export，保持向后兼容。
- * 现有代码的 `from "../types"` 无需修改。
- * 新代码可按需导入具体子模块（如 `from "../types/domain"`）。
+ * 集中导出跨模块共享的领域、任务、Provider 与设置类型。
  */
 
 // 领域模型
-export type { CRType, NoteState, CRFrontmatter, StandardizedConcept } from "./domain";
+export type {
+    CRType,
+    NoteState,
+    CRFrontmatter,
+    ConceptName,
+    DefineCandidate,
+    DefinePreview,
+    ConfirmedConceptSource,
+    ConfirmedConcept,
+} from "./domain";
+export { CR_TYPES } from "./domain";
 
 // Result Monad
 export type { Err, Result } from "./result";
@@ -15,43 +23,49 @@ export { ok, err, CognitiveRazorError, toErr, safeErrorMessage } from "./result"
 
 // 任务系统
 export type {
-    TaskType, TaskState, TaskError,
-    DefinePayload, TagPayload, WritePayload,
-    IndexPayload, VerifyPayload,
-    TaskPayloadMap,
-    AnyTaskPayload, TypedTaskRecord, TaskRecord,
+    TaskType, QueueTaskType, TaskState, TaskFailureStage, TaskFailureKind, QueueTaskPayload,
+    TaskError, TaskRecord, NewTaskRecord, PersistedTaskRecord, TaskModelSnapshot,
+    WorkflowKind, TaskStageId, WriteTaskStageId, TaskExecutionAttemptReason, TaskExecutionContext, ConversationContinuation,
 } from "./task";
+export { TASK_STAGE_IDS } from "./task";
 
 // Provider 系统
 export type {
-    ProviderCapabilities, ProviderInfo,
-    ChatRequest, ChatResponse,
+    ProviderCapabilities, EmbeddingApiFormat,
+    ChatRequest, ChatResponse, ChatResponseFormat, UrlCitation,
+    WebSearchPurpose, ReasoningEffort, ProviderAttemptReason,
     EmbedRequest, EmbedResponse,
 } from "./provider";
 export { DEFAULT_ENDPOINTS } from "./provider";
 
 // 配置系统
 export type {
-    ProviderConfig, TaskModelConfig,
+    ProviderConfig, ProviderApiFormat, TaskModelConfig,
     DirectoryScheme, PluginSettings,
 } from "./settings";
-export { DEFAULT_UI_STATE } from "./settings";
 
 // 存储类型
 export type {
-    DuplicatePairStatus, DuplicatePair,
-    VectorEntry, SearchResult, IndexStats,
+    DuplicatePair,
+    VectorEntry, SearchResult,
     VectorIndexMeta, ConceptVector,
-    DuplicatePairsStore, QueueStateFile,
+    VectorFileRef,
+    DuplicatePairsStore,
 } from "./storage";
-
-// 管线系统
-export type { PipelineStage, PipelineContext } from "./pipeline";
+export type {
+  DuplicateMergeNoteSnapshot,
+  DuplicateMergeDraft,
+  LinkRepairEntry,
+  LinkRepairPlan,
+  DuplicateMergePreview,
+  DuplicateMergePhase,
+  DuplicateMergeOperation,
+  DuplicateMergeOperationsStore,
+} from "./duplicate-merge";
 
 // 队列系统
 export type {
     QueueStatus, QueueEvent, QueueEventListener,
-    TaskResult,
 } from "./queue";
 
 // UI 类型
@@ -60,4 +74,16 @@ export type {
 } from "./ui";
 
 // 日志接口
-export type { ILogger } from "./logger";
+export type { ILogger, LogLevel } from "./logger";
+export type {
+  WorkflowArtifact,
+  ConceptSnapshot,
+  WorkflowConversation,
+  SourcePackage,
+  SourcePackageItem,
+  PendingStageResult,
+  WorkflowPatch,
+} from "./workflow";
+
+export type { ModelCapabilities, ModelParameters, ModelParameterOverrides, ResolvedTaskConfig } from "./model-config";
+export { DEFAULT_MODEL_CAPABILITIES } from "./model-config";

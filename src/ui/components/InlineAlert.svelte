@@ -15,10 +15,15 @@
         level = 'error',
         message,
         details = undefined,
+        detailsToggleLabels,
     }: {
         level?: AlertLevel;
         message: string;
         details?: string | undefined;
+        detailsToggleLabels: {
+            expand: string;
+            collapse: string;
+        };
     } = $props();
 
     let expanded = $state(false);
@@ -33,8 +38,8 @@
 
 <div
     class="cr-inline-alert cr-inline-alert--{level}"
-    role="alert"
-    aria-live="assertive"
+    role={level === 'error' || level === 'warning' ? 'alert' : 'status'}
+    aria-live={level === 'error' || level === 'warning' ? 'assertive' : 'polite'}
 >
     <div class="cr-inline-alert__header">
         <Icon name={ICON_MAP[level]} size={16} />
@@ -44,7 +49,7 @@
                 class="cr-inline-alert__toggle"
                 onclick={() => expanded = !expanded}
                 aria-expanded={expanded}
-                aria-label={expanded ? '收起详情' : '展开详情'}
+                aria-label={expanded ? detailsToggleLabels.collapse : detailsToggleLabels.expand}
             >
                 <Icon name={expanded ? 'chevron-up' : 'chevron-down'} size={16} />
             </button>
@@ -57,10 +62,10 @@
 
 <style>
     .cr-inline-alert {
-        border-radius: var(--cr-radius-sm, 4px);
-        padding: var(--cr-space-2, 8px) var(--cr-space-3, 12px);
-        font-size: var(--cr-font-sm, 13px);
-        line-height: var(--cr-line-height-body, 1.5);
+        border-radius: var(--cr-radius-sm);
+        padding: var(--cr-space-2) var(--cr-space-3);
+        font-size: var(--cr-font-sm);
+        line-height: var(--cr-line-height-body);
     }
 
     .cr-inline-alert--error {
@@ -86,7 +91,7 @@
     .cr-inline-alert__header {
         display: flex;
         align-items: center;
-        gap: var(--cr-space-2, 8px);
+        gap: var(--cr-space-2);
     }
 
     .cr-inline-alert__message {
@@ -110,11 +115,11 @@
     }
 
     .cr-inline-alert__details {
-        margin-top: var(--cr-space-2, 8px);
-        padding-top: var(--cr-space-2, 8px);
+        margin-top: var(--cr-space-2);
+        padding-top: var(--cr-space-2);
         border-top: 1px solid currentColor;
         opacity: 0.8;
-        font-size: var(--cr-font-xs, 11px);
+        font-size: var(--cr-font-xs);
         white-space: pre-wrap;
         word-break: break-all;
     }

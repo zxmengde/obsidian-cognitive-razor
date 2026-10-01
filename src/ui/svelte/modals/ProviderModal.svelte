@@ -3,27 +3,31 @@
 
   表单字段：名称（Provider ID）、API Key（密码输入）、Base URL、
   默认聊天模型、默认嵌入模型、启用开关。
-  连接测试按钮、保存/取消按钮。
-  焦点捕获（Focus Trap）、ARIA 属性、Escape 关闭。
+   连接测试按钮、保存/取消按钮。容器生命周期由 ModalShell 统一处理。
 
-  @see 需求 12.3, 12.5, 12.6
 -->
 <script lang="ts">
-    import { untrack } from 'svelte';
-    import { showError } from '../../feedback';
+    import { onDestroy, untrack } from 'svelte';
     import Button from '../../components/Button.svelte';
     import TextInput from '../../components/TextInput.svelte';
     import PasswordInput from '../../components/PasswordInput.svelte';
+    import Select from '../../components/Select.svelte';
     import Toggle from '../../components/Toggle.svelte';
-    import type { ProviderConfig } from '../../../types';
-    import type { ProviderManager } from '../../../core/provider-manager';
+    import ModalShell from '../../components/ModalShell.svelte';
+    import { DEFAULT_ENDPOINTS } from '../../../types';
+    import type { EmbeddingApiFormat, ProviderApiFormat, ProviderConfig, Result } from '../../../types';
+    import type { ProviderProbeRequest } from '../../../core/model-gateway';
     import type { I18n } from '../../../core/i18n';
+    import { isValidProviderId } from '../../../data/settings-store';
+    import ProviderProbeStatus from '../settings/ProviderProbeStatus.svelte';
+    import type { ProviderProbeReadModel } from '../../provider-probe-result';
+    import { toSafeErrorFeedback } from '../../error-feedback';
 
     let {
         mode,
         providerId = '',
         currentConfig = undefined,
-        providerManager,
+        ontest,
         i18n,
         onsave,
         oncancel,
@@ -31,9 +35,9 @@
         mode: 'add' | 'edit';
         providerId?: string;
         currentConfig?: ProviderConfig;
-        providerManager: ProviderManager;
+        ontest: (request: ProviderProbeRequest, signal?: AbortSignal) => Promise<ProviderProbeReadModel | undefined>;
         i18n: I18n;
-        onsave: (id: string, config: ProviderConfig) => Promise<void>;
+        onsave: (id: string, config: ProviderConfig) => Promise<Result<void>>;
         oncancel: () => void;
     } = $props();
 
@@ -41,6 +45,31 @@
     let formId = $state(untrack(() => providerId));
     let formApiKey = $state(untrack(() => currentConfig?.apiKey ?? ''));
     let formBaseUrl = $state(untrack(() => currentConfig?.baseUrl ?? ''));
+    let formApiFormat = $state<ProviderApiFormat>(untrack(() => currentConfig?.apiFormat ?? 'openai-chat-completions'));
+    let formEnableWebSearch = $state(untrack(
+        () => currentConfig?.capabilities?.nativeWebSearch ?? currentConfig?.enableWebSearch ?? false
+    ));
+    let formTemperatureSupported = $state(untrack(() => currentConfig?.capabilities?.temperature ?? false));
+    let formTopPSupported = $state(untrack(() => currentConfig?.capabilities?.topP ?? false));
+    let formReasoningSupported = $state(untrack(() => currentConfig?.capabilities?.reasoning ?? false));
+    let formPromptCaching = $state(untrack(() => currentConfig?.capabilities?.promptCaching ?? false));
+    let formPromptCacheMode = $state<'implicit' | 'explicit'>(untrack(() => currentConfig?.capabilities?.promptCacheMode ?? 'implicit'));
+    let formResponseContinuation = $state(untrack(() => currentConfig?.capabilities?.responseContinuation ?? false));
+    let formStructuredOutput = $state<NonNullable<ProviderConfig['capabilities']>['structuredOutput']>(untrack(() => currentConfig?.capabilities?.structuredOutput ?? 'prompt'));
+    let formTemperature = $state(untrack(() => currentConfig?.parameters?.temperature ?? 0.7));
+    let formTopP = $state(untrack(() => currentConfig?.parameters?.topP ?? 1));
+    let formReasoningEffort = $state(untrack(() => currentConfig?.parameters?.reasoning_effort ?? ''));
+    let formThinkingLevel = $state(untrack(() => currentConfig?.parameters?.thinkingLevel ?? ''));
+    let formThinkingBudget = $state(untrack(() => currentConfig?.parameters?.thinkingBudget === undefined ? '' : String(currentConfig.parameters.thinkingBudget)));
+    let formMaxTokens = $state(untrack(() => currentConfig?.parameters?.maxTokens === undefined ? '' : String(currentConfig.parameters.maxTokens)));
+    let formEmbeddingDimension = $state(untrack(() => currentConfig?.parameters?.embeddingDimension === undefined ? '' : String(currentConfig.parameters.embeddingDimension)));
+    let formEmbeddingApiFormat = $state<EmbeddingApiFormat>(untrack(
+        () => currentConfig?.embeddingApiFormat ?? (
+            currentConfig?.apiFormat === 'gemini-generative-language'
+                ? 'disabled'
+                : 'openai-embeddings'
+        )
+    ));
     let formChatModel = $state(untrack(() => currentConfig?.defaultChatModel ?? ''));
     let formEmbedModel = $state(untrack(() => currentConfig?.defaultEmbedModel ?? ''));
     let formEnabled = $state(untrack(() => currentConfig?.enabled ?? true));
@@ -48,14 +77,11 @@
     /** UI 状态 */
     let saving = $state(false);
     let testing = $state(false);
-    let testResult = $state<{ ok: boolean; message: string } | null>(null);
+    let testResult = $state<ProviderProbeReadModel | undefined>();
+    let saveError = $state<string | undefined>();
     let errors = $state<Record<string, string>>({});
-
-    /** 挂载前记录触发元素 */
-    let previousActiveElement: HTMLElement | null = null;
-
-    /** 对话框容器引用 */
-    let dialogEl: HTMLDivElement | undefined = $state(undefined);
+    let testAbortController: AbortController | undefined;
+    let testedSignature: string | undefined;
 
     /** 标题 ID（aria-labelledby） */
     const titleId = `cr-provider-title-${Math.random().toString(36).slice(2, 8)}`;
@@ -67,87 +93,74 @@
             : i18n.t('modals.editProvider.title')
     );
 
+    let endpointPlaceholder = $derived(
+        formApiFormat === 'disabled'
+            ? DEFAULT_ENDPOINTS['openai-chat-completions']
+            : DEFAULT_ENDPOINTS[formApiFormat]
+    );
+
     /** 翻译快捷方式 */
     function t(key: string): string {
-        return i18n.t(key) || key;
+        return i18n.t(key);
     }
 
-    /**
-     * 获取对话框内所有可聚焦元素
-     */
-    function getFocusableElements(): HTMLElement[] {
-        if (!dialogEl) return [];
-        return Array.from(
-            dialogEl.querySelectorAll<HTMLElement>(
-                'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-            )
-        );
-    }
+    const apiFormatOptions = [
+        { value: 'openai-chat-completions', label: t('modals.providerConfig.apiFormats.openaiChatCompletions') },
+        { value: 'openai-responses', label: t('modals.providerConfig.apiFormats.openaiResponses') },
+        { value: 'gemini-generative-language', label: t('modals.providerConfig.apiFormats.geminiGenerativeLanguage') },
+        { value: 'disabled', label: t('modals.providerConfig.apiFormats.disabled') },
+    ];
 
-    /**
-     * 焦点捕获：Tab/Shift+Tab 在 Modal 内循环
-     */
-    function handleKeydown(e: KeyboardEvent) {
-        if (e.key === 'Escape') {
-            e.preventDefault();
-            handleCancel();
-            return;
-        }
-        if (e.key === 'Tab') {
-            const focusable = getFocusableElements();
-            if (focusable.length === 0) return;
-            const first = focusable[0];
-            const last = focusable[focusable.length - 1];
-            if (e.shiftKey) {
-                if (document.activeElement === first) {
-                    e.preventDefault();
-                    last.focus();
-                }
-            } else {
-                if (document.activeElement === last) {
-                    e.preventDefault();
-                    first.focus();
-                }
-            }
-        }
-    }
+    const embeddingApiFormatOptions = [
+        { value: 'openai-embeddings', label: t('modals.providerConfig.embeddingApiFormats.openaiEmbeddings') },
+        { value: 'disabled', label: t('modals.providerConfig.embeddingApiFormats.disabled') },
+    ];
 
-    /** 恢复焦点到触发元素 */
-    function restoreFocus() {
-        if (previousActiveElement && typeof previousActiveElement.focus === 'function') {
-            setTimeout(() => previousActiveElement?.focus(), 0);
-        }
-    }
-
-    /** 检测是否为内网/本地地址（安全校验，防止 SSRF） */
-    function isPrivateHost(hostname: string): boolean {
-        const h = hostname.toLowerCase();
-        return (
-            h === 'localhost' ||
-            h === '127.0.0.1' ||
-            h === '::1' ||
-            /^10\./.test(h) ||
-            /^172\.(1[6-9]|2\d|3[01])\./.test(h) ||
-            /^192\.168\./.test(h)
-        );
+    function handleApiFormatChange(value: string) {
+        formApiFormat = value as ProviderApiFormat;
+        errors = { ...errors, apiFormat: '', chatModel: '' };
     }
 
     /** 表单验证 */
-    function validate(): boolean {
+    function validate(requireProviderId = true): boolean {
         const newErrors: Record<string, string> = {};
-        if (!formId.trim()) {
-            newErrors.id = t('modals.providerConfig.errors.providerIdRequired');
+        if (requireProviderId) {
+            const id = formId.trim();
+            if (!id) {
+                newErrors.id = t('modals.providerConfig.errors.providerIdRequired');
+            } else if (!isValidProviderId(id)) {
+                newErrors.id = t('modals.providerConfig.errors.providerIdInvalid');
+            }
         }
-        if (!formApiKey.trim()) {
+        if (!formApiKey.trim() && !formBaseUrl.trim()) {
             newErrors.apiKey = t('modals.providerConfig.errors.apiKeyRequired');
+        }
+        if (formApiFormat !== 'disabled' && !formChatModel.trim()) {
+            newErrors.chatModel = t('modals.providerConfig.errors.chatModelRequired');
+        }
+        if (formEmbeddingApiFormat === 'openai-embeddings' && !formEmbedModel.trim()) {
+            newErrors.embedModel = t('modals.providerConfig.errors.embedModelRequired');
+        }
+        if (formReasoningSupported && formApiFormat === 'gemini-generative-language' && formThinkingLevel.trim() && formThinkingBudget.trim()) {
+            newErrors.reasoning = t('modals.providerConfig.errors.thinkingExclusive');
+        } else if (formReasoningSupported && formApiFormat === 'gemini-generative-language' && formThinkingBudget.trim()) {
+            const budget = Number(formThinkingBudget);
+            if (!Number.isSafeInteger(budget) || budget <= 0) newErrors.reasoning = t('taskModels.fields.positiveIntegerError');
+        }
+        for (const [value, field] of [[formMaxTokens, 'maxTokens'], [formEmbeddingDimension, 'embeddingDimension']] as const) {
+            if (value.trim()) {
+                const parsed = Number(value.trim());
+                if (!Number.isSafeInteger(parsed) || parsed <= 0) newErrors[field] = t('taskModels.fields.positiveIntegerError');
+            }
+        }
+        if (formApiFormat === 'disabled' && formEmbeddingApiFormat === 'disabled') {
+            newErrors.apiFormat = t('modals.providerConfig.errors.capabilityRequired');
         }
         if (formBaseUrl.trim()) {
             try {
                 const url = new URL(formBaseUrl.trim());
                 if (!['http:', 'https:'].includes(url.protocol)) {
                     newErrors.baseUrl = t('modals.providerConfig.errors.invalidUrlProtocol');
-                } else if (isPrivateHost(url.hostname)) {
-                    newErrors.baseUrl = t('modals.providerConfig.errors.privateAddressBlocked');
                 }
             } catch {
                 newErrors.baseUrl = t('modals.providerConfig.errors.invalidUrl');
@@ -157,22 +170,70 @@
         return Object.keys(newErrors).length === 0;
     }
 
+    function buildConfig(enabled = formEnabled): ProviderConfig {
+        return {
+            apiKey: formApiKey.trim(),
+            baseUrl: formBaseUrl.trim() || undefined,
+            apiFormat: formApiFormat,
+            capabilities: {
+                nativeWebSearch: formEnableWebSearch,
+                temperature: formTemperatureSupported,
+                topP: formTopPSupported,
+                reasoning: formReasoningSupported,
+                promptCaching: formPromptCaching,
+                ...(formPromptCaching ? { promptCacheMode: formPromptCacheMode } : {}),
+                ...(formPromptCaching && formPromptCacheMode === 'explicit' ? { promptCacheTtl: '30m' as const } : {}),
+                responseContinuation: formResponseContinuation,
+                structuredOutput: formStructuredOutput,
+            },
+            parameters: {
+                ...(formTemperatureSupported ? { temperature: formTemperature } : {}),
+                ...(formTopPSupported ? { topP: formTopP } : {}),
+                ...(formReasoningSupported && formApiFormat === 'gemini-generative-language' && formThinkingLevel.trim() ? { thinkingLevel: formThinkingLevel.trim() } : {}),
+                ...(formReasoningSupported && formApiFormat === 'gemini-generative-language' && formThinkingBudget.trim() && !formThinkingLevel.trim() ? { thinkingBudget: Number(formThinkingBudget) } : {}),
+                ...(formReasoningSupported && formApiFormat !== 'gemini-generative-language' && formReasoningEffort.trim() ? { reasoning_effort: formReasoningEffort.trim() } : {}),
+                ...(formMaxTokens.trim() ? { maxTokens: Number(formMaxTokens.trim()) } : {}),
+                ...(formEmbeddingDimension.trim() ? { embeddingDimension: Number(formEmbeddingDimension.trim()) } : {}),
+            },
+            embeddingApiFormat: formEmbeddingApiFormat,
+            defaultChatModel: formApiFormat === 'disabled' ? '' : formChatModel.trim(),
+            defaultEmbedModel: formEmbeddingApiFormat === 'disabled' ? '' : formEmbedModel.trim(),
+            enabled,
+        };
+    }
+
+    function buildTestSignature(config = buildConfig(true)): string {
+        return JSON.stringify({ id: formId.trim(), config });
+    }
+
+    function invalidateConnectionTest(reason: string) {
+        const staleController = testAbortController;
+        testAbortController = undefined;
+        testedSignature = undefined;
+        testResult = undefined;
+        testing = false;
+        staleController?.abort(reason);
+    }
+
+    $effect(() => {
+        const currentSignature = buildTestSignature();
+        if (!testedSignature || currentSignature === testedSignature) return;
+        invalidateConnectionTest('provider configuration changed');
+    });
+
     /** 保存 */
     async function handleSave() {
-        if (!validate()) return;
+        if (saving || !validate()) return;
+        invalidateConnectionTest('provider configuration saved');
         saving = true;
+        saveError = undefined;
         try {
-            const config: ProviderConfig = {
-                apiKey: formApiKey.trim(),
-                baseUrl: formBaseUrl.trim() || undefined,
-                defaultChatModel: formChatModel.trim(),
-                defaultEmbedModel: formEmbedModel.trim(),
-                enabled: formEnabled,
-            };
-            await onsave(formId.trim(), config);
-            restoreFocus();
-        } catch (e) {
-            showError(t('modals.providerConfig.errors.saveFailed'));
+            const result = await onsave(formId.trim(), buildConfig());
+            saveError = result.ok
+                ? undefined
+                : toSafeErrorFeedback(result, t('modals.providerConfig.errors.saveFailed')).message;
+        } catch {
+            saveError = t('modals.providerConfig.errors.saveFailed');
         } finally {
             saving = false;
         }
@@ -180,95 +241,52 @@
 
     /** 取消 */
     function handleCancel() {
-        restoreFocus();
+        if (saving) return;
+        testAbortController?.abort('provider modal closed');
         oncancel();
     }
 
-    /** 点击遮罩层关闭 */
-    function handleOverlayClick() {
-        handleCancel();
-    }
-
     /** 连接测试 */
-    async function handleTestConnection() {
-        if (!formApiKey.trim()) {
-            errors = { ...errors, apiKey: t('modals.providerConfig.errors.apiKeyRequired') };
-            return;
-        }
+    async function handleTestConnection(attemptReason: 'initial' | 'manual-retry' = 'initial') {
+        if (testing) return;
+        if (!validate(false)) return;
+        const abortController = new AbortController();
+        testAbortController = abortController;
+        const tempConfig = buildConfig(true);
+        const requestSignature = buildTestSignature(tempConfig);
+        testedSignature = requestSignature;
         testing = true;
-        testResult = null;
+        testResult = undefined;
         try {
-            // 临时构建配置用于测试
-            const tempConfig: ProviderConfig = {
-                apiKey: formApiKey.trim(),
-                baseUrl: formBaseUrl.trim() || undefined,
-                defaultChatModel: formChatModel.trim(),
-                defaultEmbedModel: formEmbedModel.trim(),
-                enabled: true,
-            };
-            const result = await providerManager.checkAvailability(
-                formId.trim() || '__test__',
-                true,
-                tempConfig
-            );
-            if (result.ok) {
-                const caps = result.value;
-                testResult = {
-                    ok: true,
-                    message: i18n.format('notices.connectionSuccess', {
-                        chat: caps.chat ? 'OK' : 'X',
-                        embedding: caps.embedding ? 'OK' : 'X',
-                        models: caps.models.length,
-                    }),
-                };
-            } else {
-                testResult = {
-                    ok: false,
-                    message: i18n.format('notices.connectionFailed', {
-                        error: result.error.message,
-                    }),
-                };
-            }
-        } catch (e) {
+            // 使用当前表单快照构建连接测试配置。
+            const result = await ontest({
+                providerId: formId.trim() || '__test__',
+                configOverride: tempConfig,
+                attemptReason,
+            }, abortController.signal);
+            if (abortController.signal.aborted || buildTestSignature() !== requestSignature) return;
+            if (result) testResult = result;
+        } catch {
+            if (abortController.signal.aborted) return;
             testResult = {
-                ok: false,
-                message: String(e),
+                outcome: 'failed',
+                chat: tempConfig.apiFormat === 'disabled' ? 'disabled' : 'unavailable',
+                embedding: tempConfig.embeddingApiFormat === 'disabled' ? 'disabled' : 'unavailable',
             };
         } finally {
-            testing = false;
+            if (testAbortController === abortController) {
+                testAbortController = undefined;
+                testing = false;
+            }
         }
     }
 
-    /**
-     * 挂载时：记录触发元素 + 聚焦第一个可聚焦元素
-     */
-    $effect(() => {
-        previousActiveElement = document.activeElement as HTMLElement | null;
-        const timer = setTimeout(() => {
-            const focusable = getFocusableElements();
-            if (focusable.length > 0) {
-                focusable[0].focus();
-            }
-        }, 0);
-        return () => clearTimeout(timer);
+    onDestroy(() => {
+        testAbortController?.abort('provider modal unmounted');
     });
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
-
-<!-- 遮罩层 -->
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="cr-provider-overlay" onmousedown={handleOverlayClick}>
-    <!-- 对话框 -->
-    <div
-        bind:this={dialogEl}
-        class="cr-provider-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        tabindex="0"
-        onmousedown={(e: MouseEvent) => e.stopPropagation()}
-    >
+<ModalShell {titleId} wide={true} dismissible={!saving} oncancel={handleCancel}>
         <!-- 标题 -->
         <h3 id={titleId} class="cr-provider-dialog__title">{title}</h3>
         <p class="cr-provider-dialog__desc">
@@ -290,7 +308,7 @@
                     id="pm-provider-id"
                     value={formId}
                     placeholder="my-openai"
-                    disabled={mode === 'edit'}
+                    disabled={saving || mode === 'edit'}
                     onchange={(v) => { formId = v; errors = { ...errors, id: '' }; }}
                 />
                 {#if errors.id}
@@ -302,7 +320,6 @@
             <div class="cr-provider-field">
                 <label class="cr-provider-field__label" for="pm-api-key">
                     {t('modals.providerConfig.fields.apiKey')}
-                    <span class="cr-provider-field__required">*</span>
                 </label>
                 <p class="cr-provider-field__desc">
                     {t('modals.providerConfig.fields.apiKeyDesc')}
@@ -311,6 +328,9 @@
                     id="pm-api-key"
                     value={formApiKey}
                     placeholder="sk-..."
+                    disabled={saving}
+                    showLabel={t('common.password.show')}
+                    hideLabel={t('common.password.hide')}
                     onchange={(v) => { formApiKey = v; errors = { ...errors, apiKey: '' }; }}
                 />
                 {#if errors.apiKey}
@@ -329,12 +349,120 @@
                 <TextInput
                     id="pm-base-url"
                     value={formBaseUrl}
-                    placeholder="https://api.openai.com/v1"
+                    placeholder={endpointPlaceholder}
+                    disabled={saving}
                     onchange={(v) => { formBaseUrl = v; errors = { ...errors, baseUrl: '' }; }}
                 />
                 {#if errors.baseUrl}
                     <p class="cr-provider-field__error">{errors.baseUrl}</p>
                 {/if}
+            </div>
+
+            <!-- 聊天 API 协议 -->
+            <div class="cr-provider-field">
+                <label class="cr-provider-field__label" for="pm-api-format">
+                    {t('modals.providerConfig.fields.apiFormat')}
+                </label>
+                <p class="cr-provider-field__desc">
+                    {t('modals.providerConfig.fields.apiFormatDesc')}
+                </p>
+                <Select
+                    id="pm-api-format"
+                    value={formApiFormat}
+                    options={apiFormatOptions}
+                    disabled={saving}
+                    onchange={handleApiFormatChange}
+                />
+                {#if errors.apiFormat}
+                    <p class="cr-provider-field__error">{errors.apiFormat}</p>
+                {/if}
+            </div>
+
+            {#if formApiFormat !== 'disabled'}
+            <div class="cr-provider-field cr-provider-field--row">
+                <div>
+                    <span class="cr-provider-field__label" id="pm-web-search-label">
+                        {t('modals.providerConfig.fields.webSearch')}
+                    </span>
+                    <p class="cr-provider-field__desc">
+                        {t('modals.providerConfig.fields.webSearchDesc')}
+                    </p>
+                </div>
+                <Toggle
+                    checked={formEnableWebSearch}
+                    disabled={saving}
+                    ariaLabel={t('modals.providerConfig.fields.webSearch')}
+                    onchange={(v) => { formEnableWebSearch = v; }}
+                />
+            </div>
+
+            <div class="cr-provider-field cr-provider-field--row">
+                <span class="cr-provider-field__label">{t('taskModels.fields.temperature')}</span>
+                <Toggle checked={formTemperatureSupported} disabled={saving} ariaLabel={t('taskModels.fields.temperature')} onchange={(v) => { formTemperatureSupported = v; }} />
+                {#if formTemperatureSupported}<TextInput value={String(formTemperature)} onchange={(v) => { const n = Number(v); if (Number.isFinite(n) && n >= 0 && n <= 2) formTemperature = n; }} widthClass="cr-input-sm" />{/if}
+            </div>
+            <div class="cr-provider-field cr-provider-field--row">
+                <span class="cr-provider-field__label">{t('taskModels.fields.topP')}</span>
+                <Toggle checked={formTopPSupported} disabled={saving} ariaLabel={t('taskModels.fields.topP')} onchange={(v) => { formTopPSupported = v; }} />
+                {#if formTopPSupported}<TextInput value={String(formTopP)} onchange={(v) => { const n = Number(v); if (Number.isFinite(n) && n >= 0 && n <= 1) formTopP = n; }} widthClass="cr-input-sm" />{/if}
+            </div>
+            <div class="cr-provider-field cr-provider-field--row">
+                <span class="cr-provider-field__label">{t('taskModels.fields.reasoningEffort')}</span>
+                <Toggle checked={formReasoningSupported} disabled={saving} ariaLabel={t('taskModels.fields.reasoningEffort')} onchange={(v) => { formReasoningSupported = v; }} />
+                {#if formReasoningSupported && formApiFormat === 'gemini-generative-language'}
+                    <TextInput value={formThinkingLevel} placeholder="thinking level" onchange={(v) => { formThinkingLevel = v; }} widthClass="cr-input-sm" />
+                    <TextInput value={formThinkingBudget} placeholder="thinking budget" onchange={(v) => { formThinkingBudget = v; }} widthClass="cr-input-sm" />
+                {:else if formReasoningSupported}
+                    <TextInput value={formReasoningEffort} placeholder="effort" onchange={(v) => { formReasoningEffort = v; }} widthClass="cr-input-sm" />
+                {/if}
+                {#if errors.reasoning}<p class="cr-provider-field__error">{errors.reasoning}</p>{/if}
+            </div>
+            <div class="cr-provider-field cr-provider-field--row">
+                <span class="cr-provider-field__label">{t('taskModels.fields.promptCaching')}</span>
+                <Toggle checked={formPromptCaching} disabled={saving} ariaLabel={t('taskModels.fields.promptCaching')} onchange={(v) => { formPromptCaching = v; }} />
+                {#if formPromptCaching && formApiFormat === 'openai-responses'}
+                    <Select value={formPromptCacheMode} options={[{ value: 'implicit', label: t('taskModels.fields.promptCacheImplicit') }, { value: 'explicit', label: t('taskModels.fields.promptCacheExplicit') }]} disabled={saving} onchange={(value) => { formPromptCacheMode = value as 'implicit' | 'explicit'; }} />
+                {/if}
+            </div>
+            <div class="cr-provider-field cr-provider-field--row">
+                <span class="cr-provider-field__label">{t('taskModels.fields.responseContinuation')}</span>
+                <Toggle checked={formResponseContinuation} disabled={saving} ariaLabel={t('taskModels.fields.responseContinuation')} onchange={(v) => { formResponseContinuation = v; }} />
+            </div>
+
+            <div class="cr-provider-field">
+                <label class="cr-provider-field__label" for="pm-structured-output">
+                    {t('taskModels.fields.structuredOutput')}
+                </label>
+                <p class="cr-provider-field__desc">
+                    {t('taskModels.fields.structuredOutputDesc')}
+                </p>
+                <Select
+                    id="pm-structured-output"
+                    value={formStructuredOutput}
+                    options={[
+                        { value: 'prompt', label: t('taskModels.fields.structuredOutputOptions.prompt') },
+                        { value: 'json_object', label: t('taskModels.fields.structuredOutputOptions.json_object') },
+                        { value: 'json_schema', label: t('taskModels.fields.structuredOutputOptions.json_schema') },
+                    ]}
+                    disabled={saving}
+                    onchange={(value) => { formStructuredOutput = value as NonNullable<ProviderConfig['capabilities']>['structuredOutput']; }}
+                />
+            </div>
+
+            <div class="cr-provider-field">
+                <label class="cr-provider-field__label" for="pm-max-tokens">
+                    {t('taskModels.fields.maxTokens')}
+                </label>
+                <TextInput
+                    id="pm-max-tokens"
+                    value={formMaxTokens}
+                    placeholder={t('taskModels.fields.maxTokensPlaceholder')}
+                    invalid={Boolean(errors.maxTokens)}
+                    onchange={(v) => { formMaxTokens = v; errors = { ...errors, maxTokens: '' }; }}
+                    widthClass="cr-input-sm"
+                    disabled={saving}
+                />
+                {#if errors.maxTokens}<p class="cr-provider-field__error">{errors.maxTokens}</p>{/if}
             </div>
 
             <!-- 默认聊天模型 -->
@@ -349,11 +477,33 @@
                     id="pm-chat-model"
                     value={formChatModel}
                     placeholder="gemini-2.5-flash"
-                    onchange={(v) => { formChatModel = v; }}
+                    disabled={saving}
+                    onchange={(v) => { formChatModel = v; errors = { ...errors, chatModel: '' }; }}
+                />
+                {#if errors.chatModel}
+                    <p class="cr-provider-field__error">{errors.chatModel}</p>
+                {/if}
+            </div>
+            {/if}
+
+            <div class="cr-provider-field">
+                <label class="cr-provider-field__label" for="pm-embedding-api-format">
+                    {t('modals.providerConfig.fields.embeddingApiFormat')}
+                </label>
+                <p class="cr-provider-field__desc">
+                    {t('modals.providerConfig.fields.embeddingApiFormatDesc')}
+                </p>
+                <Select
+                    id="pm-embedding-api-format"
+                    value={formEmbeddingApiFormat}
+                    options={embeddingApiFormatOptions}
+                    disabled={saving}
+                    onchange={(value) => { formEmbeddingApiFormat = value as EmbeddingApiFormat; errors = { ...errors, apiFormat: '', embedModel: '' }; }}
                 />
             </div>
 
             <!-- 默认嵌入模型 -->
+            {#if formEmbeddingApiFormat === 'openai-embeddings'}
             <div class="cr-provider-field">
                 <label class="cr-provider-field__label" for="pm-embed-model">
                     {t('modals.providerConfig.fields.embedModel')}
@@ -365,9 +515,32 @@
                     id="pm-embed-model"
                     value={formEmbedModel}
                     placeholder="text-embedding-004"
-                    onchange={(v) => { formEmbedModel = v; }}
+                    disabled={saving}
+                    onchange={(v) => { formEmbedModel = v; errors = { ...errors, embedModel: '' }; }}
                 />
+                {#if errors.embedModel}
+                    <p class="cr-provider-field__error">{errors.embedModel}</p>
+                {/if}
             </div>
+            <div class="cr-provider-field">
+                <label class="cr-provider-field__label" for="pm-embedding-dimension">
+                    {t('taskModels.fields.embeddingDimension')}
+                </label>
+                <p class="cr-provider-field__desc">
+                    {t('taskModels.fields.embeddingDimensionDesc')}
+                </p>
+                <TextInput
+                    id="pm-embedding-dimension"
+                    value={formEmbeddingDimension}
+                    placeholder={t('taskModels.fields.optional')}
+                    invalid={Boolean(errors.embeddingDimension)}
+                    onchange={(v) => { formEmbeddingDimension = v; errors = { ...errors, embeddingDimension: '' }; }}
+                    widthClass="cr-input-sm"
+                    disabled={saving}
+                />
+                {#if errors.embeddingDimension}<p class="cr-provider-field__error">{errors.embeddingDimension}</p>{/if}
+            </div>
+            {/if}
 
             <!-- 启用开关（Toggle 是 div[role=switch]，用 aria-labelledby 关联） -->
             <div class="cr-provider-field cr-provider-field--row">
@@ -376,6 +549,7 @@
                 </span>
                 <Toggle
                     checked={formEnabled}
+                    disabled={saving}
                     ariaLabel={t('settings.provider.enabled')}
                     onchange={(v) => { formEnabled = v; }}
                 />
@@ -384,14 +558,17 @@
 
         <!-- 连接测试结果 -->
         {#if testResult}
-            <div
-                class="cr-provider-test-result"
-                class:cr-provider-test-result--ok={testResult.ok}
-                class:cr-provider-test-result--fail={!testResult.ok}
-                role="status"
-                aria-live="polite"
-            >
-                {testResult.message}
+            <ProviderProbeStatus
+                result={testResult}
+                {i18n}
+                onretry={() => void handleTestConnection('manual-retry')}
+                retrying={testing}
+            />
+        {/if}
+
+        {#if saveError}
+            <div class="cr-provider-test-result cr-provider-test-result--fail" role="alert">
+                {saveError}
             </div>
         {/if}
 
@@ -400,12 +577,13 @@
             <Button
                 variant="ghost"
                 loading={testing}
-                onclick={handleTestConnection}
+                disabled={saving}
+                onclick={() => void handleTestConnection()}
             >
                 {t('settings.provider.testConnection')}
             </Button>
             <div class="cr-provider-actions__right">
-                <Button variant="secondary" onclick={handleCancel}>
+                <Button variant="secondary" disabled={saving} onclick={handleCancel}>
                     {t('common.cancel')}
                 </Button>
                 <Button variant="primary" loading={saving} onclick={handleSave}>
@@ -413,39 +591,13 @@
                 </Button>
             </div>
         </div>
-    </div>
-</div>
+ </ModalShell>
 
 
 <style>
-    /* 遮罩层 */
-    .cr-provider-overlay {
-        position: fixed;
-        inset: 0;
-        z-index: var(--layer-modal, 50);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: rgba(0, 0, 0, 0.5);
-    }
-
-    /* 对话框容器 */
-    .cr-provider-dialog {
-        background: var(--cr-bg-base);
-        border: 1px solid var(--cr-border);
-        border-radius: var(--cr-radius-md);
-        box-shadow: var(--cr-shadow-lg);
-        padding: var(--cr-space-6);
-        min-width: 380px;
-        max-width: 520px;
-        width: 90%;
-        max-height: 85vh;
-        overflow-y: auto;
-    }
-
     .cr-provider-dialog__title {
         margin: 0 0 var(--cr-space-1) 0;
-        font-size: var(--font-ui-medium, 16px);
+        font-size: var(--font-ui-medium);
         font-weight: 600;
         color: var(--cr-text-normal);
     }
@@ -453,7 +605,7 @@
     .cr-provider-dialog__desc {
         margin: 0 0 var(--cr-space-4) 0;
         color: var(--cr-text-muted);
-        font-size: var(--cr-font-sm, 13px);
+        font-size: var(--cr-font-sm);
         line-height: 1.4;
     }
 
@@ -478,7 +630,7 @@
     }
 
     .cr-provider-field__label {
-        font-size: var(--font-ui-small, 13px);
+        font-size: var(--font-ui-small);
         font-weight: 500;
         color: var(--cr-text-normal);
     }
@@ -490,37 +642,15 @@
 
     .cr-provider-field__desc {
         margin: 0;
-        font-size: var(--cr-font-xs, 12px);
+        font-size: var(--cr-font-xs);
         color: var(--cr-text-muted);
         line-height: 1.3;
     }
 
     .cr-provider-field__error {
         margin: 0;
-        font-size: var(--cr-font-xs, 12px);
+        font-size: var(--cr-font-xs);
         color: var(--cr-text-error);
-    }
-
-    /* 连接测试结果 */
-    .cr-provider-test-result {
-        margin-top: var(--cr-space-2);
-        padding: var(--cr-space-2) var(--cr-space-3);
-        border-radius: var(--cr-radius-sm);
-        font-size: var(--cr-font-sm, 13px);
-        line-height: 1.4;
-        white-space: pre-line;
-    }
-
-    .cr-provider-test-result--ok {
-        background: var(--cr-bg-success, rgba(0, 200, 83, 0.1));
-        color: var(--cr-text-success, #00c853);
-        border: 1px solid var(--cr-border-success, rgba(0, 200, 83, 0.3));
-    }
-
-    .cr-provider-test-result--fail {
-        background: var(--cr-bg-error, rgba(255, 82, 82, 0.1));
-        color: var(--cr-text-error);
-        border: 1px solid var(--cr-border-error, rgba(255, 82, 82, 0.3));
     }
 
     /* 操作按钮行 */

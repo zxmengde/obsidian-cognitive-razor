@@ -4,7 +4,7 @@
  * 功能：
  * - 从 zh.json 加载翻译内容（构建时通过 esbuild JSON loader 内联）
  * - 支持 t(key) 键路径查找和 format(key, params) 占位符插值
- * - 保留 t() / format() / onLanguageChange() 接口签名，避免大量 Svelte 组件改动
+ * - messages 提供需要批量读取的类型安全中文词条
  */
 
 import zhLocale from "../locales/zh.json";
@@ -13,13 +13,12 @@ import type { ILogger } from "../types";
 /**
  * 翻译数据类型（嵌套 JSON 对象）
  */
-type TranslationData = Record<string, unknown>;
+type TranslationData = typeof zhLocale;
 
 /**
  * i18n 管理器（中文单语版）
  *
- * 设计决策：移除多语言切换，硬编码中文。
- * 保留 t() / format() / onLanguageChange() 接口以兼容现有 Svelte 组件。
+ * 插件只提供中文界面，不维护虚假的语言状态或切换事件。
  */
 export class I18n {
     private readonly translationData: TranslationData;
@@ -32,40 +31,21 @@ export class I18n {
     /**
      * 设置 Logger 实例（延迟注入，避免循环依赖）
      */
-    setLogger(logger: ILogger): void {
+    setLogger(logger: ILogger | null): void {
         this.logger = logger;
     }
 
-    /**
-     * 获取当前语言（始终返回 "zh"）
-     */
-    getLanguage(): "zh" {
-        return "zh";
-    }
-
-    /**
-     * 设置语言（no-op，保留接口兼容）
-     */
-    setLanguage(_language: string): void {
-        // 中文单语版，忽略语言切换
+    /** 供同一组件批量读取多个固定词条。 */
+    get messages(): TranslationData {
+        return this.translationData;
     }
 
     /**
      * 通过键路径获取翻译文本
      *
-     * 支持两种调用方式：
-     * - t("workbench.buttons.verify") → 返回对应翻译字符串
-     * - t() → 返回完整翻译对象（向后兼容 Svelte 组件）
+     * 例如 t("workbench.buttons.verify")。
      */
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    t(): any;
-    t(key: string): string;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    t(key?: string): string | any {
-        if (key === undefined) {
-            // 向后兼容：返回完整翻译对象供属性访问
-            return this.translationData;
-        }
+    t(key: string): string {
         return this.resolveKey(key);
     }
 
@@ -73,21 +53,12 @@ export class I18n {
      * 带参数插值的翻译
      *
      * 支持 {param} 占位符，例如：
-     *   format("notices.providerAdded", { id: "openai" })
-     *   → "Provider openai 已添加"
+     *   format("confirmDialogs.deleteProvider.message", { id: "openai" })
+     *   → "确定要删除 Provider \"openai\" 吗？此操作不可撤销。"
      */
     format(key: string, params: Record<string, string | number>): string {
         const template = this.resolveKey(key);
         return formatMessage(template, params);
-    }
-
-    /**
-     * 注册语言切换监听器（no-op，保留接口兼容）
-     * @returns 取消注册的函数
-     */
-    onLanguageChange(_listener: () => void): () => void {
-        // 中文单语版，不会触发语言切换
-        return () => {};
     }
 
     /**
@@ -122,7 +93,7 @@ export class I18n {
 /**
  * 格式化消息（支持 {param} 占位符插值）
  */
-export function formatMessage(template: string, params: Record<string, string | number>): string {
+function formatMessage(template: string, params: Record<string, string | number>): string {
     return template.replace(/\{(\w+)\}/g, (match, key) => {
         return params[key]?.toString() ?? match;
     });

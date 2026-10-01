@@ -10,21 +10,12 @@
 import { App, TFile } from "obsidian";
 import type { EventRef } from "obsidian";
 import type { ILogger } from "../types";
-import { extractFrontmatter } from "./frontmatter-utils";
 
-/** CruidCache 最大容量（防止内存无限增长，需求 24.3） */
-const MAX_CRUID_CACHE_SIZE = 10_000;
-
-type CruidCacheOptions = {
-  /** 解析 frontmatter 失败时是否回退到读取文件内容 */
-  fallbackToRead?: boolean;
-};
-
-/**
- * registerEvent 回调类型
- * 由 Plugin 层注入，确保事件监听器随插件卸载自动清理
- */
-type RegisterEventFn = (eventRef: EventRef) => void;
+export interface CruidCacheEntry {
+  cruid: string;
+  path: string;
+  file: TFile;
+}
 
 export class CruidCache {
   private app: App;
@@ -34,44 +25,48 @@ export class CruidCache {
   private eventRefs: Array<{ target: "metadata" | "vault"; ref: EventRef }> = [];
   private deleteListeners: Array<(event: { cruid: string; path: string }) => void> = [];
   private started = false;
-  private registerEventFn: RegisterEventFn | null;
+  private generation = 0;
+  private buildPromise: Promise<void> | undefined;
 
-  constructor(app: App, logger?: ILogger, registerEventFn?: RegisterEventFn) {
+  constructor(app: App, logger?: ILogger) {
     this.app = app;
     this.logger = logger;
-    this.registerEventFn = registerEventFn ?? null;
   }
 
   /**
    * 启动缓存：注册事件监听器并触发一次全量构建
-   * 优先使用 registerEventFn（Obsidian 自动清理），否则回退到手动 offref
+   * 事件监听器由缓存自身拥有，并在 dispose() 中成对释放。
    */
-  start(options: CruidCacheOptions = {}): void {
+  start(): void {
     if (this.started) {
       return;
     }
     this.started = true;
+    const generation = ++this.generation;
 
     // metadataCache 变更：frontmatter 修改、新文件解析完成等
     const metaRef = this.app.metadataCache.on("changed", (file) => {
+      if (generation !== this.generation) return;
       if (!(file instanceof TFile) || file.extension !== "md") {
         return;
       }
-      void this.upsertFromFile(file, options);
+      this.queueUpsert(file, generation);
     });
-    this.registerOrTrackEvent("metadata", metaRef);
+    this.trackEvent("metadata", metaRef);
 
     // 文件删除：清理缓存
     const deleteRef = this.app.vault.on("delete", (file) => {
+      if (generation !== this.generation) return;
       if (!(file instanceof TFile) || file.extension !== "md") {
         return;
       }
-      this.removeByFile(file);
+      this.removeByFile(file, generation);
     });
-    this.registerOrTrackEvent("vault", deleteRef);
+    this.trackEvent("vault", deleteRef);
 
     // 文件重命名/移动：更新 pathToCruid（同一 TFile 对象 path 会变化）
     const renameRef = this.app.vault.on("rename", (file, oldPath) => {
+      if (generation !== this.generation) return;
       if (!(file instanceof TFile) || file.extension !== "md") {
         return;
       }
@@ -84,31 +79,50 @@ export class CruidCache {
       }
 
       // 若旧路径不存在映射，尝试从 metadataCache 补全
-      void this.upsertFromFile(file, options);
+      this.queueUpsert(file, generation);
     });
-    this.registerOrTrackEvent("vault", renameRef);
+    this.trackEvent("vault", renameRef);
 
     // 异步构建（不阻塞插件启动）
-    void this.buildCache(options);
+    const build = this.buildCache(generation).catch((error: unknown) => {
+      if (generation === this.generation) {
+        this.logger?.warn("CruidCache", "构建 cruid 缓存失败", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    });
+    this.buildPromise = build;
   }
 
-  /**
-   * 注册事件：优先通过 Plugin.registerEvent() 注册（自动清理），
-   * 否则回退到手动追踪 + dispose() 清理
-   */
-  private registerOrTrackEvent(target: "metadata" | "vault", ref: EventRef): void {
-    if (this.registerEventFn) {
-      this.registerEventFn(ref);
-    } else {
-      this.eventRefs.push({ target, ref });
+  /** 记录事件引用，确保缓存生命周期结束时可以精确解除监听。 */
+  private trackEvent(target: "metadata" | "vault", ref: EventRef): void {
+    this.eventRefs.push({ target, ref });
+  }
+
+  /** metadata 事件同步更新内存映射；异常只记录日志，不影响 Obsidian 事件循环。 */
+  private queueUpsert(file: TFile, generation: number): void {
+    try {
+      this.upsertFromFile(file, generation);
+    } catch (error) {
+      if (generation === this.generation) {
+        this.logger?.warn("CruidCache", "增量更新 cruid 缓存失败", {
+          path: file.path,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 
   /**
    * 停止缓存：取消事件监听
-   * 若事件通过 registerEventFn 注册，则由 Plugin 自动清理，此处仅清理手动追踪的事件
+   * 解除全部监听，并等待正在进行的初始扫描完成。
    */
-  dispose(): void {
+  async dispose(): Promise<void> {
+    if (!this.started && !this.buildPromise) {
+      return;
+    }
+    this.started = false;
+    const stopGeneration = ++this.generation;
     for (const item of this.eventRefs) {
       if (item.target === "metadata") {
         this.app.metadataCache.offref(item.ref);
@@ -118,14 +132,24 @@ export class CruidCache {
     }
     this.eventRefs = [];
     this.deleteListeners = [];
-    this.started = false;
+    const build = this.buildPromise;
+    this.buildPromise = undefined;
+    if (build) {
+      await build;
+    }
+    // A cache can be restarted while an older scan is winding down. Only the
+    // generation that requested this disposal may clear its own maps.
+    if (this.generation === stopGeneration && !this.started) {
+      this.cruidToFile.clear();
+      this.pathToCruid.clear();
+    }
   }
 
   /**
    * 启动时扫描所有 Markdown 文件构建缓存
    * 使用分块处理，块之间让出事件循环，避免阻塞 UI
    */
-  async buildCache(options: CruidCacheOptions = {}): Promise<void> {
+  private async buildCache(generation = this.generation): Promise<void> {
     this.cruidToFile.clear();
     this.pathToCruid.clear();
 
@@ -133,10 +157,11 @@ export class CruidCache {
     const CHUNK_SIZE = 100; // 每块处理 100 个文件
 
     for (let i = 0; i < files.length; i += CHUNK_SIZE) {
+      if (generation !== this.generation) return;
       const chunk = files.slice(i, i + CHUNK_SIZE);
       for (const file of chunk) {
-        // eslint-disable-next-line no-await-in-loop
-        await this.upsertFromFile(file, options);
+        if (generation !== this.generation) return;
+        this.upsertFromFile(file, generation);
       }
       // 块之间让出事件循环，避免阻塞 UI
       if (i + CHUNK_SIZE < files.length) {
@@ -150,17 +175,9 @@ export class CruidCache {
     });
   }
 
-  /**
-   * 通过 cruid 获取文件（LRU：访问时刷新到 Map 末尾）
-   */
+  /** 通过 cruid 获取文件。 */
   getFile(cruid: string): TFile | null {
-    const file = this.cruidToFile.get(cruid) ?? null;
-    if (file) {
-      // delete-then-set 刷新到末尾，模拟 LRU
-      this.cruidToFile.delete(cruid);
-      this.cruidToFile.set(cruid, file);
-    }
-    return file;
+    return this.cruidToFile.get(cruid) ?? null;
   }
 
   /**
@@ -179,15 +196,27 @@ export class CruidCache {
     return file ? file.basename : null;
   }
 
-  /**
-   * 通过 path 获取 cruid（用于清理/诊断）
-   */
+  has(cruid: string): boolean {
+    return this.cruidToFile.has(cruid);
+  }
+
+  /** 通过当前文件路径获取 cruid，供工作台动作使用。 */
   getCruidByPath(path: string): string | null {
     return this.pathToCruid.get(path) ?? null;
   }
 
-  has(cruid: string): boolean {
-    return this.cruidToFile.has(cruid);
+  /** 等待当前一轮初始 metadata 扫描完成。 */
+  async waitUntilReady(): Promise<void> {
+    await this.buildPromise;
+  }
+
+  /** 返回当前一轮扫描完成后的稳定、按路径排序的概念文件快照。 */
+  async snapshotEntries(): Promise<CruidCacheEntry[]> {
+    await this.waitUntilReady();
+    if (!this.started) return [];
+    return [...this.cruidToFile.entries()]
+      .map(([cruid, file]) => ({ cruid, path: file.path, file }))
+      .sort((first, second) => first.path.localeCompare(second.path));
   }
 
   /**
@@ -203,87 +232,82 @@ export class CruidCache {
     };
   }
 
-  private removeByFile(file: TFile): void {
-    const cruid = this.pathToCruid.get(file.path);
+  private removeByFile(file: TFile, generation = this.generation): void {
+    if (!this.started || generation !== this.generation) {
+      return;
+    }
+    this.removeMapping(file.path, generation);
+  }
+
+  /** 删除路径对应的映射，并通知依赖方清理旧概念状态。 */
+  private removeMapping(path: string, generation: number): void {
+    if (generation !== this.generation) {
+      return;
+    }
+    const cruid = this.pathToCruid.get(path);
     if (!cruid) {
       return;
     }
 
     for (const listener of this.deleteListeners) {
       try {
-        listener({ cruid, path: file.path });
+        listener({ cruid, path });
       } catch (error) {
         this.logger?.warn("CruidCache", "删除事件监听器执行失败", {
           cruid,
-          path: file.path,
+          path,
           error: error instanceof Error ? error.message : String(error),
         });
       }
     }
 
-    this.pathToCruid.delete(file.path);
+    this.pathToCruid.delete(path);
 
     const existing = this.cruidToFile.get(cruid);
-    if (existing && existing.path === file.path) {
+    if (existing && existing.path === path) {
       this.cruidToFile.delete(cruid);
     }
 
-    this.logger?.info("CruidCache", "已移除已删除文件的 cruid 映射", {
+    this.logger?.info("CruidCache", "已移除 cruid 映射", {
       cruid,
-      path: file.path,
+      path,
     });
   }
 
-  private async upsertFromFile(file: TFile, options: CruidCacheOptions): Promise<void> {
-    const cruid =
-      this.getCruidFromMetadata(file) ??
-      (options.fallbackToRead ? await this.getCruidFromFileContent(file) : null);
+  private upsertFromFile(
+    file: TFile,
+    generation = this.generation,
+    path = file.path,
+  ): void {
+    if (generation !== this.generation || file.path !== path) return;
+    const currentFile = this.app.vault.getAbstractFileByPath(path);
+    if (currentFile !== file) return;
 
+    const cruid = this.getCruidFromMetadata(file);
     if (!cruid) {
+      this.removeMapping(path, generation);
       return;
     }
 
-    const previousCruid = this.pathToCruid.get(file.path);
+    const previousCruid = this.pathToCruid.get(path);
     if (previousCruid && previousCruid !== cruid) {
-      const mapped = this.cruidToFile.get(previousCruid);
-      if (mapped && mapped.path === file.path) {
-        this.cruidToFile.delete(previousCruid);
-      }
+      this.removeMapping(path, generation);
     }
 
     const existingFile = this.cruidToFile.get(cruid);
-    if (existingFile && existingFile.path !== file.path) {
+    if (existingFile && existingFile.path !== path) {
+      if (this.pathToCruid.get(existingFile.path) === cruid) {
+        this.pathToCruid.delete(existingFile.path);
+      }
       this.logger?.warn("CruidCache", "检测到重复 cruid，已用最新文件覆盖", {
         cruid,
         previousPath: existingFile.path,
-        newPath: file.path,
+        newPath: path,
       });
     }
 
-    // 容量检查：超出上限时驱逐最久未访问的条目（LRU，需求 24.3）
-    if (!this.cruidToFile.has(cruid) && this.cruidToFile.size >= MAX_CRUID_CACHE_SIZE) {
-      this.evictOldest();
-    }
-
-    // delete-then-set 确保更新/插入都刷新到 Map 末尾（LRU）
-    this.cruidToFile.delete(cruid);
     this.cruidToFile.set(cruid, file);
-    this.pathToCruid.set(file.path, cruid);
-  }
-
-  /**
-   * 驱逐最久未访问的缓存条目（LRU：Map 头部 = 最久未访问）
-   * 当缓存超出 MAX_CRUID_CACHE_SIZE 时调用（需求 24.3）
-   */
-  private evictOldest(): void {
-    const firstKey = this.cruidToFile.keys().next().value;
-    if (firstKey === undefined) return;
-
-    const file = this.cruidToFile.get(firstKey);
-    this.cruidToFile.delete(firstKey);
-    if (file) {
-      this.pathToCruid.delete(file.path);
-    }
+    this.pathToCruid.set(path, cruid);
   }
 
   private getCruidFromMetadata(file: TFile): string | null {
@@ -293,25 +317,11 @@ export class CruidCache {
       return null;
     }
 
-    const raw = typeof fm.cruid === "string" ? fm.cruid : typeof fm.crUid === "string" ? (fm.crUid as string) : null;
+    const raw = typeof fm.cruid === "string" ? fm.cruid : null;
     if (!raw) {
       return null;
     }
     return raw.trim() || null;
   }
 
-  private async getCruidFromFileContent(file: TFile): Promise<string | null> {
-    try {
-      const content = await this.app.vault.cachedRead(file);
-      const extracted = extractFrontmatter(content);
-      const cruid = extracted?.frontmatter?.cruid;
-      return cruid ? cruid.trim() : null;
-    } catch (error) {
-      this.logger?.warn("CruidCache", "读取文件内容解析 cruid 失败", {
-        path: file.path,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return null;
-    }
-  }
 }

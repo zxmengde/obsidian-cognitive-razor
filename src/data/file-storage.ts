@@ -3,20 +3,24 @@
 import { 
   ok, 
   err,
+  CR_TYPES,
 } from "../types";
 import type {
   Result, 
-  QueueStateFile,
-  DuplicatePairsStore,
   ConceptVector,
   VectorIndexMeta,
-  CRType
+  CRType,
+  VectorFileRef,
 } from "../types";
 import { Vault } from "obsidian";
 
-function mapFsErrorToErrorCode(error: unknown): "E301_FILE_NOT_FOUND" | "E302_PERMISSION_DENIED" | "E303_DISK_FULL" | "E500_INTERNAL_ERROR" {
+function getFsErrorCode(error: unknown): string {
   const candidate = error as { code?: unknown } | null;
-  const code = typeof candidate?.code === "string" ? candidate.code : "";
+  return typeof candidate?.code === "string" ? candidate.code : "";
+}
+
+function mapFsErrorToErrorCode(error: unknown): "E301_FILE_NOT_FOUND" | "E302_PERMISSION_DENIED" | "E303_DISK_FULL" | "E500_INTERNAL_ERROR" {
+  const code = getFsErrorCode(error);
 
   if (code === "ENOENT") {
     return "E301_FILE_NOT_FOUND";
@@ -31,67 +35,117 @@ function mapFsErrorToErrorCode(error: unknown): "E301_FILE_NOT_FOUND" | "E302_PE
   return "E500_INTERNAL_ERROR";
 }
 
+function isMissingFsError(error: unknown): boolean {
+  return getFsErrorCode(error) === "ENOENT";
+}
+
 /** 数据目录路径常量 */
 const DATA_DIR = "data";
-export const VECTORS_DIR = `${DATA_DIR}/vectors`;
+const VECTORS_DIR = `${DATA_DIR}/vectors`;
+const CR_TYPE_SET: ReadonlySet<string> = new Set(CR_TYPES);
 
 /** 数据文件路径常量 */
-const QUEUE_STATE_FILE = `${DATA_DIR}/queue-state.json`;
 const VECTOR_INDEX_META_FILE = `${VECTORS_DIR}/index.json`;
-const DUPLICATE_PAIRS_FILE = `${DATA_DIR}/duplicate-pairs.json`;
-const APP_LOG_FILE = `${DATA_DIR}/app.log`;
 
-/** 默认队列状态 */
-const DEFAULT_QUEUE_STATE: QueueStateFile = {
-  version: "2.0.0",
-  pendingTasks: [],
-  paused: false,
-};
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
 
+function isSafeConceptId(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.trim() === value &&
+    !value.includes("/") && !value.includes("\\") && !value.includes("\0") &&
+    value !== "." && value !== ".." && value !== "__proto__" &&
+    value !== "prototype" && value !== "constructor";
+}
 
+function isSafeRelativePath(value: unknown): value is string {
+  if (typeof value !== "string" || value.length === 0 || value.includes("\\") || value.includes("\0")) {
+    return false;
+  }
+  if (value.startsWith("/") || /^[A-Za-z]:/.test(value)) {
+    return false;
+  }
+  return value.split("/").every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
+}
 
-/**
- * 默认重复对存储
- */
-const DEFAULT_DUPLICATE_PAIRS: DuplicatePairsStore = {
-  version: "1.0.0",
-  pairs: [],
-  dismissedPairs: [],
-};
+function isSafeCrType(value: unknown): value is CRType {
+  return typeof value === "string" && CR_TYPE_SET.has(value);
+}
 
-/**
- * 默认向量索引元数据
- */
-export const DEFAULT_VECTOR_INDEX_META: VectorIndexMeta = {
-  version: "3.0",
-  lastUpdated: Date.now(),
-  stats: {
-    totalConcepts: 0,
-    byType: {
-      Domain: 0,
-      Issue: 0,
-      Theory: 0,
-      Entity: 0,
-      Mechanism: 0,
-    },
-  },
-  concepts: {},
-};
+function parseVectorIndexMeta(raw: unknown): VectorIndexMeta | null {
+  if (!isRecord(raw) || raw.version !== "5.0" ||
+    typeof raw.embeddingProfile !== "string" || !raw.embeddingProfile.trim() ||
+    typeof raw.embeddingModel !== "string" || !raw.embeddingModel.trim() ||
+    !Number.isInteger(raw.dimensions) || (raw.dimensions as number) < 0 ||
+    !isRecord(raw.concepts)) {
+    return null;
+  }
+
+  const concepts = Object.create(null) as VectorIndexMeta["concepts"];
+  for (const [id, candidate] of Object.entries(raw.concepts)) {
+    if (!isSafeConceptId(id) || !isRecord(candidate) || !CR_TYPE_SET.has(String(candidate.type))) {
+      return null;
+    }
+    concepts[id] = { type: candidate.type as CRType };
+  }
+  if ((raw.dimensions as number) === 0 && Object.keys(concepts).length > 0) return null;
+  return {
+    version: "5.0",
+    embeddingProfile: raw.embeddingProfile.trim(),
+    embeddingModel: raw.embeddingModel.trim(),
+    dimensions: raw.dimensions as number,
+    concepts,
+  };
+}
+
+function parseVectorMetadata(raw: unknown, embeddingLength: number): ConceptVector["metadata"] | null {
+  if (!isRecord(raw) ||
+    typeof raw.createdAt !== "number" || !Number.isFinite(raw.createdAt) ||
+    typeof raw.updatedAt !== "number" || !Number.isFinite(raw.updatedAt) ||
+    typeof raw.embeddingModel !== "string" || !raw.embeddingModel.trim() ||
+    !Number.isInteger(raw.dimensions) || raw.dimensions !== embeddingLength) {
+    return null;
+  }
+  return {
+    createdAt: raw.createdAt,
+    updatedAt: raw.updatedAt,
+    embeddingModel: raw.embeddingModel.trim(),
+    dimensions: raw.dimensions as number,
+  };
+}
+
+function parseConceptVector(raw: unknown, expectedType: CRType, expectedId: string): ConceptVector | null {
+  if (!isRecord(raw) || raw.id !== expectedId || raw.type !== expectedType ||
+    !Array.isArray(raw.embedding) || raw.embedding.length === 0 ||
+    !raw.embedding.every((value) => typeof value === "number" && Number.isFinite(value))) {
+    return null;
+  }
+  const metadata = parseVectorMetadata(raw.metadata, raw.embedding.length);
+  if (!metadata) return null;
+  return {
+    id: expectedId,
+    type: expectedType,
+    embedding: [...raw.embedding] as number[],
+    metadata,
+  };
+}
 
 /** FileStorage 实现类 - 目录初始化、原子写入、数据完整性校验 */
 export class FileStorage {
   private vault: Vault;
   private basePath: string;
-  private initialized = false;
 
   /** 构造函数 */
   constructor(vault: Vault, basePath?: string) {
     this.vault = vault;
-    this.basePath = basePath || "";
+    this.basePath = (basePath || "").replace(/^\/+|\/+$/g, "");
   }
 
-  /** 解析完整路径 */
+  /** 解析完整路径；所有公开相对路径都必须留在插件数据目录内。 */
   private resolvePath(relativePath: string): string {
+    if (!isSafeRelativePath(relativePath)) {
+      throw new Error(`Invalid relative path: ${relativePath}`);
+    }
     if (!this.basePath) {
       return relativePath;
     }
@@ -107,35 +161,6 @@ export class FileStorage {
         return dataDirResult;
       }
 
-      const vectorsDirResult = await this.ensureDir(VECTORS_DIR);
-      if (!vectorsDirResult.ok) {
-        return vectorsDirResult;
-      }
-
-      // 为每个类型创建子目录
-      const types: CRType[] = ["Domain", "Issue", "Theory", "Entity", "Mechanism"];
-      for (const type of types) {
-        const typeDirResult = await this.ensureDir(`${VECTORS_DIR}/${type}`);
-        if (!typeDirResult.ok) {
-          return typeDirResult;
-        }
-      }
-
-      // 2. 初始化数据文件（如果不存在）
-      const initResults = await Promise.all([
-        this.initializeFileIfNotExists(QUEUE_STATE_FILE, DEFAULT_QUEUE_STATE),
-        this.initializeFileIfNotExists(DUPLICATE_PAIRS_FILE, DEFAULT_DUPLICATE_PAIRS),
-        this.initializeFileIfNotExists(VECTOR_INDEX_META_FILE, DEFAULT_VECTOR_INDEX_META),
-      ]);
-
-      // 检查是否有初始化失败
-      for (const result of initResults) {
-        if (!result.ok) {
-          return result;
-        }
-      }
-
-      this.initialized = true;
       return ok(undefined);
     } catch (error) {
       return err(
@@ -144,11 +169,6 @@ export class FileStorage {
         error
       );
     }
-  }
-
-  /** 检查是否已初始化 */
-  isInitialized(): boolean {
-    return this.initialized;
   }
 
   /**
@@ -162,58 +182,49 @@ export class FileStorage {
    */
   async recoverIncompleteWrites(): Promise<Result<number>> {
     let recovered = 0;
+    const recoveryFailures: Array<{ path: string; error: unknown }> = [];
     try {
-      const residuals = await this.scanResidualFiles(DATA_DIR);
+      const residuals = await this.scanResidualFiles(this.resolvePath(DATA_DIR));
       for (const file of residuals) {
-        if (file.endsWith(".tmp")) {
-          // 临时文件：写入未完成，直接删除
-          await this.cleanupResidual(file);
-        } else if (file.endsWith(".bak")) {
-          // 备份文件：检查目标文件是否存在
-          const targetPath = file.slice(0, -4); // 去掉 .bak
-          const targetExists = await this.existsByFullPath(targetPath);
-          if (!targetExists) {
-            // 目标文件丢失，从备份恢复
-            try {
-              const backupContent = await this.vault.adapter.read(file);
-              await this.vault.adapter.write(targetPath, backupContent);
-              recovered++;
-            } catch {
-              // 恢复失败，忽略
-            }
-          }
-          await this.cleanupResidual(file);
+        try {
+          if (await this.recoverResidualFile(file)) recovered++;
+        } catch (error) {
+          // 保留未清理的残留文件，交给下一次启动或人工处理。
+          recoveryFailures.push({ path: file, error });
         }
+      }
+      if (recoveryFailures.length > 0) {
+        return err(mapFsErrorToErrorCode(recoveryFailures[0].error), "部分原子写入残留处理失败，残留文件已保留", {
+          failures: recoveryFailures,
+        });
       }
       return ok(recovered);
     } catch (error) {
-      return err("E500_INTERNAL_ERROR", "恢复未完成写入失败", error);
+      return err(mapFsErrorToErrorCode(error), "恢复未完成写入失败", error);
     }
   }
 
-  /** 扫描目录下的 .bak/.tmp 残留文件（递归） */
-  private async scanResidualFiles(dir: string): Promise<string[]> {
-    const results: string[] = [];
-    const fullDir = this.resolvePath(dir);
-    try {
-      const listing = await this.vault.adapter.list(fullDir);
-      for (const filePath of listing.files) {
-        if (filePath.endsWith(".tmp") || filePath.endsWith(".bak")) {
-          results.push(filePath);
-        }
-      }
-      for (const subDir of listing.folders) {
-        const subResults = await this.scanResidualFilesFullPath(subDir);
-        results.push(...subResults);
-      }
-    } catch {
-      // 目录不存在或无法读取，忽略
+  /** 处理单个残留文件；返回是否从备份恢复了目标。 */
+  private async recoverResidualFile(file: string): Promise<boolean> {
+    if (file.endsWith(".tmp")) {
+      await this.removeFullPath(file);
+      return false;
     }
-    return results;
+
+    const targetPath = file.slice(0, -4);
+    if (await this.fullPathExists(targetPath)) {
+      await this.removeFullPath(file);
+      return false;
+    }
+
+    const backupContent = await this.vault.adapter.read(file);
+    await this.vault.adapter.write(targetPath, backupContent);
+    await this.removeFullPath(file);
+    return true;
   }
 
-  /** 递归扫描（使用完整路径） */
-  private async scanResidualFilesFullPath(fullDir: string): Promise<string[]> {
+  /** 扫描完整目录路径下的 .bak/.tmp 残留文件（递归） */
+  private async scanResidualFiles(fullDir: string): Promise<string[]> {
     const results: string[] = [];
     try {
       const listing = await this.vault.adapter.list(fullDir);
@@ -223,50 +234,42 @@ export class FileStorage {
         }
       }
       for (const subDir of listing.folders) {
-        const subResults = await this.scanResidualFilesFullPath(subDir);
+        // Reset backups are immutable snapshots, not interrupted live writes.
+        if (subDir === this.resolvePath(`${DATA_DIR}/backups`)) continue;
+        const subResults = await this.scanResidualFiles(subDir);
         results.push(...subResults);
       }
-    } catch {
-      // 忽略
+    } catch (error) {
+      if (!isMissingFsError(error)) throw error;
     }
     return results;
   }
 
   /** 检查完整路径文件是否存在 */
-  private async existsByFullPath(fullPath: string): Promise<boolean> {
+  private async fullPathExists(fullPath: string): Promise<boolean> {
     try {
       const stat = await this.vault.adapter.stat(fullPath);
       return stat !== null && stat !== undefined;
-    } catch {
-      return false;
+    } catch (error) {
+      if (isMissingFsError(error)) return false;
+      throw error;
     }
   }
 
-  /** 安全清理残留文件 */
-  private async cleanupResidual(fullPath: string): Promise<void> {
+  /** 删除完整路径；不存在视为已清理，其他错误交给调用方处理。 */
+  private async removeFullPath(fullPath: string): Promise<void> {
     try {
       await this.vault.adapter.remove(fullPath);
-    } catch {
-      // 忽略清理错误
+    } catch (error) {
+      if (!isMissingFsError(error)) throw error;
     }
-  }
-
-  /** 如果文件不存在则初始化 */
-  private async initializeFileIfNotExists<T>(
-    path: string,
-    defaultContent: T
-  ): Promise<Result<void>> {
-    const fileExists = await this.exists(path);
-    if (!fileExists) {
-      const content = JSON.stringify(defaultContent, null, 2);
-      const writeResult = await this.write(path, content);
-      return writeResult;
-    }
-    return ok(undefined);
   }
 
   /** 读取文件 */
   async read(path: string): Promise<Result<string>> {
+    if (!isSafeRelativePath(path)) {
+      return err("E101_INVALID_INPUT", `Invalid relative path: ${path}`);
+    }
     try {
       const fullPath = this.resolvePath(path);
       const content = await this.vault.adapter.read(fullPath);
@@ -282,6 +285,9 @@ export class FileStorage {
 
   /** 写入文件（普通写入） */
   async write(path: string, content: string): Promise<Result<void>> {
+    if (!isSafeRelativePath(path)) {
+      return err("E101_INVALID_INPUT", `Invalid relative path: ${path}`);
+    }
     try {
       const fullPath = this.resolvePath(path);
       
@@ -309,9 +315,13 @@ export class FileStorage {
 
   /** 原子写入文件（临时文件 + 校验 + 重命名） */
   async atomicWrite(path: string, content: string): Promise<Result<void>> {
+    if (!isSafeRelativePath(path)) {
+      return err("E101_INVALID_INPUT", `Invalid relative path: ${path}`);
+    }
     const fullPath = this.resolvePath(path);
     const tempPath = `${fullPath}.tmp`;
     const backupPath = `${fullPath}.bak`;
+    let backupCreated = false;
     
     try {
       // 确保父目录存在（使用原始 path 而非 fullPath，因为 ensureDir 内部会调用 resolvePath）
@@ -334,79 +344,53 @@ export class FileStorage {
         return verifyResult;
       }
 
-      // 步骤 3: 如果目标文件存在，先备份并删除
-      // 注意：使用 try-catch 处理竞态条件（文件可能在检查后被删除）
-      let targetExists = false;
+      // 如果目标文件存在，先保留一份可恢复备份，再移除旧目标。
       try {
         const originalContent = await this.vault.adapter.read(fullPath);
-        targetExists = true;
-        // 创建备份
         await this.vault.adapter.write(backupPath, originalContent);
-        // 删除原文件（忽略 ENOENT 错误）
+        backupCreated = true;
         try {
           await this.vault.adapter.remove(fullPath);
         } catch (removeError: unknown) {
-          // 忽略文件不存在的错误（可能已被其他进程删除）
           const e = removeError as { code?: string };
           if (e.code !== "ENOENT") {
             throw removeError;
           }
         }
       } catch (backupError: unknown) {
-        // 读取失败说明文件不存在，这是正常情况
         const e = backupError as { code?: string };
         if (e.code !== "ENOENT") {
-          // 其他错误，清理临时文件并返回错误
-          await this.cleanupTempFile(tempPath);
-          return err(
-            mapFsErrorToErrorCode(backupError),
-            `Failed to backup/remove original file: ${path}`,
-            backupError
-          );
+          throw backupError;
         }
-        // 文件不存在，继续执行
       }
 
-      // 步骤 4: 重命名临时文件为目标文件
-      // 注意：Obsidian 的 rename 在某些情况下可能会失败，使用 copy + delete 作为备选方案
-      try {
-        await this.vault.adapter.rename(tempPath, fullPath);
-        // 成功后清理备份
+      // DataAdapter.rename 是 Obsidian 的标准提交能力；失败时进入备份回滚。
+      await this.vault.adapter.rename(tempPath, fullPath);
+
+      if (backupCreated) {
         await this.cleanupTempFile(backupPath);
-      } catch (renameError) {
-        // rename 失败，尝试使用 copy + delete 方案
-        try {
-          const tempContent = await this.vault.adapter.read(tempPath);
-          await this.vault.adapter.write(fullPath, tempContent);
-          await this.cleanupTempFile(tempPath);
-          await this.cleanupTempFile(backupPath);
-        } catch (copyError) {
-          // copy 也失败，尝试恢复备份
-          if (targetExists) {
-            try {
-              const backupContent = await this.vault.adapter.read(backupPath);
-              await this.vault.adapter.write(fullPath, backupContent);
-            } catch {
-              // 恢复失败，记录但不掩盖原始错误
-            }
-          }
-          // 清理临时文件和备份
-          await this.cleanupTempFile(tempPath);
-          await this.cleanupTempFile(backupPath);
-          throw copyError;
-        }
       }
-
       return ok(undefined);
     } catch (error) {
-      // 清理临时文件和备份文件
       await this.cleanupTempFile(tempPath);
-      await this.cleanupTempFile(backupPath);
+      let restoreError: unknown;
+      if (backupCreated) {
+        try {
+          const backupContent = await this.vault.adapter.read(backupPath);
+          await this.vault.adapter.write(fullPath, backupContent);
+          await this.cleanupTempFile(backupPath);
+        } catch (candidate) {
+          // 恢复失败时绝不删除 .bak；它仍是最后一份可恢复数据。
+          restoreError = candidate;
+        }
+      }
       
       return err(
         mapFsErrorToErrorCode(error),
         `Atomic write failed for file: ${path}`,
-        error
+        restoreError === undefined
+          ? error
+          : { error, restoreError, backupPath }
       );
     }
   }
@@ -440,8 +424,6 @@ export class FileStorage {
   /** 清理临时文件 */
   private async cleanupTempFile(tempPath: string): Promise<void> {
     try {
-      // 直接使用 vault.adapter，因为 tempPath 已经是完整路径
-      await this.vault.adapter.stat(tempPath);
       await this.vault.adapter.remove(tempPath);
     } catch {
       // 忽略清理错误（文件可能不存在），避免掩盖原始错误
@@ -450,16 +432,17 @@ export class FileStorage {
 
   /** 删除文件 */
   async delete(path: string): Promise<Result<void>> {
+    if (!isSafeRelativePath(path)) {
+      return err("E101_INVALID_INPUT", `Invalid relative path: ${path}`);
+    }
     try {
-      const exists = await this.exists(path);
-      if (!exists) {
-        return ok(undefined);
-      }
-      
       const fullPath = this.resolvePath(path);
       await this.vault.adapter.remove(fullPath);
       return ok(undefined);
     } catch (error) {
+      if ((error as { code?: unknown } | null)?.code === "ENOENT") {
+        return ok(undefined);
+      }
       return err(
         mapFsErrorToErrorCode(error),
         `Failed to delete file: ${path}`,
@@ -470,17 +453,20 @@ export class FileStorage {
 
   /** 检查文件是否存在 */
   async exists(path: string): Promise<boolean> {
+    if (!isSafeRelativePath(path)) {
+      return false;
+    }
     try {
       const fullPath = this.resolvePath(path);
-      await this.vault.adapter.stat(fullPath);
-      return true;
+      const stat = await this.vault.adapter.stat(fullPath);
+      return stat !== null && stat !== undefined;
     } catch {
       return false;
     }
   }
 
   /** 确保目录存在 */
-  async ensureDir(path: string): Promise<Result<void>> {
+  private async ensureDir(path: string): Promise<Result<void>> {
     try {
       const fullPath = this.resolvePath(path);
 
@@ -552,9 +538,72 @@ export class FileStorage {
     conceptId: string,
     data: ConceptVector
   ): Promise<Result<void>> {
+    if (!isSafeCrType(type) || !isSafeConceptId(conceptId)) {
+      return err("E101_INVALID_INPUT", `Invalid vector concept ID: ${conceptId}`);
+    }
+    const parsed = parseConceptVector(data, type, conceptId);
+    if (!parsed) {
+      return err("E101_INVALID_INPUT", `Invalid vector data: ${type}/${conceptId}`);
+    }
     const path = `${VECTORS_DIR}/${type}/${conceptId}.json`;
-    const content = JSON.stringify(data, null, 2);
+    const content = JSON.stringify(parsed, null, 2);
     return this.atomicWrite(path, content);
+  }
+
+  /**
+   * 列出数据目录内的直接文件，返回仍以 FileStorage 相对路径表示的结果。
+   * 工作流恢复只能读取插件自己的 data 目录，不能通过 adapter 暴露任意路径。
+   */
+  async listFiles(path: string): Promise<Result<string[]>> {
+    if (!isSafeRelativePath(path)) {
+      return err("E101_INVALID_INPUT", `Invalid relative path: ${path}`);
+    }
+    try {
+      const fullPath = this.resolvePath(path);
+      const listing = await this.vault.adapter.list(fullPath);
+      const prefix = this.basePath ? `${this.basePath}/` : "";
+      const files = listing.files
+        .filter((file) => !prefix || file.startsWith(prefix))
+        .map((file) => prefix ? file.slice(prefix.length) : file)
+        .filter((file) => isSafeRelativePath(file));
+      return ok(files);
+    } catch (error) {
+      if (isMissingFsError(error)) return ok([]);
+      return err(mapFsErrorToErrorCode(error), `Failed to list files: ${path}`, error);
+    }
+  }
+
+  /**
+   * Recursively list files under a plugin-relative directory.
+   * Used by backup/reset so nested workflows and vectors are not left behind.
+   */
+  async listFilesRecursive(path: string): Promise<Result<string[]>> {
+    if (!isSafeRelativePath(path)) {
+      return err("E101_INVALID_INPUT", `Invalid relative path: ${path}`);
+    }
+    try {
+      const fullPath = this.resolvePath(path);
+      const prefix = this.basePath ? `${this.basePath}/` : "";
+      const collected: string[] = [];
+
+      const walk = async (dirFullPath: string): Promise<void> => {
+        const listing = await this.vault.adapter.list(dirFullPath);
+        for (const filePath of listing.files) {
+          if (prefix && !filePath.startsWith(prefix)) continue;
+          const relative = prefix ? filePath.slice(prefix.length) : filePath;
+          if (isSafeRelativePath(relative)) collected.push(relative);
+        }
+        for (const subDir of listing.folders) {
+          await walk(subDir);
+        }
+      };
+
+      await walk(fullPath);
+      return ok(collected);
+    } catch (error) {
+      if (isMissingFsError(error)) return ok([]);
+      return err(mapFsErrorToErrorCode(error), `Failed to list files recursively: ${path}`, error);
+    }
   }
 
   /**
@@ -566,6 +615,9 @@ export class FileStorage {
     type: CRType,
     conceptId: string
   ): Promise<Result<ConceptVector>> {
+    if (!isSafeCrType(type) || !isSafeConceptId(conceptId)) {
+      return err("E101_INVALID_INPUT", `Invalid vector concept ID: ${conceptId}`);
+    }
     const path = `${VECTORS_DIR}/${type}/${conceptId}.json`;
     const readResult = await this.read(path);
     
@@ -574,11 +626,13 @@ export class FileStorage {
     }
 
     try {
-      const data: ConceptVector = JSON.parse(readResult.value);
-      return ok(data);
+      const data = parseConceptVector(JSON.parse(readResult.value) as unknown, type, conceptId);
+      return data
+        ? ok(data)
+        : err("E101_INVALID_INPUT", `Invalid vector file format: ${path}`);
     } catch (error) {
       return err(
-        "E500_INTERNAL_ERROR",
+        "E101_INVALID_INPUT",
         `Failed to parse vector file: ${path}`,
         error
       );
@@ -594,8 +648,35 @@ export class FileStorage {
     type: CRType,
     conceptId: string
   ): Promise<Result<void>> {
+    if (!isSafeCrType(type) || !isSafeConceptId(conceptId)) {
+      return err("E101_INVALID_INPUT", `Invalid vector concept ID: ${conceptId}`);
+    }
     const path = `${VECTORS_DIR}/${type}/${conceptId}.json`;
     return this.delete(path);
+  }
+
+  /**
+   * 列出向量目录下的物理 JSON 文件。
+   * 这里只返回合法类型和安全文件名；索引是否引用这些文件由 VectorIndex 决定。
+   */
+  async listVectorFiles(): Promise<Result<VectorFileRef[]>> {
+    const files: VectorFileRef[] = [];
+    try {
+      for (const type of CR_TYPES) {
+        const result = await this.listFiles(`${VECTORS_DIR}/${type}`);
+        if (!result.ok) return result as Result<VectorFileRef[]>;
+        for (const path of result.value) {
+          const prefix = `${VECTORS_DIR}/${type}/`;
+          if (!path.startsWith(prefix) || !path.endsWith(".json")) continue;
+          const id = path.slice(prefix.length, -".json".length);
+          if (!isSafeConceptId(id)) continue;
+          files.push({ type, id, path });
+        }
+      }
+      return ok(files.sort((first, second) => first.path.localeCompare(second.path)));
+    } catch (error) {
+      return err(mapFsErrorToErrorCode(error), "列出向量文件失败", error);
+    }
   }
 
   /**
@@ -609,11 +690,13 @@ export class FileStorage {
     }
 
     try {
-      const meta: VectorIndexMeta = JSON.parse(readResult.value);
-      return ok(meta);
+      const meta = parseVectorIndexMeta(JSON.parse(readResult.value) as unknown);
+      return meta
+        ? ok(meta)
+        : err("E101_INVALID_INPUT", "Invalid vector index metadata format");
     } catch (error) {
       return err(
-        "E500_INTERNAL_ERROR",
+        "E101_INVALID_INPUT",
         `Failed to parse vector index meta`,
         error
       );
@@ -624,27 +707,12 @@ export class FileStorage {
    * 写入向量索引元数据（原子写入，防止崩溃时损坏）
    */
   async writeVectorIndexMeta(meta: VectorIndexMeta): Promise<Result<void>> {
-    const content = JSON.stringify(meta, null, 2);
+    const parsed = parseVectorIndexMeta(meta);
+    if (!parsed) {
+      return err("E101_INVALID_INPUT", "Invalid vector index metadata format");
+    }
+    const content = JSON.stringify(parsed, null, 2);
     return this.atomicWrite(VECTOR_INDEX_META_FILE, content);
   }
 
-  /**
-   * 重命名文件
-   * @param oldPath 原路径
-   * @param newPath 新路径
-   */
-  async rename(oldPath: string, newPath: string): Promise<Result<void>> {
-    try {
-      const fullOldPath = this.resolvePath(oldPath);
-      const fullNewPath = this.resolvePath(newPath);
-      await this.vault.adapter.rename(fullOldPath, fullNewPath);
-      return ok(undefined);
-    } catch (error) {
-      return err(
-        mapFsErrorToErrorCode(error),
-        `Failed to rename file: ${oldPath} -> ${newPath}`,
-        error
-      );
-    }
-  }
 }

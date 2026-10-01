@@ -4,7 +4,6 @@
   用于设置页中的文本配置项。
   支持宽度类：cr-input-xs / cr-input-sm / cr-input-md / cr-input-lg。
 
-  @see 需求 10.4
 -->
 <script lang="ts">
     let {
@@ -14,6 +13,9 @@
         disabled = false,
         widthClass = '',
         id = undefined,
+        ariaLabel = undefined,
+        invalid = false,
+        ariaDescribedBy = undefined,
     }: {
         value?: string;
         placeholder?: string;
@@ -21,6 +23,9 @@
         disabled?: boolean;
         widthClass?: string;
         id?: string;
+        ariaLabel?: string;
+        invalid?: boolean;
+        ariaDescribedBy?: string;
     } = $props();
 
     /** 组合 CSS 类名 */
@@ -28,7 +33,9 @@
         ['cr-text-input', widthClass].filter(Boolean).join(' ')
     );
 
-    function handleInput(e: Event) {
+    // Persist settings after the edit is committed, rather than once per
+    // keystroke. This keeps plugin-data writes and listener updates bounded.
+    function handleChange(e: Event) {
         const target = e.target as HTMLInputElement;
         onchange(target.value);
     }
@@ -42,17 +49,21 @@
     {placeholder}
     {disabled}
     aria-disabled={disabled ? 'true' : undefined}
-    oninput={handleInput}
+    aria-label={ariaLabel}
+    aria-invalid={invalid ? 'true' : undefined}
+    aria-describedby={ariaDescribedBy}
+    class:cr-text-input--invalid={invalid}
+    onchange={handleChange}
 />
 
 <style>
     .cr-text-input {
-        padding: var(--cr-space-1, 4px) var(--cr-space-2, 8px);
+        padding: var(--cr-space-1) var(--cr-space-2);
         border: 1px solid var(--cr-border);
-        border-radius: var(--cr-radius-sm, 4px);
+        border-radius: var(--cr-radius-sm);
         background: var(--cr-bg-base);
         color: var(--cr-text-normal);
-        font-size: var(--font-ui-small, 13px);
+        font-size: var(--font-ui-small);
         min-height: 28px;
     }
 
@@ -63,6 +74,10 @@
 
     .cr-text-input:hover:not(:disabled) {
         border-color: var(--cr-bg-border-hover);
+    }
+
+    .cr-text-input--invalid {
+        border-color: var(--cr-status-error);
     }
 
     .cr-text-input::placeholder {

@@ -1,5 +1,14 @@
 import { App, TFile } from "obsidian";
-import type { ILogger } from "../types";
+import type { ILogger, CRFrontmatter } from "../types";
+import { extractFrontmatter, generateMarkdownContent } from "./frontmatter-utils";
+
+class NoteContentChangedError extends Error {}
+
+function bodyForGeneration(body: string): string {
+  // extractFrontmatter includes the newline separating YAML from Markdown;
+  // generateMarkdownContent already emits that separator.
+  return body.startsWith("\n") ? body.slice(1) : body;
+}
 
 export class NoteRepository {
   private readonly app: App;
@@ -23,19 +32,6 @@ export class NoteRepository {
     return file instanceof TFile ? file : null;
   }
 
-  async read(file: TFile): Promise<string> {
-    return this.app.vault.cachedRead(file);
-  }
-
-  listMarkdownFiles(): TFile[] {
-    return this.app.vault.getMarkdownFiles();
-  }
-
-  async modify(file: TFile, content: string): Promise<void> {
-    // 需求 22.2：后台文件修改使用 Vault.process() 原子操作
-    await this.app.vault.process(file, () => content);
-  }
-
   async readByPathIfExists(path: string): Promise<string | null> {
     const adapter = this.app.vault.adapter;
     const exists = await adapter.exists(path);
@@ -45,85 +41,165 @@ export class NoteRepository {
     return adapter.read(path);
   }
 
-  async deleteByPath(path: string): Promise<void> {
-    const file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof TFile)) {
-      throw new Error(`文件不存在: ${path}`);
-    }
-    // 需求 22.4：使用 fileManager.trashFile() 处理反向链接清理
-    await this.app.fileManager.trashFile(file);
+  async create(path: string, content: string): Promise<void> {
+    await this.ensureVaultDir(path);
+    await this.app.vault.create(path, content);
   }
 
-  async deleteByPathIfExists(path: string): Promise<boolean> {
-    const file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof TFile)) {
-      return false;
-    }
-    // 需求 22.4：使用 fileManager.trashFile() 处理反向链接清理
-    await this.app.fileManager.trashFile(file);
-    return true;
+  /** Create a draft once; recovery calls this repeatedly without overwriting user content. */
+  async ensureCreate(path: string, content: string): Promise<"created" | "existing"> {
+    const existing = this.getFileByPath(path);
+    if (existing) return "existing";
+    await this.ensureVaultDir(path);
+    await this.app.vault.create(path, content);
+    return "created";
   }
 
-  async writeAtomic(path: string, content: string): Promise<void> {
-    const adapter = this.app.vault.adapter;
+  /** Replace the complete plugin-owned snapshot only when no user edit occurred. */
+  async replaceIfUnchanged(
+    path: string,
+    expectedContent: string,
+    content: string,
+  ): Promise<"updated" | "missing" | "changed"> {
+    const file = this.getFileByPath(path);
+    if (!file) return "missing";
+    try {
+      await this.app.vault.process(file, (current) => {
+        // A Vault write may have succeeded just before the workflow
+        // checkpoint failed. Treat the already-applied target as idempotent.
+        if (current === content) return current;
+        if (current !== expectedContent) throw new NoteContentChangedError();
+        return content;
+      });
+    } catch (error) {
+      if (error instanceof NoteContentChangedError) return "changed";
+      throw error;
+    }
+    const confirmed = this.getFileByPath(path);
+    if (!confirmed) return "missing";
+    return (await this.app.vault.cachedRead(confirmed)) === content ? "updated" : "changed";
+  }
 
-    const existingFile = this.app.vault.getAbstractFileByPath(path);
-    if (existingFile && existingFile instanceof TFile) {
-      // 需求 22.2：后台文件修改使用 Vault.process() 原子操作
-      await this.app.vault.process(existingFile, () => content);
-      this.logger.debug("NoteRepository", "静默更新已存在文件", { path });
+  /** Preserve the current file byte for byte; only a newly created file gets a Decks header. */
+  async appendCards(path: string, markdown: string): Promise<void> {
+    const append = (current: string) => `${current}\n\n${markdown}\n`;
+    const existing = this.getFileByPath(path);
+    if (existing) {
+      await this.app.vault.process(existing, append);
       return;
     }
+    await this.ensureVaultDir(path);
+    // Do not retry after a create error: the host may have written the bytes
+    // before reporting failure, and retrying could append the batch twice.
+    await this.app.vault.create(path, `---\ntags: [decks]\n---\n\n${markdown}\n`);
+  }
 
-    const temp = `${path}.tmp`;
+  /** Patch frontmatter only when the complete plugin-owned snapshot is unchanged. */
+  async updateFrontmatterIfUnchanged(
+    path: string,
+    expectedContent: string,
+    patch: Partial<Pick<CRFrontmatter, "aliases" | "tags" | "status" | "updated">>,
+  ): Promise<{ content: string } | "missing" | "invalid" | "changed"> {
+    const file = this.getFileByPath(path);
+    if (!file) return "missing";
+    let valid = true;
+    let targetContent: string | undefined;
     try {
-      await this.ensureVaultDir(path);
-      await adapter.write(temp, content);
-      const verify = await adapter.read(temp);
-      if (verify !== content) {
-        throw new Error("写入校验失败");
-      }
-      await adapter.rename(temp, path);
-      this.logger.debug("NoteRepository", "原子写入新文件", { path });
-    } catch (error) {
-      try {
-        if (await adapter.exists(temp)) {
-          await adapter.remove(temp);
+      await this.app.vault.process(file, (current) => {
+        const extracted = extractFrontmatter(expectedContent);
+        if (!extracted) {
+          if (current !== expectedContent) throw new NoteContentChangedError();
+          valid = false;
+          return current;
         }
-      } catch (cleanupError) {
-        this.logger.warn("NoteRepository", "清理临时文件失败", {
-          temp,
-          error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
-        });
+        const next = generateMarkdownContent({ ...extracted.frontmatter, ...patch }, bodyForGeneration(extracted.body), expectedContent);
+        // A successful frontmatter write followed by a checkpoint failure is
+        // safe to replay when the current content is already the target.
+        targetContent = next;
+        if (current === next) return current;
+        if (current !== expectedContent) throw new NoteContentChangedError();
+        return next;
+      });
+    } catch (error) {
+      if (error instanceof NoteContentChangedError) return "changed";
+      throw error;
+    }
+    if (!valid) return "invalid";
+    const confirmed = this.getFileByPath(path);
+    if (!confirmed) return "missing";
+    const content = await this.app.vault.cachedRead(confirmed);
+    // Return the confirmed write, so callers never adopt a later user edit
+    // as the plugin-owned snapshot for the next generation stage.
+    return content === targetContent ? { content } : "changed";
+  }
+
+  /** Replace a marked Verify report exactly once, refusing to apply to a changed snapshot. */
+  async replaceVerificationReport(
+    path: string,
+    expectedContent: string,
+    reportBlock: string,
+    status: CRFrontmatter["status"] = "draft",
+    updated?: string,
+  ): Promise<"updated" | "missing" | "changed"> {
+    const file = this.getFileByPath(path);
+    if (!file) return "missing";
+    let targetContent: string | undefined;
+    try {
+      // Derive the target from the captured input, never from current user
+      // edits. Exact equality with that target is the only safe replay.
+      const markerStart = "<!-- cognitive-razor:verify-report -->";
+      const markerEnd = "<!-- /cognitive-razor:verify-report -->";
+      const marked = `${markerStart}\n${reportBlock.trim()}\n${markerEnd}`;
+      const existing = new RegExp(`${markerStart}[\\s\\S]*?${markerEnd}`, "m");
+      const withReport = existing.test(expectedContent)
+        ? expectedContent.replace(existing, () => marked)
+        : `${expectedContent}${expectedContent.endsWith("\n") ? "\n" : "\n\n"}${marked}\n`;
+      const next = extractFrontmatter(withReport);
+      if (!next) return "changed";
+      targetContent = generateMarkdownContent(
+        { ...next.frontmatter, status, ...(updated ? { updated } : {}) },
+        bodyForGeneration(next.body),
+        expectedContent,
+      );
+      await this.app.vault.process(file, (current) => {
+        if (current !== expectedContent && current !== targetContent) throw new NoteContentChangedError();
+        return targetContent!;
+      });
+    } catch (error) {
+      if (error instanceof NoteContentChangedError) return "changed";
+      throw error;
+    }
+    const confirmed = this.getFileByPath(path);
+    if (!confirmed) return "missing";
+    return (await this.app.vault.cachedRead(confirmed)) === targetContent ? "updated" : "changed";
+  }
+
+  async appendIfUnchanged(
+    path: string,
+    expectedContent: string,
+    block: string,
+  ): Promise<"appended" | "missing" | "changed"> {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) {
+      return "missing";
+    }
+
+    try {
+      await this.app.vault.process(file, (currentContent) => {
+        if (currentContent !== expectedContent) {
+          throw new NoteContentChangedError();
+        }
+        const separator = currentContent.endsWith("\n") ? "\n" : "\n\n";
+        return `${currentContent}${separator}${block}\n`;
+      });
+    } catch (error) {
+      if (error instanceof NoteContentChangedError) {
+        return "changed";
       }
       throw error;
     }
-  }
-
-  async ensureDirForPath(targetPath: string): Promise<void> {
-    await this.ensureVaultDir(targetPath);
-  }
-
-  getAvailablePathForAttachment(fileName: string, currentFilePath: string): string {
-    // Obsidian 内部 API，未在公开类型中声明，使用接口扩展安全访问
-    const vaultInternal = this.app.vault as typeof this.app.vault & {
-      getAvailablePathForAttachment?: (fileName: string, currentFilePath: string) => string;
-    };
-    if (typeof vaultInternal.getAvailablePathForAttachment === "function") {
-      return vaultInternal.getAvailablePathForAttachment(fileName, currentFilePath);
-    }
-
-    const currentFile = this.getFileByPath(currentFilePath);
-    if (currentFile?.parent) {
-      return `${currentFile.parent.path}/${fileName}`;
-    }
-
-    return fileName;
-  }
-
-  async createBinary(path: string, data: ArrayBuffer): Promise<void> {
-    await this.ensureVaultDir(path);
-    await this.app.vault.createBinary(path, data);
+    this.logger.debug("NoteRepository", "已在未变更的笔记末尾追加内容", { path });
+    return "appended";
   }
 
   private async ensureVaultDir(targetPath: string): Promise<void> {
@@ -133,9 +209,30 @@ export class NoteRepository {
     let current = "";
     for (const part of parts) {
       current = current ? `${current}/${part}` : part;
-      const exists = await adapter.exists(current);
-      if (!exists) {
+      let currentStat = null;
+      try {
+        currentStat = await adapter.stat(current);
+      } catch {
+        // Missing directories may be reported as null or as an adapter error.
+      }
+      if (currentStat) {
+        if (currentStat.type !== "folder") {
+          throw new Error(`路径不是目录: ${current}`);
+        }
+        continue;
+      }
+      try {
         await adapter.mkdir(current);
+      } catch (error) {
+        let createdByPeer = null;
+        try {
+          createdByPeer = await adapter.stat(current);
+        } catch {
+          // Preserve the original mkdir error below.
+        }
+        if (!createdByPeer || createdByPeer.type !== "folder") {
+          throw error;
+        }
       }
     }
   }

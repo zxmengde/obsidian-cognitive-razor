@@ -7,7 +7,6 @@
   按钮样式由全局 styles.css 中的 cr-btn-* 类定义，本组件仅负责
   根据 props 组装正确的 CSS 类名和 ARIA 属性。
   
-  @see 需求 16.4, 16.5, 16.6, 14.5
 -->
 <script lang="ts">
     import type { Snippet } from 'svelte';
@@ -70,6 +69,7 @@
     disabled={isDisabled}
     aria-disabled={isDisabled ? 'true' : undefined}
     aria-label={ariaLabel}
+    title={size === 'icon' ? ariaLabel : undefined}
     aria-busy={loading ? 'true' : undefined}
     onclick={isDisabled ? undefined : onclick}
 >

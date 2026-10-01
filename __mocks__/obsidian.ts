@@ -24,6 +24,8 @@ export class Notice {
     constructor(_message: string, _timeout?: number) {}
 }
 
+export function setIcon(_element: HTMLElement, _icon: string): void {}
+
 export class Modal {
     app: unknown;
     constructor(app: unknown) { this.app = app; }

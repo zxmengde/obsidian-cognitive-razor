@@ -4,7 +4,6 @@
   用于设置页中的布尔配置项，支持 disabled 状态和 ARIA 无障碍属性。
   样式通过 scoped styles + --cr-* 变量引用。
 
-  @see 需求 10.4
 -->
 <script lang="ts">
     let {

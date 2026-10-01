@@ -1,5 +1,7 @@
 /** Validator - 验证 AI 输出，包括 JSON 解析和 Schema 校验 */
 
+import Ajv from "ajv";
+import type { ErrorObject, ValidateFunction } from "ajv";
 import type {
   ValidationResult,
   ValidationError,
@@ -12,14 +14,18 @@ import type {
  * 2. 若无代码块，尝试提取第一个完整的 JSON 对象（{ ... }）
  * 3. 最后直接尝试解析原始内容
  */
-export function extractJsonFromResponse<T = Record<string, unknown>>(raw: string): T {
+function extractJsonFromResponse<T = Record<string, unknown>>(raw: string): T {
     const trimmed = raw.trim();
 
-    // 阶段 1：代码块提取
-    const jsonMatch = trimmed.match(/```json\s*([\s\S]*?)\s*```/)
-        || trimmed.match(/```\s*([\s\S]*?)\s*```/);
-    if (jsonMatch) {
-        return JSON.parse(jsonMatch[1]) as T;
+    // 阶段 1：代码块提取。逐个尝试，避免第一个非 JSON 代码块遮蔽后续合法 JSON。
+    const codeBlockPattern = /```[a-zA-Z0-9_-]*\s*([\s\S]*?)\s*```/g;
+    let codeBlockMatch: RegExpExecArray | null;
+    while ((codeBlockMatch = codeBlockPattern.exec(trimmed)) !== null) {
+        try {
+            return JSON.parse(codeBlockMatch[1]) as T;
+        } catch {
+            // 继续尝试后续代码块
+        }
     }
 
     // 阶段 2：直接解析（纯 JSON 输出）
@@ -42,6 +48,12 @@ export function extractJsonFromResponse<T = Record<string, unknown>>(raw: string
 
 /** Validator 实现类 */
 export class Validator {
+  private readonly ajv = new Ajv({
+    allErrors: true,
+    strict: false,
+  });
+  private readonly compiledSchemas = new WeakMap<object, ValidateFunction>();
+
   /** 验证输出 */
   async validate(
     output: string,
@@ -101,88 +113,16 @@ export class Validator {
     data: Record<string, unknown>,
     schema: object
   ): ValidationError[] {
-    const errors: ValidationError[] = [];
-    const schemaProps = (
-      schema as { properties?: Record<string, { type: string }> }
-    ).properties;
-
-    if (!schemaProps) {
-      return errors;
+    let validate = this.compiledSchemas.get(schema);
+    if (!validate) {
+      validate = this.ajv.compile(schema);
+      this.compiledSchemas.set(schema, validate);
+    }
+    if (validate(data)) {
+      return [];
     }
 
-    for (const [key, propSchema] of Object.entries(schemaProps)) {
-      const value = data[key];
-      const expectedType = propSchema.type;
-
-      if (value === undefined || value === null) {
-        continue; // 必填字段检查在下一步
-      }
-
-      const actualType = Array.isArray(value) ? "array" : typeof value;
-
-      if (expectedType === "array" && !Array.isArray(value)) {
-        errors.push({
-          code: "E211_MODEL_SCHEMA_VIOLATION",
-          type: "SchemaError",
-          message: `字段 "${key}" 应为数组`,
-          location: key,
-          fixInstruction: `请将 "${key}" 输出为数组`,
-        });
-      } else if (expectedType === "array" && Array.isArray(value)) {
-        // 数组元素类型检查
-        const itemsSchema = (propSchema as Record<string, unknown>).items as { type?: string } | undefined;
-        if (itemsSchema?.type && value.length > 0) {
-          const expectedItemType = itemsSchema.type;
-          for (let i = 0; i < value.length; i++) {
-            const itemActualType = Array.isArray(value[i]) ? "array" : typeof value[i];
-            if (expectedItemType === "object" && (typeof value[i] !== "object" || Array.isArray(value[i]) || value[i] === null)) {
-              errors.push({
-                code: "E211_MODEL_SCHEMA_VIOLATION",
-                type: "SchemaError",
-                message: `字段 "${key}[${i}]" 应为对象，实际为 "${itemActualType}"`,
-                location: `${key}[${i}]`,
-                fixInstruction: `请将 "${key}" 数组中的元素输出为对象`,
-              });
-              break; // 仅报告第一个类型错误
-            } else if (expectedItemType !== "object" && expectedItemType !== "array" && itemActualType !== expectedItemType) {
-              errors.push({
-                code: "E211_MODEL_SCHEMA_VIOLATION",
-                type: "SchemaError",
-                message: `字段 "${key}[${i}]" 应为 "${expectedItemType}"，实际为 "${itemActualType}"`,
-                location: `${key}[${i}]`,
-                fixInstruction: `请将 "${key}" 数组中的元素输出为 "${expectedItemType}" 类型`,
-              });
-              break;
-            }
-          }
-        }
-      } else if (
-        expectedType === "object" &&
-        (typeof value !== "object" || Array.isArray(value))
-      ) {
-        errors.push({
-          code: "E211_MODEL_SCHEMA_VIOLATION",
-          type: "SchemaError",
-          message: `字段 "${key}" 应为对象`,
-          location: key,
-          fixInstruction: `请将 "${key}" 输出为对象`,
-        });
-      } else if (
-        expectedType !== "array" &&
-        expectedType !== "object" &&
-        expectedType !== actualType
-      ) {
-        errors.push({
-          code: "E211_MODEL_SCHEMA_VIOLATION",
-          type: "SchemaError",
-          message: `字段 "${key}" 类型应为 "${expectedType}"，实际为 "${actualType}"`,
-          location: key,
-          fixInstruction: `请将 "${key}" 输出为 "${expectedType}" 类型`,
-        });
-      }
-    }
-
-    return errors;
+    return (validate.errors ?? []).map((error) => this.toValidationError(error));
   }
 
   /** 必填字段检查 */
@@ -190,35 +130,134 @@ export class Validator {
     data: Record<string, unknown>,
     schema: object
   ): ValidationError[] {
+    return this.validateRequiredStringFields(data, schema, "");
+  }
+
+  private toValidationError(error: ErrorObject): ValidationError {
+    const pointer = this.getErrorPointer(error);
+    return {
+      code: "E211_MODEL_SCHEMA_VIOLATION",
+      type: error.keyword === "required" ? "MissingField" : "SchemaError",
+      message: this.formatAjvError(error, pointer),
+      location: pointer,
+      fixInstruction: this.buildFixInstruction(error, pointer),
+    };
+  }
+
+  private getErrorPointer(error: ErrorObject): string {
+    if (error.keyword === "required") {
+      const missingProperty = (error.params as { missingProperty?: string }).missingProperty;
+      return `${error.instancePath}/${this.escapeJsonPointerToken(missingProperty ?? "")}`.replace(/^\/\//, "/");
+    }
+    if (error.keyword === "additionalProperties") {
+      const additionalProperty = (error.params as { additionalProperty?: string }).additionalProperty;
+      return `${error.instancePath}/${this.escapeJsonPointerToken(additionalProperty ?? "")}`.replace(/^\/\//, "/");
+    }
+    return error.instancePath || "/";
+  }
+
+  private formatAjvError(error: ErrorObject, pointer: string): string {
+    if (error.keyword === "required") {
+      const missingProperty = (error.params as { missingProperty?: string }).missingProperty;
+      return `缺少必填字段 "${missingProperty ?? pointer}"`;
+    }
+    if (error.keyword === "additionalProperties") {
+      const additionalProperty = (error.params as { additionalProperty?: string }).additionalProperty;
+      return `字段 "${additionalProperty ?? pointer}" 不在 Schema 中`;
+    }
+    return `字段 "${pointer}" ${error.message ?? "不符合 Schema"}`;
+  }
+
+  private buildFixInstruction(error: ErrorObject, pointer: string): string {
+    switch (error.keyword) {
+      case "required":
+        return `请补全 ${pointer} 字段`;
+      case "additionalProperties":
+        return `请移除 ${pointer} 字段`;
+      case "type":
+        return `请修正 ${pointer} 的数据类型`;
+      case "enum":
+        return `请将 ${pointer} 改为 Schema enum 允许的值`;
+      case "minimum":
+      case "maximum":
+      case "minItems":
+      case "maxItems":
+        return `请调整 ${pointer} 以满足 Schema 数值或数量范围`;
+      default:
+        return `请修正 ${pointer} 以符合 JSON Schema`;
+    }
+  }
+
+  private validateRequiredStringFields(
+    data: unknown,
+    schema: unknown,
+    pointer: string
+  ): ValidationError[] {
+    if (!schema || typeof schema !== "object") return [];
+    const schemaObject = schema as {
+      type?: string;
+      required?: string[];
+      properties?: Record<string, unknown>;
+      items?: unknown;
+    };
+    if (schemaObject.type === "object") {
+      return this.validateObjectRequiredStrings(data, schemaObject, pointer);
+    }
+    if (schemaObject.type === "array") {
+      return this.validateArrayRequiredStrings(data, schemaObject.items, pointer);
+    }
+    return [];
+  }
+
+  private validateObjectRequiredStrings(
+    data: unknown,
+    schema: { required?: string[]; properties?: Record<string, unknown> },
+    pointer: string,
+  ): ValidationError[] {
+    if (!data || typeof data !== "object" || Array.isArray(data)) return [];
+    const record = data as Record<string, unknown>;
+    const properties = schema.properties ?? {};
     const errors: ValidationError[] = [];
-    const required = (schema as { required?: string[] }).required;
 
-    if (!required) {
-      return errors;
+    for (const field of schema.required ?? []) {
+      const fieldSchema = properties[field] as { type?: string; minLength?: number } | undefined;
+      const value = record[field];
+      // An explicit zero permits empty strings while preserving the legacy
+      // non-empty policy for schemas that do not declare that exception.
+      if (fieldSchema?.minLength === 0) continue;
+      if (fieldSchema?.type !== "string" || typeof value !== "string" || value.trim()) continue;
+      const fieldPointer = `${pointer}/${this.escapeJsonPointerToken(field)}`;
+      errors.push({
+        code: "E211_MODEL_SCHEMA_VIOLATION",
+        type: "MissingField",
+        message: `必填字段 "${field}" 为空`,
+        location: fieldPointer,
+        fixInstruction: `请为 ${fieldPointer} 提供非空字符串`,
+      });
     }
 
-    for (const field of required) {
-      const value = data[field];
-      if (value === undefined || value === null) {
-        errors.push({
-          code: "E211_MODEL_SCHEMA_VIOLATION",
-          type: "MissingField",
-          message: `缺少必填字段 "${field}"`,
-          location: field,
-          fixInstruction: `请补全 "${field}" 字段`,
-        });
-      } else if (typeof value === "string" && value.trim() === "") {
-        errors.push({
-          code: "E211_MODEL_SCHEMA_VIOLATION",
-          type: "MissingField",
-          message: `必填字段 "${field}" 为空`,
-          location: field,
-          fixInstruction: `请为 "${field}" 提供非空值`,
-        });
-      }
+    for (const [field, childSchema] of Object.entries(properties)) {
+      errors.push(...this.validateRequiredStringFields(
+        record[field],
+        childSchema,
+        `${pointer}/${this.escapeJsonPointerToken(field)}`,
+      ));
     }
-
     return errors;
+  }
+
+  private validateArrayRequiredStrings(
+    data: unknown,
+    itemSchema: unknown,
+    pointer: string,
+  ): ValidationError[] {
+    if (!Array.isArray(data) || !itemSchema) return [];
+    return data.flatMap((item, index) =>
+      this.validateRequiredStringFields(item, itemSchema, `${pointer}/${index}`));
+  }
+
+  private escapeJsonPointerToken(token: string): string {
+    return token.replace(/~/g, "~0").replace(/\//g, "~1");
   }
 }
 

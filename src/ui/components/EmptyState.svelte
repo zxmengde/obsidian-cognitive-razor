@@ -31,8 +31,8 @@
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: var(--cr-space-2, 8px);
-        padding: var(--cr-space-6, 24px) var(--cr-space-4, 16px);
+        gap: var(--cr-space-2);
+        padding: var(--cr-space-6) var(--cr-space-4);
         margin: 0;
     }
 
@@ -46,6 +46,6 @@
         color: var(--cr-text-muted);
         font-size: var(--font-ui-small);
         margin: 0;
-        line-height: var(--cr-line-height-body, 1.5);
+        line-height: var(--cr-line-height-body);
     }
 </style>

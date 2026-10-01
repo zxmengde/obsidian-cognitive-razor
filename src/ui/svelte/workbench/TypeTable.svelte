@@ -1,44 +1,47 @@
 <!--
   TypeTable.svelte — 类型置信度表格
 
-  渲染 Define 结果中 5 种知识类型的置信度行：
+  渲染 Define 预览中的知识类型候选：
   - 类型标签（i18n）、标准名称、置信度进度条、创建按钮
   - 最高置信度行：Primary 按钮 + 强调色进度条
   - 其余行：Ghost 按钮 + 淡化色进度条
   - 点击创建后通过 oncreate 回调通知父组件
 
-  @see 需求 4.7, 4.8, 4.9
 -->
 <script lang="ts">
-    import type { CRType, StandardizedConcept } from '../../../types';
-    import { getCRContext } from '../../bridge/context';
+    import type { CRType, DefinePreview } from '../../../types';
+    import { getWorkbenchContext } from '../../bridge/context';
     import Button from '../../components/Button.svelte';
     import ProgressBar from '../../components/ProgressBar.svelte';
 
-    /** 5 种知识类型的固定顺序 */
-    const TYPE_ORDER: CRType[] = ['Domain', 'Issue', 'Theory', 'Entity', 'Mechanism'];
+    /** 知识类型的固定顺序 */
+    const TYPE_ORDER: CRType[] = ['domain', 'issue', 'theory', 'entity', 'mechanism'];
 
     let {
         concept,
         oncreate,
+        types = TYPE_ORDER,
     }: {
-        /** Define 返回的标准化概念数据 */
-        concept: StandardizedConcept;
+        /** Define 返回的临时预览 */
+        concept: DefinePreview;
         /** 用户选择某类型创建时的回调 */
         oncreate?: (type: CRType) => void;
+        /** Optional restriction used by an Expand confirmation. */
+        types?: readonly CRType[];
     } = $props();
 
-    const ctx = getCRContext();
-    const t = ctx.i18n.t();
+    const ctx = getWorkbenchContext();
+    const t = ctx.i18n.messages;
 
     /** 按置信度排序的类型行数据 */
     let rows = $derived(
         TYPE_ORDER
+            .filter(type => types.includes(type))
             .map(type => ({
                 type,
-                label: (t.crTypes as Record<string, string>)?.[type] ?? type,
-                name: concept.standardNames[type]?.chinese ?? '',
-                confidence: concept.typeConfidences[type] ?? 0,
+                label: t.crTypes[type],
+                name: concept.candidates[type]?.name.chinese.trim() || concept.candidates[type]?.name.english.trim() || '',
+                confidence: concept.candidates[type]?.confidence ?? 0,
             }))
             .sort((a, b) => b.confidence - a.confidence)
     );
@@ -49,7 +52,7 @@
     );
 </script>
 
-<div class="cr-type-table" role="table" aria-label={t.workbench?.createConcept?.selectType ?? '选择概念类型'}>
+<div class="cr-type-table" role="table" aria-label={t.workbench.createConcept.selectType}>
     {#each rows as row (row.type)}
         {@const isPrimary = row.confidence === maxConfidence && maxConfidence > 0}
         <div
@@ -71,7 +74,7 @@
                     size="sm"
                     onclick={() => oncreate?.(row.type)}
                 >
-                    {t.workbench?.createConcept?.create ?? '创建'}
+                    {t.workbench.createConcept.create}
                 </Button>
             </div>
         </div>
@@ -90,7 +93,7 @@
         align-items: center;
         gap: var(--cr-space-2);
         padding: var(--cr-space-1) var(--cr-space-2);
-        border-radius: var(--cr-radius-sm, 4px);
+        border-radius: var(--cr-radius-sm);
     }
 
     .cr-type-table__row--primary {
@@ -99,15 +102,15 @@
 
     .cr-type-table__label {
         width: 48px;
-        font-size: var(--cr-font-sm, 13px);
+        font-size: var(--cr-font-sm);
         color: var(--cr-text-muted);
         flex-shrink: 0;
     }
 
     .cr-type-table__name {
         flex: 1;
-        font-size: var(--cr-font-sm, 13px);
-        color: var(--cr-text-primary);
+        font-size: var(--cr-font-sm);
+        color: var(--cr-text-normal);
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;

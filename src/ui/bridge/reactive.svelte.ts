@@ -7,12 +7,10 @@
  * 每个 store 工厂函数返回 `destroy` 方法用于清理订阅，
  * 应在组件卸载时（$effect 清理或 onDestroy）调用。
  *
- * @see 需求 2.4, 2.5
  */
 
 import type { Workspace, TFile } from 'obsidian';
-import type { TaskQueue } from '@/core/task-queue';
-import type { DuplicateManager } from '@/core/duplicate-manager';
+import type { DuplicateApplication, QueueApplication } from '@/app/workbench-application';
 import type {
     QueueStatus,
     TaskRecord,
@@ -26,17 +24,19 @@ import type {
 /**
  * 队列状态响应式 store
  *
- * 订阅 TaskQueue 的所有事件，自动同步队列状态和任务列表到 $state。
+ * 订阅 Queue application port 的事件，自动同步队列状态和任务列表到 $state。
  * 组件卸载时调用 destroy() 取消订阅。
  */
-export function createQueueStore(taskQueue: TaskQueue) {
-    let status = $state<QueueStatus>(taskQueue.getStatus());
-    let tasks = $state<TaskRecord[]>(taskQueue.getAllTasks());
+export function createQueueStore(taskQueue: QueueApplication) {
+    const initial = taskQueue.getSnapshot();
+    let status = $state<QueueStatus>(initial.status);
+    let tasks = $state<TaskRecord[]>(initial.tasks);
 
-    // 订阅队列事件，任何变化都重新拉取最新状态
+    // 每个事件只读取一次一致快照，避免重复遍历任务集合。
     const unsubscribe = taskQueue.subscribe(() => {
-        status = taskQueue.getStatus();
-        tasks = taskQueue.getAllTasks();
+        const snapshot = taskQueue.getSnapshot();
+        status = snapshot.status;
+        tasks = snapshot.tasks;
     });
 
     return {
@@ -53,19 +53,21 @@ export function createQueueStore(taskQueue: TaskQueue) {
 /**
  * 活跃文件响应式 store
  *
- * 监听 Obsidian workspace 的 active-leaf-change 事件，
+ * 监听 Obsidian workspace 的文件和标签页切换事件，
  * 自动同步当前活跃文件到 $state。
  */
 export function createActiveFileStore(workspace: Workspace) {
     let activeFile = $state<TFile | null>(workspace.getActiveFile());
 
-    const ref = workspace.on('active-leaf-change', () => {
+    const refresh = () => {
         activeFile = workspace.getActiveFile();
-    });
+    };
+    const leafRef = workspace.on('active-leaf-change', refresh);
+    const fileRef = workspace.on('file-open', refresh);
 
     return {
         get file() { return activeFile; },
-        destroy: () => workspace.offref(ref),
+        destroy: () => { workspace.offref(leafRef); workspace.offref(fileRef); },
     };
 }
 
@@ -76,16 +78,14 @@ export function createActiveFileStore(workspace: Workspace) {
 /**
  * 重复对响应式 store
  *
- * 订阅 DuplicateManager 的变化通知，自动同步待处理重复对列表。
- * DuplicateManager.subscribe 会在订阅时立即调用一次回调。
+ * 订阅 Duplicate application port 的变化通知，自动同步待处理重复对列表。
+ * application port 的 subscribe 会在订阅时立即调用一次回调。
  */
-export function createDuplicatesStore(duplicateManager: DuplicateManager) {
+export function createDuplicatesStore(duplicateManager: DuplicateApplication) {
     let pairs = $state<DuplicatePair[]>(duplicateManager.getPendingPairs());
 
     const unsubscribe = duplicateManager.subscribe((updatedPairs) => {
-        // DuplicateManager 回调传入的是全量 pairs（含所有状态），
-        // 这里只保留 pending 状态的对
-        pairs = updatedPairs.filter(p => p.status === 'pending');
+        pairs = updatedPairs;
     });
 
     return {
@@ -93,5 +93,3 @@ export function createDuplicatesStore(duplicateManager: DuplicateManager) {
         destroy: unsubscribe,
     };
 }
-
-

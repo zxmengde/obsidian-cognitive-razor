@@ -4,7 +4,6 @@
   用于设置页中的枚举配置项。
   样式通过 scoped styles + --cr-* 变量引用。
 
-  @see 需求 10.4
 -->
 <script lang="ts">
     let {
@@ -13,12 +12,14 @@
         onchange,
         disabled = false,
         id = undefined,
+        ariaLabel = undefined,
     }: {
         value?: string;
         options?: Array<{ value: string; label: string }>;
         onchange: (value: string) => void;
         disabled?: boolean;
         id?: string;
+        ariaLabel?: string;
     } = $props();
 
     function handleChange(e: Event) {
@@ -33,6 +34,7 @@
     {value}
     {disabled}
     aria-disabled={disabled ? 'true' : undefined}
+    aria-label={ariaLabel}
     onchange={handleChange}
 >
     {#each options as opt (opt.value)}
@@ -47,10 +49,10 @@
         appearance: none;
         background: var(--cr-bg-base);
         border: 1px solid var(--cr-border);
-        border-radius: var(--cr-radius-sm, 4px);
+        border-radius: var(--cr-radius-sm);
         padding: var(--cr-space-1) var(--cr-space-6) var(--cr-space-1) var(--cr-space-2);
         color: var(--cr-text-normal);
-        font-size: var(--font-ui-small, 13px);
+        font-size: var(--font-ui-small);
         cursor: pointer;
         min-height: 28px;
         /* 下拉箭头 */

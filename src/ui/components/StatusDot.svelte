@@ -4,7 +4,6 @@
   根据状态显示不同颜色的圆点，running 状态带脉冲动画。
   可选 label 文字通过 aria-live="polite" 通知屏幕阅读器。
 
-  @see 需求 6.3, 15.4, 14.6
 -->
 <script lang="ts">
     /** 状态类型 */
@@ -34,7 +33,7 @@
     .cr-status-dot-wrapper {
         display: inline-flex;
         align-items: center;
-        gap: var(--cr-space-1h, 6px);
+        gap: var(--cr-space-1h);
     }
 
     .cr-status-dot {

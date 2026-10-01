@@ -1,32 +1,85 @@
 {
+  "cards": {
+      "regenerateHint": "请回到源笔记重新生成；旧任务不会自动重试。",
+      "configureFirst": "请先在设置 → 工作流 → Cards 中选择 Provider 并填写模型。",
+      "generate": "生成记忆卡片",
+      "failed": "生成记忆卡片失败",
+      "queued": "卡片任务已入队，完成后追加至：{path}",
+      "completed": "记忆卡片已追加：{path}",
+      "interrupted": "已中断（不自动重试）",
+      "hasInterrupted": "有已中断任务，不自动重试",
+      "chooseProvider": "请选择独立 Provider",
+      "modelPlaceholder": "请输入卡片模型名称",
+      "directories": "记忆卡片目录",
+      "directoriesDesc": "源笔记只读；镜像子目录，追加到同名 -decks.md 文件。",
+      "sourceRoot": "知识库根目录",
+      "targetRoot": "习题库根目录",
+      "rebuildNote": "重建指定笔记",
+      "rebuildNoteDesc": "输入 Vault 内的 Markdown 路径，仅为该 Cognitive Razor 节点重新生成向量。",
+      "notePlaceholder": "C-知识库/笔记.md",
+      "rebuildComplete": "已重建 {indexed} 篇，失败 {failed} 篇"
+  },
   "common": {
-    "confirm": "确认",
     "cancel": "取消",
     "save": "保存",
     "delete": "删除",
     "edit": "编辑",
-    "add": "添加",
-    "close": "关闭",
-    "loading": "加载中...",
-    "success": "成功",
-    "error": "错误",
-    "warning": "警告"
+    "confirm": "确认",
+    "details": {
+      "expand": "展开详情",
+      "collapse": "收起详情"
+    },
+    "password": {
+      "show": "显示密码",
+      "hide": "隐藏密码"
+    },
+    "units": {
+      "seconds": "秒"
+    }
   },
   "commands": {
-    "openWorkbench": "打开工作台",
-    "createConcept": "创建概念",
-    "expandNote": "拓展当前笔记",
-    "mergeDuplicates": "查看重复对"
+    "openWorkbench": "打开工作台"
+  },
+  "host": {
+    "settingsLoadFailed": "Cognitive Razor 设置读取失败，已使用当前可用设置",
+    "externalSettingsInvalid": "Cognitive Razor 外部设置无效，已使用当前可用设置"
   },
   "workbench": {
-    "title": "工作台",
+    "loading": "正在准备工作台...",
+    "sections": {
+      "recovery": "恢复记录",
+      "create": "创建",
+      "queue": "队列",
+      "duplicates": "重复对"
+    },
     "buttons": {
       "expand": "拓展当前笔记",
       "verify": "事实核查",
+      "reindex": "重新生成向量",
       "openNoteHint": "打开一篇 Markdown 笔记以使用改进、拓展等工具"
     },
+    "stages": {
+      "cards": "记忆卡片",
+      "tag": "提取标签",
+      "tagShort": "标签",
+      "verify": "事实核查",
+      "verifyShort": "核查",
+      "unknown": "未知阶段",
+      "unknownShort": "未知",
+      "write": {
+        "core": "写作 · 核心内容",
+        "coreShort": "核心内容",
+        "narrative": "写作 · 叙事与理解",
+        "narrativeShort": "叙事与理解",
+        "structure": "写作 · 结构与关联",
+        "structureShort": "结构与关联",
+        "synthesis": "写作 · 综合理解",
+        "synthesisShort": "综合理解",
+        "process": "写作 · 过程与调节",
+        "processShort": "过程与调节"
+      }
+    },
     "createConcept": {
-      "title": "创建概念",
       "placeholder": "输入概念描述...",
       "startButton": "开始",
       "defining": "定义中...",
@@ -38,65 +91,138 @@
       "title": "重复概念",
       "empty": "暂无重复概念",
       "dismiss": "忽略",
-      "dismissAria": "忽略此重复对"
+      "dismissAria": "忽略此重复对",
+      "merge": "处理",
+      "mergeAria": "处理此重复对",
+      "mergeTitle": "处理重复笔记",
+      "chooseCanonical": "选择要保留的主笔记，然后生成可编辑合并稿。",
+      "openNote": "打开笔记",
+      "generateDraft": "生成合并稿",
+      "confirmMerge": "写入并移入回收站",
+      "fieldName": "名称",
+      "fieldAliases": "别名（逗号分隔）",
+      "fieldTags": "标签（逗号分隔）",
+      "fieldParents": "父概念（每行一个）",
+      "fieldBody": "合并正文",
+      "conflicts": "需要人工确认的冲突",
+      "linkPreview": "链接修复",
+      "files": "个文件",
+      "skipped": "跳过的歧义链接",
+      "ariaLabel": "{nameA} 与 {nameB}，相似度 {percent}%"
     },
     "queueStatus": {
-      "title": "队列状态",
-      "active": "运行中",
+      "title": "任务队列",
+      "active": "活动",
+      "hasFailures": "有失败任务",
       "paused": "已暂停",
+      "total": "总计",
       "pending": "待处理",
       "running": "执行中",
+      "completed": "已完成",
       "failed": "失败",
-      "clearPending": "清除待处理",
-      "retryFailed": "重试失败",
+      "cancelled": "已取消",
+      "filterState": "状态",
+      "all": "全部",
+      "selectAll": "全选筛选结果",
+      "selectTask": "选择任务",
+      "summary": "任务统计",
+      "batchActions": "批量任务操作",
+      "retry": "重试",
+      "retrySelected": "重试选中",
+      "retryFailed": "重试全部失败",
+      "cancelSelected": "取消选中",
+      "cancelAllActive": "取消全部活动任务",
+      "delete": "删除记录",
+      "deleteSelected": "删除选中",
+      "unnamedNote": "未命名笔记",
+      "stage": "阶段",
+      "showMore": "显示更多",
+      "noFilteredTasks": "当前筛选下没有任务",
       "pauseQueue": "暂停队列",
       "resumeQueue": "恢复队列",
-      "queueResumed": "队列已恢复运行",
       "cancel": "取消",
       "noTasks": "队列中暂无任务",
-      "clearPendingConfirmTitle": "确认清空待处理",
-      "clearPendingConfirmMessage": "是否取消所有待处理任务？"
+      "cancelAllConfirmTitle": "确认取消活动任务",
+      "cancelAllConfirmMessage": "将取消所有待处理和执行中的任务，已发出的请求可能仍产生费用。是否继续？",
+      "uncertainRetryConfirmTitle": "确认重新发送未知请求",
+      "uncertainRetryConfirmMessage": "上一次请求可能已被 Provider 处理。重新发送可能产生重复内容或重复计费。是否继续？",
+      "clearHistory": "清理历史",
+      "clearHistoryConfirmTitle": "确认清理任务历史",
+      "clearHistoryConfirmMessage": "将删除已完成、失败和已取消的任务记录，无法恢复。是否继续？"
     },
-    "notifications": {
-      "systemNotInitialized": "系统未初始化",
-      "enterDescription": "请输入概念描述",
-      "standardizeFailed": "定义失败",
-      "standardizeComplete": "定义完成，请选择类型",
-      "pluginNotInitialized": "插件未初始化",
+    "recovery": {
+      "title": "需要处理的恢复记录",
+      "summary": "{count} 项需要人工确认",
+      "actionCompleted": "恢复记录已更新",
+      "continueMerge": "继续合并",
+      "source": "来源",
+      "detectedAt": "发现时间",
+      "keep": "保留",
+      "rebuild": "重新建立",
+      "continueRebuild": "继续建立",
+      "retryManually": "手动重试",
+      "discard": "放弃并删除",
+      "rebuildSelected": "请使用当前输入创建新的工作流；原记录不会被读取或继续。",
+      "rebuildCompletePending": "新的工作流已创建，正在完成恢复记录关联。",
+      "finishRebuild": "完成关联",
+      "notFound": "恢复记录不存在",
+      "discardConfirmTitle": "放弃恢复记录",
+      "discardConfirmMessage": "将删除已隔离的插件数据记录，且无法恢复。是否继续？",
+      "retryConfirmTitle": "确认手动重试未知请求",
+      "retryConfirmMessage": "上一次请求可能已被 Provider 处理。重新发送可能产生重复内容或重复计费。是否继续？",
+      "statuses": {
+        "awaiting-confirmation": "等待确认",
+        "kept": "已保留",
+        "rebuild-requested": "等待重新建立",
+        "manual-retry-requested": "等待手动重试",
+        "discard-requested": "等待放弃完成",
+        "resolved": "已解决",
+        "discarded": "已放弃"
+      },
+      "kinds": {
+        "unknown-workflow": "无法识别的工作流",
+        "unknown-queue": "无法识别的队列状态",
+        "uncertain-attempt": "结果未知的请求",
+        "snapshot-conflict": "笔记快照冲突"
+      },
+      "reasons": {
+        "invalid-json": "文件不是有效 JSON",
+        "unsupported-schema": "不支持的数据版本",
+        "invalid-schema": "数据结构无效",
+        "file-name-mismatch": "文件名与工作流标识不一致",
+        "unreadable": "文件无法读取",
+        "orphaned-task": "任务缺少对应工作流",
+        "duplicate-active-stage": "存在重复活动阶段",
+        "queue-state-unknown": "队列记录无法证明与工作流的关系",
+        "interrupted-attempt": "请求在完成前中断",
+        "snapshot-mismatch": "笔记内容已变化"
+      }
+    },
+      "notifications": {
       "openMarkdownFirst": "请先打开一个 Markdown 笔记",
-      "createFailed": "创建失败",
-      "conceptCreated": "概念创建已启动",
-      "selectDuplicates": "请先选择要处理的重复对",
-      "batchDismissConfirm": "确定要忽略选中的重复对吗？",
-      "batchDismissComplete": "批量忽略完成",
       "dismissFailed": "忽略失败",
       "dismissSuccess": "已忽略重复对",
+      "mergeSuccess": "重复笔记已合并，冗余笔记已移入回收站",
+      "mergeFailed": "重复笔记处理失败",
       "queueResumed": "队列已恢复运行",
       "queuePaused": "队列已暂停",
       "taskCancelled": "任务已取消",
-      "cancelFailed": "取消失败",
-      "retryComplete": "已重试失败任务",
-      "clearComplete": "已清除任务",
-      "confirmCreateFailed": "确认创建失败",
-      "confirmCreateWaiting": "已确认创建，等待内容生成",
-      "undoDismissSuccess": "已撤销忽略，重复对已恢复到待处理列表",
-      "deletePairSuccess": "已删除重复对记录",
-      "writeFailed": "写入失败",
-      "writeSuccess": "已写入",
-      "writePreviewFailed": "无法生成写入预览",
-      "verifyStarted": "核查任务已启动，请等待 AI 生成核查报告...",
-      "featureDisabled": "功能已关闭",
-      "workbenchNotInitialized": "工作台未初始化，请稍后重试",
-      "startFailed": "启动失败: {message}",
-      "commandFailed": "命令执行失败: {message}",
-      "noPendingDuplicates": "没有待处理的重复对",
-      "pendingDuplicatesHint": "有 {count} 个待处理的重复对，请在工作台中查看",
-      "conceptLocked": "该概念正在被处理中，请稍后再试",
-      "clearFailed": "清空失败"
+      "taskCancellationUncertain": "已停止本地等待，但请求可能已发送。任务已标为结果未知，不会自动重试。",
+      "taskRetried": "任务已重新排队",
+      "taskRemoved": "任务记录已删除",
+      "retriedCount": "已重新排队",
+      "cancelledCount": "已取消任务",
+      "removedCount": "已删除记录",
+      "queueActionFailed": "队列操作失败",
+       "verifyStarted": "核查任务已启动，请等待 AI 生成核查报告...",
+       "embedOneComplete": "当前笔记向量已重新生成",
+       "embedOneFailed": "当前笔记向量生成失败",
+       "defineFailed": "定义失败，请重试",
+      "unknownFailure": "未知错误",
+      "commandFailed": "命令执行失败: {message}"
     }
   },
   "expand": {
-    "titlePrefix": "拓展：",
     "stats": {
       "total": "候选总数",
       "creatable": "可创建",
@@ -105,17 +231,14 @@
     },
     "selectAll": "全选",
     "deselectAll": "全不选",
-    "confirm": "创建已选",
-    "empty": "暂无候选项",
+    "confirm": "创建已选（{count}）",
     "status": {
       "existing": "已存在",
-      "invalid": "不可创建"
+      "invalid": "不可创建",
+      "queued": "已在队列中"
     },
-    "looseStructureHint": "未找到标准章节，已回退全局扫描，结果可能不完整",
-    "abstractTitlePrefix": "抽象：",
     "abstractInstruction": "选择至少 1 个相似概念，与当前笔记一起生成更高层概念。",
     "abstractConfirm": "生成",
-    "similarity": "相似度",
     "notInitialized": "拓展功能未初始化",
     "started": "已启动 {count} 个创建任务",
     "startedWithFailures": "已启动 {started} 个任务，{failed} 个未能启动"
@@ -123,132 +246,148 @@
   "settings": {
     "title": "Cognitive Razor 设置",
     "tabs": {
-      "general": "通用",
       "providers": "AI 服务",
-      "advanced": "高级",
-      "system": "系统"
+      "workflow": "工作流",
+      "backup": "备份与重置"
     },
     "groups": {
-      "interface": "界面",
-      "languageDisplay": "语言与显示",
       "knowledgeStorage": "知识存储",
       "automation": "自动化",
-      "deduplication": "去重",
-      "performance": "性能",
-      "directory": "目录结构",
-      "typeDirectories": "类型目录",
-      "vectorEmbedding": "向量嵌入",
-      "taskModels": "任务模型配置",
-      "logging": "日志",
-      "dataManagement": "数据管理"
+      "semanticIndexing": "语义索引与重复项",
+      "taskModels": "任务模型配置"
     },
-    "language": {
-      "name": "语言",
-      "desc": "选择界面语言",
-      "zh": "中文",
-      "en": "English"
+    "save": {
+      "saving": "保存中…",
+      "saved": "已保存",
+      "failed": "保存失败",
+      "retry": "重试"
     },
     "similarityThreshold": {
       "name": "相似度阈值",
-      "desc": "用于检测重复概念的相似度阈值 (0-1)"
+      "desc": "新检测使用此阈值；提高阈值会立即隐藏已有的低相似度候选（0-1）"
     },
     "concurrency": {
       "name": "并发任务数",
       "desc": "同时执行的最大任务数"
-    },
-    "units": {
-      "days": "天"
     },
     "provider": {
       "title": "AI Provider 配置",
       "addButton": "添加 Provider",
       "addDesc": "配置 AI 服务提供商（支持 OpenAI 标准格式，可通过自定义端点兼容其他服务）",
       "noProvider": "尚未配置任何 Provider。请添加至少一个 Provider 以使用插件功能。",
-      "addFirstProvider": "点击上方按钮添加您的第一个 AI Provider",
       "defaultProvider": "默认 Provider",
       "defaultProviderDesc": "选择默认使用的 AI Provider",
       "testConnection": "测试连接",
+      "testTaskConfig": "测试任务配置",
+      "probe": {
+        "outcome": {
+          "success": "连接测试成功",
+          "partial": "部分能力可用",
+          "failed": "连接测试失败",
+          "uncertain": "结果未知"
+        },
+        "chat": "聊天",
+        "embedding": "嵌入",
+        "status": {
+          "available": "可用",
+          "unavailable": "不可用",
+          "disabled": "已禁用"
+        },
+        "uncertainHint": "请求结果未知，可能已产生请求或费用。仅在确认后手动重试。",
+        "retry": "手动重试"
+      },
       "setDefault": "设为默认",
-      "status": "状态",
       "enabled": "启用",
       "disabled": "禁用",
       "model": "模型"
     },
     "importExport": {
-      "title": "导入导出",
       "export": "导出",
-      "exportDesc": "导出当前配置为 JSON 文件",
+      "exportDesc": "导出当前配置为 JSON 文件；API Key 不会写入导出文件",
       "import": "导入",
-      "importDesc": "从 JSON 文件导入配置",
-      "reset": "重置",
-      "resetDesc": "将所有设置重置为默认值"
+      "importDesc": "从 JSON 文件导入配置；导入后需要重新填写各项 API Key",
+      "importFailed": "配置文件读取失败",
+      "reset": "备份并重置运行数据",
+      "resetDesc": "先备份插件设置和运行数据，再清空队列、工作流、向量与重复项状态；Markdown 笔记不会删除"
     },
     "advanced": {
-      "title": "高级设置",
       "directoryScheme": {
-        "title": "目录方案",
         "desc": "为每种知识类型配置存储目录"
       },
       "taskModels": {
-        "title": "任务模型配置",
-        "desc": "为不同任务类型配置使用的模型和参数",
-        "providerAndModel": "Provider 和模型",
-        "useDefaultProvider": "使用默认 Provider",
-        "configureProviderFirst": "请先配置 Provider",
-        "modelName": "模型名称",
-        "modelNamePlaceholder": "模型名称",
-        "notSet": "不设置",
-        "low": "低",
-        "medium": "中",
-        "high": "高",
-        "advancedParams": "高级参数配置"
-      },
-      "temperature": {
-        "name": "Temperature",
-        "desc": "控制生成内容的随机性 (0-2)，较低值更确定，较高值更创意"
-      },
-      "topP": {
-        "name": "Top P",
-        "desc": "核采样参数 (0-1)，控制生成内容的多样性"
-      },
-      "reasoningEffort": {
-        "name": "Reasoning Effort",
-        "desc": "推理强度（用于支持推理的模型，如 o1, o3）"
-      },
-      "embedding": {
-        "title": "嵌入参数",
-        "dimension": "向量维度",
-        "dimensionDesc": "嵌入向量的维度（text-embedding-3-small 支持 256-3072）",
-        "dimensionWarning": "修改维度后需要重建向量索引，现有的向量数据将失效"
+        "desc": "为不同任务类型配置使用的模型和参数"
       },
       "features": {
-        "title": "功能开关",
         "enableAutoVerify": "启用自动校验（Verify）",
         "enableAutoVerifyDesc": "在写入落盘后自动执行 Verify，并将报告追加到笔记末尾（会增加一次 LLM 调用）"
       },
-      "queue": {
-        "title": "队列参数",
-        "autoRetry": "自动重试",
-        "autoRetryDesc": "任务失败时自动重试",
-        "maxRetryAttempts": "最大重试次数",
-        "maxRetryAttemptsDesc": "任务失败时的最大重试次数",
-        "taskTimeout": "任务超时时间",
-        "taskTimeoutDesc": "单个任务的最大执行时长（毫秒，默认 180000 = 3分钟）",
-        "providerTimeout": "Provider 请求超时",
-        "providerTimeoutDesc": "API 请求的超时时间（毫秒，默认 1800000 = 30分钟）"
+      "semanticIndexing": {
+        "enabled": "为新笔记建立语义索引",
+        "enabledDesc": "创建笔记后调用嵌入模型并写入向量索引，供 Expand 候选匹配和重复检测使用；修改嵌入 Provider、端点、协议、模型或维度会使旧向量失效",
+        "duplicates": "检测重复概念",
+        "duplicatesDesc": "写入向量后在同类型概念中计算相似度并显示待处理候选；不会增加模型请求",
+        "rebuildDuplicates": "重算重复对",
+        "rebuildDuplicatesDesc": "使用现有向量按当前相似度阈值重新比较同类型概念；不会请求嵌入 API。",
+        "rebuildDuplicatesComplete": "已按当前阈值重算 {count} 个重复对",
+        "rebuildDuplicatesFailed": "重算重复对失败",
+        "scanMissing": "扫描缺失向量",
+        "scanMissingDesc": "只检查 draft 和 evergreen 笔记，并列出当前索引中没有向量的笔记。",
+        "counts": "应向量化 {eligible} 篇，已有向量 {indexed} 篇，缺失 {missing} 篇",
+        "embedMissing": "生成全部缺失向量",
+         "embedOne": "生成向量",
+         "embedOneComplete": "单篇向量处理完成",
+         "vectorMaintenance": "向量文件管理",
+         "vectorMaintenanceDesc": "检查索引登记与磁盘文件的一致性，删除未被当前有效笔记使用的向量文件；不会删除笔记。",
+         "scanVectorFiles": "检查向量文件",
+         "scanVectorFilesDesc": "只读盘点索引登记、缺失文件、无效文件和未被索引引用的物理文件。",
+         "vectorCounts": "索引登记 {indexedEntries} 条，磁盘文件 {physicalFiles} 个，多余 {orphaned} 个，缺失 {missing} 个，失联笔记 {stale} 个，无效 {invalid} 个",
+         "orphanFiles": "可清理的多余文件",
+         "missingEntries": "索引中缺失的文件",
+         "staleEntries": "失联笔记的索引登记",
+         "invalidEntries": "无效或不兼容的文件",
+         "cleanupVectorFiles": "删除多余向量文件",
+         "cleanupVectorFilesConfirmTitle": "确认删除多余向量文件",
+         "cleanupVectorFilesConfirmMessage": "将删除本次检查列出的、当前仍未被有效笔记使用的物理向量文件；不会删除笔记。是否继续？",
+         "cleanupVectorFilesConfirm": "删除文件",
+         "cleanupVectorFilesComplete": "向量文件清理完成：删除 {removed} 个，跳过 {skipped} 个，失败 {failed} 个",
+         "cleanupVectorFilesNone": "没有可清理的多余向量文件",
+         "missingComplete": "缺失向量处理完成：成功 {indexed} 篇，跳过 {skipped} 篇，失败 {failed} 篇",
+        "rebuild": "重建语义索引",
+        "rebuildDesc": "重新读取全部 Cognitive Razor 笔记并生成向量；用于首次启用、嵌入配置变化或索引需要修复时",
+        "rebuildConfirmTitle": "重建语义索引",
+        "rebuildConfirmMessage": "将为当前每篇概念笔记发出一次嵌入请求并替换现有索引，随后重新计算重复项。此操作可能产生 API 费用。",
+        "rebuildConfirm": "开始重建",
+        "rebuildComplete": "语义索引重建完成：已索引 {indexed} 篇笔记",
+        "rebuildPartial": "语义索引已部分重建：已索引 {indexed} 篇，跳过 {skipped} 篇",
+        "rebuildDuplicateFailed": "已索引 {indexed} 篇笔记，但重复项刷新失败",
+        "rebuildCancelled": "语义索引重建已取消",
+        "rebuildFailed": "语义索引重建失败",
+        "rebuildPhases": {
+          "scanning": "扫描 {completed}/{total}，跳过 {failed}",
+          "embedding": "生成向量 {completed}/{total}，失败 {failed}",
+          "committing": "提交索引 {completed}/{total}",
+          "duplicates": "刷新重复项 {completed}/{total}"
+        }
       },
-      "logging": {
-        "title": "日志设置",
+      "queue": {
+        "title": "任务执行",
         "logLevel": "日志级别",
-        "logLevelDesc": "设置日志记录的详细程度",
-        "clearLogs": "清除日志",
-        "clearLogsDesc": "清空所有日志文件",
-        "levels": {
+        "logLevelDesc": "控制运行时日志；静默不会写入文件或开发者控制台，修改后立即生效",
+        "logLevels": {
+          "silent": "静默",
           "debug": "调试",
           "info": "信息",
           "warn": "警告",
           "error": "错误"
-        }
+        },
+        "taskTimeout": "任务超时时间",
+        "taskTimeoutDesc": "队列等待单个任务完成的最长时间（秒，默认 180）；超时会释放队列，但不保证撤回已发出的请求",
+        "networkTimeout": "单次网络请求超时",
+        "networkTimeoutDesc": "插件等待单次模型或嵌入请求的最长时间（秒，默认 60）；任务总超时可能更早结束，Obsidian 底层请求也可能继续传输",
+        "streamingKeepalive": "流式保活聊天请求",
+        "streamingKeepaliveDesc": "通过流式传输保持长响应连接；不会减少模型生成时间。插件仍等待完整输出后一次性处理，任务总超时仍可能先终止；端点不兼容时直接报错，不会改发非流式请求",
+        "providerMaxAttempts": "每阶段最大尝试次数",
+        "providerMaxAttemptsDesc": "每个明确可重试的网络阶段最多尝试 1-3 次；502/503/504 和连接中断始终不自动重发，以免长请求重复计费。多阶段任务仍可能发出多次请求"
       }
     }
   },
@@ -260,55 +399,52 @@
       "title": "编辑 AI Provider"
     },
     "providerConfig": {
-      "description": "配置兼容 OpenAI 的 API 服务（如 Gemini、OpenAI、Azure OpenAI 等）。",
-      "sections": {
-        "basic": "基础配置",
-        "endpoint": "端点配置",
-        "model": "默认模型"
-      },
+      "description": "分别配置聊天协议与嵌入能力。任务模型留空时使用这里的默认模型。",
       "fields": {
         "providerId": "Provider ID",
         "providerIdDesc": "唯一标识，例如 my-openai",
         "apiKey": "API Key",
-        "apiKeyDesc": "你的 API 密钥。存储在 Obsidian 本地配置文件中，未加密。",
+        "apiKeyDesc": "官方服务通常必填；不需要鉴权的自定义或本地端点可留空。密钥存储在 Obsidian 本地配置文件中，未加密。",
         "endpoint": "API 端点",
-        "endpointDesc": "留空使用默认 Gemini 端点。",
+        "endpointDesc": "可填写服务根地址或带版本的 Base URL。根地址会按协议补全 /v1 或 /v1beta；显式代理路径保持不变。",
+        "apiFormat": "聊天 API 协议",
+        "apiFormatDesc": "请求严格使用所选协议，不根据模型名称自动猜测。",
+        "webSearch": "原生网络搜索",
+        "webSearchDesc": "在 Write 与 Verify 中向 Responses 或 Gemini 提供服务商原生搜索工具；Define 与 Tag 不联网。Chat Completions 不支持此通用工具。",
         "chatModel": "聊天模型",
-        "chatModelDesc": "用于生成类任务",
+        "chatModelDesc": "生成类任务留空时使用的默认模型",
+        "embeddingApiFormat": "嵌入 API",
+        "embeddingApiFormatDesc": "明确启用 OpenAI /embeddings 兼容端点，或禁用嵌入能力。",
         "embedModel": "嵌入模型",
-        "embedModelDesc": "用于向量嵌入与语义检索"
+        "embedModelDesc": "Index 任务留空时使用的默认嵌入模型"
       },
-      "showSecret": "显示",
-      "hideSecret": "隐藏",
+      "apiFormats": {
+        "openaiChatCompletions": "OpenAI Chat Completions",
+        "openaiResponses": "OpenAI Responses",
+        "geminiGenerativeLanguage": "Gemini Generative Language API",
+        "disabled": "禁用聊天（仅嵌入）"
+      },
+      "embeddingApiFormats": {
+        "openaiEmbeddings": "OpenAI Embeddings",
+        "disabled": "禁用"
+      },
+      "webSearchStates": {
+        "enabled": "已开启",
+        "disabled": "已关闭"
+      },
       "errors": {
         "providerIdRequired": "请输入 Provider ID",
-        "apiKeyRequired": "请输入 API Key",
+        "providerIdInvalid": "Provider ID 不能包含控制字符或使用 __proto__、prototype、constructor 等保留名称",
+        "apiKeyRequired": "使用默认官方端点时必须填写 API Key",
+        "chatModelRequired": "请输入默认聊天模型",
+        "embedModelRequired": "启用嵌入 API 时必须填写默认嵌入模型",
+        "capabilityRequired": "必须至少启用聊天或嵌入能力",
+        "thinkingExclusive": "Thinking level 与 thinking budget 不能同时填写，请只设置其中一项",
         "saveFailed": "保存失败",
         "invalidUrlProtocol": "URL 必须以 http:// 或 https:// 开头",
-        "invalidUrl": "URL 格式无效",
-        "privateAddressBlocked": "出于安全原因，不允许使用内网/本地地址"
+        "invalidUrl": "URL 格式无效"
       }
     }
-  },
-  "notices": {
-    "providerAdded": "Provider {id} 已添加",
-    "providerUpdated": "Provider {id} 已更新",
-    "providerDeleted": "Provider {id} 已删除",
-    "providerSetDefault": "默认 Provider 已设置为: {id}",
-    "connectionSuccess": "连接成功！\n聊天: {chat}\n嵌入: {embedding}\n可用模型: {models} 个",
-    "connectionFailed": "连接失败: {error}",
-    "settingsExported": "配置已导出",
-    "settingsImported": "配置已导入",
-    "settingsImportFailed": "配置导入失败",
-    "settingsReset": "配置已重置",
-    "logsCleared": "日志已清除",
-    "noLogsToClean": "没有日志文件需要清除",
-    "languageChanged": "语言已切换为: {language}",
-    "logLevelChanged": "日志级别已设置为: {level}（将在下次启动时生效）",
-    "groundingEnabled": "校验已启用",
-    "groundingDisabled": "校验已禁用",
-    "networkRestored": "网络已恢复，队列可继续运行",
-    "networkOffline": "AI 服务离线，队列已暂停"
   },
   "confirmDialogs": {
     "deleteProvider": {
@@ -316,82 +452,83 @@
       "message": "确定要删除 Provider \"{id}\" 吗？此操作不可撤销。"
     },
     "resetSettings": {
-      "title": "重置设置",
-      "message": "确定要重置所有设置吗？此操作不可撤销。"
-    },
-    "deleteDuplicatePair": {
-      "title": "确认删除",
-      "message": "确定要永久删除这个重复对记录吗？此操作不可撤销。"
+      "title": "备份并重置运行数据",
+      "message": "将先备份插件运行数据，再清空设置、队列、工作流、向量和重复项状态。Markdown 笔记会保留。是否继续？"
     }
   },
-  "taskTypes": {
-    "define": { "name": "定义", "desc": "标准化输入并确定知识类型" },
-    "tag": { "name": "标记", "desc": "生成别名与标签" },
-    "index": { "name": "索引", "desc": "生成语义向量以便检索" },
-    "write": { "name": "撰写", "desc": "生成完整正文" },
-    "verify": { "name": "校验", "desc": "验证生成内容的准确性" }
-  },
   "crTypes": {
-    "Domain": "领域",
-    "Issue": "议题",
-    "Theory": "理论",
-    "Entity": "实体",
-    "Mechanism": "机制"
+    "domain": "领域",
+    "issue": "议题",
+    "theory": "理论",
+    "entity": "实体",
+    "mechanism": "机制"
   },
   "crTypeDirectories": {
-    "Domain": "知识领域的存储目录。默认: 1-领域，支持相对路径如 CR/1-领域",
-    "Issue": "问题议题的存储目录。默认: 2-议题，支持相对路径如 CR/2-议题",
-    "Theory": "理论学说的存储目录。默认: 3-理论，支持相对路径如 CR/3-理论",
-    "Entity": "实体对象的存储目录。默认: 4-实体，支持相对路径如 CR/4-实体",
-    "Mechanism": "机制原理的存储目录。默认: 5-机制，支持相对路径如 CR/5-机制"
+    "domain": "知识领域的存储目录。默认: 1-领域，支持相对路径如 CR/1-领域",
+    "issue": "问题议题的存储目录。默认: 2-议题，支持相对路径如 CR/2-议题",
+    "theory": "理论学说的存储目录。默认: 3-理论，支持相对路径如 CR/3-理论",
+    "entity": "实体对象的存储目录。默认: 4-实体，支持相对路径如 CR/4-实体",
+    "mechanism": "机制原理的存储目录。默认: 5-机制，支持相对路径如 CR/5-机制"
   },
   "taskModels": {
-    "title": "任务模型配置",
-    "resetAll": "重置全部",
-    "resetAllConfirm": "确定要将所有任务配置重置为默认值吗？此操作不可撤销。",
     "reset": "重置",
-    "resetConfirm": "确定要将此任务配置重置为默认值吗？",
     "isDefault": "默认值",
-    "isCustom": "自定义",
-    "recommended": "推荐",
     "fields": {
       "provider": "Provider",
-      "providerDesc": "选择 AI Provider（留空则使用默认 Provider）",
+      "providerUnavailable": "当前不可用",
       "useDefaultProvider": "使用默认 Provider",
+      "defaultProviderNoEmbedding": "默认 Provider 未启用嵌入，请另选",
       "model": "模型名称",
-      "modelDesc": "指定使用的模型（如 gemini-3-flash-preview）",
+      "useProviderDefaultModel": "使用 Provider 默认模型",
       "temperature": "Temperature",
-      "temperatureDesc": "控制生成内容的随机性 (0-2)，较低值更确定，较高值更创意",
       "topP": "Top P",
-      "topPDesc": "核采样参数 (0-1)，控制生成内容的多样性",
       "maxTokens": "最大输出 Tokens",
-      "maxTokensDesc": "限制模型输出 token 上限（留空表示不限制）",
+      "maxTokensPlaceholder": "留空（不发送此参数）",
       "reasoningEffort": "推理强度",
-      "reasoningEffortDesc": "用于支持推理的模型（如 o1, o3）",
+      "thinkingLevel": "Thinking level",
+      "thinkingBudget": "Thinking budget",
+      "longTaskReasoningWarning": "Write/Verify 属于长任务；高及以上推理强度可能显著增加耗时、上游 5xx 和费用。建议先使用“低”。",
       "embeddingDimension": "嵌入维度",
-      "embeddingDimensionDesc": "向量嵌入的维度大小"
+      "embeddingDimensionDesc": "可选的嵌入向量维度；留空时不发送 dimensions 参数。",
+      "positiveIntegerError": "请输入大于 0 的安全整数",
+      "optional": "可选",
+      "capabilities": "能力覆盖",
+      "inherit": "继承 Provider",
+      "specified": "指定值",
+      "doNotSend": "不发送",
+      "enabled": "启用",
+      "disabled": "禁用",
+      "nativeWebSearch": "原生搜索",
+      "promptCaching": "提示词缓存",
+      "promptCacheImplicit": "隐式缓存（默认）",
+      "promptCacheExplicit": "显式缓存断点（GPT-6）",
+      "responseContinuation": "Responses 续传",
+      "structuredOutput": "结构化输出",
+      "structuredOutputDesc": "Provider 默认结构化输出方式；任务可继承或覆盖。提示词约束始终保留本地 Schema 校验。",
+      "structuredOutputOptions": {
+        "prompt": "提示词约束",
+        "json_object": "JSON Object",
+        "json_schema": "JSON Schema"
+      }
     },
     "tasks": {
       "define": { "name": "Define (定义)", "desc": "分析和定义概念的核心含义" },
       "tag": { "name": "Tag (标记)", "desc": "标记和分类概念" },
       "write": { "name": "Write (撰写)", "desc": "撰写和扩展概念内容" },
       "index": { "name": "Index (索引)", "desc": "生成语义向量并建立索引" },
-      "verify": { "name": "Verify (校验)", "desc": "验证和检查概念质量" }
+      "verify": { "name": "Verify (校验)", "desc": "验证和检查概念质量" },
+      "merge": { "name": "Merge (合并)", "desc": "生成重复笔记的可编辑合并草稿" },
+      "cards": { "name": "Cards (记忆卡片)", "desc": "独立配置 Provider 和模型；按知识密度生成，仍受模型上下文、输出 token 和任务超时限制" }
     },
     "reasoningEffortOptions": {
       "notSet": "不设置",
+      "none": "关闭推理",
+      "minimal": "极低",
       "low": "低",
       "medium": "中",
-      "high": "高"
-    },
-    "validation": {
-      "temperature": "Temperature 需在 0-2 之间",
-      "topP": "Top P 需在 0-1 之间",
-      "maxTokens": "最大输出 Tokens 需为正整数"
+      "high": "高",
+      "xhigh": "极高",
+      "max": "最大"
     }
-  },
-  "feedback": {
-    "undo": "撤销",
-    "defaultError": "操作失败，请稍后重试"
   }
 }

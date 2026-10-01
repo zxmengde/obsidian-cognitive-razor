@@ -1,823 +1,1057 @@
-/**
- * VectorIndex — 按类型分桶存储向量，支持按需加载与 TTL 驱逐
- *
- * 重构要点：
- * - load() 仅加载 index.json 元数据，不加载向量文件
- * - ensureBucketLoaded() 按需加载指定类型的向量桶
- * - TTL 驱逐机制（默认 5 分钟），通过 registerInterval 注册定时器
- * - embedding 模型/维度一致性检查（不匹配时标记 needsRebuild）
- *
- * @see 需求 16.1, 16.2, 16.3, 16.4, 16.5
- */
-
-import {
-  ok,
-  err,
-} from "../types";
+import { err, ok } from "../types";
 import type {
-  ILogger,
-  VectorEntry,
-  SearchResult,
-  IndexStats,
-  CRType,
-  Result,
-  Err,
   ConceptVector,
+  CRType,
+  Err,
+  ILogger,
+  Result,
+  SearchResult,
+  VectorEntry,
   VectorIndexMeta,
+  VectorFileRef,
 } from "../types";
-import { VECTORS_DIR, DEFAULT_VECTOR_INDEX_META } from "../data/file-storage";
 import type { FileStorage } from "../data/file-storage";
-import { formatCRTimestamp } from "../utils/date-utils";
-import { normalizeVector as normalize, dotProduct } from "./vector-math";
 import type { CruidCache } from "./cruid-cache";
+import { dotProduct, normalizeVector } from "./vector-math";
 
-// ============================================================================
-// 类型定义
-// ============================================================================
-
-/** 按类型分桶的向量缓存 */
 interface TypeBucket {
-  /** 知识类型 */
-  type: CRType;
-  /** 该类型下所有向量 */
   vectors: ConceptVector[];
-  /** 桶加载时间戳 */
-  loadedAt: number;
-  /** 最后访问时间戳（用于 TTL 驱逐） */
   lastAccessedAt: number;
 }
 
+interface LoadedBucket {
+  vectors: ConceptVector[];
+  invalidIds: string[];
+}
+
+const DEFAULT_MODEL = "text-embedding-3-small";
+const BUCKET_TTL_MS = 5 * 60 * 1000;
+const VECTOR_READ_BATCH_SIZE = 16;
+const MAX_RECENT_VECTORS = 500;
+const MISSING_FILE_CODES = new Set(["E301_FILE_NOT_FOUND", "E311_NOT_FOUND"]);
+const DISCARDABLE_VECTOR_CODES = new Set([...MISSING_FILE_CODES, "E101_INVALID_INPUT"]);
+
+type VectorReadOutcome =
+  | { id: string; vector: ConceptVector }
+  | { id: string; invalidReason: string }
+  | { id: string; error: Err["error"] };
+
+export interface VectorIndexIssue {
+  uid: string;
+  type: CRType;
+  reason: "missing-file" | "invalid-file" | "incompatible-file" | "note-missing";
+}
+
+export interface VectorIndexMaintenanceReport {
+  indexedEntries: number;
+  physicalFiles: number;
+  missingEntries: VectorIndexIssue[];
+  staleEntries: VectorIndexIssue[];
+  invalidEntries: VectorIndexIssue[];
+  orphanFiles: VectorFileRef[];
+}
+
+export interface VectorCleanupSummary {
+  removed: number;
+  skipped: number;
+  failed: number;
+}
+
 /**
- * registerInterval 回调类型
- * 由 Plugin 层注入，确保定时器随插件卸载自动清理
+ * Persistent vector index with immutable metadata commits and lazy type buckets.
+ * Metadata is authoritative; vector files not referenced by it are ignored.
  */
-type RegisterIntervalFn = (callback: () => void, intervalMs: number) => number;
-
-// ============================================================================
-// VectorIndex 实现
-// ============================================================================
-
-/** VectorIndex 实现类 — 分桶存储、按需加载、TTL 驱逐 */
 export class VectorIndex {
-  private fileStorage: FileStorage;
-  private logger: ILogger | null;
-  private model: string;
-  private dimension: number;
-  private cruidCache: CruidCache | null;
-  private registerIntervalFn: RegisterIntervalFn | null;
+  private readonly buckets = new Map<CRType, TypeBucket>();
+  private readonly recentVectors = new Map<string, ConceptVector>();
+  private readonly activeReads = new Set<Promise<unknown>>();
 
-  // 元数据索引（轻量级，始终在内存中）
   private indexMeta: VectorIndexMeta | null = null;
+  private mutationChain: Promise<void> = Promise.resolve();
+  private disposePromise: Promise<void> | undefined;
+  private contentVersion = 0;
+  private mutationActivityVersion = 0;
+  private disposed = false;
+  private profile: string;
+  private model: string;
+  private dimension: number | undefined;
+  private dimensionConfigured: boolean;
 
-  // 按类型分桶的向量缓存（按需加载）
-  private buckets: Map<CRType, TypeBucket> = new Map();
-
-  // 单条向量缓存（upsert 后立即可用，不依赖桶加载）
-  private recentVectors: Map<string, ConceptVector> = new Map();
-
-  /** recentVectors 最大容量（防止内存无限增长，需求 24.3） */
-  private readonly maxRecentVectors: number = 500;
-
-  // TTL 配置（默认 5 分钟）
-  private readonly ttlMs: number = 5 * 60 * 1000;
-
-  // 驱逐定时器 ID
-  private evictionTimer: number | null = null;
-
-  /** 构造函数 */
   constructor(
-    fileStorage: FileStorage,
-    model: string = "text-embedding-3-small",
-    dimension: number = 1536,
-    logger: ILogger | null = null,
-    cruidCache: CruidCache | null = null,
-    registerIntervalFn: RegisterIntervalFn | null = null
+    private readonly fileStorage: FileStorage,
+    model: string = DEFAULT_MODEL,
+    dimension?: number,
+    private readonly logger: ILogger | null = null,
+    private readonly cruidCache: CruidCache | null = null,
+    profile?: string,
   ) {
-    this.fileStorage = fileStorage;
-    this.logger = logger;
-    this.model = model;
-    this.dimension = dimension;
-    this.cruidCache = cruidCache;
-    this.registerIntervalFn = registerIntervalFn;
+    this.model = model.trim() || DEFAULT_MODEL;
+    this.profile = profile?.trim() || this.model;
+    this.dimension = Number.isInteger(dimension) && (dimension ?? 0) > 0
+      ? dimension
+      : undefined;
+    this.dimensionConfigured = this.dimension !== undefined;
   }
 
-  /**
-   * 加载索引元数据（不加载向量文件）
-   *
-   * @see 需求 16.1 — 启动时仅加载元数据
-   */
+  /** Load only the current metadata. Vector files remain lazy. */
   async load(): Promise<Result<void>> {
-    try {
-      // 确保向量目录存在
-      const ensureDirResult = await this.fileStorage.ensureDir(VECTORS_DIR);
-      if (!ensureDirResult.ok) {
-        return ensureDirResult;
-      }
-
-      // 为每个类型创建子目录
-      const types: CRType[] = ["Domain", "Issue", "Theory", "Entity", "Mechanism"];
-      for (const type of types) {
-        const typeDirResult = await this.fileStorage.ensureDir(`${VECTORS_DIR}/${type}`);
-        if (!typeDirResult.ok) {
-          return typeDirResult;
-        }
-      }
-
-      // 读取元数据索引
-      const metaResult = await this.fileStorage.readVectorIndexMeta();
-
-      if (!metaResult.ok) {
-        // 索引不存在，创建新索引
-        this.indexMeta = { ...DEFAULT_VECTOR_INDEX_META };
-        this.indexMeta.embeddingModel = this.model;
-        this.indexMeta.dimensions = this.dimension;
-
-        const saveResult = await this.saveIndexMeta();
-        if (!saveResult.ok) {
-          return saveResult;
-        }
-        this.startEvictionTimer();
-        return ok(undefined);
-      }
-
-      this.indexMeta = metaResult.value;
-
-      // 校验 embedding 模型/维度一致性（需求 16.5）
-      const configResult = await this.ensureEmbeddingConfigConsistency();
-      if (!configResult.ok) {
-        return configResult;
-      }
-
-      // 迁移旧格式数据
-      const migrationResult = await this.migrateMetaSchema();
-      if (!migrationResult.ok) {
-        this.logger?.warn("VectorIndex", "迁移旧格式数据时出现警告", {
-          error: migrationResult.error
-        });
-      }
-
-      // 启动 TTL 驱逐定时器
-      this.startEvictionTimer();
-
-      return ok(undefined);
-    } catch (error) {
-      return err(
-        "E500_INTERNAL_ERROR",
-        "Failed to load vector index",
-        error
-      );
+    if (this.disposed) {
+      return this.stopped();
     }
-  }
-
-  /**
-   * 按需加载指定类型的向量桶
-   *
-   * 如果桶已在内存中，更新 lastAccessedAt 并直接返回。
-   * 否则从文件系统加载该类型的所有向量文件。
-   *
-   * @see 需求 16.2 — 按需加载
-   * @see 需求 16.4 — 加载失败返回错误并记录日志
-   */
-  private async ensureBucketLoaded(type: CRType): Promise<Result<TypeBucket>> {
-    // 检查桶是否已加载
-    const existing = this.buckets.get(type);
-    if (existing) {
-      existing.lastAccessedAt = Date.now();
-      return ok(existing);
-    }
-
-    // 按需加载该类型的向量
-    const vectorsResult = await this.loadVectorsByType(type);
-    if (!vectorsResult.ok) {
-      this.logger?.warn("VectorIndex", `按需加载类型 ${type} 的向量桶失败`, {
-        type,
-        error: (vectorsResult as Err).error.message
-      });
-      return vectorsResult as Result<TypeBucket>;
-    }
-
-    const now = Date.now();
-    const bucket: TypeBucket = {
-      type,
-      vectors: vectorsResult.value,
-      loadedAt: now,
-      lastAccessedAt: now,
-    };
-    this.buckets.set(type, bucket);
-
-    this.logger?.debug("VectorIndex", `类型 ${type} 的向量桶已按需加载`, {
-      type,
-      vectorCount: bucket.vectors.length,
-    });
-
-    return ok(bucket);
-  }
-
-  /**
-   * TTL 驱逐：清除超时未访问的向量桶
-   *
-   * @see 需求 16.3 — 一定时间内未访问时释放内存
-   */
-  private evictStale(): void {
-    const now = Date.now();
-    for (const [type, bucket] of this.buckets) {
-      if (now - bucket.lastAccessedAt > this.ttlMs) {
-        this.buckets.delete(type);
-        this.logger?.debug("VectorIndex", `类型 ${type} 的向量桶已驱逐（TTL 过期）`, {
-          type,
-          lastAccessedAt: bucket.lastAccessedAt,
-          ttlMs: this.ttlMs,
-        });
-      }
-    }
-  }
-
-  /**
-   * 启动 TTL 驱逐定时器
-   * 优先使用 registerInterval（Obsidian 自动清理），否则回退到 window.setInterval
-   */
-  private startEvictionTimer(): void {
-    if (this.evictionTimer !== null) return;
-
-    const callback = () => this.evictStale();
-    // 每分钟检查一次
-    const intervalMs = 60 * 1000;
-
-    if (this.registerIntervalFn) {
-      this.evictionTimer = this.registerIntervalFn(callback, intervalMs);
-    } else {
-      this.evictionTimer = window.setInterval(callback, intervalMs);
-    }
-  }
-
-  /**
-   * embedding 模型/维度一致性检查
-   *
-   * 重构后行为（需求 16.5）：
-   * - 模型或维度不匹配时标记 needsRebuild = true，记录警告
-   * - 不再静默覆盖当前配置，而是保留当前配置并提示用户重建
-   * - 元数据中缺少模型/维度信息时，写入当前配置（首次初始化场景）
-   */
-  private async ensureEmbeddingConfigConsistency(): Promise<Result<void>> {
-    if (!this.indexMeta) {
+    if (this.indexMeta) {
       return ok(undefined);
     }
 
-    let needsSave = false;
-
-    const metaDimensions =
-      typeof this.indexMeta.dimensions === "number" && Number.isFinite(this.indexMeta.dimensions) && this.indexMeta.dimensions > 0
-        ? Math.floor(this.indexMeta.dimensions)
-        : undefined;
-
-    const metaModel =
-      typeof this.indexMeta.embeddingModel === "string" && this.indexMeta.embeddingModel.trim().length > 0
-        ? this.indexMeta.embeddingModel.trim()
-        : undefined;
-
-    // 检测模型不匹配
-    if (metaModel && metaModel !== this.model) {
-      this.logger?.warn("VectorIndex", "检测到 embedding 模型不一致，索引需要重建", {
-        configured: this.model,
-        indexed: metaModel,
-      });
-      this.indexMeta.needsRebuild = true;
-      needsSave = true;
+    const metaResult = await this.fileStorage.readVectorIndexMeta();
+    if (this.disposed) {
+      return this.stopped();
     }
 
-    // 检测维度不匹配
-    if (metaDimensions !== undefined && metaDimensions !== this.dimension) {
-      this.logger?.warn("VectorIndex", "检测到 embedding 维度不一致，索引需要重建", {
-        configured: this.dimension,
-        indexed: metaDimensions,
-      });
-      this.indexMeta.needsRebuild = true;
-      needsSave = true;
-    }
-
-    // 元数据中缺少模型/维度信息时写入当前配置
-    if (!metaModel) {
-      this.indexMeta.embeddingModel = this.model;
-      needsSave = true;
-    }
-    if (metaDimensions === undefined) {
-      this.indexMeta.dimensions = this.dimension;
-      needsSave = true;
-    }
-
-    if (needsSave) {
-      return this.saveIndexMeta();
-    }
-
-    return ok(undefined);
-  }
-
-  /**
-   * 迁移索引元数据结构（删除冗余字段，修复旧字段命名）
-   *
-   * 目标：ConceptMeta 中不再保存 name/notePath；向量文件不再保存 name。
-   */
-  private async migrateMetaSchema(): Promise<Result<void>> {
-    if (!this.indexMeta) {
-      return ok(undefined);
-    }
-
-    let needsSave = false;
-    const migratedConceptIds: string[] = [];
-
-    for (const [uid, meta] of Object.entries(this.indexMeta.concepts)) {
-      const legacyMeta = meta as unknown as Record<string, unknown>;
-      let migrated = false;
-
-      // 兼容：旧字段 filePath → vectorFilePath
-      if (typeof legacyMeta.filePath === "string" && typeof legacyMeta.vectorFilePath !== "string") {
-        (legacyMeta as Record<string, unknown>).vectorFilePath = legacyMeta.filePath;
-        delete legacyMeta.filePath;
-        migrated = true;
+    if (!metaResult.ok) {
+      if (metaResult.error.code !== "E301_FILE_NOT_FOUND" &&
+        metaResult.error.code !== "E101_INVALID_INPUT") {
+        return metaResult as Result<void>;
+      }
+      if (metaResult.error.code === "E101_INVALID_INPUT") {
+        this.logger?.warn("VectorIndex", "向量索引元数据格式无效，将创建空索引");
       }
 
-      // 移除冗余字段
-      if ("name" in legacyMeta) {
-        delete legacyMeta.name;
-        migrated = true;
-      }
-      if ("notePath" in legacyMeta) {
-        delete legacyMeta.notePath;
-        migrated = true;
-      }
-
-      // 修复缺失的 id / vectorFilePath
-      if (typeof legacyMeta.id !== "string") {
-        (legacyMeta as Record<string, unknown>).id = uid;
-        migrated = true;
-      }
-      if (typeof legacyMeta.vectorFilePath !== "string") {
-        const type = typeof legacyMeta.type === "string" ? legacyMeta.type : "Entity";
-        (legacyMeta as Record<string, unknown>).vectorFilePath = `${type}/${uid}.json`;
-        migrated = true;
-      }
-
-      if (migrated) {
-        needsSave = true;
-        migratedConceptIds.push(uid);
-      }
-    }
-
-    if (needsSave) {
-      this.indexMeta.version = "3.0";
-
-      this.logger?.info("VectorIndex", `向量索引元数据已迁移，共 ${migratedConceptIds.length} 个条目`, {
-        migratedCount: migratedConceptIds.length
-      });
-      const saveResult = await this.saveIndexMeta();
-      if (!saveResult.ok) {
-        return saveResult;
-      }
-    }
-
-    return ok(undefined);
-  }
-
-  /** 添加或更新向量条目 */
-  async upsert(entry: VectorEntry): Promise<Result<void>> {
-    try {
-      if (!this.indexMeta) {
-        return err("E310_INVALID_STATE", "向量索引未加载");
-      }
-
-      // 验证向量维度
-      if (entry.embedding.length !== this.dimension) {
-        return err(
-          "E305_VECTOR_MISMATCH",
-          `Invalid embedding dimension: expected ${this.dimension}, got ${entry.embedding.length}`,
-          { expected: this.dimension, actual: entry.embedding.length }
-        );
-      }
-
-      const now = Date.now();
-      const isUpdate = entry.uid in this.indexMeta.concepts;
-
-      // 归一化向量（预先归一化，计算相似度时只需点积）
-      const normalizedEmbedding = normalize(entry.embedding);
-
-      // 构建概念向量数据
-      const conceptVector: ConceptVector = {
-        id: entry.uid,
-        type: entry.type,
-        embedding: normalizedEmbedding,
-        metadata: {
-          createdAt: isUpdate
-            ? this.indexMeta.concepts[entry.uid]?.lastModified || now
-            : now,
-          updatedAt: now,
-          embeddingModel: this.model,
-          dimensions: this.dimension,
-        },
-      };
-
-      // 写入向量文件
-      const writeResult = await this.fileStorage.writeVectorFile(
-        entry.type,
-        entry.uid,
-        conceptVector
-      );
-
+      const emptyMeta = this.createEmptyMeta(this.profile, this.model, this.dimension);
+      const writeResult = await this.fileStorage.writeVectorIndexMeta(emptyMeta);
       if (!writeResult.ok) {
         return writeResult;
       }
-
-      // 更新元数据索引
-      const oldType = this.indexMeta.concepts[entry.uid]?.type;
-
-      // 如果类型变更，需要删除旧文件并更新统计
-      if (isUpdate && oldType && oldType !== entry.type) {
-        await this.fileStorage.deleteVectorFile(oldType, entry.uid);
-        this.indexMeta.stats.byType[oldType]--;
-        this.indexMeta.stats.byType[entry.type]++;
-
-        // 使旧类型桶缓存失效（类型变更后桶数据已过时）
-        this.buckets.delete(oldType);
-      } else if (!isUpdate) {
-        this.indexMeta.stats.totalConcepts++;
-        this.indexMeta.stats.byType[entry.type]++;
+      if (this.disposed) {
+        return this.stopped();
       }
-
-      this.indexMeta.concepts[entry.uid] = {
-        id: entry.uid,
-        type: entry.type,
-        vectorFilePath: `${entry.type}/${entry.uid}.json`,
-        lastModified: now,
-        hasEmbedding: true,
-      };
-
-      this.indexMeta.lastUpdated = now;
-
-      // 更新单条缓存（upsert 后立即可用于 getEntry）
-      this.setRecentVector(entry.uid, conceptVector);
-
-      // 如果桶已加载，直接更新内存中的桶数据（避免失效后重新加载整个桶）
-      const bucket = this.buckets.get(entry.type);
-      if (bucket) {
-        const idx = bucket.vectors.findIndex(v => v.id === entry.uid);
-        if (idx !== -1) {
-          bucket.vectors[idx] = conceptVector;
-        } else {
-          bucket.vectors.push(conceptVector);
+      this.indexMeta = emptyMeta;
+      this.contentVersion++;
+    } else {
+      this.indexMeta = metaResult.value;
+      this.contentVersion++;
+      if (this.indexMeta.embeddingProfile !== this.profile ||
+        this.indexMeta.embeddingModel !== this.model ||
+        (this.dimensionConfigured && this.indexMeta.dimensions !== this.dimension)) {
+        const resetResult = await this.resetIndexNow(this.profile, this.model, this.dimension);
+        if (!resetResult.ok) {
+          return resetResult;
         }
-        bucket.lastAccessedAt = Date.now();
+      } else if (this.dimension === undefined && this.indexMeta.dimensions > 0) {
+        this.dimension = this.indexMeta.dimensions;
       }
-
-      // 保存元数据索引
-      const saveResult = await this.saveIndexMeta();
-      if (!saveResult.ok) {
-        return saveResult;
-      }
-
-      return ok(undefined);
-    } catch (error) {
-      return err(
-        "E500_INTERNAL_ERROR",
-        "Failed to upsert vector entry",
-        error
-      );
-    }
-  }
-
-  /** 删除向量条目 */
-  async delete(uid: string): Promise<Result<void>> {
-    try {
-      if (!this.indexMeta) {
-        return err("E310_INVALID_STATE", "向量索引未加载");
-      }
-
-      const meta = this.indexMeta.concepts[uid];
-      if (!meta) {
-        return err(
-          "E311_NOT_FOUND",
-          `Vector entry not found: ${uid}`,
-          { uid }
-        );
-      }
-
-      // 删除向量文件
-      const deleteResult = await this.fileStorage.deleteVectorFile(meta.type, uid);
-      if (!deleteResult.ok) {
-        return deleteResult;
-      }
-
-      // 更新元数据索引
-      const deletedType = meta.type;
-      delete this.indexMeta.concepts[uid];
-      this.indexMeta.stats.totalConcepts--;
-      this.indexMeta.stats.byType[deletedType]--;
-      this.indexMeta.lastUpdated = Date.now();
-
-      // 从缓存中移除
-      this.recentVectors.delete(uid);
-      // 使该类型桶缓存失效
-      this.buckets.delete(deletedType);
-
-      // 保存元数据索引
-      const saveResult = await this.saveIndexMeta();
-      if (!saveResult.ok) {
-        return saveResult;
-      }
-
-      return ok(undefined);
-    } catch (error) {
-      return err(
-        "E500_INTERNAL_ERROR",
-        "Failed to delete vector entry",
-        error
-      );
-    }
-  }
-
-  /**
-   * 搜索相似概念（同类型桶内检索）
-   * 内部通过 ensureBucketLoaded 按需加载向量
-   */
-  async search(
-    type: CRType,
-    embedding: number[],
-    topK: number
-  ): Promise<Result<SearchResult[]>> {
-    return this.searchInternal(type, embedding, { mode: "topK", topK });
-  }
-
-  /**
-   * 搜索相似概念（同类型桶内检索，按阈值全量过滤）
-   * 内部通过 ensureBucketLoaded 按需加载向量
-   */
-  async searchAboveThreshold(
-    type: CRType,
-    embedding: number[],
-    threshold: number
-  ): Promise<Result<SearchResult[]>> {
-    if (Number.isNaN(threshold) || threshold < 0 || threshold > 1) {
-      return err("E101_INVALID_INPUT", `无效的相似度阈值: ${threshold}`, { threshold });
-    }
-    return this.searchInternal(type, embedding, { mode: "threshold", threshold });
-  }
-
-  /**
-   * 搜索内部实现（DRY：统一 topK 和 threshold 两种模式）
-   */
-  private async searchInternal(
-    type: CRType,
-    embedding: number[],
-    opts: { mode: "topK"; topK: number } | { mode: "threshold"; threshold: number }
-  ): Promise<Result<SearchResult[]>> {
-    try {
-      if (!this.indexMeta) {
-        return err("E310_INVALID_STATE", "向量索引未加载");
-      }
-
-      if (this.indexMeta.needsRebuild) {
-        return err("E305_VECTOR_MISMATCH", "向量索引需要重建（embedding 模型或维度已变更），请先重建索引");
-      }
-
-      if (embedding.length !== this.dimension) {
-        return err(
-          "E305_VECTOR_MISMATCH",
-          `Invalid embedding dimension: expected ${this.dimension}, got ${embedding.length}`,
-          { expected: this.dimension, actual: embedding.length }
-        );
-      }
-
-      const normalizedQuery = normalize(embedding);
-
-      const bucketResult = await this.ensureBucketLoaded(type);
-      if (!bucketResult.ok) {
-        return bucketResult as Result<SearchResult[]>;
-      }
-
-      const vectors = bucketResult.value.vectors;
-      let matched: Array<{ vector: ConceptVector; similarity: number }>;
-
-      if (opts.mode === "topK") {
-        // 二分插入维护 topK 有序数组
-        matched = [];
-        for (const vector of vectors) {
-          const similarity = dotProduct(normalizedQuery, vector.embedding);
-          if (matched.length < opts.topK) {
-            let lo = 0, hi = matched.length;
-            while (lo < hi) {
-              const mid = (lo + hi) >>> 1;
-              if (matched[mid].similarity > similarity) lo = mid + 1;
-              else hi = mid;
-            }
-            matched.splice(lo, 0, { vector, similarity });
-          } else if (similarity > matched[matched.length - 1].similarity) {
-            matched.pop();
-            let lo = 0, hi = matched.length;
-            while (lo < hi) {
-              const mid = (lo + hi) >>> 1;
-              if (matched[mid].similarity > similarity) lo = mid + 1;
-              else hi = mid;
-            }
-            matched.splice(lo, 0, { vector, similarity });
-          }
-        }
-      } else {
-        // 阈值过滤模式
-        matched = [];
-        for (const vector of vectors) {
-          const similarity = dotProduct(normalizedQuery, vector.embedding);
-          if (similarity > opts.threshold) {
-            matched.push({ vector, similarity });
-          }
-        }
-        matched.sort((a, b) => b.similarity - a.similarity);
-      }
-
-      const searchResults: SearchResult[] = matched.map((r) => ({
-        uid: r.vector.id,
-        similarity: r.similarity,
-        name: this.cruidCache?.getName(r.vector.id) || r.vector.id,
-        path: this.cruidCache?.getPath(r.vector.id) || "",
-      }));
-
-      return ok(searchResults);
-    } catch (error) {
-      return err(
-        "E500_INTERNAL_ERROR",
-        "Failed to search vector index",
-        error
-      );
-    }
-  }
-
-  /** 获取索引统计信息 */
-  getStats(): IndexStats {
-    if (!this.indexMeta) {
-      return {
-        totalEntries: 0,
-        byType: {
-          Domain: 0,
-          Issue: 0,
-          Theory: 0,
-          Entity: 0,
-          Mechanism: 0,
-        },
-        lastUpdated: formatCRTimestamp(),
-      };
     }
 
-    return {
-      totalEntries: this.indexMeta.stats.totalConcepts,
-      byType: { ...this.indexMeta.stats.byType },
-      lastUpdated: formatCRTimestamp(new Date(this.indexMeta.lastUpdated)),
+    if (this.disposed) {
+      return this.stopped();
+    }
+    return ok(undefined);
+  }
+
+  upsert(entry: VectorEntry): Promise<Result<void>> {
+    const snapshot: VectorEntry = {
+      ...entry,
+      embedding: [...entry.embedding],
     };
+    return this.enqueueMutation("写入向量", () => this.upsertNow(snapshot));
   }
 
-  /** 当前索引使用的 embedding 模型（Runtime SSOT） */
-  getEmbeddingModel(): string {
-    return this.model;
+  /** 用一组已生成的向量替换当前索引；读取会等待整个替换操作结束。 */
+  replaceAll(entries: VectorEntry[]): Promise<Result<number>> {
+    const snapshots = entries.map((entry) => ({
+      ...entry,
+      embedding: [...entry.embedding],
+    }));
+    return this.enqueueMutation("重建向量索引", async () => {
+      const seenIds = new Set<string>();
+      for (const entry of snapshots) {
+        if (!entry.uid.trim() || seenIds.has(entry.uid)) {
+          return err("E101_INVALID_INPUT", `重建索引包含空或重复 UID: ${entry.uid}`);
+        }
+        seenIds.add(entry.uid);
+        if (!entry.embedding.every((value) => Number.isFinite(value)) || !entry.embedding.some((value) => value !== 0)) {
+          return err("E101_INVALID_INPUT", "向量必须包含有限且非全零的数值") as Result<number>;
+        }
+      }
+      return this.replaceAllNow(snapshots);
+    });
   }
 
-  /** 当前索引使用的 embedding 维度（Runtime SSOT） */
-  getEmbeddingDimension(): number {
-    return this.dimension;
+  delete(uid: string): Promise<Result<void>> {
+    return this.enqueueMutation("删除向量", () => this.deleteNow(uid));
   }
 
-  /** 索引是否需要重建（模型/维度不匹配时为 true） */
-  getNeedsRebuild(): boolean {
-    return this.indexMeta?.needsRebuild === true;
-  }
-
-  /** 根据 UID 获取条目（用于复用已有向量） */
-  getEntry(uid: string): VectorEntry | undefined {
-    if (!this.indexMeta) {
-      return undefined;
+  search(
+    type: CRType,
+    embedding: number[],
+    topK: number,
+  ): Promise<Result<SearchResult[]>> {
+    if (!Number.isInteger(topK) || topK <= 0) {
+      return Promise.resolve(err(
+        "E101_INVALID_INPUT",
+        `topK 必须是正整数: ${topK}`,
+        { topK },
+      ));
     }
-
-    const meta = this.indexMeta.concepts[uid];
-    if (!meta) {
-      return undefined;
-    }
-
-    // 如果已缓存，从缓存返回
-    const cached = this.recentVectors.get(uid);
-    if (cached) {
-      return {
-        uid: cached.id,
-        type: cached.type,
-        embedding: cached.embedding,
-        updated: formatCRTimestamp(new Date(cached.metadata.updatedAt)),
-      };
-    }
-
-    // 否则返回 undefined（向量未加载到内存）
-    return undefined;
+    const query = [...embedding];
+    return this.trackRead("搜索向量", () => this.searchNow(type, query, topK));
   }
 
-  /**
-   * 获取指定类型的所有向量（按需加载桶）
-   * 用于 DuplicateManager 分页检测
-   */
-  async getVectorsByType(type: CRType): Promise<Result<ConceptVector[]>> {
-    try {
+  getVectorsByType(type: CRType): Promise<Result<ConceptVector[]>> {
+    return this.trackRead("读取向量桶", async () => {
       const bucketResult = await this.ensureBucketLoaded(type);
       if (!bucketResult.ok) {
         return bucketResult as Result<ConceptVector[]>;
       }
-      return ok([...bucketResult.value.vectors]);
-    } catch (error) {
-      return err("E500_INTERNAL_ERROR", `获取类型 ${type} 的向量失败`, error);
-    }
+      return ok(bucketResult.value.vectors.map((vector) => this.cloneVector(vector)));
+    });
   }
 
-
-  /** 延迟加载：按类型加载向量（内部方法，被 ensureBucketLoaded 调用） */
-  private async loadVectorsByType(type: CRType): Promise<Result<ConceptVector[]>> {
-    try {
-      if (!this.indexMeta) {
-        return err("E310_INVALID_STATE", "向量索引未加载");
-      }
-
-      const vectors: ConceptVector[] = [];
-
-      // 获取该类型的所有概念
-      const conceptMetas = Object.values(this.indexMeta.concepts).filter(
-        (meta) => meta.type === type
-      );
-
-      // 加载向量文件
-      for (const meta of conceptMetas) {
-        // 检查单条缓存
-        let vector = this.recentVectors.get(meta.id);
-
-        if (!vector) {
-          // 从文件加载
-          const readResult = await this.fileStorage.readVectorFile(type, meta.id);
-          if (readResult.ok) {
-            vector = readResult.value;
-            this.setRecentVector(meta.id, vector);
-          } else {
-            // 文件读取失败，跳过该向量（需求 16.4）
-            const error = readResult as Err;
-            this.logger?.warn("VectorIndex", `加载向量文件失败: ${meta.id}`, {
-              conceptId: meta.id,
-              error: error.error.message
-            });
-            continue;
-          }
-        }
-
-        vectors.push(vector);
-      }
-
-      return ok(vectors);
-    } catch (error) {
-      return err(
-        "E500_INTERNAL_ERROR",
-        `Failed to load vectors for type: ${type}`,
-        error
-      );
-    }
+  getEmbeddingModel(): string {
+    return this.model;
   }
 
-  /** 保存元数据索引 */
-  private async saveIndexMeta(): Promise<Result<void>> {
-    if (!this.indexMeta) {
-      return err("E310_INVALID_STATE", "Index meta not initialized");
-    }
-
-    const writeResult = await this.fileStorage.writeVectorIndexMeta(this.indexMeta);
-    if (!writeResult.ok) {
-      return writeResult;
-    }
-
-    return ok(undefined);
+  getEmbeddingProfile(): string {
+    return this.profile;
   }
 
-  /** 释放资源：清除定时器、缓存和元数据 */
-  dispose(): void {
-    if (this.evictionTimer !== null) {
-      clearInterval(this.evictionTimer);
-      this.evictionTimer = null;
-    }
-    this.buckets.clear();
-    this.recentVectors.clear();
-    this.indexMeta = null;
+  getEmbeddingDimension(): number | undefined {
+    return this.dimension;
+  }
+
+  getEntryCount(): number {
+    return Object.keys(this.indexMeta?.concepts ?? {}).length;
   }
 
   /**
-   * 向 recentVectors 缓存写入条目，超出容量时驱逐最早插入的条目
-   * Map 迭代顺序 = 插入顺序（需求 24.3）
+   * 盘点索引登记与磁盘上的物理向量文件，不修改任何状态。
+   * 元数据是所有权来源：未被当前 UID/type 登记引用的文件才是可清理候选。
    */
+  inspectStorage(): Promise<Result<VectorIndexMaintenanceReport>> {
+    return this.trackRead("盘点向量文件", async () => {
+      await this.mutationChain;
+      const meta = this.indexMeta;
+      if (!meta) return err("E310_INVALID_STATE", "向量索引未加载");
+      await this.cruidCache?.waitUntilReady();
+
+      const listed = await this.fileStorage.listVectorFiles();
+      if (!listed.ok) return listed as Result<VectorIndexMaintenanceReport>;
+      const physicalByKey = new Map(
+        listed.value.map((file) => [this.vectorKey(file.type, file.id), file]),
+      );
+      const missingEntries: VectorIndexIssue[] = [];
+      const staleEntries: VectorIndexIssue[] = [];
+      const invalidEntries: VectorIndexIssue[] = [];
+
+      for (const [uid, concept] of Object.entries(meta.concepts)) {
+        const noteMissing = !!this.cruidCache && !this.cruidCache.has(uid);
+        if (noteMissing) {
+          staleEntries.push({ uid, type: concept.type, reason: "note-missing" });
+        }
+        const key = this.vectorKey(concept.type, uid);
+        const physical = physicalByKey.get(key);
+        if (!physical) {
+          missingEntries.push({ uid, type: concept.type, reason: "missing-file" });
+          continue;
+        }
+        const vector = await this.fileStorage.readVectorFile(concept.type, uid);
+        if (!vector.ok) {
+          invalidEntries.push({
+            uid,
+            type: concept.type,
+            reason: "invalid-file",
+          });
+          continue;
+        }
+        if (!this.isVectorCompatible(vector.value)) {
+          invalidEntries.push({
+            uid,
+            type: concept.type,
+            reason: "incompatible-file",
+          });
+        }
+      }
+
+      const orphanFiles = listed.value.filter((file) => {
+        const registered = meta.concepts[file.id];
+        return !registered || registered.type !== file.type ||
+          (!!this.cruidCache && !this.cruidCache.has(file.id));
+      });
+      return ok({
+        indexedEntries: Object.keys(meta.concepts).length,
+        physicalFiles: listed.value.length,
+        missingEntries,
+        staleEntries,
+        invalidEntries,
+        orphanFiles,
+      });
+    });
+  }
+
+  /**
+   * 删除盘点结果中的物理孤儿文件。执行时再次列目录并核验索引所有权，
+   * 因此扫描后新增的文件不会被误删，且已重新登记的文件会被跳过。
+   */
+  cleanupOrphanFiles(expected: VectorFileRef[]): Promise<Result<VectorCleanupSummary>> {
+    const requested = new Set(expected.map((file) => this.vectorKey(file.type, file.id)));
+    return this.enqueueMutation("清理多余向量文件", async () => {
+      const meta = this.indexMeta;
+      if (!meta) return err("E310_INVALID_STATE", "向量索引未加载");
+      const listed = await this.fileStorage.listVectorFiles();
+      if (!listed.ok) return listed as Result<VectorCleanupSummary>;
+
+      let removed = 0;
+      let skipped = 0;
+      let failed = 0;
+      for (const file of listed.value) {
+        const key = this.vectorKey(file.type, file.id);
+        if (!requested.has(key)) continue;
+        const registered = meta.concepts[file.id];
+        const noteMissing = !!this.cruidCache && !this.cruidCache.has(file.id);
+        if (registered?.type === file.type && !noteMissing) {
+          skipped++;
+          continue;
+        }
+        if (registered?.type === file.type && noteMissing) {
+          const removedEntry = await this.deleteNow(file.id);
+          if (removedEntry.ok) {
+            removed++;
+          } else {
+            failed++;
+            this.logger?.warn("VectorIndex", "失联笔记向量登记清理失败", {
+              type: file.type,
+              id: file.id,
+              error: removedEntry.error,
+            });
+          }
+          continue;
+        }
+        const result = await this.fileStorage.deleteVectorFile(file.type, file.id);
+        if (result.ok || MISSING_FILE_CODES.has(result.error.code)) {
+          removed++;
+        } else {
+          failed++;
+          this.logger?.warn("VectorIndex", "多余向量文件删除失败", {
+            type: file.type,
+            id: file.id,
+            error: result.error,
+          });
+        }
+      }
+      return ok({ removed, skipped, failed });
+    });
+  }
+
+  has(uid: string): boolean {
+    return !!this.indexMeta?.concepts[uid];
+  }
+
+  reconfigure(model: string, dimension: number | undefined, profile = model): Promise<Result<void>> {
+    const normalizedModel = model.trim();
+    const normalizedProfile = profile.trim();
+    if (!normalizedModel) {
+      return Promise.resolve(err("E101_INVALID_INPUT", "Embedding 模型不能为空"));
+    }
+    if (!normalizedProfile) {
+      return Promise.resolve(err("E101_INVALID_INPUT", "Embedding 配置身份不能为空"));
+    }
+    if (dimension !== undefined && (!Number.isInteger(dimension) || dimension <= 0)) {
+      return Promise.resolve(err(
+        "E101_INVALID_INPUT",
+        `Embedding 维度必须是正整数: ${dimension}`,
+        { dimension },
+      ));
+    }
+
+    return this.enqueueMutation("更新向量配置", async () => {
+      if (!this.indexMeta) {
+        return err("E310_INVALID_STATE", "向量索引未加载");
+      }
+      const dimensionMatches = dimension !== undefined
+        ? this.dimension === dimension
+        : !this.dimensionConfigured;
+      if (this.profile === normalizedProfile && this.model === normalizedModel && dimensionMatches) {
+        return ok(undefined);
+      }
+      return this.resetIndexNow(normalizedProfile, normalizedModel, dimension);
+    });
+  }
+
+  /** Stop new work and wait for all already-started reads and mutations. */
+  dispose(): Promise<void> {
+    if (this.disposePromise) {
+      return this.disposePromise;
+    }
+
+    this.disposed = true;
+    this.disposePromise = (async () => {
+      await Promise.allSettled([...this.activeReads]);
+      await this.mutationChain;
+      this.buckets.clear();
+      this.recentVectors.clear();
+      this.indexMeta = null;
+    })();
+    return this.disposePromise;
+  }
+
+  private async upsertNow(entry: VectorEntry): Promise<Result<void>> {
+    const currentMeta = this.indexMeta;
+    if (!currentMeta) {
+      return err("E310_INVALID_STATE", "向量索引未加载");
+    }
+
+    const validation = await this.ensureEmbeddingDimension(entry.embedding);
+    if (!validation.ok) {
+      return validation;
+    }
+
+    const previous = await this.readPreviousVector(currentMeta, entry.uid);
+    if (!previous.ok) return previous;
+    const { previousType, previousVector } = previous.value;
+    const now = Date.now();
+    const vector: ConceptVector = {
+      id: entry.uid,
+      type: entry.type,
+      embedding: normalizeVector(entry.embedding),
+      metadata: {
+        createdAt: previousVector?.metadata.createdAt ?? now,
+        updatedAt: now,
+        embeddingModel: this.model,
+        dimensions: this.dimension!,
+      },
+    };
+
+    const vectorWrite = await this.fileStorage.writeVectorFile(entry.type, entry.uid, vector);
+    if (!vectorWrite.ok) {
+      return vectorWrite;
+    }
+
+    const nextMeta: VectorIndexMeta = {
+      ...currentMeta,
+      dimensions: this.dimension!,
+      concepts: {
+        ...currentMeta.concepts,
+        [entry.uid]: { type: entry.type },
+      },
+    };
+    const metaWrite = await this.fileStorage.writeVectorIndexMeta(nextMeta);
+    if (!metaWrite.ok) {
+      await this.rollbackVectorWrite(entry.type, entry.uid, previousType, previousVector);
+      this.invalidateEntryCaches(entry.uid, entry.type, previousType);
+      return metaWrite;
+    }
+
+    this.indexMeta = nextMeta;
+    this.contentVersion++;
+    this.commitVectorToCaches(vector, previousType);
+
+    if (previousType && previousType !== entry.type) {
+      await this.cleanupVectorFiles(
+        [{ type: previousType, id: entry.uid }],
+        "清理类型变更前的旧向量",
+      );
+    }
+    return ok(undefined);
+  }
+
+  private async replaceAllNow(entries: VectorEntry[]): Promise<Result<number>> {
+    const currentMeta = this.indexMeta;
+    if (!currentMeta) {
+      return err("E310_INVALID_STATE", "向量索引未加载");
+    }
+    if (entries.length > 0) {
+      const dimension = await this.ensureEmbeddingDimension(entries[0].embedding);
+      if (!dimension.ok) return dimension as Result<number>;
+      for (const entry of entries.slice(1)) {
+        const validation = this.validateEmbedding(entry.embedding);
+        if (!validation.ok) return validation as Result<number>;
+      }
+    }
+
+    const previousByTarget = new Map<string, ConceptVector>();
+    for (const entry of entries) {
+      const previousType = currentMeta.concepts[entry.uid]?.type;
+      if (previousType !== entry.type) continue;
+      const previousResult = await this.fileStorage.readVectorFile(entry.type, entry.uid);
+      if (previousResult.ok) {
+        previousByTarget.set(this.vectorKey(entry.type, entry.uid), previousResult.value);
+      } else if (!DISCARDABLE_VECTOR_CODES.has(previousResult.error.code)) {
+        return previousResult as Result<number>;
+      }
+    }
+
+    const now = Date.now();
+    const vectors = entries.map((entry): ConceptVector => {
+      const previous = previousByTarget.get(this.vectorKey(entry.type, entry.uid));
+      return {
+        id: entry.uid,
+        type: entry.type,
+        embedding: normalizeVector(entry.embedding),
+        metadata: {
+          createdAt: previous?.metadata.createdAt ?? now,
+          updatedAt: now,
+          embeddingModel: this.model,
+          dimensions: this.dimension!,
+        },
+      };
+    });
+    const written: ConceptVector[] = [];
+    for (const vector of vectors) {
+      written.push(vector);
+      const writeResult = await this.fileStorage.writeVectorFile(vector.type, vector.id, vector);
+      if (!writeResult.ok) {
+        await this.rollbackBulkWrites(written, previousByTarget);
+        return writeResult as Result<number>;
+      }
+    }
+
+    const concepts = Object.fromEntries(
+      vectors.map((vector) => [vector.id, { type: vector.type }]),
+    ) as VectorIndexMeta["concepts"];
+    const nextMeta: VectorIndexMeta = { ...currentMeta, dimensions: this.dimension ?? 0, concepts };
+    const metaWrite = await this.fileStorage.writeVectorIndexMeta(nextMeta);
+    if (!metaWrite.ok) {
+      await this.rollbackBulkWrites(written, previousByTarget);
+      return metaWrite as Result<number>;
+    }
+
+    this.indexMeta = nextMeta;
+    this.contentVersion++;
+    this.buckets.clear();
+    this.recentVectors.clear();
+    for (const vector of vectors) this.setRecentVector(vector.id, vector);
+
+    const retainedTargets = new Set(vectors.map((vector) => this.vectorKey(vector.type, vector.id)));
+    const obsolete = Object.entries(currentMeta.concepts)
+      .filter(([id, concept]) => !retainedTargets.has(this.vectorKey(concept.type, id)))
+      .map(([id, concept]) => ({ id, type: concept.type }));
+    await this.cleanupVectorFiles(obsolete, "清理重建前的旧向量");
+    return ok(vectors.length);
+  }
+
+  private async readPreviousVector(
+    meta: VectorIndexMeta,
+    uid: string,
+  ): Promise<Result<{ previousType?: CRType; previousVector?: ConceptVector }>> {
+    const previousType = meta.concepts[uid]?.type;
+    if (!previousType) return ok({});
+
+    const result = await this.fileStorage.readVectorFile(previousType, uid);
+    if (!result.ok && !DISCARDABLE_VECTOR_CODES.has(result.error.code)) return result;
+    return ok({
+      previousType,
+      previousVector: result.ok ? result.value : undefined,
+    });
+  }
+
+  private async deleteNow(uid: string): Promise<Result<void>> {
+    const currentMeta = this.indexMeta;
+    if (!currentMeta) {
+      return err("E310_INVALID_STATE", "向量索引未加载");
+    }
+    const concept = currentMeta.concepts[uid];
+    if (!concept) {
+      return err("E311_NOT_FOUND", `Vector entry not found: ${uid}`, { uid });
+    }
+
+    const nextConcepts = { ...currentMeta.concepts };
+    delete nextConcepts[uid];
+    const nextMeta: VectorIndexMeta = {
+      ...currentMeta,
+      concepts: nextConcepts,
+    };
+    const metaWrite = await this.fileStorage.writeVectorIndexMeta(nextMeta);
+    if (!metaWrite.ok) {
+      return metaWrite;
+    }
+
+    this.indexMeta = nextMeta;
+    this.contentVersion++;
+    this.recentVectors.delete(uid);
+    this.buckets.delete(concept.type);
+    await this.cleanupVectorFiles([{ type: concept.type, id: uid }], "清理已删除向量");
+    return ok(undefined);
+  }
+
+  private async searchNow(
+    type: CRType,
+    embedding: number[],
+    topK: number,
+  ): Promise<Result<SearchResult[]>> {
+    await this.cruidCache?.waitUntilReady();
+    if (this.disposed) {
+      return this.stopped();
+    }
+    if (!this.indexMeta) {
+      return err("E310_INVALID_STATE", "向量索引未加载");
+    }
+    const validation = await this.ensureEmbeddingDimension(embedding);
+    if (!validation.ok) {
+      return validation as Result<SearchResult[]>;
+    }
+
+    const bucketResult = await this.ensureBucketLoaded(type);
+    if (!bucketResult.ok) {
+      return bucketResult as Result<SearchResult[]>;
+    }
+
+    const query = normalizeVector(embedding);
+    const matches: Array<{ vector: ConceptVector; similarity: number }> = [];
+    for (const vector of bucketResult.value.vectors) {
+      const similarity = dotProduct(query, vector.embedding);
+      let low = 0;
+      let high = matches.length;
+      while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (matches[middle].similarity > similarity) {
+          low = middle + 1;
+        } else {
+          high = middle;
+        }
+      }
+
+      if (low < topK) {
+        matches.splice(low, 0, { vector, similarity });
+        if (matches.length > topK) {
+          matches.pop();
+        }
+      }
+    }
+
+    return ok(matches.map(({ vector, similarity }) => ({
+      uid: vector.id,
+      similarity,
+      name: this.cruidCache?.getName(vector.id) || vector.id,
+      path: this.cruidCache?.getPath(vector.id) || "",
+    })));
+  }
+
+  private async ensureBucketLoaded(type: CRType): Promise<Result<TypeBucket>> {
+    while (!this.disposed) {
+      await this.mutationChain;
+      if (this.disposed) {
+        return this.stopped();
+      }
+
+      this.evictStaleBuckets();
+      const cached = this.buckets.get(type);
+      if (cached) {
+        cached.lastAccessedAt = Date.now();
+        return ok(cached);
+      }
+
+      const loadVersion = this.contentVersion;
+      const activityVersion = this.mutationActivityVersion;
+      const loaded = await this.loadVectorsByType(type);
+      if (!loaded.ok) {
+        return loaded as Result<TypeBucket>;
+      }
+      if (this.disposed) {
+        return this.stopped();
+      }
+      if (loadVersion !== this.contentVersion ||
+        activityVersion !== this.mutationActivityVersion) {
+        continue;
+      }
+
+      if (loaded.value.invalidIds.length > 0) {
+        const pruneResult = await this.pruneInvalidVectors(
+          type,
+          loaded.value.invalidIds,
+          loadVersion,
+        );
+        if (!pruneResult.ok) {
+          return pruneResult as Result<TypeBucket>;
+        }
+        if (!pruneResult.value) {
+          continue;
+        }
+      }
+
+      if (this.disposed) {
+        return this.stopped();
+      }
+      for (const vector of loaded.value.vectors) {
+        this.setRecentVector(vector.id, vector);
+      }
+      const bucket: TypeBucket = {
+        vectors: loaded.value.vectors,
+        lastAccessedAt: Date.now(),
+      };
+      this.buckets.set(type, bucket);
+      return ok(bucket);
+    }
+    return this.stopped();
+  }
+
+  private async loadVectorsByType(type: CRType): Promise<Result<LoadedBucket>> {
+    const meta = this.indexMeta;
+    if (!meta) {
+      return err("E310_INVALID_STATE", "向量索引未加载");
+    }
+
+    const entries = Object.entries(meta.concepts)
+      .filter(([, concept]) => concept.type === type);
+    const vectors: ConceptVector[] = [];
+    const invalidIds: string[] = [];
+    const failures: Array<{ id: string; reason: string }> = [];
+
+    for (let offset = 0; offset < entries.length; offset += VECTOR_READ_BATCH_SIZE) {
+      if (this.disposed) {
+        return this.stopped();
+      }
+      const batch = entries.slice(offset, offset + VECTOR_READ_BATCH_SIZE);
+      const results = await Promise.all(batch.map(async ([id]): Promise<VectorReadOutcome> => {
+        const cached = this.recentVectors.get(id);
+        if (cached && this.isVectorCompatible(cached)) {
+          return { id, vector: cached };
+        }
+        const readResult = await this.fileStorage.readVectorFile(type, id);
+        if (!readResult.ok) {
+          return DISCARDABLE_VECTOR_CODES.has(readResult.error.code)
+            ? { id, invalidReason: readResult.error.message }
+            : { id, error: readResult.error };
+        }
+        if (!this.isVectorCompatible(readResult.value)) {
+          return { id, invalidReason: "向量模型或维度与当前索引不一致" };
+        }
+        return { id, vector: readResult.value };
+      }));
+
+      for (const result of results) {
+        if ("error" in result) {
+          return err(result.error.code, `读取向量失败: ${type}/${result.id}`, {
+            cause: result.error,
+          });
+        }
+        if ("vector" in result) {
+          vectors.push(result.vector);
+        } else {
+          invalidIds.push(result.id);
+          failures.push({ id: result.id, reason: result.invalidReason });
+        }
+      }
+    }
+
+    if (failures.length > 0) {
+      this.logger?.warn("VectorIndex", `类型 ${type} 有 ${failures.length} 个无效向量，将从索引移除`, {
+        type,
+        failures: failures.slice(0, 10),
+      });
+    }
+    return ok({ vectors, invalidIds });
+  }
+
+  private pruneInvalidVectors(
+    type: CRType,
+    ids: string[],
+    expectedVersion: number,
+  ): Promise<Result<boolean>> {
+    return this.enqueueMutation("修复损坏向量", async () => {
+      if (expectedVersion !== this.contentVersion) {
+        return ok(false);
+      }
+      const currentMeta = this.indexMeta;
+      if (!currentMeta) {
+        return err("E310_INVALID_STATE", "向量索引未加载");
+      }
+
+      const nextConcepts = { ...currentMeta.concepts };
+      const removed: string[] = [];
+      for (const id of ids) {
+        if (nextConcepts[id]?.type === type) {
+          delete nextConcepts[id];
+          removed.push(id);
+        }
+      }
+      if (removed.length === 0) {
+        return ok(true);
+      }
+
+      const nextMeta: VectorIndexMeta = {
+        ...currentMeta,
+        concepts: nextConcepts,
+      };
+      const metaWrite = await this.fileStorage.writeVectorIndexMeta(nextMeta);
+      if (!metaWrite.ok) {
+        return metaWrite as Result<boolean>;
+      }
+
+      this.indexMeta = nextMeta;
+      this.contentVersion++;
+      this.buckets.delete(type);
+      for (const id of removed) {
+        this.recentVectors.delete(id);
+      }
+      await this.cleanupVectorFiles(
+        removed.map((id) => ({ type, id })),
+        "清理损坏向量文件",
+      );
+      return ok(true);
+    });
+  }
+
+  private async resetIndexNow(
+    profile: string,
+    model: string,
+    dimension: number | undefined,
+  ): Promise<Result<void>> {
+    const previousEntries = this.indexMeta
+      ? Object.entries(this.indexMeta.concepts).map(([id, concept]) => ({
+          id,
+          type: concept.type,
+        }))
+      : [];
+    const emptyMeta = this.createEmptyMeta(profile, model, dimension);
+    const metaWrite = await this.fileStorage.writeVectorIndexMeta(emptyMeta);
+    if (!metaWrite.ok) {
+      return metaWrite;
+    }
+
+    this.profile = profile;
+    this.model = model;
+    this.dimension = dimension;
+    this.dimensionConfigured = dimension !== undefined;
+    this.indexMeta = emptyMeta;
+    this.contentVersion++;
+    this.buckets.clear();
+    this.recentVectors.clear();
+    await this.cleanupVectorFiles(previousEntries, "清理不兼容的旧索引");
+    this.logger?.info("VectorIndex", "向量索引已重置", {
+      profile,
+      model,
+      dimension,
+      removedEntries: previousEntries.length,
+    });
+    return ok(undefined);
+  }
+
+  private createEmptyMeta(profile: string, model: string, dimension: number | undefined): VectorIndexMeta {
+    return {
+      version: "5.0",
+      embeddingProfile: profile,
+      embeddingModel: model,
+      dimensions: dimension ?? 0,
+      concepts: {},
+    };
+  }
+
+  private enqueueMutation<T>(
+    operationName: string,
+    operation: () => Promise<Result<T>>,
+  ): Promise<Result<T>> {
+    if (this.disposed) {
+      return Promise.resolve(this.stopped());
+    }
+
+    const run = async (): Promise<Result<T>> => {
+      if (this.disposed) {
+        return this.stopped();
+      }
+      this.mutationActivityVersion++;
+      try {
+        return await operation();
+      } catch (error) {
+        return err("E500_INTERNAL_ERROR", `${operationName}失败`, error);
+      } finally {
+        this.mutationActivityVersion++;
+      }
+    };
+    const resultPromise = this.mutationChain.then(run, run);
+    this.mutationChain = resultPromise.then(
+      () => undefined,
+      () => undefined,
+    );
+    return resultPromise;
+  }
+
+  private trackRead<T>(
+    operationName: string,
+    operation: () => Promise<Result<T>>,
+  ): Promise<Result<T>> {
+    if (this.disposed) {
+      return Promise.resolve(this.stopped());
+    }
+    const promise = (async (): Promise<Result<T>> => {
+      try {
+        return await operation();
+      } catch (error) {
+        return err("E500_INTERNAL_ERROR", `${operationName}失败`, error);
+      }
+    })();
+    this.activeReads.add(promise);
+    void promise.then(
+      () => this.activeReads.delete(promise),
+      () => this.activeReads.delete(promise),
+    );
+    return promise;
+  }
+
+  private validateEmbedding(embedding: number[]): Result<void> {
+    if (this.dimension !== undefined && embedding.length !== this.dimension) {
+      return err(
+        "E305_VECTOR_MISMATCH",
+        `Invalid embedding dimension: expected ${this.dimension}, got ${embedding.length}`,
+        { expected: this.dimension, actual: embedding.length },
+      );
+    }
+    if (!embedding.every((value) => Number.isFinite(value)) ||
+      !embedding.some((value) => value !== 0)) {
+      return err("E101_INVALID_INPUT", "向量必须包含有限且非全零的数值");
+    }
+    return ok(undefined);
+  }
+
+  private async ensureEmbeddingDimension(embedding: number[]): Promise<Result<void>> {
+    const basic = this.validateEmbedding(embedding);
+    if (!basic.ok) return basic;
+    if (this.dimension !== undefined) return ok(undefined);
+    if (!Number.isInteger(embedding.length) || embedding.length <= 0) {
+      return err("E101_INVALID_INPUT", "向量维度必须是正整数");
+    }
+    this.dimension = embedding.length;
+    if (this.indexMeta && this.indexMeta.dimensions !== this.dimension) {
+      const nextMeta: VectorIndexMeta = { ...this.indexMeta, dimensions: this.dimension };
+      const written = await this.fileStorage.writeVectorIndexMeta(nextMeta);
+      if (!written.ok) {
+        this.dimension = undefined;
+        this.dimensionConfigured = false;
+        return written;
+      }
+      this.indexMeta = nextMeta;
+    }
+    return ok(undefined);
+  }
+
+  private isVectorCompatible(vector: ConceptVector): boolean {
+    return this.dimension !== undefined && vector.embedding.length === this.dimension &&
+      vector.metadata.dimensions === this.dimension &&
+      vector.metadata.embeddingModel === this.model &&
+      vector.embedding.every((value) => Number.isFinite(value));
+  }
+
+  private commitVectorToCaches(vector: ConceptVector, previousType?: CRType): void {
+    this.setRecentVector(vector.id, vector);
+    if (previousType && previousType !== vector.type) {
+      this.buckets.delete(previousType);
+    }
+    const bucket = this.buckets.get(vector.type);
+    if (!bucket) {
+      return;
+    }
+    const existingIndex = bucket.vectors.findIndex((candidate) => candidate.id === vector.id);
+    if (existingIndex >= 0) {
+      bucket.vectors[existingIndex] = vector;
+    } else {
+      bucket.vectors.push(vector);
+    }
+    bucket.lastAccessedAt = Date.now();
+  }
+
+  private invalidateEntryCaches(uid: string, type: CRType, previousType?: CRType): void {
+    this.recentVectors.delete(uid);
+    this.buckets.delete(type);
+    if (previousType) {
+      this.buckets.delete(previousType);
+    }
+  }
+
+  private async rollbackVectorWrite(
+    type: CRType,
+    uid: string,
+    previousType: CRType | undefined,
+    previousVector: ConceptVector | undefined,
+  ): Promise<void> {
+    const rollbackResult = previousType === type && previousVector
+      ? await this.fileStorage.writeVectorFile(type, uid, previousVector)
+      : await this.fileStorage.deleteVectorFile(type, uid);
+    if (!rollbackResult.ok && !MISSING_FILE_CODES.has(rollbackResult.error.code)) {
+      this.logger?.error("VectorIndex", "向量索引提交失败后无法回滚向量文件", undefined, {
+        uid,
+        type,
+        error: rollbackResult.error,
+      });
+    }
+  }
+
+  private async rollbackBulkWrites(
+    written: ConceptVector[],
+    previousByTarget: Map<string, ConceptVector>,
+  ): Promise<void> {
+    const failures: Array<{ id: string; type: CRType; error: unknown }> = [];
+    for (const vector of [...written].reverse()) {
+      const previous = previousByTarget.get(this.vectorKey(vector.type, vector.id));
+      const result = previous
+        ? await this.fileStorage.writeVectorFile(vector.type, vector.id, previous)
+        : await this.fileStorage.deleteVectorFile(vector.type, vector.id);
+      if (!result.ok && !MISSING_FILE_CODES.has(result.error.code)) {
+        failures.push({ id: vector.id, type: vector.type, error: result.error });
+      }
+    }
+    if (failures.length > 0) {
+      this.logger?.error("VectorIndex", "重建索引提交失败后无法完整回滚向量文件", undefined, {
+        failures: failures.slice(0, 10),
+      });
+    }
+  }
+
+  private async cleanupVectorFiles(
+    entries: Array<{ type: CRType; id: string }>,
+    operation: string,
+  ): Promise<void> {
+    const failures: Array<{ id: string; type: CRType; error: unknown }> = [];
+    for (let offset = 0; offset < entries.length; offset += VECTOR_READ_BATCH_SIZE) {
+      const batch = entries.slice(offset, offset + VECTOR_READ_BATCH_SIZE);
+      const results = await Promise.all(batch.map(async (entry) => ({
+        entry,
+        result: await this.fileStorage.deleteVectorFile(entry.type, entry.id),
+      })));
+      for (const { entry, result } of results) {
+        if (!result.ok && !MISSING_FILE_CODES.has(result.error.code)) {
+          failures.push({ ...entry, error: result.error });
+        }
+      }
+    }
+    if (failures.length > 0) {
+      this.logger?.warn("VectorIndex", `${operation}时有 ${failures.length} 个文件未能删除`, {
+        failures: failures.slice(0, 10),
+      });
+    }
+  }
+
+  private evictStaleBuckets(): void {
+    const cutoff = Date.now() - BUCKET_TTL_MS;
+    for (const [type, bucket] of this.buckets) {
+      if (bucket.lastAccessedAt < cutoff) {
+        this.buckets.delete(type);
+      }
+    }
+  }
+
   private setRecentVector(uid: string, vector: ConceptVector): void {
-    // 已存在则先删除再重新插入（刷新到末尾，模拟 LRU）
     if (this.recentVectors.has(uid)) {
       this.recentVectors.delete(uid);
-    } else if (this.recentVectors.size >= this.maxRecentVectors) {
-      // 驱逐最早插入的条目
-      const firstKey = this.recentVectors.keys().next().value;
-      if (firstKey !== undefined) {
-        this.recentVectors.delete(firstKey);
+    } else if (this.recentVectors.size >= MAX_RECENT_VECTORS) {
+      const oldest = this.recentVectors.keys().next().value as string | undefined;
+      if (oldest) {
+        this.recentVectors.delete(oldest);
       }
     }
     this.recentVectors.set(uid, vector);
+  }
+
+  private cloneVector(vector: ConceptVector): ConceptVector {
+    return {
+      ...vector,
+      embedding: [...vector.embedding],
+      metadata: { ...vector.metadata },
+    };
+  }
+
+  private vectorKey(type: CRType, uid: string): string {
+    return `${type}/${uid}`;
+  }
+
+  private stopped<T>(): Result<T> {
+    return err("E310_INVALID_STATE", "向量索引已停止");
   }
 }

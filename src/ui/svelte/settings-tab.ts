@@ -1,52 +1,37 @@
-/**
- * CRSettingTab — Svelte 5 设置页的 Obsidian PluginSettingTab 包装器
- *
- * 职责：
- * - 继承 PluginSettingTab，注册为插件设置面板
- * - 在 display() 中挂载 SettingsRoot Svelte 组件
- * - 在 hide() 中卸载 Svelte 组件并释放资源
- * - 通过 plugin 引用向 Svelte 组件树提供服务访问
- *
- * @see 需求 10.1
- */
-
-import { App, PluginSettingTab } from 'obsidian';
-import type CognitiveRazorPlugin from '../../../main';
-import SettingsRoot from './settings/SettingsRoot.svelte';
-import { mountSvelteComponent } from '../bridge/mount';
+import { App, PluginSettingTab } from "obsidian";
+import type CognitiveRazorPlugin from "../../../main";
+import SettingsRoot from "./settings/SettingsRoot.svelte";
+import { mountSvelteComponent } from "../bridge/mount";
 
 export class CRSettingTab extends PluginSettingTab {
-    private cleanup: (() => void) | null = null;
-    private plugin: CognitiveRazorPlugin;
+  private cleanup: (() => Promise<void>) | undefined;
 
-    constructor(app: App, plugin: CognitiveRazorPlugin) {
-        super(app, plugin);
-        this.plugin = plugin;
+  constructor(app: App, private readonly plugin: CognitiveRazorPlugin) {
+    super(app, plugin);
+  }
+
+  display(): void {
+    this.cleanupMountedComponent();
+    this.containerEl.empty();
+    this.containerEl.addClass("cr-scope");
+    this.cleanup = mountSvelteComponent(this.containerEl, SettingsRoot, {
+      app: this.app,
+      i18n: this.plugin.getI18n(),
+      settingsApplication: this.plugin.getSettingsApplication(),
+    }).destroy;
+  }
+
+  hide(): void {
+    this.cleanupMountedComponent();
+  }
+
+  private cleanupMountedComponent(): void {
+    const cleanup = this.cleanup;
+    this.cleanup = undefined;
+    if (cleanup) {
+      void cleanup().catch((error: unknown) => {
+        this.plugin.reportHostError("SettingsTab", "设置页面收尾失败", error);
+      });
     }
-
-    display(): void {
-        const { containerEl } = this;
-        containerEl.empty();
-        containerEl.addClass('cr-scope');
-
-        // 检查插件是否已完全初始化
-        if (!this.plugin.isFullyInitialized()) {
-            containerEl.createEl('div', {
-                cls: 'cr-loading',
-                text: '插件正在初始化，请稍后重新打开设置页...',
-            });
-            return;
-        }
-
-        // 挂载 Svelte 根组件，传入 plugin 引用供组件获取服务
-        const { destroy } = mountSvelteComponent(containerEl, SettingsRoot, {
-            plugin: this.plugin,
-        });
-        this.cleanup = destroy;
-    }
-
-    hide(): void {
-        this.cleanup?.();
-        this.cleanup = null;
-    }
+  }
 }

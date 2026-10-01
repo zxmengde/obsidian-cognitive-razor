@@ -1,25 +1,24 @@
 /**
  * 统一反馈服务
  *
- * 需求 18.1-18.5：
  * - 统一出口，禁止业务代码散点使用 new Notice(...)
- * - 按级别分类：success(3s)、info(内联持久)、warning(5s)、error(6s)
- * - 错误消息通过 safeErrorMessage() 过滤，不暴露技术细节
+ * - 按级别分类：success(3s)、warning(5s)、error(6s)
+ * - 错误消息通过统一 UI 错误投影过滤，不暴露技术细节
  * - 同一操作链禁止连续弹出同级通知
  */
 
 import { Notice } from "obsidian";
-import { safeErrorMessage } from "../types";
+import { toSafeErrorFeedback } from "./error-feedback";
 
 // ============================================================================
 // 类型定义
 // ============================================================================
 
 /** 反馈级别 */
-type FeedbackLevel = "success" | "info" | "warning" | "error";
+type FeedbackLevel = "success" | "warning" | "error";
 
 /** 各级别的 Notice 持续时间（毫秒） */
-const DURATION: Record<Exclude<FeedbackLevel, "info">, number> = {
+const DURATION: Record<FeedbackLevel, number> = {
     success: 3000,
     warning: 5000,
     error: 6000,
@@ -64,11 +63,6 @@ function recordNotice(level: FeedbackLevel, message: string): void {
     lastNotice = { level, message, timestamp: Date.now() };
 }
 
-/** 重置去重状态（测试用） */
-export function resetDedupeState(): void {
-    lastNotice = null;
-}
-
 // ============================================================================
 // 公共 API
 // ============================================================================
@@ -93,42 +87,16 @@ export function showWarning(message: string): void {
 
 /**
  * 显示错误通知（Notice 6s）
- * 自动通过 safeErrorMessage() 过滤，不暴露技术细节
+ * 自动通过统一 UI 错误投影过滤，不暴露技术细节
  *
  * @param error - 原始错误对象或字符串
  * @param fallback - 当无法提取安全消息时的回退文案
  */
-export function showError(error: unknown, fallback?: string): void {
+export function showError(error: unknown, fallback: string): void {
     const message = typeof error === "string"
         ? error
-        : safeErrorMessage(error, fallback);
+        : toSafeErrorFeedback(error, fallback).message;
     if (shouldSuppress("error", message)) return;
     recordNotice("error", message);
     new Notice(message, DURATION.error);
 }
-
-// ============================================================================
-// 内联反馈 API
-// ============================================================================
-
-/** 内联反馈数据 */
-export interface InlineFeedback {
-    level: FeedbackLevel;
-    message: string;
-    details?: string;
-    timestamp: number;
-}
-
-/**
- * 创建内联反馈数据（供 Svelte 组件消费）
- * 不使用 Notice，而是返回结构化数据用于渲染 InlineAlert
- */
-export function createInlineFeedback(
-    level: FeedbackLevel,
-    message: string,
-    details?: string,
-): InlineFeedback {
-    return { level, message, details, timestamp: Date.now() };
-}
-
-

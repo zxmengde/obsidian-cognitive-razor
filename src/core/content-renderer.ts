@@ -1,6 +1,7 @@
 import type { CRType } from "../types";
 import { schemaRegistry } from "./schema-registry";
 import type { FieldDescription } from "./schema-registry";
+import { getMarkdownArrayProjection, type MarkdownArrayProjection } from "./projection-catalog";
 
 export class ContentRenderer {
   renderNoteMarkdown(options: {
@@ -62,7 +63,7 @@ export class ContentRenderer {
     return desc.name;
   }
 
-  private renderValue(value: unknown, fieldName?: string): string {
+  private renderValue(value: unknown, fieldName: string): string {
     if (Array.isArray(value)) {
       if (value.length > 0 && typeof value[0] === "object" && value[0] !== null) {
         return this.renderObjectArray(value as Record<string, unknown>[], fieldName);
@@ -78,44 +79,34 @@ export class ContentRenderer {
     return String(value);
   }
 
-  private renderObjectArray(items: Record<string, unknown>[], fieldName?: string): string {
+  private renderObjectArray(items: Record<string, unknown>[], fieldName: string): string {
     if (items.length === 0) return "";
+    const projection = getMarkdownArrayProjection(fieldName);
+    return projection ? this.renderProjectedArray(items, projection) : this.renderGenericObjectArray(items);
+  }
 
-    switch (fieldName) {
-      case "sub_domains":
-      case "issues":
-        return this.renderNameDescriptionArray(items, true);
-
-      case "sub_issues":
-        return this.renderNameDescriptionArray(items, true);
-      case "stakeholder_perspectives":
-        return this.renderStakeholderPerspectives(items);
-      case "theories":
-        return this.renderTheories(items);
-
-      case "axioms":
-        return this.renderAxioms(items);
-      case "sub_theories":
-        return this.renderNameDescriptionArray(items, true);
-      case "entities":
-        return this.renderTheoryEntities(items);
-      case "mechanisms":
-        return this.renderTheoryMechanisms(items);
-
-      case "properties":
-        return this.renderEntityProperties(items);
-      case "states":
-        return this.renderNameDescriptionArray(items, false);
-
-      case "operates_on":
-        return this.renderOperatesOn(items);
-      case "causal_chain":
-        return this.renderCausalChain(items);
-      case "modulation":
-        return this.renderModulation(items);
+  private renderProjectedArray(items: Record<string, unknown>[], projection: MarkdownArrayProjection): string {
+    switch (projection) {
+      case "linked-name-description": return this.renderLinkedNameDescriptions(items);
+      case "plain-name-description": return this.renderPlainNameDescriptions(items);
+      case "stakeholder-perspective": return this.renderStakeholderPerspectives(items);
+      case "theory": return this.renderTheories(items);
+      case "axiom": return this.renderAxioms(items);
+      case "theory-entity": return this.renderTheoryEntities(items);
+      case "theory-mechanism": return this.renderTheoryMechanisms(items);
+      case "entity-property": return this.renderEntityProperties(items);
+      case "operates-on": return this.renderOperatesOn(items);
+      case "causal-chain": return this.renderCausalChain(items);
+      case "modulation": return this.renderModulation(items);
     }
+  }
 
-    return this.renderObjectArrayByStructure(items);
+  private renderLinkedNameDescriptions(items: Record<string, unknown>[]): string {
+    return this.renderNameDescriptionArray(items, true);
+  }
+
+  private renderPlainNameDescriptions(items: Record<string, unknown>[]): string {
+    return this.renderNameDescriptionArray(items, false);
   }
 
   private renderNameDescriptionArray(items: Record<string, unknown>[], withLink: boolean): string {
@@ -226,49 +217,7 @@ export class ContentRenderer {
       .join("\n");
   }
 
-  private renderObjectArrayByStructure(items: Record<string, unknown>[]): string {
-    const firstItem = items[0];
-
-    if ("name" in firstItem && "type" in firstItem && "description" in firstItem) {
-      return this.renderEntityProperties(items);
-    }
-
-    if ("statement" in firstItem && "justification" in firstItem) {
-      return this.renderAxioms(items);
-    }
-
-    if ("name" in firstItem && "role" in firstItem && "attributes" in firstItem) {
-      return this.renderTheoryEntities(items);
-    }
-
-    if ("name" in firstItem && "process" in firstItem && "function" in firstItem) {
-      return this.renderTheoryMechanisms(items);
-    }
-
-    if ("name" in firstItem && "status" in firstItem && "brief" in firstItem) {
-      return this.renderTheories(items);
-    }
-
-    if ("stakeholder" in firstItem && "perspective" in firstItem) {
-      return this.renderStakeholderPerspectives(items);
-    }
-
-    if ("entity" in firstItem && "role" in firstItem) {
-      return this.renderOperatesOn(items);
-    }
-
-    if ("step" in firstItem && "description" in firstItem && "interaction" in firstItem) {
-      return this.renderCausalChain(items);
-    }
-
-    if ("factor" in firstItem && "effect" in firstItem && "mechanism" in firstItem) {
-      return this.renderModulation(items);
-    }
-
-    if ("name" in firstItem && "description" in firstItem) {
-      return this.renderNameDescriptionArray(items, true);
-    }
-
+  private renderGenericObjectArray(items: Record<string, unknown>[]): string {
     return items
       .map((item, index) => {
         const entries = Object.entries(item)
@@ -279,18 +228,18 @@ export class ContentRenderer {
       .join("\n");
   }
 
-  private renderObject(obj: Record<string, unknown>, _fieldName?: string): string {
-    if ("has_parts" in obj && "part_of" in obj) {
-      const hasParts = obj.has_parts as string[];
-      const partOf = String(obj.part_of || "");
-      const partsStr = Array.isArray(hasParts) && hasParts.length > 0 ? hasParts.join("、") : "无";
-      return `- **组成部分**：${partsStr}\n- **所属系统**：${partOf || "无"}`;
-    }
-
-    if ("genus" in obj && "differentia" in obj) {
-      const genus = String(obj.genus || "");
-      const differentia = String(obj.differentia || "");
-      return `- **属**：${genus}\n- **种差**：${differentia}`;
+  private renderObject(obj: Record<string, unknown>, fieldName: string): string {
+    switch (fieldName) {
+      case "composition": {
+        const hasParts = Array.isArray(obj.has_parts) ? obj.has_parts.map(String) : [];
+        const partOf = String(obj.part_of || "");
+        return `- **组成部分**：${hasParts.length > 0 ? hasParts.join("、") : "无"}\n- **所属系统**：${partOf || "无"}`;
+      }
+      case "classification": {
+        const genus = String(obj.genus || "");
+        const differentia = String(obj.differentia || "");
+        return `- **属**：${genus}\n- **种差**：${differentia}`;
+      }
     }
 
     return Object.entries(obj)
@@ -302,7 +251,9 @@ export class ContentRenderer {
     const labels: Record<string, string> = {
       mainstream: "主流",
       marginal: "边缘",
-      falsified: "已证伪"
+      falsified: "证伪",
+      contested: "争议",
+      unclear: "不明确"
     };
     return labels[status] || status;
   }
@@ -316,4 +267,3 @@ export class ContentRenderer {
     return labels[effect] || effect;
   }
 }
-

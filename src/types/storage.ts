@@ -5,15 +5,14 @@
  */
 
 import type { CRType } from "./domain";
-import type { TaskType, TaskState, TaskError, AnyTaskPayload } from "./task";
 
 // ============================================================================
 // 重复检测
 // ============================================================================
 
 /** 重复对状态 */
-export type DuplicatePairStatus =
-    | "pending" | "merging" | "merged" | "dismissed";
+type DuplicatePairStatus =
+    | "pending" | "dismissed";
 
 /** 重复对记录 */
 export interface DuplicatePair {
@@ -22,7 +21,6 @@ export interface DuplicatePair {
     nodeIdB: string;
     type: CRType;
     similarity: number;
-    detectedAt: string;
     status: DuplicatePairStatus;
 }
 
@@ -35,7 +33,6 @@ export interface VectorEntry {
     uid: string;
     type: CRType;
     embedding: number[];
-    updated: string;
 }
 
 /** 相似度搜索结果 */
@@ -46,33 +43,19 @@ export interface SearchResult {
     path: string;
 }
 
-/** 索引统计信息 */
-export interface IndexStats {
-    totalEntries: number;
-    byType: Record<CRType, number>;
-    lastUpdated: string;
-}
-
 /** 概念元数据 */
 interface ConceptMeta {
-    id: string;
     type: CRType;
-    vectorFilePath: string;
-    lastModified: number;
-    hasEmbedding: boolean;
 }
 
 /** 向量索引元数据 */
 export interface VectorIndexMeta {
-    version: string;
-    lastUpdated: number;
-    embeddingModel?: string;
-    dimensions?: number;
-    needsRebuild?: boolean;
-    stats: {
-        totalConcepts: number;
-        byType: Record<CRType, number>;
-    };
+    version: "5.0";
+    /** Provider、端点、协议和模型共同形成的非密钥配置身份。 */
+    embeddingProfile: string;
+    embeddingModel: string;
+    /** Zero is allowed only while an empty index awaits its first embedding. */
+    dimensions: number;
     concepts: Record<string, ConceptMeta>;
 }
 
@@ -95,26 +78,13 @@ export interface ConceptVector {
 
 /** 重复对存储 */
 export interface DuplicatePairsStore {
-    version: string;
+    version: "2.0.0";
     pairs: DuplicatePair[];
-    dismissedPairs: string[];
 }
 
-/** 队列状态文件 */
-export interface QueueStateFile {
-    version: "1.0.0" | "2.0.0";
-    pendingTasks: Array<{
-        id: string;
-        nodeId: string;
-        taskType: TaskType;
-        attempt: number;
-        maxAttempts: number;
-        providerRef?: string;
-        promptRef?: string;
-        payload?: AnyTaskPayload | Record<string, unknown>;
-        created?: string;
-        updated?: string;
-        errors?: TaskError[];
-    }>;
-    paused: boolean;
+/** Physical vector file discovered under the current vector store. */
+export interface VectorFileRef {
+    type: CRType;
+    id: string;
+    path: string;
 }
