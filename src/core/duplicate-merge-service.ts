@@ -281,11 +281,13 @@ export class DuplicateMergeService {
     try { parsed = JSON.parse(response.value.content); } catch { return err("E205_PROVIDER_REQUEST_INVALID", "合并模型返回的 JSON 无效"); }
     if (!validDraft(parsed)) return err("E205_PROVIDER_REQUEST_INVALID", "合并模型返回字段不完整");
     const raw = parsed as Record<string, unknown>;
+    // The model may omit ancestry. Preserve it in the editable preview only;
+    // confirmation remains authoritative so deleted/edited parents stay that way.
     const draft: DuplicateMergeDraft = {
       pairId, canonicalNodeId, redundantNodeId,
       canonicalContentHash: canonical.value.contentHash, redundantContentHash: redundant.value.contentHash,
       body: raw.body as string, name: raw.name as string,
-      aliases: uniqueStrings(raw.aliases), tags: uniqueStrings(raw.tags), parents: uniqueStrings(raw.parents), sourceUids: uniqueStrings(raw.sourceUids), conflicts: uniqueStrings(raw.conflicts),
+      aliases: uniqueStrings(raw.aliases), tags: uniqueStrings(raw.tags), parents: normalizeParents([...canonical.value.frontmatter.parents, ...redundant.value.frontmatter.parents, ...uniqueStrings(raw.parents)]), sourceUids: uniqueStrings(raw.sourceUids), conflicts: uniqueStrings(raw.conflicts),
     };
     const redundantFile = this.deps.cruidCache.getFile(redundantNodeId);
     const canonicalFile = this.deps.cruidCache.getFile(canonicalNodeId);

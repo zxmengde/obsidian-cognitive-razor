@@ -29,6 +29,7 @@ import {
 } from "./provider-request-builders";
 import {
   aggregateProviderStream,
+  readProviderStreamUsage,
   hasProviderStreamFraming,
   ProviderStreamAbortError,
   ProviderStreamNetworkError,
@@ -38,8 +39,10 @@ import type {
   ExternalCallKind,
   ExternalCallLedger,
   AttemptReason,
+  ExternalCallDiagnostics,
 } from "./external-call-ledger";
 import { InMemoryExternalCallLedger } from "./external-call-ledger";
+import { readProviderTokenUsage, deriveResponseCacheUsage, applyProviderTokenUsage } from "./provider-token-usage";
 import type { ModelGateway } from "./model-gateway";
 import type { ProviderProbeRequest } from "./model-gateway";
 import type {
@@ -91,16 +94,6 @@ function sanitizeSensitiveText(raw: string, apiKey?: string): string {
 }
 
 const MAX_PROVIDER_ERROR_DETAIL_LENGTH = 500;
-
-function tokenRatio(part?: number, total?: number): number | undefined {
-  if (!Number.isFinite(part) || !Number.isFinite(total) || (total as number) <= 0) return undefined;
-  return Math.round(((part as number) / (total as number)) * 10000) / 10000;
-}
-
-function uncachedInputTokens(input?: number, cached?: number, written?: number): number | undefined {
-  if (!Number.isFinite(input)) return undefined;
-  return Math.max(0, (input as number) - (cached ?? 0) - (written ?? 0));
-}
 
 function sanitizeProviderErrorDetail(raw: string, apiKey?: string): string {
   const sanitized = sanitizeSensitiveText(raw, apiKey).trim();
@@ -246,6 +239,11 @@ export class ProviderManager implements ModelGateway {
     this.ledger = ledger;
 
     this.logger.debug("ProviderManager", "ProviderManager 初始化完成");
+  }
+
+  /** Bounded session-only diagnostics. No prompts, answers, credentials or prices. */
+  getExternalCallDiagnostics(): ExternalCallDiagnostics {
+    return this.ledger.diagnostics();
   }
 
   /** 调用聊天 API */
@@ -624,9 +622,7 @@ export class ProviderManager implements ModelGateway {
         cacheWriteTokens: result.value.cacheWriteTokens,
         promptCacheMode: request.promptCacheMode,
         promptCacheKeyConfigured: !!request.promptCacheKey,
-        cacheHitRate: tokenRatio(result.value.cacheReadTokens, result.value.inputTokens),
-        cacheWriteRate: tokenRatio(result.value.cacheWriteTokens, result.value.inputTokens),
-        uncachedInputTokens: uncachedInputTokens(result.value.inputTokens, result.value.cacheReadTokens, result.value.cacheWriteTokens),
+        ...deriveResponseCacheUsage(result.value),
         webSearchUsed: result.value.webSearchUsed,
         citationCount: result.value.citations?.length ?? 0,
         elapsedTime,
@@ -712,6 +708,7 @@ export class ProviderManager implements ModelGateway {
           },
         );
       }
+      attempt.recordUsage(readProviderTokenUsage(callContext?.protocol ?? "unknown", payload));
       const parsed = parse(payload);
       attempt.finish(parsed.ok ? "succeeded" : "known-failure", parsed.ok ? undefined : parsed.error.code);
       return parsed;
@@ -813,7 +810,9 @@ export class ProviderManager implements ModelGateway {
         // request, so parse it directly rather than rejecting it or issuing a
         // second request that could duplicate work.
         try {
-          const parsed = parse(JSON.parse(response.body));
+          const payload: unknown = JSON.parse(response.body);
+          attempt.recordUsage(readProviderTokenUsage(protocol, payload));
+          const parsed = parse(payload);
           attempt.finish(parsed.ok ? "succeeded" : "known-failure", parsed.ok ? undefined : parsed.error.code);
           return parsed;
         } catch {
@@ -821,12 +820,17 @@ export class ProviderManager implements ModelGateway {
           return err("E207_PROVIDER_RESPONSE_UNSUPPORTED", "Provider 未返回可解析的流式事件或完整响应");
         }
       }
+      const observedUsage = readProviderStreamUsage(protocol, response.body);
+      attempt.recordUsage(observedUsage);
       const aggregate = aggregateProviderStream(protocol, response.body);
       if (!aggregate.ok) {
         attempt.finish(aggregate.error.code === "E206_PROVIDER_REQUEST_UNCERTAIN" ? "uncertain" : "known-failure", aggregate.error.code);
         return aggregate;
       }
       const parsed = parse(aggregate.value);
+      if (parsed.ok && parsed.value !== null && typeof parsed.value === "object") {
+        parsed.value = applyProviderTokenUsage(parsed.value, observedUsage);
+      }
       attempt.finish(parsed.ok ? "succeeded" : "known-failure", parsed.ok ? undefined : parsed.error.code);
       return parsed;
     } catch (error) {

@@ -1791,3 +1791,56 @@ describe("ProviderManager", () => {
     expect(JSON.parse(streamRequester.mock.calls[0][0].body as string)).not.toHaveProperty("stream");
   });
 });
+
+describe("ProviderManager session usage diagnostics", () => {
+  it("records reported usage before rejecting an unsupported response", async () => {
+    vi.mocked(requestUrl).mockReset();
+    vi.mocked(requestUrl).mockResolvedValue({ status: 200, json: { choices: [], usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120, prompt_tokens_details: { cached_tokens: 0 } } }, text: "" } as never);
+    const manager = new ProviderManager(createSettingsStore(), createLogger());
+    const result = await manager.chat({ providerId: "provider-1", model: "model", messages: [{ role: "user", content: "private prompt" }] });
+    expect(result.ok).toBe(false);
+    const diagnostics = manager.getExternalCallDiagnostics();
+    expect(diagnostics.attempts).toEqual([expect.objectContaining({ outcome: "known-failure", usage: { tokensUsed: 120, inputTokens: 100, outputTokens: 20, cacheReadTokens: 0, status: "partial" } })]);
+    expect(JSON.stringify(diagnostics)).not.toContain("private prompt");
+    expect(requestUrl).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps invalid accounting separate from a usable answer", async () => {
+    vi.mocked(requestUrl).mockReset();
+    vi.mocked(requestUrl).mockResolvedValue({ status: 200, json: { choices: [{ message: { content: "usable answer" }, finish_reason: "stop" }], usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120, prompt_tokens_details: { cached_tokens: -1 } } }, text: "" } as never);
+    const manager = new ProviderManager(createSettingsStore(), createLogger());
+    expect(await manager.chat({ providerId: "provider-1", model: "model", messages: [{ role: "user", content: "prompt" }] })).toMatchObject({ ok: true, value: { content: "usable answer" } });
+    expect(manager.getExternalCallDiagnostics().attempts[0].usage).toMatchObject({ status: "invalid", invalidFields: ["cacheReadTokens"] });
+    expect(requestUrl).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains observable usage from a failed SSE event without changing retries or request flags", async () => {
+    const streamRequester = vi.fn().mockResolvedValue({ status: 200, headers: { "content-type": "text/event-stream" }, body: `data: ${JSON.stringify({ type: "response.failed", response: { error: { code: "server_error" }, usage: { input_tokens: 100, output_tokens: 20, total_tokens: 120, input_tokens_details: { cached_tokens: 10, cache_write_tokens: 90 } } } })}\n\n` });
+    const manager = new ProviderManager(createSettingsStore({ enableStreamingKeepalive: true, providerMaxAttempts: 1, provider: { apiFormat: "openai-responses" } }), createLogger(), undefined, streamRequester);
+    const result = await manager.chat({ providerId: "provider-1", model: "model", messages: [{ role: "user", content: "prompt" }] });
+    expect(result).toMatchObject({ ok: false, error: { code: "E204_PROVIDER_ERROR" } });
+    expect(manager.getExternalCallDiagnostics().attempts[0]).toMatchObject({ outcome: "known-failure", usage: { inputTokens: 100, outputTokens: 20, tokensUsed: 120, cacheReadTokens: 10, cacheWriteTokens: 90, status: "reported" } });
+    expect(streamRequester).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(streamRequester.mock.calls[0][0].body)).toEqual({ model: "model", input: "prompt", stream: true });
+  });
+});
+
+
+describe("stream accounting consistency", () => {
+  it("does not restore stale cache ratios when aggregation ignores malformed final usage", async () => {
+    const usage = { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120, prompt_tokens_details: { cached_tokens: 50, cache_write_tokens: 0 } };
+    const body = `data: ${JSON.stringify({ choices: [{ delta: { content: "usable answer" }, finish_reason: "stop" }], usage })}\n\ndata: ${JSON.stringify({ choices: [], usage: "bad" })}\n\ndata: [DONE]\n\n`;
+    const streamRequester = vi.fn().mockResolvedValue({ status: 200, headers: { "content-type": "text/event-stream" }, body });
+    const logger = createLogger();
+    logger.info = vi.fn();
+    const manager = new ProviderManager(createSettingsStore({ enableStreamingKeepalive: true }), logger, undefined, streamRequester);
+    const result = await manager.chat({ providerId: "provider-1", model: "model", messages: [{ role: "user", content: "prompt" }] });
+    expect(result).toMatchObject({ ok: true, value: { content: "usable answer" } });
+    if (result.ok) expect(result.value).not.toHaveProperty("cacheReadTokens");
+    expect(manager.getExternalCallDiagnostics().attempts[0].usage).toEqual({ status: "invalid", issues: ["invalid-usage"] });
+    const log = vi.mocked(logger.info).mock.calls.find((call) => call[2]?.event === "API_RESPONSE")?.[2];
+    expect(log).not.toHaveProperty("cacheHitRate");
+    expect(log).not.toHaveProperty("uncachedInputTokens");
+    expect(streamRequester).toHaveBeenCalledTimes(1);
+  });
+});

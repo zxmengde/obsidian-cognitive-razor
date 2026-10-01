@@ -2,7 +2,7 @@
   SettingsNav — 设置页顶部水平 Tab 导航
 
   职责：
-  - 渲染 3 个按工作流组织的 Tab 按钮（AI 服务、工作流、备份与重置）
+  - 渲染 3 个按工作流组织的 Tab 按钮（AI 与模型、笔记与卡片、维护与备份）
   - sticky 定位，当前 tab 下划线高亮
   - ArrowLeft/Right 键盘快捷键切换 Tab
   - 正确的 ARIA 属性（role="tablist", role="tab"）
@@ -36,6 +36,10 @@
         let nextIndex = -1;
         if (e.key === 'ArrowRight') {
             nextIndex = (currentIndex + 1) % TAB_ORDER.length;
+        } else if (e.key === 'Home') {
+            nextIndex = 0;
+        } else if (e.key === 'End') {
+            nextIndex = TAB_ORDER.length - 1;
         } else if (e.key === 'ArrowLeft') {
             nextIndex = (currentIndex - 1 + TAB_ORDER.length) % TAB_ORDER.length;
         }
@@ -56,8 +60,8 @@
 <div
     class="cr-settings-nav"
     role="tablist"
+    tabindex="-1"
     aria-label={i18n.t('settings.title')}
-    tabindex="0"
     onkeydown={handleKeydown}
 >
     {#each TAB_ORDER as tab (tab)}
@@ -65,6 +69,8 @@
             class="cr-settings-nav-tab"
             class:is-active={activeTab === tab}
             role="tab"
+            id={`cr-settings-tab-${tab}`}
+            aria-controls={`cr-settings-panel-${tab}`}
             aria-selected={activeTab === tab}
             tabindex={activeTab === tab ? 0 : -1}
             data-tab={tab}
@@ -96,7 +102,9 @@
         font-size: var(--cr-font-sm);
         cursor: pointer;
         transition: color 0.15s ease;
-        white-space: nowrap;
+        white-space: normal;
+        min-width: 0;
+        flex: 1;
     }
 
     .cr-settings-nav-tab:hover {

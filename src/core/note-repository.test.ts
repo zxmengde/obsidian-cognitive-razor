@@ -225,3 +225,22 @@ parents: []
     expect(currentContent).not.toContain("## 报告");
   });
 });
+
+
+describe("Verify preserves note maturity unless explicitly supplied", () => {
+  it.each(["seed", "draft", "evergreen"] as const)("preserves %s on write and replay", async (status) => {
+    const file = new TFile(); file.path = "note.md";
+    const snapshot = generateMarkdownContent(generateFrontmatter({ cruid: "id", type: "entity", name: "测试", status }), "正文");
+    let content = snapshot;
+    const repository = new NoteRepository({ vault: {
+      getAbstractFileByPath: () => file,
+      cachedRead: async () => content,
+      process: async (_file: TFile, update: (value: string) => string) => { content = update(content); },
+    } } as unknown as App, logger);
+    expect(await repository.replaceVerificationReport(file.path, snapshot, "通过")).toBe("updated");
+    expect(YAML.parse(content.split("---")[1]).status).toBe(status);
+    const applied = content;
+    expect(await repository.replaceVerificationReport(file.path, snapshot, "通过")).toBe("updated");
+    expect(content).toBe(applied);
+  });
+});

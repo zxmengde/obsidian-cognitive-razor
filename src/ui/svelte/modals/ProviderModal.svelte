@@ -379,92 +379,6 @@
             </div>
 
             {#if formApiFormat !== 'disabled'}
-            <div class="cr-provider-field cr-provider-field--row">
-                <div>
-                    <span class="cr-provider-field__label" id="pm-web-search-label">
-                        {t('modals.providerConfig.fields.webSearch')}
-                    </span>
-                    <p class="cr-provider-field__desc">
-                        {t('modals.providerConfig.fields.webSearchDesc')}
-                    </p>
-                </div>
-                <Toggle
-                    checked={formEnableWebSearch}
-                    disabled={saving}
-                    ariaLabel={t('modals.providerConfig.fields.webSearch')}
-                    onchange={(v) => { formEnableWebSearch = v; }}
-                />
-            </div>
-
-            <div class="cr-provider-field cr-provider-field--row">
-                <span class="cr-provider-field__label">{t('taskModels.fields.temperature')}</span>
-                <Toggle checked={formTemperatureSupported} disabled={saving} ariaLabel={t('taskModels.fields.temperature')} onchange={(v) => { formTemperatureSupported = v; }} />
-                {#if formTemperatureSupported}<TextInput value={String(formTemperature)} onchange={(v) => { const n = Number(v); if (Number.isFinite(n) && n >= 0 && n <= 2) formTemperature = n; }} widthClass="cr-input-sm" />{/if}
-            </div>
-            <div class="cr-provider-field cr-provider-field--row">
-                <span class="cr-provider-field__label">{t('taskModels.fields.topP')}</span>
-                <Toggle checked={formTopPSupported} disabled={saving} ariaLabel={t('taskModels.fields.topP')} onchange={(v) => { formTopPSupported = v; }} />
-                {#if formTopPSupported}<TextInput value={String(formTopP)} onchange={(v) => { const n = Number(v); if (Number.isFinite(n) && n >= 0 && n <= 1) formTopP = n; }} widthClass="cr-input-sm" />{/if}
-            </div>
-            <div class="cr-provider-field cr-provider-field--row">
-                <span class="cr-provider-field__label">{t('taskModels.fields.reasoningEffort')}</span>
-                <Toggle checked={formReasoningSupported} disabled={saving} ariaLabel={t('taskModels.fields.reasoningEffort')} onchange={(v) => { formReasoningSupported = v; }} />
-                {#if formReasoningSupported && formApiFormat === 'gemini-generative-language'}
-                    <TextInput value={formThinkingLevel} placeholder="thinking level" onchange={(v) => { formThinkingLevel = v; }} widthClass="cr-input-sm" />
-                    <TextInput value={formThinkingBudget} placeholder="thinking budget" onchange={(v) => { formThinkingBudget = v; }} widthClass="cr-input-sm" />
-                {:else if formReasoningSupported}
-                    <TextInput value={formReasoningEffort} placeholder="effort" onchange={(v) => { formReasoningEffort = v; }} widthClass="cr-input-sm" />
-                {/if}
-                {#if errors.reasoning}<p class="cr-provider-field__error">{errors.reasoning}</p>{/if}
-            </div>
-            <div class="cr-provider-field cr-provider-field--row">
-                <span class="cr-provider-field__label">{t('taskModels.fields.promptCaching')}</span>
-                <Toggle checked={formPromptCaching} disabled={saving} ariaLabel={t('taskModels.fields.promptCaching')} onchange={(v) => { formPromptCaching = v; }} />
-                {#if formPromptCaching && formApiFormat === 'openai-responses'}
-                    <Select value={formPromptCacheMode} options={[{ value: 'implicit', label: t('taskModels.fields.promptCacheImplicit') }, { value: 'explicit', label: t('taskModels.fields.promptCacheExplicit') }]} disabled={saving} onchange={(value) => { formPromptCacheMode = value as 'implicit' | 'explicit'; }} />
-                {/if}
-            </div>
-            <div class="cr-provider-field cr-provider-field--row">
-                <span class="cr-provider-field__label">{t('taskModels.fields.responseContinuation')}</span>
-                <Toggle checked={formResponseContinuation} disabled={saving} ariaLabel={t('taskModels.fields.responseContinuation')} onchange={(v) => { formResponseContinuation = v; }} />
-            </div>
-
-            <div class="cr-provider-field">
-                <label class="cr-provider-field__label" for="pm-structured-output">
-                    {t('taskModels.fields.structuredOutput')}
-                </label>
-                <p class="cr-provider-field__desc">
-                    {t('taskModels.fields.structuredOutputDesc')}
-                </p>
-                <Select
-                    id="pm-structured-output"
-                    value={formStructuredOutput}
-                    options={[
-                        { value: 'prompt', label: t('taskModels.fields.structuredOutputOptions.prompt') },
-                        { value: 'json_object', label: t('taskModels.fields.structuredOutputOptions.json_object') },
-                        { value: 'json_schema', label: t('taskModels.fields.structuredOutputOptions.json_schema') },
-                    ]}
-                    disabled={saving}
-                    onchange={(value) => { formStructuredOutput = value as NonNullable<ProviderConfig['capabilities']>['structuredOutput']; }}
-                />
-            </div>
-
-            <div class="cr-provider-field">
-                <label class="cr-provider-field__label" for="pm-max-tokens">
-                    {t('taskModels.fields.maxTokens')}
-                </label>
-                <TextInput
-                    id="pm-max-tokens"
-                    value={formMaxTokens}
-                    placeholder={t('taskModels.fields.maxTokensPlaceholder')}
-                    invalid={Boolean(errors.maxTokens)}
-                    onchange={(v) => { formMaxTokens = v; errors = { ...errors, maxTokens: '' }; }}
-                    widthClass="cr-input-sm"
-                    disabled={saving}
-                />
-                {#if errors.maxTokens}<p class="cr-provider-field__error">{errors.maxTokens}</p>{/if}
-            </div>
-
             <!-- 默认聊天模型 -->
             <div class="cr-provider-field">
                 <label class="cr-provider-field__label" for="pm-chat-model">
@@ -486,6 +400,8 @@
             </div>
             {/if}
 
+            <details class="cr-provider-disclosure" open={formEmbeddingApiFormat !== 'disabled' || Boolean(errors.embedModel || errors.embeddingDimension)}>
+                <summary>{t('settings.redesign.optionalEmbedding')}</summary>
             <div class="cr-provider-field">
                 <label class="cr-provider-field__label" for="pm-embedding-api-format">
                     {t('modals.providerConfig.fields.embeddingApiFormat')}
@@ -540,6 +456,101 @@
                 />
                 {#if errors.embeddingDimension}<p class="cr-provider-field__error">{errors.embeddingDimension}</p>{/if}
             </div>
+            {/if}
+
+            </details>
+
+            {#if formApiFormat !== 'disabled'}
+            <details class="cr-provider-disclosure" open={Boolean(errors.reasoning || errors.maxTokens)}>
+                <summary>{t('settings.redesign.providerAdvanced')}</summary>
+                <p class="cr-provider-field__desc">{t('settings.redesign.providerAdvancedDesc')}</p>
+            <div class="cr-provider-field cr-provider-field--row">
+                <div>
+                    <span class="cr-provider-field__label" id="pm-web-search-label">
+                        {t('modals.providerConfig.fields.webSearch')}
+                    </span>
+                    <p class="cr-provider-field__desc">
+                        {t('modals.providerConfig.fields.webSearchDesc')}
+                    </p>
+                </div>
+                <Toggle
+                    checked={formEnableWebSearch}
+                    disabled={saving}
+                    ariaLabel={t('modals.providerConfig.fields.webSearch')}
+                    onchange={(v) => { formEnableWebSearch = v; }}
+                />
+            </div>
+
+            <div class="cr-provider-field cr-provider-field--row">
+                <span class="cr-provider-field__label">{t('taskModels.fields.temperature')}</span>
+                <Toggle checked={formTemperatureSupported} disabled={saving} ariaLabel={t('taskModels.fields.temperature')} onchange={(v) => { formTemperatureSupported = v; }} />
+                {#if formTemperatureSupported}<TextInput value={String(formTemperature)} onchange={(v) => { const n = Number(v); if (Number.isFinite(n) && n >= 0 && n <= 2) formTemperature = n; }} widthClass="cr-input-sm" />{/if}
+            </div>
+            <div class="cr-provider-field cr-provider-field--row">
+                <span class="cr-provider-field__label">{t('taskModels.fields.topP')}</span>
+                <Toggle checked={formTopPSupported} disabled={saving} ariaLabel={t('taskModels.fields.topP')} onchange={(v) => { formTopPSupported = v; }} />
+                {#if formTopPSupported}<TextInput value={String(formTopP)} onchange={(v) => { const n = Number(v); if (Number.isFinite(n) && n >= 0 && n <= 1) formTopP = n; }} widthClass="cr-input-sm" />{/if}
+            </div>
+            <div class="cr-provider-field cr-provider-field--row">
+                <span class="cr-provider-field__label">{t('taskModels.fields.reasoningEffort')}</span>
+                <Toggle checked={formReasoningSupported} disabled={saving} ariaLabel={t('taskModels.fields.reasoningEffort')} onchange={(v) => { formReasoningSupported = v; }} />
+                {#if formReasoningSupported && formApiFormat === 'gemini-generative-language'}
+                    <TextInput value={formThinkingLevel} placeholder="thinking level" onchange={(v) => { formThinkingLevel = v; }} widthClass="cr-input-sm" />
+                    <TextInput value={formThinkingBudget} placeholder="thinking budget" onchange={(v) => { formThinkingBudget = v; }} widthClass="cr-input-sm" />
+                {:else if formReasoningSupported}
+                    <TextInput value={formReasoningEffort} placeholder="effort" onchange={(v) => { formReasoningEffort = v; }} widthClass="cr-input-sm" />
+                {/if}
+                {#if errors.reasoning}<p class="cr-provider-field__error">{errors.reasoning}</p>{/if}
+            </div>
+            <div class="cr-provider-field cr-provider-field--row">
+                <div><span class="cr-provider-field__label">{t('taskModels.fields.promptCaching')}</span><p class="cr-provider-field__desc">{t('taskModels.fields.promptCachingDesc')}</p></div>
+                <Toggle checked={formPromptCaching} disabled={saving} ariaLabel={t('taskModels.fields.promptCaching')} onchange={(v) => { formPromptCaching = v; }} />
+                {#if formPromptCaching && formApiFormat === 'openai-responses'}
+                    <Select value={formPromptCacheMode} options={[{ value: 'implicit', label: t('taskModels.fields.promptCacheImplicit') }, { value: 'explicit', label: t('taskModels.fields.promptCacheExplicit') }]} disabled={saving} onchange={(value) => { formPromptCacheMode = value as 'implicit' | 'explicit'; }} />
+                {/if}
+            </div>
+            <div class="cr-provider-field cr-provider-field--row">
+                <span class="cr-provider-field__label">{t('taskModels.fields.responseContinuation')}</span>
+                <Toggle checked={formResponseContinuation} disabled={saving} ariaLabel={t('taskModels.fields.responseContinuation')} onchange={(v) => { formResponseContinuation = v; }} />
+            </div>
+
+            <div class="cr-provider-field">
+                <label class="cr-provider-field__label" for="pm-structured-output">
+                    {t('taskModels.fields.structuredOutput')}
+                </label>
+                <p class="cr-provider-field__desc">
+                    {t('taskModels.fields.structuredOutputDesc')}
+                </p>
+                <Select
+                    id="pm-structured-output"
+                    value={formStructuredOutput}
+                    options={[
+                        { value: 'prompt', label: t('taskModels.fields.structuredOutputOptions.prompt') },
+                        { value: 'json_object', label: t('taskModels.fields.structuredOutputOptions.json_object') },
+                        { value: 'json_schema', label: t('taskModels.fields.structuredOutputOptions.json_schema') },
+                    ]}
+                    disabled={saving}
+                    onchange={(value) => { formStructuredOutput = value as NonNullable<ProviderConfig['capabilities']>['structuredOutput']; }}
+                />
+            </div>
+
+            <div class="cr-provider-field">
+                <label class="cr-provider-field__label" for="pm-max-tokens">
+                    {t('taskModels.fields.maxTokens')}
+                </label>
+                <TextInput
+                    id="pm-max-tokens"
+                    value={formMaxTokens}
+                    placeholder={t('taskModels.fields.maxTokensPlaceholder')}
+                    invalid={Boolean(errors.maxTokens)}
+                    onchange={(v) => { formMaxTokens = v; errors = { ...errors, maxTokens: '' }; }}
+                    widthClass="cr-input-sm"
+                    disabled={saving}
+                />
+                {#if errors.maxTokens}<p class="cr-provider-field__error">{errors.maxTokens}</p>{/if}
+            </div>
+
+            </details>
             {/if}
 
             <!-- 启用开关（Toggle 是 div[role=switch]，用 aria-labelledby 关联） -->
@@ -608,6 +619,10 @@
         font-size: var(--cr-font-sm);
         line-height: 1.4;
     }
+
+    .cr-provider-disclosure summary { cursor: pointer; color: var(--cr-text-normal); padding: var(--cr-space-2) 0; }
+    .cr-provider-disclosure .cr-provider-field { margin-top: var(--cr-space-3); }
+    .cr-provider-field--row { flex-wrap: wrap; gap: var(--cr-space-2); }
 
     /* 表单 */
     .cr-provider-form {

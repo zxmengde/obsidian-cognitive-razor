@@ -21,6 +21,8 @@ export interface WorkflowArtifact {
   filePath: string;
   noteTitle: string;
   parents: string[];
+  /** Frozen at Create confirmation. Absent on older artifacts: keep legacy bare links on replay. */
+  directoryScheme?: import("./settings").DirectoryScheme;
   /** Create workflow fact; Verify workflows do not need a concept. */
   concept?: ConceptSnapshot;
   /** Whether a Create workflow captured automatic Verify at confirmation time. */

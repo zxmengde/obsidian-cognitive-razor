@@ -25,6 +25,7 @@ import { generateUUID } from "../data/validator";
 import { getWriteStageIds, isWriteStage } from "./stage-catalog";
 import { buildPromptCacheKey } from "./task-execution-support";
 import { formatCRTimestamp } from "../utils/date-utils";
+import { makeVerificationReportBlock } from "./verification-report";
 import { cloneJson } from "../utils/clone";
 const clone = cloneJson;
 
@@ -35,7 +36,8 @@ export interface WorkflowCoordinatorDeps {
   contentRenderer: ContentRenderer;
   settingsStore: SettingsStore;
   logger: ILogger;
-  indexNote?: (cruid: string) => Promise<Result<unknown>>;
+  indexNote?: (cruid: string) => Promise<Result<{ indexed: number; failed: number }>>;
+  onIndexingFailed?: (noteTitle: string) => void | Promise<void>;
   failurePoint?: (point: WorkflowCommitFailurePoint, context: WorkflowCommitFailureContext) => void | Promise<void>;
 }
 
@@ -69,10 +71,6 @@ function restoreConfirmedConcept(artifact: WorkflowArtifact): ConfirmedConcept |
     source: "define",
     parents: [...artifact.parents],
   };
-}
-
-function makeReportBlock(report: string, at = Date.now()): string {
-  return `## 事实核查报告\n\n${report.trim() || "（报告内容为空）"}\n\n> 核查时间: ${formatCRTimestamp(new Date(at))}`;
 }
 
 /** Single source of truth for the continuation snapshot handed to queued stages. */
@@ -165,6 +163,7 @@ export class WorkflowCoordinator {
       filePath: target.targetPath,
       noteTitle: target.targetName,
       parents: [...concept.parents],
+      directoryScheme: clone(settings.directoryScheme),
       concept: {
         name: clone(concept.name),
         coreDefinition: concept.coreDefinition,
@@ -419,7 +418,7 @@ export class WorkflowCoordinator {
   ): Promise<Result<WorkflowArtifact>> {
     const stageResult = clone(result);
     if (stage === "verify" && typeof stageResult.reportBlock !== "string") {
-      stageResult.reportBlock = makeReportBlock(typeof stageResult.reportText === "string" ? stageResult.reportText : "");
+      stageResult.reportBlock = makeVerificationReportBlock(typeof stageResult.reportText === "string" ? stageResult.reportText : "", Date.now(), this.deps.settingsStore.getSettings().verifyReportPresentation);
     }
     const patch: Record<string, unknown> = {
       pendingStageResult: {
@@ -539,8 +538,8 @@ export class WorkflowCoordinator {
       const applied = await this.deps.noteRepository.replaceVerificationReport(
         artifact.filePath,
         artifact.contentSnapshot ?? "",
-        typeof result.reportBlock === "string" ? result.reportBlock : makeReportBlock(report, artifact.createdAt),
-        "evergreen",
+        typeof result.reportBlock === "string" ? result.reportBlock : makeVerificationReportBlock(report, artifact.createdAt),
+        undefined,
         updatedAt,
       );
       if (applied === "missing") return err("E301_FILE_NOT_FOUND", `文件不存在: ${artifact.filePath}`);
@@ -574,6 +573,9 @@ export class WorkflowCoordinator {
     artifact: WorkflowArtifact,
     stage: TaskStageId,
   ): Promise<Result<TaskCompletionCommit>> {
+    // A completed receipt may outlive the queue commit. Replaying it must not
+    // resend an already attempted (possibly billable) indexing request.
+    if (artifact.state === "completed") return ok({});
     const next = this.nextStage(artifact, false);
     if (next) {
       await this.injectFailurePoint("follow-up-intent", artifact.workflowId, stage);
@@ -585,11 +587,37 @@ export class WorkflowCoordinator {
     }
     const completed = await this.deps.workflowStore.update(artifact.workflowId, { state: "completed" });
     if (!completed.ok) return completed as Result<TaskCompletionCommit>;
-    if (completed.value.kind === "create" && this.deps.indexNote) {
-      const indexed = await this.deps.indexNote(completed.value.nodeId);
-      if (!indexed.ok) this.deps.logger.warn("WorkflowCoordinator", "笔记已完成，但自动向量化失败；可在设置页重试", { workflowId: artifact.workflowId, error: indexed.error });
+    if (completed.value.kind === "create" && this.deps.settingsStore.getSettings().enableSemanticIndexing && this.deps.indexNote) {
+      await this.indexCompletedNote(completed.value);
     }
     return ok({});
+  }
+
+  private async indexCompletedNote(artifact: WorkflowArtifact): Promise<void> {
+    if (this.disposed || !this.deps.indexNote) return;
+    let failure: unknown;
+    try {
+      const indexed = await this.deps.indexNote(artifact.nodeId);
+      if (indexed.ok && indexed.value.failed === 0) return;
+      failure = indexed.ok ? indexed.value : indexed.error;
+    } catch (cause) {
+      failure = cause;
+    }
+    if (this.disposed) return;
+    this.deps.logger.warn("WorkflowCoordinator", "笔记已完成，但自动向量化未完成；可在设置页扫描缺失向量", {
+      workflowId: artifact.workflowId,
+      error: failure,
+    });
+    try {
+      await this.deps.onIndexingFailed?.(artifact.noteTitle);
+    } catch (cause) {
+      // Feedback must never turn a successfully generated note into a failed
+      // workflow, or cause a completed receipt to repeat an indexing charge.
+      this.deps.logger.warn("WorkflowCoordinator", "自动向量化失败通知未能显示", {
+        workflowId: artifact.workflowId,
+        error: cause,
+      });
+    }
   }
 
   private async cleanupCompletedWorkflow(task: TaskRecord): Promise<void> {
@@ -687,7 +715,7 @@ export class WorkflowCoordinator {
 
   private renderCreateNote(artifact: WorkflowArtifact, updatedAt?: string): string {
     if (!artifact.concept) throw new Error("工作流缺少概念快照");
-    const body = this.deps.contentRenderer.renderNoteMarkdown({ title: artifact.noteTitle, type: artifact.type, content: artifact.accumulated, language: "zh" });
+    const body = this.deps.contentRenderer.renderNoteMarkdown({ title: artifact.noteTitle, type: artifact.type, content: artifact.accumulated, language: "zh", directoryScheme: artifact.directoryScheme });
     const snapshotFrontmatter = artifact.contentSnapshot ? extractFrontmatter(artifact.contentSnapshot)?.frontmatter : undefined;
     const baseFrontmatter = snapshotFrontmatter
       ? {

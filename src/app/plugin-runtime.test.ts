@@ -18,7 +18,10 @@ import { FileStorage } from "../data/file-storage";
 import { Logger } from "../data/logger";
 import { DEFAULT_SETTINGS } from "../data/settings-store";
 import type { SettingsStore } from "../data/settings-store";
-import { err, ok } from "../types";
+import { err, ok, type WorkflowArtifact, type TaskRecord } from "../types";
+import { WorkflowCoordinator } from "../core/workflow-coordinator";
+import { WorkflowStore } from "../data/workflow-store";
+import * as feedback from "../ui/feedback";
 
 function createSettingsStore(): SettingsStore {
   return {
@@ -155,6 +158,18 @@ describe("PluginRuntime lifecycle", () => {
     expect(services.loggerFlush).toHaveBeenCalledTimes(1);
     await runtime.dispose();
     expect(services.cacheDispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops before loading task services when reset recovery is incomplete", async () => {
+    const services = stubSuccessfulServices();
+    services.fileRead.mockResolvedValue(ok("corrupt reset marker"));
+    const runtime = createRuntime();
+    await expect(runtime.start()).rejects.toThrow("恢复未完成重置失败");
+    expect(services.fileRecovery).not.toHaveBeenCalled();
+    expect(services.loggerInitialize).not.toHaveBeenCalled();
+    expect(services.cacheStart).not.toHaveBeenCalled();
+    expect(services.vectorLoad).not.toHaveBeenCalled();
+    await runtime.dispose();
   });
 
   it("stops before opening data services when atomic-write recovery fails", async () => {
@@ -348,5 +363,42 @@ describe("PluginRuntime lifecycle", () => {
     expect(disposed).toBe(true);
     expect(duplicateCleanup).toHaveBeenCalledWith("node-1");
     expect(services.vectorDispose).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe("PluginRuntime generated-note indexing feedback", () => {
+  it("uses the shared warning channel and localized recovery guidance once", async () => {
+    stubSuccessfulServices();
+    const warning = vi.spyOn(feedback, "showWarning").mockImplementation(() => undefined);
+    const embed = vi.spyOn(SemanticIndexRebuilder.prototype, "embedOne").mockResolvedValue(ok({ indexed: 0, failed: 1 }));
+    const runtime = createRuntime();
+    await runtime.start();
+    const coordinator = (runtime as unknown as { workflowCoordinator: WorkflowCoordinator }).workflowCoordinator;
+    const artifact: WorkflowArtifact = {
+      version: "7.0.0", workflowId: "runtime-feedback", kind: "create", state: "active",
+      nodeId: "node-id", type: "entity", filePath: "Note.md", noteTitle: "测试笔记",
+      parents: [], autoVerify: false, accumulated: {}, noteCreated: true,
+      appliedStageIds: ["tag", "core", "synthesis"], createdAt: 1, updatedAt: 1,
+    };
+    vi.spyOn(WorkflowStore.prototype, "get").mockImplementation(() => artifact);
+    vi.spyOn(WorkflowStore.prototype, "update").mockImplementation(async () => {
+      artifact.state = "completed";
+      return ok(artifact);
+    });
+    const task: TaskRecord = {
+      id: "task", workflowId: artifact.workflowId, nodeId: artifact.nodeId,
+      stageId: "synthesis", state: "running", payload: {}, attempt: 1, createdAt: 1, updatedAt: 1,
+    };
+    try {
+      await expect(coordinator.hooks.resolveAppliedCompletion!(task)).resolves.toEqual(ok({}));
+      expect(embed).toHaveBeenCalledExactlyOnceWith("node-id");
+      expect(warning).toHaveBeenCalledExactlyOnceWith("「测试笔记」已生成，但自动向量化未完成。请到设置 → 维护与备份 → 扫描缺失向量，为该笔记生成向量（可能产生 API 费用）。");
+      await expect(coordinator.hooks.resolveAppliedCompletion!(task)).resolves.toEqual(ok({}));
+      expect(embed).toHaveBeenCalledOnce();
+      expect(warning).toHaveBeenCalledOnce();
+    } finally {
+      await runtime.dispose();
+    }
   });
 });

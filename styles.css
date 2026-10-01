@@ -442,3 +442,33 @@
 }
 
 
+
+/* Settings use the host's theme and available pane width, including split panes. */
+.cr-settings-root { container-type: inline-size; min-width: 0; }
+.cr-settings-root *, .cr-settings-root *::before, .cr-settings-root *::after { box-sizing: border-box; }
+.cr-settings-root .cr-settings-page-heading { margin: 8px 0 24px; }
+.cr-settings-root .cr-settings-page-heading h2 { font-size: var(--h2-size, 1.5em); margin: 0 0 8px; }
+.cr-settings-root .cr-settings-page-heading p, .cr-settings-root .cr-settings-hint { color: var(--text-muted); line-height: 1.6; font-size: var(--font-ui-small, 13px); margin: 8px 0; overflow-wrap: anywhere; }
+.cr-settings-root .cr-settings-disclosure summary, .cr-settings-root .cr-result-details summary { cursor: pointer; color: var(--text-muted); padding: 8px 0; }
+.cr-settings-root summary:focus-visible, .cr-settings-root button:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 2px; }
+.cr-settings-root input, .cr-settings-root select { max-width: 100%; min-width: 0; }
+.cr-settings-root .cr-setting-item__desc { overflow-wrap: anywhere; }
+.cr-settings-root .cr-setting-item__control { max-width: 60%; flex-wrap: wrap; justify-content: flex-end; }
+@container (max-width: 520px) {
+    .cr-settings-root .cr-setting-item { flex-direction: column; align-items: stretch; gap: 8px; }
+    .cr-settings-root .cr-setting-item__control { max-width: 100%; justify-content: flex-start; }
+    .cr-settings-root .cr-setting-item__control > input, .cr-settings-root .cr-setting-item__control > select { width: 100%; }
+    .cr-settings-root .cr-setting-item__control .cr-slider { max-width: 100%; min-width: 0; width: 100%; }
+    .cr-settings-root .cr-slider__number { flex: 0 0 56px; }
+    .cr-settings-root .cr-settings-section__header { flex-wrap: wrap; gap: 8px; }
+    .cr-settings-root .cr-missing-item { grid-template-columns: 1fr; }
+    .cr-settings-root .cr-settings-nav { padding: 0; gap: 0; }
+    .cr-settings-root .cr-settings-nav-tab { padding: 10px 4px; font-size: 13px; }
+    .cr-settings-root .cr-settings-content { padding-left: 0; padding-right: 0; }
+}
+
+@container (max-width: 420px) {
+    .cr-settings-root .cr-task-model-card__parameter { grid-template-columns: minmax(0, 1fr) minmax(100px, 42%); gap: var(--cr-space-2); }
+    .cr-settings-root .cr-task-model-card__parameter-result { grid-column: 1 / -1; }
+    .cr-settings-root .cr-task-model-card__parameter-controls { grid-row: auto; }
+}

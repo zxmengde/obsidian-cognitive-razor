@@ -1,3 +1,4 @@
+import type { CRType } from "../types";
 import type { ProjectionId } from "../types/projection-id";
 
 /** Semantic renderers for structured object arrays in Markdown projections. */
@@ -13,6 +14,12 @@ export type MarkdownArrayProjection =
   | "operates-on"
   | "causal-chain"
   | "modulation";
+
+/** Only these structured fields create forward links to typed child notes. */
+export const STRUCTURAL_LINK_TARGET_TYPES: Readonly<Record<string, CRType>> = {
+  sub_domains: "domain", issues: "issue", sub_issues: "issue", theories: "theory",
+  sub_theories: "theory", entities: "entity", mechanisms: "mechanism",
+};
 
 /** Field-to-projection mapping; schema remains the field existence authority. */
 export const MARKDOWN_ARRAY_PROJECTIONS: Readonly<Record<string, MarkdownArrayProjection>> = {

@@ -3,7 +3,7 @@ import { TFile, type CachedMetadata } from "obsidian";
 import { err, ok } from "../types";
 import type { CRFrontmatter, DuplicatePair, ILogger, PluginSettings, Result } from "../types";
 import type { FileStorage } from "../data/file-storage";
-import { generateFrontmatter, generateMarkdownContent } from "./frontmatter-utils";
+import { extractFrontmatter, generateFrontmatter, generateMarkdownContent } from "./frontmatter-utils";
 import { DuplicateMergeService } from "./duplicate-merge-service";
 import { formatCRTimestamp } from "../utils/date-utils";
 
@@ -117,6 +117,30 @@ function fixture(options: FixtureOptions = {}) {
 }
 
 describe("DuplicateMergeService", () => {
+  it("preserves both original parent sets in the preview, then respects explicit user edits", async () => {
+    const f = fixture();
+    f.canonical.frontmatter.parents = ["[[Domains/A, B]]", "[[Shared]]"];
+    f.redundant.frontmatter.parents = ["[[Domains/Other]]", "[[Shared]]"];
+    for (const entry of [f.canonical, f.redundant]) entry.content = generateMarkdownContent(entry.frontmatter, "body");
+    const prepared = await f.service.prepareMerge(f.pair.id, "canonical");
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) return;
+    expect(prepared.value.draft.parents).toEqual(["[[Domains/A, B]]", "[[Shared]]", "[[Domains/Other]]", "[[Parent]]"]);
+    const edited = { ...prepared.value.draft, parents: ["[[Domains/A, B]]", "[[User/Replacement]]"] };
+    expect((await f.service.confirmMerge(edited, prepared.value.linkRepairPlan)).ok).toBe(true);
+    expect(extractFrontmatter(f.canonical.content)?.frontmatter.parents).toEqual(edited.parents);
+  });
+
+  it("allows the user to remove all parents at confirmation", async () => {
+    const f = fixture();
+    f.canonical.frontmatter.parents = ["[[Original]]"];
+    f.canonical.content = generateMarkdownContent(f.canonical.frontmatter, "body");
+    const prepared = await f.service.prepareMerge(f.pair.id, "canonical");
+    if (!prepared.ok) throw new Error("preview failed");
+    expect((await f.service.confirmMerge({ ...prepared.value.draft, parents: [] }, prepared.value.linkRepairPlan)).ok).toBe(true);
+    expect(extractFrontmatter(f.canonical.content)?.frontmatter.parents).toEqual([]);
+  });
+
   it("prevents concurrent journal mutations from undoing another recovery removal on rollback", async () => {
     const f = fixture();
     f.reindex.mockResolvedValue(err("E204_PROVIDER_ERROR", "offline"));

@@ -56,6 +56,7 @@ export interface DuplicateApplication {
   subscribe(listener: (pairs: DuplicatePair[]) => void): () => void;
   dismiss(pairId: string): Promise<Result<void>>;
   getConceptName(cruid: string): string | null;
+  getConceptPath(cruid: string): string | null;
   prepareMerge(pairId: string, canonicalNodeId: string, signal?: AbortSignal): Promise<Result<DuplicateMergePreview>>;
   confirmMerge(draft: DuplicateMergeDraft, linkRepairPlan: LinkRepairPlan): Promise<Result<DuplicateMergeOperation>>;
   getRecoveryOperations(): DuplicateMergeOperation[];
@@ -78,6 +79,7 @@ interface WorkbenchApplicationDeps {
   expandOrchestrator: ExpandOrchestrator;
   duplicateManager: DuplicateManager;
   getConceptName: (cruid: string) => string | null;
+  getConceptPath: (cruid: string) => string | null;
   rebuildSemanticNote: (filePath: string) => Promise<Result<{ indexed: number; failed: number }>>;
   generateCards?: (filePath: string) => Promise<Result<string>>;
   workflowCoordinator?: WorkflowCoordinator;
@@ -138,6 +140,7 @@ export class WorkbenchApplication {
       subscribe: (listener) => this.deps.duplicateManager.subscribe(listener),
       dismiss: (pairId) => this.deps.duplicateManager.markAsNonDuplicate(pairId),
       getConceptName: (cruid) => this.deps.getConceptName(cruid),
+      getConceptPath: (cruid) => this.deps.getConceptPath(cruid),
       prepareMerge: (pairId, canonicalNodeId, signal) => this.deps.duplicateMergeService
         ? this.deps.duplicateMergeService.prepareMerge(pairId, canonicalNodeId, signal)
         : Promise.resolve(err("E310_INVALID_STATE", "合并服务尚未就绪")),

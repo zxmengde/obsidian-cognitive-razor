@@ -1,4 +1,4 @@
-import { TFile } from "obsidian";
+import { TFile, normalizePath } from "obsidian";
 import type { App } from "obsidian";
 import {
   ok,
@@ -215,7 +215,7 @@ export class ExpandOrchestrator {
         return err("E310_INVALID_STATE", "拓展服务已停止");
       }
       if (candidate.status !== "creatable") continue;
-      const parentLink = this.wrapAsWikilink(plan.parentTitle);
+      const parentLink = this.wrapAsWikilink(plan.currentPath.replace(/\.md$/i, ""));
       const concept = confirmConcept({
         type: candidate.targetType,
         name: { chinese: candidate.name, english: "" },
@@ -288,12 +288,14 @@ export class ExpandOrchestrator {
     try {
       // Resolve source titles again so a stale selection cannot silently create parents.
       const sourceTitles: string[] = [];
+      const sourcePaths: string[] = [];
 
       const currentFile = this.deps.app.vault.getAbstractFileByPath(plan.currentPath);
       if (!(currentFile instanceof TFile)) {
         return err("E311_NOT_FOUND", "当前笔记不存在或已被移动");
       }
       sourceTitles.push(plan.currentTitle);
+      sourcePaths.push(currentFile.path);
 
       for (const item of selected) {
         const file = this.deps.app.vault.getAbstractFileByPath(item.path);
@@ -302,6 +304,7 @@ export class ExpandOrchestrator {
           continue;
         }
         sourceTitles.push(file.basename || item.name);
+        sourcePaths.push(file.path);
       }
 
       if (sourceTitles.length === 1) {
@@ -333,7 +336,7 @@ export class ExpandOrchestrator {
         plan.currentType
       );
 
-      const parentLinks = sourceTitles.map((t) => this.wrapAsWikilink(t));
+      const parentLinks = [...new Set(sourcePaths)].map((path) => this.wrapAsWikilink(path.replace(/\.md$/i, "")));
       return ok({
         preview: defineResult.value,
         type: plan.currentType,
@@ -392,7 +395,7 @@ export class ExpandOrchestrator {
         candidate.reason = "已在队列中";
       }
 
-      const key = `${candidate.targetType}::${candidate.name.toLowerCase()}`;
+      const key = `${candidate.targetType}::${candidate.targetPath.toLowerCase()}`;
       if (seen.has(key)) continue;
       seen.add(key);
 
@@ -454,10 +457,22 @@ export class ExpandOrchestrator {
     item: RawHierarchicalCandidate,
     directoryScheme: DirectoryScheme,
   ): HierarchicalCandidate | undefined {
-    const name = this.normalizeLinkName(item.name);
-    if (!name) return undefined;
+    const target = this.normalizeLinkName(item.name);
+    if (!target) return undefined;
 
-    const targetPath = generateFilePath(name, directoryScheme, item.targetType);
+    // Exact existing paths (including root/moved/merged notes) win over title
+    // guessing. Rendered links carry aliases, so retain their explicit paths
+    // even after settings change. Bare slash-containing titles still require
+    // a known type directory; do not guess an unintended folder.
+    const explicitPath = `${target}.md`;
+    const directory = normalizePath(directoryScheme[item.targetType] || "").replace(/\/$/, "");
+    const hasPath = target.includes("/");
+    const safePath = target.split("/").every((part) => part && part !== "." && part !== ".." && !hasIllegalFileNameChars(part));
+    const existing = safePath && this.deps.app.vault.getAbstractFileByPath(explicitPath);
+    const explicitLink = (hasPath && item.name.includes("|")) || /\.md$/i.test(item.name.split("|")[0].split("#")[0].trim());
+    const qualified = safePath && (existing instanceof TFile || explicitLink || (hasPath && directory && target.startsWith(`${directory}/`)));
+    const name = qualified ? target.split("/").at(-1)! : target;
+    const targetPath = qualified ? explicitPath : generateFilePath(name, directoryScheme, item.targetType);
     const candidate: HierarchicalCandidate = {
       name,
       description: item.description,
@@ -465,7 +480,7 @@ export class ExpandOrchestrator {
       targetPath,
       status: "creatable",
     };
-    if (hasIllegalFileNameChars(name) || !sanitizeFileName(name)) {
+    if (!safePath || (hasPath && !qualified) || hasIllegalFileNameChars(name) || !sanitizeFileName(name)) {
       candidate.status = "invalid";
       candidate.reason = "名称包含非法字符";
     } else if (name.length > 256) {
@@ -567,7 +582,7 @@ export class ExpandOrchestrator {
   }
 
   private normalizeLinkName(raw: string): string {
-    const name = raw.split("|")[0]?.trim() || "";
+    const name = raw.split("|")[0]?.split("#")[0]?.trim().replace(/\.md$/i, "") || "";
     return name;
   }
 

@@ -577,31 +577,40 @@ export class FileStorage {
    * Recursively list files under a plugin-relative directory.
    * Used by backup/reset so nested workflows and vectors are not left behind.
    */
-  async listFilesRecursive(path: string): Promise<Result<string[]>> {
-    if (!isSafeRelativePath(path)) {
+  async listFilesRecursive(path: string, excludedDirectories: string[] = []): Promise<Result<string[]>> {
+    if (!isSafeRelativePath(path) || !excludedDirectories.every(isSafeRelativePath)) {
       return err("E101_INVALID_INPUT", `Invalid relative path: ${path}`);
     }
     try {
       const fullPath = this.resolvePath(path);
       const prefix = this.basePath ? `${this.basePath}/` : "";
       const collected: string[] = [];
+      const excluded = new Set(excludedDirectories.map((directory) => this.resolvePath(directory)));
 
-      const walk = async (dirFullPath: string): Promise<void> => {
-        const listing = await this.vault.adapter.list(dirFullPath);
+      const walk = async (dirFullPath: string, isRoot = false): Promise<void> => {
+        let listing: { files: string[]; folders: string[] };
+        try {
+          listing = await this.vault.adapter.list(dirFullPath);
+        } catch (error) {
+          // Only an absent root represents an empty tree. A listed child
+          // becoming unreadable must not discard already discovered files.
+          if (isRoot && isMissingFsError(error)) return;
+          throw error;
+        }
         for (const filePath of listing.files) {
           if (prefix && !filePath.startsWith(prefix)) continue;
           const relative = prefix ? filePath.slice(prefix.length) : filePath;
           if (isSafeRelativePath(relative)) collected.push(relative);
         }
         for (const subDir of listing.folders) {
+          if (excluded.has(subDir)) continue;
           await walk(subDir);
         }
       };
 
-      await walk(fullPath);
+      await walk(fullPath, true);
       return ok(collected);
     } catch (error) {
-      if (isMissingFsError(error)) return ok([]);
       return err(mapFsErrorToErrorCode(error), `Failed to list files recursively: ${path}`, error);
     }
   }

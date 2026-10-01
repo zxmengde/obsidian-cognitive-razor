@@ -138,7 +138,7 @@ export class NoteRepository {
     path: string,
     expectedContent: string,
     reportBlock: string,
-    status: CRFrontmatter["status"] = "draft",
+    status?: CRFrontmatter["status"],
     updated?: string,
   ): Promise<"updated" | "missing" | "changed"> {
     const file = this.getFileByPath(path);
@@ -157,7 +157,7 @@ export class NoteRepository {
       const next = extractFrontmatter(withReport);
       if (!next) return "changed";
       targetContent = generateMarkdownContent(
-        { ...next.frontmatter, status, ...(updated ? { updated } : {}) },
+        { ...next.frontmatter, ...(status ? { status } : {}), ...(updated ? { updated } : {}) },
         bodyForGeneration(next.body),
         expectedContent,
       );

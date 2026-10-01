@@ -145,7 +145,7 @@ describe("current UI architecture", () => {
   });
 
   it("exposes missing-vector maintenance controls in settings", () => {
-    const source = read("src/ui/svelte/settings/WorkflowTab.svelte");
+    const source = read("src/ui/svelte/settings/MaintenanceTab.svelte");
     expect(source).toContain("scanSemanticIndex");
     expect(source).toContain("embedMissingSemanticIndex");
     expect(source).toContain("embedOneSemanticIndex");
@@ -159,7 +159,7 @@ describe("current UI architecture", () => {
     const source = read("src/ui/svelte/workbench/CreateSection.svelte");
     expect(source).not.toContain("rebuildCurrentNote");
     expect(source).toContain("application.cards.start");
-    expect(read("src/ui/svelte/settings/WorkflowTab.svelte")).toContain("rebuildSpecifiedNote");
+    expect(read("src/ui/svelte/settings/MaintenanceTab.svelte")).toContain("rebuildSpecifiedNote");
   });
 
   it("keeps host/runtime access outside Svelte settings and workbench code", () => {
@@ -325,9 +325,10 @@ describe("current UI architecture", () => {
     const source = read("src/ui/svelte/settings/SettingsRoot.svelte");
 
     expect(source).toContain("'providers' | 'workflow' | 'backup'");
-    expect(source).toContain("<ProvidersTab />");
-    expect(source).toContain("<WorkflowTab />");
-    expect(source).toContain("<BackupTab />");
+    expect(source).toContain("<ProvidersTab {expandedTask} />");
+    expect(source).toContain("<WorkflowTab onConfigureTask={configureTask} />");
+    expect(source).toContain("<MaintenanceTab />");
+    expect(read("src/ui/svelte/settings/MaintenanceTab.svelte")).toContain("<BackupTab />");
     expect(existsSync("src/ui/svelte/settings/DataTab.svelte")).toBe(false);
     expect(existsSync("src/ui/svelte/settings/AdvancedTab.svelte")).toBe(false);
     expect(existsSync("src/ui/svelte/settings/GeneralTab.svelte")).toBe(false);
@@ -415,7 +416,7 @@ describe("current UI architecture", () => {
     expect(modal).toContain("embeddingApiFormats.openaiEmbeddings");
     expect(modal).toContain("embeddingApiFormats.disabled");
     expect(modal).not.toContain("formEmbeddingApiFormat = formApiFormat");
-    expect(taskModel).toContain("pConfig.embeddingApiFormat === 'openai-embeddings'");
+    expect(taskModel).toContain("provider.embeddingApiFormat === 'openai-embeddings'");
   });
 
   it("centralizes modal focus and keyboard lifecycle", () => {
@@ -451,8 +452,9 @@ describe("current UI architecture", () => {
     expect(provider).toContain("disabled={saving}");
   });
 
-  it("keeps semantic indexing controls in the workflow tab without a second search service", () => {
-    const source = read("src/ui/svelte/settings/WorkflowTab.svelte");
+  it("separates everyday indexing settings from maintenance without a second search service", () => {
+    const workflow = read("src/ui/svelte/settings/WorkflowTab.svelte");
+    const source = read("src/ui/svelte/settings/MaintenanceTab.svelte");
 
     expect(source).toContain("settings.enableSemanticIndexing");
     expect(source).toContain("settings.enableDuplicateDetection");
@@ -468,13 +470,14 @@ describe("current UI architecture", () => {
     expect(source).toContain("value={settings.taskTimeoutMs / 1000}");
     expect(source).toContain("taskTimeoutMs: value * 1000");
     expect(source).toContain("ariaLabel=");
-    expect(source).toContain("directoryScheme: { [key]: value }");
+    expect(workflow).toContain("directoryScheme: { [key]: value }");
+    expect(workflow).not.toContain("rebuildSemanticIndex()");
     expect(source).not.toContain("...settings.directoryScheme");
   });
 
   it("shows unavailable task assignments and uses user-scale provider controls", () => {
     const providers = read("src/ui/svelte/settings/ProvidersTab.svelte");
-    const workflow = read("src/ui/svelte/settings/WorkflowTab.svelte");
+    const workflow = read("src/ui/svelte/settings/MaintenanceTab.svelte");
     const taskModel = read("src/ui/svelte/settings/TaskModelCard.svelte");
 
     expect(workflow).toContain("settings.providerTimeoutMs / 1000");
@@ -485,13 +488,13 @@ describe("current UI architecture", () => {
     expect(providers).not.toContain("settings.providerTimeoutMs / 1000");
     expect(providers).toContain("providerUnavailable");
     expect(taskModel).toContain("providerUnavailable");
-    expect(taskModel).toContain("ariaLabel={i18n.t('taskModels.fields.temperature')}");
-    expect(taskModel).toContain("ariaLabel={i18n.t('taskModels.fields.topP')}");
+    expect(taskModel).toContain("aria-label={parameterLabel(key)}");
+    expect(taskModel).toContain("aria-describedby={`${parameterId(key)}-desc");
     expect(taskModel).toContain("positiveIntegerError");
     expect(taskModel).toContain("Number.isSafeInteger");
     expect(taskModel).toContain("showLongTaskReasoningWarning");
     expect(taskModel).toContain("longTaskReasoningWarning");
-    expect(taskModel).toContain("max-tokens-desc");
+    expect(taskModel).toContain("maxTokens: 'max-tokens'");
   });
 
   it("never persists a placeholder task parameter when 指定值 has no real value", () => {
@@ -517,7 +520,8 @@ describe("current UI architecture", () => {
     expect(expand).toContain("submissionGeneration === loadGeneration");
     expect(expand).not.toContain("replaceSelection(getCreatableIndices(result.value))");
     expect(expand).toContain("String(selected.size)");
-    expect(workflowSettings).toContain("settingsApplication.updateTaskModel(type, partial)");
+    expect(providers).toContain("settingsApplication.updateTaskModel(type, partial)");
+    expect(workflowSettings).not.toContain("<TaskModelCard");
     expect(providers).toContain("ctx.settingsApplication.updateProvider(id, config)");
     expect(providers).not.toContain("sanitizeTaskModelsForProvider");
   });

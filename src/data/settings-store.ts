@@ -50,6 +50,9 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   taskTimeoutMs: DEFAULT_TASK_TIMEOUT_MS,
   logLevel: "info",
   enableAutoVerify: false,
+  verifyReportPresentation: "expanded",
+  queueDefaultFilter: "all",
+  queuePageSize: 50,
   providers: {},
   defaultProviderId: "",
   taskModels: cloneTaskModels(DEFAULT_TASK_MODEL_CONFIGS),
@@ -97,11 +100,17 @@ const BOOLEAN_SETTING_RULES = [
   { key: "enableDuplicateDetection", defaultValue: DEFAULT_SETTINGS.enableDuplicateDetection },
   { key: "enableStreamingKeepalive", defaultValue: DEFAULT_SETTINGS.enableStreamingKeepalive },
 ] as const;
+const PRESENTATION_SETTING_RULES = [
+  { key: "verifyReportPresentation", values: ["expanded", "collapsed"] },
+  { key: "queueDefaultFilter", values: ["all", "active", "failed"] },
+  { key: "queuePageSize", values: [25, 50, 100] },
+] as const;
+type PresentationSettingKey = typeof PRESENTATION_SETTING_RULES[number]["key"];
 type NumericSettingKey = typeof NUMERIC_SETTING_RULES[number]["key"];
 type BooleanSettingKey = typeof BOOLEAN_SETTING_RULES[number]["key"];
 type ScalarSettings = Pick<
   PluginSettings,
-  NumericSettingKey | BooleanSettingKey | "logLevel"
+  NumericSettingKey | BooleanSettingKey | PresentationSettingKey | "logLevel"
 >;
 
 export class SettingsStore {
@@ -385,10 +394,19 @@ function mergeSettings(
       ...(partial.taskModels ?? {}),
     },
   };
-  return normalizeSettings(candidate);
+  return normalizeSettings(candidate, true);
 }
 
-function normalizeScalarSettings(raw: Record<string, unknown>): Result<ScalarSettings> {
+function normalizeScalarSettings(raw: Record<string, unknown>, strictPresentationSettings: boolean): Result<ScalarSettings> {
+  const presentation = {} as Pick<PluginSettings, PresentationSettingKey>;
+  for (const rule of PRESENTATION_SETTING_RULES) {
+    const value = raw[rule.key];
+    const valid = rule.values.some((allowed) => allowed === value);
+    // New presentation options are optional in older files. Bad imported values
+    // also fall back safely; an explicit invalid live edit must fail atomically.
+    if (!valid && strictPresentationSettings) return err("E101_INVALID_INPUT", `${rule.key} 无效`);
+    Object.assign(presentation, { [rule.key]: valid ? value : DEFAULT_SETTINGS[rule.key] });
+  }
   const numeric = {} as Pick<PluginSettings, NumericSettingKey>;
   for (const rule of NUMERIC_SETTING_RULES) {
     const rawValue = raw[rule.key] ?? ("defaultValue" in rule ? rule.defaultValue : undefined);
@@ -413,6 +431,7 @@ function normalizeScalarSettings(raw: Record<string, unknown>): Result<ScalarSet
   return ok({
     ...numeric,
     ...booleans,
+    ...presentation,
     logLevel: logLevel as LogLevel,
   });
 }
@@ -434,7 +453,7 @@ function normalizeTaskProviderAssignments(
   return ok(normalized);
 }
 
-function normalizeSettings(raw: unknown): Result<PluginSettings> {
+function normalizeSettings(raw: unknown, strictPresentationSettings = false): Result<PluginSettings> {
   if (!isRecord(raw)) {
     return err("E101_INVALID_INPUT", "设置必须是对象");
   }
@@ -451,7 +470,7 @@ function normalizeSettings(raw: unknown): Result<PluginSettings> {
   if (!providersResult.ok) return providersResult;
   const taskModelsResult = normalizeTaskModels(raw.taskModels);
   if (!taskModelsResult.ok) return taskModelsResult;
-  const scalarResult = normalizeScalarSettings(raw);
+  const scalarResult = normalizeScalarSettings(raw, strictPresentationSettings);
   if (!scalarResult.ok) return scalarResult;
   if (typeof raw.defaultProviderId !== "string") {
     return err("E101_INVALID_INPUT", "defaultProviderId 必须是字符串");
@@ -484,6 +503,9 @@ function normalizeSettings(raw: unknown): Result<PluginSettings> {
     taskTimeoutMs: scalar.taskTimeoutMs,
     logLevel: scalar.logLevel,
     enableAutoVerify: scalar.enableAutoVerify,
+    verifyReportPresentation: scalar.verifyReportPresentation,
+    queueDefaultFilter: scalar.queueDefaultFilter,
+    queuePageSize: scalar.queuePageSize,
     providers: providersResult.value,
     defaultProviderId,
     taskModels: taskModelsResultWithProviders.value,

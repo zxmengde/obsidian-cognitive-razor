@@ -48,7 +48,7 @@
     }
 </script>
 
-<SettingsSection title={i18n.t('settings.tabs.backup')}>
+<SettingsSection title={i18n.t('settings.redesign.settingsBackup')}>
     {#if importError}
         <InlineAlert level="error" message={importError} {detailsToggleLabels} />
     {/if}
@@ -68,15 +68,19 @@
             {i18n.t('settings.importExport.import')}
         </Button>
     </SettingItem>
-    <SettingItem
-        name={i18n.t('settings.importExport.reset')}
-        description={i18n.t('settings.importExport.resetDesc')}
-    >
-        <Button variant="danger" onclick={() => showResetConfirm = true}>
-            {i18n.t('settings.importExport.reset')}
-        </Button>
-    </SettingItem>
 </SettingsSection>
+<section class="cr-settings-danger">
+    <h3>{i18n.t('settings.redesign.dangerZone')}</h3>
+    <p>{i18n.t('settings.redesign.resetScope')}</p>
+    <details>
+        <summary>{i18n.t('settings.redesign.resetRecoveryTitle')}</summary>
+        <p>{i18n.t('settings.redesign.resetBackupLocation')}</p>
+        <p>{i18n.t('settings.redesign.resetInterruptedRecovery')}</p>
+        <p>{i18n.t('settings.redesign.resetManualRecovery')}</p>
+    </details>
+    <Button variant="danger" onclick={() => showResetConfirm = true}>{i18n.t('settings.importExport.reset')}…</Button>
+    <p class="cr-settings-hint">{i18n.t('settings.redesign.confirmAgain')}</p>
+</section>
 
 {#if showResetConfirm}
     <ConfirmModal
@@ -89,3 +93,9 @@
         oncancel={() => showResetConfirm = false}
     />
 {/if}
+
+<style>
+    .cr-settings-danger { margin-top: var(--cr-space-6); padding-top: var(--cr-space-4); border-top: 1px solid var(--cr-status-error); }
+    .cr-settings-danger h3 { color: var(--cr-status-error); font-size: var(--font-ui-medium); }
+    .cr-settings-danger p { color: var(--cr-text-muted); font-size: var(--cr-font-sm); line-height: 1.6; }
+</style>

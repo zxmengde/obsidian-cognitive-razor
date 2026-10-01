@@ -10,6 +10,7 @@ import { ContentRenderer } from "./content-renderer";
 import type { TaskRunner } from "./task-runner";
 import { err, ok, type ConfirmedConcept, type ILogger, type Result, type TaskRecord, type TaskExecutionContext } from "../types";
 import { formatCRTimestamp } from "../utils/date-utils";
+import { backupAndClearPluginData, recoverInterruptedReset } from "../data/runtime-data-maintenance";
 
 const concept: ConfirmedConcept = { type: "entity", name: { chinese: "验收概念", english: "Acceptance" }, coreDefinition: "测试定义", parents: [], source: "define" };
 const logger: ILogger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
@@ -53,6 +54,8 @@ async function fixture(files = new Map<string, string>(), failurePoint?: Workflo
   } as unknown as Vault;
   const storage = new FileStorage(vault, "plugin");
   await storage.initialize();
+  const resetRecovery = await recoverInterruptedReset(storage);
+  if (!resetRecovery.ok) throw new Error(resetRecovery.error.message);
   await storage.recoverIncompleteWrites();
   const store = new WorkflowStore(storage, logger);
   await store.initialize();
@@ -143,7 +146,7 @@ describe("workflow user scenarios", () => {
     f.start();
     await completed(f);
     expect(f.run.mock.calls.map(([task]) => task.stageId)).toEqual(["tag", "core", "synthesis", "verify"]);
-    expect(f.files.get("Acceptance.md")).toContain("status: evergreen");
+    expect(f.files.get("Acceptance.md")).toContain("status: draft");
     expect(f.files.get("Acceptance.md")).toContain("已核查的测试报告 $&");
     await vi.waitFor(() => expect(f.store.list()).toHaveLength(0));
     const reload = await fixture(new Map(f.files));
@@ -314,4 +317,137 @@ describe("workflow user scenarios", () => {
     await f.queue.dispose();
     expect(f.files.get("plugin/data/queue-state-v5.json")).toBe(bytes);
   });
+});
+
+
+it("captures collapsed verification presentation once and recovers it without rewriting or paying again", async () => {
+  let crashBytes: Map<string, string> | undefined;
+  const f = await fixture(undefined, (point, context) => {
+    if (point === "pending-checkpoint" && context.stageId === "verify") {
+      crashBytes = new Map(f.files);
+      throw new Error("synthetic report checkpoint crash");
+    }
+  });
+  f.settings.verifyReportPresentation = "collapsed";
+  await create(f); f.start();
+  await vi.waitFor(() => expect(crashBytes).toBeDefined());
+  const reload = await fixture(crashBytes);
+  expect(reload.settings.verifyReportPresentation).toBe("expanded");
+  reload.start(); await completed(reload);
+  const content = reload.files.get("Acceptance.md")!;
+  expect(content).toContain("> [!info]- 事实核查报告");
+  expect(content.match(/<!-- cognitive-razor:verify-report -->/g)).toHaveLength(1);
+  expect(reload.run).not.toHaveBeenCalled();
+  reload.settings.verifyReportPresentation = "collapsed";
+  expect(reload.files.get("Acceptance.md")).toBe(content);
+});
+
+
+it.each(["pending-checkpoint", "vault-commit-confirmed"] as const)("freezes typed link directories across changes and interruption at %s", async (failurePoint) => {
+  let crashBytes: Map<string, string> | undefined;
+  const f = await fixture(undefined, (point, context) => {
+    if (point === failurePoint && context.stageId === "structure") {
+      crashBytes = new Map(f.files);
+      throw new Error("synthetic structure commit crash");
+    }
+  });
+  f.settings.enableAutoVerify = false;
+  f.settings.directoryScheme.entity = "Original Entities";
+  f.settings.directoryScheme.mechanism = "Original Mechanisms";
+  const started = await f.coordinator.startCreate({ ...concept, type: "theory" }, { targetPathOverride: "Theory.md" });
+  if (!started.ok) throw new Error("start failed");
+  expect(f.store.get(started.value)?.directoryScheme?.entity).toBe("Original Entities");
+  f.settings.directoryScheme.entity = "Changed Entities";
+  f.settings.directoryScheme.mechanism = "Changed Mechanisms";
+  const run = f.run.getMockImplementation()!;
+  f.run.mockImplementation(async (task, context) => task.stageId === "structure"
+    ? ok({ phaseResult: { entities: [{ name: "Same" }], mechanisms: [{ name: "Same" }] } })
+    : run(task, context));
+  f.start();
+  await vi.waitFor(() => expect(crashBytes).toBeDefined());
+  const reloaded = await fixture(crashBytes);
+  reloaded.start();
+  await vi.waitFor(() => expect(reloaded.queue.getSnapshot().status).toMatchObject({ completed: 4, running: 0, pending: 0, failed: 0 }));
+  const content = reloaded.files.get("Theory.md")!;
+  expect(content).toContain("[[Original Entities/Same|Same]]");
+  expect(content).toContain("[[Original Mechanisms/Same|Same]]");
+  expect(content).not.toContain("Changed");
+  expect(reloaded.run).not.toHaveBeenCalled();
+  if (failurePoint === "vault-commit-confirmed") expect(content).toBe(crashBytes!.get("Theory.md"));
+  const secondReload = await fixture(new Map(reloaded.files));
+  secondReload.start();
+  expect(secondReload.files.get("Theory.md")).toBe(content);
+  expect(secondReload.run).not.toHaveBeenCalled();
+});
+
+it("replays an older artifact's bare links byte-identically without adopting today's directories", async () => {
+  let crashBytes: Map<string, string> | undefined;
+  const f = await fixture(undefined, (point, context) => {
+    if (point === "vault-commit-confirmed" && context.stageId === "structure") {
+      crashBytes = new Map(f.files);
+      throw new Error("synthetic old artifact crash");
+    }
+  });
+  f.settings.enableAutoVerify = false;
+  const started = await f.coordinator.startCreate({ ...concept, type: "theory" }, { targetPathOverride: "Legacy.md" });
+  if (!started.ok) throw new Error("start failed");
+  await f.store.update(started.value, { directoryScheme: undefined });
+  const run = f.run.getMockImplementation()!;
+  f.run.mockImplementation(async (task, context) => task.stageId === "structure"
+    ? ok({ phaseResult: { entities: [{ name: "Legacy Child" }] } }) : run(task, context));
+  f.start();
+  await vi.waitFor(() => expect(crashBytes).toBeDefined());
+  const reloaded = await fixture(crashBytes);
+  reloaded.start();
+  await vi.waitFor(() => expect(reloaded.queue.getSnapshot().status).toMatchObject({ completed: 4, running: 0, pending: 0, failed: 0 }));
+  expect(reloaded.files.get("Legacy.md")).toContain("[[Legacy Child]]");
+  expect(reloaded.files.get("Legacy.md")).toBe(crashBytes!.get("Legacy.md"));
+  expect(reloaded.run).not.toHaveBeenCalled();
+});
+
+it("does not resend a stopped provider request after reset backup fails midway", async () => {
+  const f = await fixture();
+  f.run.mockResolvedValue(err("E500_INTERNAL_ERROR", "simulated stopped request"));
+  await create(f); f.start();
+  await vi.waitFor(() => expect(f.queue.getSnapshot().status.failed).toBe(1));
+  await f.queue.dispose();
+  const originalNote = f.files.get("Acceptance.md");
+  const write = f.vault.adapter.write.bind(f.vault.adapter);
+  vi.spyOn(f.vault.adapter, "write").mockImplementation(async (path, content, options) => {
+    if (path.includes("/backups/") && path.includes("/workflows/")) throw Object.assign(new Error("backup disk full"), { code: "ENOSPC" });
+    return write(path, content, options);
+  });
+  expect((await backupAndClearPluginData(f.vault, "plugin", f.settings)).ok).toBe(false);
+  const reload = await fixture(new Map(f.files)); reload.start();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(reload.run).not.toHaveBeenCalled();
+  expect(reload.queue.getSnapshot().status.failed).toBe(1);
+  expect(reload.files.get("Acceptance.md")).toBe(originalNote);
+});
+
+it("retains interrupted requests after reset deletion fails and never resends them", async () => {
+  const f = await fixture();
+  let release!: (value: Result<Record<string, unknown>>) => void;
+  f.run.mockImplementation(() => new Promise((resolve) => { release = resolve; }));
+  await create(f); f.start();
+  await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+  const interruptedBytes = new Map(f.files);
+  await f.queue.cancelAllActiveDurably(); release(err("E500_INTERNAL_ERROR", "stopped original fixture")); await f.queue.dispose();
+  const interrupted = await fixture(interruptedBytes);
+  expect(interrupted.queue.getSnapshot().status.interrupted).toBe(1);
+  await interrupted.queue.dispose();
+  const remove = interrupted.vault.adapter.remove.bind(interrupted.vault.adapter);
+  let crashBytes: Map<string, string> | undefined;
+  vi.spyOn(interrupted.vault.adapter, "remove").mockImplementation(async (path) => {
+    if (path.includes("/workflows/")) { crashBytes = new Map(interrupted.files); throw Object.assign(new Error("cannot delete workflow"), { code: "EACCES" }); }
+    return remove(path);
+  });
+  expect((await backupAndClearPluginData(interrupted.vault, "plugin", interrupted.settings)).ok).toBe(false);
+  const reload = await fixture(new Map(interrupted.files)); reload.start();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(reload.run).not.toHaveBeenCalled(); expect(reload.queue.getSnapshot().status.interrupted).toBe(1);
+  expect(crashBytes?.has("plugin/data/reset-in-progress.json")).toBe(true);
+  const crashReload = await fixture(crashBytes); crashReload.start();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(crashReload.run).not.toHaveBeenCalled(); expect(crashReload.queue.getSnapshot().status.interrupted).toBe(1);
 });

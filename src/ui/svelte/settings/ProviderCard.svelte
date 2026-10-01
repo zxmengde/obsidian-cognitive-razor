@@ -1,10 +1,3 @@
-<!--
-  ProviderCard.svelte — Provider 摘要卡片
-
-  显示单个 Provider 的配置信息：名称、API Key（密码）、Base URL、
-  默认模型、启用开关、连接测试、编辑/删除按钮。
-
--->
 <script lang="ts">
     import type { ProviderConfig, TaskType } from '../../../types';
     import type { ProviderProbeAttemptReason } from '../../../core/model-gateway';
@@ -17,6 +10,7 @@
     let {
         id,
         config,
+        taskSignature = '',
         isDefault = false,
         i18n,
         onToggleEnabled,
@@ -29,6 +23,8 @@
         id: string;
         /** Provider 配置 */
         config: ProviderConfig;
+        /** Used only to invalidate stale forced-provider task test results. */
+        taskSignature?: string;
         /** 是否为默认 Provider */
         isDefault: boolean;
         /** i18n 实例 */
@@ -53,6 +49,12 @@
         /** 删除 */
         onDelete: (id: string) => void;
     } = $props();
+
+    let testMode = $state('connection');
+    let showTest = $state(false);
+    function signature(taskType?: Exclude<TaskType, 'index'>): string {
+        return JSON.stringify({ id, config, tasks: taskType ? taskSignature : undefined });
+    }
 
     /** 连接测试中 */
     let testing = $state(false);
@@ -85,16 +87,17 @@
     ) {
         if (testing) return;
         testing = true;
+        testResult = undefined;
         lastTaskProbeType = taskType;
         const abortController = new AbortController();
-        const requestSignature = JSON.stringify({ id, config });
+        const requestSignature = signature(taskType);
         testAbortController = abortController;
         testedSignature = requestSignature;
         try {
             const result = taskType
                 ? await onTestTaskConnection(id, taskType, attemptReason, abortController.signal)
                 : await onTestConnection(id, attemptReason, abortController.signal);
-            if (result && !abortController.signal.aborted && JSON.stringify({ id, config }) === requestSignature) {
+            if (result && !abortController.signal.aborted && signature(taskType) === requestSignature) {
                 testResult = result;
             }
         } finally {
@@ -106,7 +109,7 @@
     }
 
     $effect(() => {
-        const currentSignature = JSON.stringify({ id, config });
+        const currentSignature = signature(lastTaskProbeType);
         if (testedSignature && testedSignature !== currentSignature) {
             testResult = undefined;
             testedSignature = undefined;
@@ -117,207 +120,72 @@
 </script>
 
 <div class="cr-provider-card" class:cr-provider-card--disabled={!config.enabled}>
-    <!-- 头部：名称 + 状态标签 -->
     <div class="cr-provider-card__header">
-        <span class="cr-provider-card__name">{id}</span>
-        {#if isDefault}
-            <span class="cr-provider-card__badge">{i18n.t('settings.provider.setDefault')}</span>
-        {/if}
+        <div class="cr-provider-card__summary">
+            <div class="cr-provider-card__name">{id} {#if isDefault}<span class="cr-provider-card__badge">{i18n.t('settings.redesign.currentDefault')}</span>{/if}</div>
+            <p class="cr-provider-card__scope">
+                {#if !config.enabled}{i18n.t('settings.provider.disabled')} · {/if}
+                {config.apiFormat !== 'disabled' ? i18n.t('settings.redesign.chat') : ''}{config.apiFormat !== 'disabled' && config.embeddingApiFormat !== 'disabled' ? '、' : ''}{config.embeddingApiFormat !== 'disabled' ? i18n.t('settings.redesign.embedding') : ''}
+                · {#if testing}{i18n.t('settings.redesign.testing')}{:else if testResult}{i18n.t(lastTaskProbeType ? 'settings.redesign.taskTest' : 'settings.redesign.connectionTest')} {lastTaskProbeType ? i18n.t(`settings.redesign.tasks.${lastTaskProbeType}`) : ''} · {i18n.t(`settings.redesign.testOutcomes.${testResult.outcome}`)}{:else}{i18n.t('settings.redesign.untested')}{/if}
+            </p>
+        </div>
+        <Button variant="ghost" size="sm" ariaLabel={`${i18n.t('common.edit')} ${id}`} onclick={() => onEdit(id)}>{i18n.t('common.edit')}</Button>
     </div>
-
-    <!-- 信息行 -->
-    <div class="cr-provider-card__info">
-        <div class="cr-provider-card__row">
-            <span class="cr-provider-card__label">API Key</span>
-            <span class="cr-provider-card__value">{maskedKey}</span>
-        </div>
-        {#if config.baseUrl}
-            <div class="cr-provider-card__row">
-                <span class="cr-provider-card__label">Base URL</span>
-                <span class="cr-provider-card__value cr-provider-card__value--mono">
-                    {config.baseUrl}
-                </span>
+    <div class="cr-provider-card__utilities">
+        <button class="cr-provider-link" aria-expanded={showTest} onclick={() => showTest = !showTest}>{i18n.t('settings.redesign.test')}</button>
+        <details class="cr-provider-details">
+            <summary>{i18n.t('settings.redesign.connectionDetails')}</summary>
+            <dl>
+                <dt>API Key</dt><dd>{maskedKey}</dd>
+                <dt>Base URL</dt><dd>{config.baseUrl || '—'}</dd>
+                <dt>API</dt><dd>{apiFormatLabel}</dd>
+                <dt>{i18n.t('settings.provider.model')}</dt><dd>{config.defaultChatModel || '—'}</dd>
+                <dt>{i18n.t('modals.providerConfig.fields.embedModel')}</dt><dd>{config.defaultEmbedModel || '—'}</dd>
+            </dl>
+            <div class="cr-provider-card__more">
+                <span>{i18n.t('settings.provider.enabled')}</span>
+                <Toggle checked={config.enabled} onchange={(value) => onToggleEnabled(id, value)} ariaLabel={`${i18n.t('settings.provider.enabled')} ${id}`} />
+                <Button variant="danger" size="sm" ariaLabel={`${i18n.t('common.delete')} ${id}`} onclick={() => onDelete(id)}>{i18n.t('common.delete')}</Button>
             </div>
-        {/if}
-        <div class="cr-provider-card__row">
-            <span class="cr-provider-card__label">API</span>
-            <span class="cr-provider-card__value">{apiFormatLabel}</span>
-        </div>
-        <div class="cr-provider-card__row">
-            <span class="cr-provider-card__label">{i18n.t('modals.providerConfig.fields.webSearch')}</span>
-            <span class="cr-provider-card__value">
-                {config.capabilities?.nativeWebSearch
-                    ? i18n.t('modals.providerConfig.webSearchStates.enabled')
-                    : i18n.t('modals.providerConfig.webSearchStates.disabled')}
-            </span>
-        </div>
-        {#if config.apiFormat !== 'disabled'}
-        <div class="cr-provider-card__row">
-            <span class="cr-provider-card__label">{i18n.t('settings.provider.model')}</span>
-            <span class="cr-provider-card__value">
-                {config.defaultChatModel || '—'}
-            </span>
-        </div>
-        {/if}
-        <div class="cr-provider-card__row">
-            <span class="cr-provider-card__label">{i18n.t('modals.providerConfig.fields.embeddingApiFormat')}</span>
-            <span class="cr-provider-card__value">
-                {config.embeddingApiFormat === 'openai-embeddings'
-                    ? i18n.t('modals.providerConfig.embeddingApiFormats.openaiEmbeddings')
-                    : i18n.t('modals.providerConfig.embeddingApiFormats.disabled')}
-            </span>
-        </div>
-        {#if config.embeddingApiFormat === 'openai-embeddings'}
-            <div class="cr-provider-card__row">
-                <span class="cr-provider-card__label">{i18n.t('modals.providerConfig.fields.embedModel')}</span>
-                <span class="cr-provider-card__value">{config.defaultEmbedModel || '—'}</span>
-            </div>
-        {/if}
+        </details>
     </div>
-
-    {#if testResult}
-        <ProviderProbeStatus
-            result={testResult}
-            {i18n}
-            onretry={() => void handleTest('manual-retry', lastTaskProbeType)}
-            retrying={testing}
-        />
-    {/if}
-
-    <!-- 底部操作栏 -->
-    <div class="cr-provider-card__actions">
-        <Toggle
-            checked={config.enabled}
-            onchange={(v) => onToggleEnabled(id, v)}
-            ariaLabel={config.enabled
-                ? i18n.t('settings.provider.enabled')
-                : i18n.t('settings.provider.disabled')}
-        />
-        <div class="cr-provider-card__buttons">
-            <Button
-                variant="ghost"
-                size="sm"
-                disabled={testing || !config.enabled}
-                loading={testing}
-                onclick={() => void handleTest()}
-            >
-                {i18n.t('settings.provider.testConnection')}
-            </Button>
-            <Select
-                value={taskProbeType}
-                options={[
+    {#if showTest}
+        <div class="cr-provider-test">
+            <Select value={testMode} options={[{ value: 'connection', label: i18n.t('settings.provider.testConnection') }, { value: 'task', label: i18n.t('settings.redesign.testUsingProvider') }]} ariaLabel={i18n.t('settings.redesign.testMode')} onchange={(value) => testMode = value} />
+            {#if testMode === 'task'}
+                {#if config.apiFormat === 'disabled'}<p class="cr-settings-hint">{i18n.t('settings.redesign.chatRequiredForTaskTest')}</p>{/if}
+                <Select value={taskProbeType} options={[
                     { value: 'define', label: i18n.t('taskModels.tasks.define.name') },
                     { value: 'tag', label: i18n.t('taskModels.tasks.tag.name') },
                     { value: 'write', label: i18n.t('taskModels.tasks.write.name') },
                     { value: 'verify', label: i18n.t('taskModels.tasks.verify.name') },
-                ]}
-                ariaLabel={i18n.t('settings.provider.testTaskConfig')}
-                onchange={(value) => { taskProbeType = value as Exclude<TaskType, 'index'>; }}
-            />
-            <Button
-                variant="ghost"
-                size="sm"
-                disabled={testing || !config.enabled}
-                loading={testing}
-                onclick={() => void handleTest('initial', taskProbeType)}
-            >
-                {i18n.t('settings.provider.testTaskConfig')}
-            </Button>
-            <Button
-                variant="ghost"
-                size="sm"
-                onclick={() => onEdit(id)}
-            >
-                {i18n.t('common.edit')}
-            </Button>
-            <Button
-                variant="danger"
-                size="sm"
-                onclick={() => onDelete(id)}
-            >
-                {i18n.t('common.delete')}
-            </Button>
+                ]} ariaLabel={i18n.t('settings.provider.testTaskConfig')} onchange={(value) => taskProbeType = value as Exclude<TaskType, 'index'>} />
+            {/if}
+            <Button variant="secondary" size="sm" disabled={!config.enabled || (testMode === 'task' && config.apiFormat === 'disabled')} loading={testing} onclick={() => void handleTest('initial', testMode === 'task' ? taskProbeType : undefined)}>{i18n.t('settings.redesign.runTest')}</Button>
+            <p class="cr-settings-hint">{testMode === 'task' ? i18n.t('settings.redesign.forcedTestNotice') : i18n.t('settings.redesign.connectionTestNotice')} ({id})</p>
         </div>
-    </div>
+    {/if}
+    {#if testResult}
+        <ProviderProbeStatus result={testResult} {i18n} onretry={() => void handleTest('manual-retry', lastTaskProbeType)} retrying={testing} />
+    {/if}
 </div>
 
 <style>
-    .cr-provider-card {
-        border: 1px solid var(--cr-border);
-        border-radius: var(--cr-radius-md);
-        padding: var(--cr-space-3);
-        background: var(--cr-bg-base);
-        display: flex;
-        flex-direction: column;
-        gap: var(--cr-space-2);
-    }
-
-    .cr-provider-card--disabled {
-        opacity: 0.6;
-    }
-
-    .cr-provider-card__header {
-        display: flex;
-        align-items: center;
-        gap: var(--cr-space-2);
-    }
-
-    .cr-provider-card__name {
-        font-weight: 600;
-        color: var(--cr-text-normal);
-        font-size: var(--font-ui-medium);
-    }
-
-    .cr-provider-card__badge {
-        font-size: var(--cr-font-xs);
-        color: var(--cr-interactive-accent);
-        border: 1px solid var(--cr-interactive-accent);
-        border-radius: var(--cr-radius-sm);
-        padding: 0 var(--cr-space-1);
-        line-height: 1.6;
-    }
-
-    .cr-provider-card__info {
-        display: flex;
-        flex-direction: column;
-        gap: var(--cr-space-1);
-    }
-
-    .cr-provider-card__row {
-        display: flex;
-        align-items: center;
-        gap: var(--cr-space-2);
-        font-size: var(--cr-font-sm);
-    }
-
-    .cr-provider-card__label {
-        color: var(--cr-text-muted);
-        min-width: 64px;
-        flex-shrink: 0;
-    }
-
-    .cr-provider-card__value {
-        color: var(--cr-text-normal);
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-
-    .cr-provider-card__value--mono {
-        font-family: var(--font-monospace);
-        font-size: var(--cr-font-xs);
-    }
-
-    .cr-provider-card__actions {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding-top: var(--cr-space-2);
-        border-top: 1px solid var(--cr-border);
-    }
-
-    .cr-provider-card__buttons {
-        display: flex;
-        gap: var(--cr-space-1);
-    }
+    .cr-provider-card { padding: var(--cr-space-3) 0; border-bottom: 1px solid var(--cr-border); }
+    .cr-provider-card__header { display: flex; align-items: center; justify-content: space-between; gap: var(--cr-space-2); }
+    .cr-provider-card__summary { min-width: 0; overflow-wrap: anywhere; }
+    .cr-provider-card__name { color: var(--cr-text-normal); font-size: var(--font-ui-medium); }
+    .cr-provider-card__scope { color: var(--cr-text-muted); font-size: var(--cr-font-sm); margin: var(--cr-space-1) 0; }
+    .cr-provider-card__badge { font-size: var(--cr-font-xs); color: var(--cr-interactive-accent); border-radius: var(--cr-radius-sm); background: var(--background-modifier-hover); padding: 2px 6px; margin-left: var(--cr-space-1); }
+    .cr-provider-card--disabled .cr-provider-card__name { color: var(--cr-text-muted); }
+    .cr-provider-card__utilities { display: flex; align-items: flex-start; gap: var(--cr-space-3); font-size: var(--cr-font-xs); color: var(--cr-text-muted); }
+    .cr-provider-link { background: none; border: 0; box-shadow: none; padding: 0; height: auto; font-size: inherit; color: var(--cr-text-muted); }
+    .cr-provider-details { min-width: 0; flex: 1; }
+    .cr-provider-details summary { cursor: pointer; }
+    .cr-provider-details dl { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: var(--cr-space-2); }
+    .cr-provider-details dd { margin: 0; overflow-wrap: anywhere; color: var(--cr-text-normal); }
+    .cr-provider-card__more, .cr-provider-test { display: flex; align-items: center; flex-wrap: wrap; gap: var(--cr-space-2); }
+    .cr-provider-test { padding: var(--cr-space-2) 0; }
+    .cr-provider-test :global(select) { max-width: 100%; }
+    .cr-provider-test p { width: 100%; }
 </style>

@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { TFile } from "obsidian";
 import { ExpandOrchestrator, type AbstractPlan, type HierarchicalPlan } from "./expand-orchestrator";
 import { err, ok } from "../types";
+import { generateFrontmatter, generateMarkdownContent } from "./frontmatter-utils";
+import { ContentRenderer } from "./content-renderer";
 import { confirmDefinePreview } from "../domain/concept";
 import type { DefinePreview, ILogger } from "../types";
 import type { CreateOrchestrator } from "./create-orchestrator";
@@ -76,6 +78,7 @@ describe("ExpandOrchestrator lifecycle", () => {
     const prepared = await orchestrator.prepareAbstractPreview(plan, plan.candidates);
     expect(prepared).toMatchObject({ ok: true, value: { type: "entity", targetPath: "4-实体/实体.md" } });
     expect(confirmCreate).not.toHaveBeenCalled();
+    if (prepared.ok) expect(prepared.value.parents).toEqual(["[[current]]", "[[source]]"]);
     if (!prepared.ok) return;
 
     const confirmed = confirmDefinePreview(prepared.value.preview, prepared.value.type, {
@@ -130,7 +133,7 @@ describe("ExpandOrchestrator lifecycle", () => {
         name: { chinese: "子领域", english: "" },
         coreDefinition: "说明",
         source: "hierarchical-expand",
-        parents: ["[[父概念]]"],
+        parents: ["[[parent]]"],
       },
       { targetPathOverride: "1-领域/子领域.md" },
     );
@@ -405,5 +408,86 @@ parents: []
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe("E311_NOT_FOUND");
     expect(defineDirect).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("ExpandOrchestrator qualified paths", () => {
+  const directoryScheme = { domain: "D", issue: "I", theory: "T", entity: "E", mechanism: "M" };
+  function setup(body: string) {
+    const parent = createFile("Moved/Parent.md");
+    const files = new Map([["Archive/Canonical.md", createFile("Archive/Canonical.md")], ["Root Canonical.md", createFile("Root Canonical.md")]]);
+    const confirmCreate = vi.fn(async () => ok("workflow"));
+    const deps: ExpandOrchestratorDeps = {
+      settingsStore: { getSettings: () => ({ directoryScheme }) } as ExpandOrchestratorDeps["settingsStore"], logger: createLogger(),
+      app: { vault: {
+        cachedRead: async () => generateMarkdownContent(generateFrontmatter({ cruid: "parent", type: "theory", name: "Displayed Parent" }), body),
+        getAbstractFileByPath: (path: string) => files.get(path) ?? null,
+      } } as unknown as ExpandOrchestratorDeps["app"], vectorIndex: {} as never,
+    };
+    return { parent, confirmCreate, orchestrator: new ExpandOrchestrator(deps, { createOrchestrator: { confirmCreate } as unknown as CreateOrchestrator, fileStorage: {} as never }) };
+  }
+  it("expands renderer-qualified same-name targets without mixing types and links back by actual path", async () => {
+    const body = new ContentRenderer().renderNoteMarkdown({ type: "theory", title: "Parent", language: "zh", directoryScheme,
+      content: { entities: [{ name: "Same" }], mechanisms: [{ name: "Same" }] },
+    });
+    const f = setup(body);
+    const prepared = await f.orchestrator.prepare(f.parent);
+    if (!prepared.ok || prepared.value.mode !== "hierarchical") throw new Error("prepare failed");
+    expect(prepared.value.candidates).toMatchObject([
+      { name: "Same", targetType: "entity", targetPath: "E/Same.md", status: "creatable" },
+      { name: "Same", targetType: "mechanism", targetPath: "M/Same.md", status: "creatable" },
+    ]);
+    await f.orchestrator.confirmHierarchical(prepared.value, prepared.value.candidates);
+    expect(f.confirmCreate).toHaveBeenCalledTimes(2);
+    for (const [concept] of f.confirmCreate.mock.calls as unknown as Array<[{ parents: string[] }]>) expect(concept.parents).toEqual(["[[Moved/Parent]]"]);
+  });
+  it("recognizes full paths repaired by merge, .md, aliases and headings while preserving other candidates", async () => {
+    const f = setup("## entities\n- [[Archive/Canonical.md#Section|Old Name]]\n- [[E/New|Shown Name]]\n- [[E/Another]]");
+    const prepared = await f.orchestrator.prepare(f.parent);
+    if (!prepared.ok || prepared.value.mode !== "hierarchical") throw new Error("prepare failed");
+    expect(prepared.value.candidates).toMatchObject([
+      { name: "Canonical", targetPath: "Archive/Canonical.md", status: "existing" },
+      { name: "New", targetPath: "E/New.md", status: "creatable" },
+      { name: "Another", targetPath: "E/Another.md", status: "creatable" },
+    ]);
+  });
+  it("respects a merge-repaired canonical target in the vault root instead of creating a same-name typed note", async () => {
+    const f = setup("## entities\n- [[Root Canonical]]");
+    const prepared = await f.orchestrator.prepare(f.parent);
+    if (!prepared.ok || prepared.value.mode !== "hierarchical") throw new Error("prepare failed");
+    expect(prepared.value.candidates).toMatchObject([{ targetPath: "Root Canonical.md", status: "existing" }]);
+    await f.orchestrator.confirmHierarchical(prepared.value, prepared.value.candidates);
+    expect(f.confirmCreate).not.toHaveBeenCalled();
+  });
+  it("retains explicit old-directory targets after settings changes and does not collapse same-name paths", async () => {
+    const f = setup("## entities\n- [[Old E/Same|Same]]\n- [[Older E/Same.md]]\n- [[E/Same|Same]]");
+    const prepared = await f.orchestrator.prepare(f.parent);
+    if (!prepared.ok || prepared.value.mode !== "hierarchical") throw new Error("prepare failed");
+    expect(prepared.value.candidates).toMatchObject([
+      { name: "Same", targetPath: "Old E/Same.md", status: "creatable" },
+      { name: "Same", targetPath: "Older E/Same.md", status: "creatable" },
+      { name: "Same", targetPath: "E/Same.md", status: "creatable" },
+    ]);
+  });
+  it("distinguishes new explicit root targets from legacy bare aliases", async () => {
+    const rootBody = new ContentRenderer().renderNoteMarkdown({ type: "theory", title: "Parent", language: "zh",
+      directoryScheme: { ...directoryScheme, entity: "" }, content: { entities: [{ name: "Root Child" }] },
+    });
+    const f = setup(`${rootBody}\n- [[Legacy Child|Display]]`);
+    const prepared = await f.orchestrator.prepare(f.parent);
+    if (!prepared.ok || prepared.value.mode !== "hierarchical") throw new Error("prepare failed");
+    expect(prepared.value.candidates).toMatchObject([
+      { targetPath: "Root Child.md", status: "creatable" },
+      { targetPath: "E/Legacy Child.md", status: "creatable" },
+    ]);
+  });
+  it("does not create traversal or unrecognized directory paths", async () => {
+    const f = setup("## entities\n- [[E/../Escape]]\n- [[/E/Absolute]]\n- [[Unknown/Name]]");
+    const prepared = await f.orchestrator.prepare(f.parent);
+    if (!prepared.ok || prepared.value.mode !== "hierarchical") throw new Error("prepare failed");
+    expect(prepared.value.candidates.every((candidate) => candidate.status === "invalid")).toBe(true);
+    expect((await f.orchestrator.confirmHierarchical(prepared.value, prepared.value.candidates)).ok).toBe(false);
+    expect(f.confirmCreate).not.toHaveBeenCalled();
   });
 });

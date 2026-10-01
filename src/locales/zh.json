@@ -1,23 +1,23 @@
 {
   "cards": {
-      "regenerateHint": "请回到源笔记重新生成；旧任务不会自动重试。",
-      "configureFirst": "请先在设置 → 工作流 → Cards 中选择 Provider 并填写模型。",
-      "generate": "生成记忆卡片",
-      "failed": "生成记忆卡片失败",
-      "queued": "卡片任务已入队，完成后追加至：{path}",
-      "completed": "记忆卡片已追加：{path}",
-      "interrupted": "已中断（不自动重试）",
-      "hasInterrupted": "有已中断任务，不自动重试",
-      "chooseProvider": "请选择独立 Provider",
-      "modelPlaceholder": "请输入卡片模型名称",
-      "directories": "记忆卡片目录",
-      "directoriesDesc": "源笔记只读；镜像子目录，追加到同名 -decks.md 文件。",
-      "sourceRoot": "知识库根目录",
-      "targetRoot": "习题库根目录",
-      "rebuildNote": "重建指定笔记",
-      "rebuildNoteDesc": "输入 Vault 内的 Markdown 路径，仅为该 Cognitive Razor 节点重新生成向量。",
-      "notePlaceholder": "C-知识库/笔记.md",
-      "rebuildComplete": "已重建 {indexed} 篇，失败 {failed} 篇"
+    "regenerateHint": "请回到源笔记重新生成；旧任务不会自动重试。",
+    "configureFirst": "请先在设置 → AI 与模型 → 记忆卡片中选择独立服务并填写模型。",
+    "generate": "生成记忆卡片",
+    "failed": "生成记忆卡片失败",
+    "queued": "卡片任务已入队，完成后追加至：{path}",
+    "completed": "记忆卡片已追加：{path}",
+    "interrupted": "已中断（不自动重试）",
+    "hasInterrupted": "有已中断任务，不自动重试",
+    "chooseProvider": "请选择独立 Provider",
+    "modelPlaceholder": "请输入卡片模型名称",
+    "directories": "记忆卡片目录",
+    "directoriesDesc": "源笔记只读；镜像子目录，追加到同名 -decks.md 文件。",
+    "sourceRoot": "知识库根目录",
+    "targetRoot": "习题库根目录",
+    "rebuildNote": "重建指定笔记",
+    "rebuildNoteDesc": "输入 Vault 内的 Markdown 路径，仅为该 Cognitive Razor 节点重新生成向量。",
+    "notePlaceholder": "C-知识库/笔记.md",
+    "rebuildComplete": "已重建 {indexed} 篇，失败 {failed} 篇"
   },
   "common": {
     "cancel": "取消",
@@ -198,7 +198,8 @@
         "snapshot-mismatch": "笔记内容已变化"
       }
     },
-      "notifications": {
+    "notifications": {
+      "indexingFailed": "「{noteTitle}」已生成，但自动向量化未完成。请到设置 → 维护与备份 → 扫描缺失向量，为该笔记生成向量（可能产生 API 费用）。",
       "openMarkdownFirst": "请先打开一个 Markdown 笔记",
       "dismissFailed": "忽略失败",
       "dismissSuccess": "已忽略重复对",
@@ -214,10 +215,10 @@
       "cancelledCount": "已取消任务",
       "removedCount": "已删除记录",
       "queueActionFailed": "队列操作失败",
-       "verifyStarted": "核查任务已启动，请等待 AI 生成核查报告...",
-       "embedOneComplete": "当前笔记向量已重新生成",
-       "embedOneFailed": "当前笔记向量生成失败",
-       "defineFailed": "定义失败，请重试",
+      "verifyStarted": "核查任务已启动，请等待 AI 生成核查报告...",
+      "embedOneComplete": "当前笔记向量已重新生成",
+      "embedOneFailed": "当前笔记向量生成失败",
+      "defineFailed": "定义失败，请重试",
       "unknownFailure": "未知错误",
       "commandFailed": "命令执行失败: {message}"
     }
@@ -246,9 +247,9 @@
   "settings": {
     "title": "Cognitive Razor 设置",
     "tabs": {
-      "providers": "AI 服务",
-      "workflow": "工作流",
-      "backup": "备份与重置"
+      "providers": "AI 与模型",
+      "workflow": "笔记与卡片",
+      "backup": "维护与备份"
     },
     "groups": {
       "knowledgeStorage": "知识存储",
@@ -259,7 +260,7 @@
     "save": {
       "saving": "保存中…",
       "saved": "已保存",
-      "failed": "保存失败",
+      "failed": "保存失败，此次更改尚未写入磁盘",
       "retry": "重试"
     },
     "similarityThreshold": {
@@ -308,7 +309,7 @@
       "importDesc": "从 JSON 文件导入配置；导入后需要重新填写各项 API Key",
       "importFailed": "配置文件读取失败",
       "reset": "备份并重置运行数据",
-      "resetDesc": "先备份插件设置和运行数据，再清空队列、工作流、向量与重复项状态；Markdown 笔记不会删除"
+      "resetDesc": "先备份插件设置和运行数据，再清空队列、工作流、向量与重复项状态；不删除 Markdown 笔记，也不备份正文或卡片"
     },
     "advanced": {
       "directoryScheme": {
@@ -334,24 +335,24 @@
         "scanMissingDesc": "只检查 draft 和 evergreen 笔记，并列出当前索引中没有向量的笔记。",
         "counts": "应向量化 {eligible} 篇，已有向量 {indexed} 篇，缺失 {missing} 篇",
         "embedMissing": "生成全部缺失向量",
-         "embedOne": "生成向量",
-         "embedOneComplete": "单篇向量处理完成",
-         "vectorMaintenance": "向量文件管理",
-         "vectorMaintenanceDesc": "检查索引登记与磁盘文件的一致性，删除未被当前有效笔记使用的向量文件；不会删除笔记。",
-         "scanVectorFiles": "检查向量文件",
-         "scanVectorFilesDesc": "只读盘点索引登记、缺失文件、无效文件和未被索引引用的物理文件。",
-         "vectorCounts": "索引登记 {indexedEntries} 条，磁盘文件 {physicalFiles} 个，多余 {orphaned} 个，缺失 {missing} 个，失联笔记 {stale} 个，无效 {invalid} 个",
-         "orphanFiles": "可清理的多余文件",
-         "missingEntries": "索引中缺失的文件",
-         "staleEntries": "失联笔记的索引登记",
-         "invalidEntries": "无效或不兼容的文件",
-         "cleanupVectorFiles": "删除多余向量文件",
-         "cleanupVectorFilesConfirmTitle": "确认删除多余向量文件",
-         "cleanupVectorFilesConfirmMessage": "将删除本次检查列出的、当前仍未被有效笔记使用的物理向量文件；不会删除笔记。是否继续？",
-         "cleanupVectorFilesConfirm": "删除文件",
-         "cleanupVectorFilesComplete": "向量文件清理完成：删除 {removed} 个，跳过 {skipped} 个，失败 {failed} 个",
-         "cleanupVectorFilesNone": "没有可清理的多余向量文件",
-         "missingComplete": "缺失向量处理完成：成功 {indexed} 篇，跳过 {skipped} 篇，失败 {failed} 篇",
+        "embedOne": "生成向量",
+        "embedOneComplete": "单篇向量处理完成",
+        "vectorMaintenance": "向量文件管理",
+        "vectorMaintenanceDesc": "检查索引登记与磁盘文件的一致性，删除未被当前有效笔记使用的向量文件；不会删除笔记。",
+        "scanVectorFiles": "检查向量文件",
+        "scanVectorFilesDesc": "只读盘点索引登记、缺失文件、无效文件和未被索引引用的物理文件。",
+        "vectorCounts": "索引登记 {indexedEntries} 条，磁盘文件 {physicalFiles} 个，多余 {orphaned} 个，缺失 {missing} 个，失联笔记 {stale} 个，无效 {invalid} 个",
+        "orphanFiles": "可清理的多余文件",
+        "missingEntries": "索引中缺失的文件",
+        "staleEntries": "失联笔记的索引登记",
+        "invalidEntries": "无效或不兼容的文件",
+        "cleanupVectorFiles": "删除多余向量文件",
+        "cleanupVectorFilesConfirmTitle": "确认删除多余向量文件",
+        "cleanupVectorFilesConfirmMessage": "将删除本次检查列出的、当前仍未被有效笔记使用的物理向量文件；不会删除笔记。是否继续？",
+        "cleanupVectorFilesConfirm": "删除文件",
+        "cleanupVectorFilesComplete": "向量文件清理完成：删除 {removed} 个，跳过 {skipped} 个，失败 {failed} 个",
+        "cleanupVectorFilesNone": "没有可清理的多余向量文件",
+        "missingComplete": "缺失向量处理完成：成功 {indexed} 篇，跳过 {skipped} 篇，失败 {failed} 篇",
         "rebuild": "重建语义索引",
         "rebuildDesc": "重新读取全部 Cognitive Razor 笔记并生成向量；用于首次启用、嵌入配置变化或索引需要修复时",
         "rebuildConfirmTitle": "重建语义索引",
@@ -389,6 +390,157 @@
         "providerMaxAttempts": "每阶段最大尝试次数",
         "providerMaxAttemptsDesc": "每个明确可重试的网络阶段最多尝试 1-3 次；502/503/504 和连接中断始终不自动重发，以免长请求重复计费。多阶段任务仍可能发出多次请求"
       }
+    },
+    "taskDetails": {
+      "defaultProvider": "使用默认服务",
+      "default": "默认",
+      "independent": "独立设置",
+      "defaultConfig": "沿用默认配置",
+      "customConfig": "单独设置",
+      "providerMissing": "未选择服务",
+      "modelMissing": "未设置模型",
+      "resolvedHint": "当前解析结果；实际请求仍受能力声明、协议与任务约束",
+      "providerUnavailable": "当前服务不可用，无法发起此任务请求。请选择已启用且支持此任务的服务",
+      "provider": "使用服务",
+      "model": "模型",
+      "cardsProviderHint": "卡片任务单独选择服务，不继承默认服务",
+      "defaultProviderHint": "跟随当前默认服务",
+      "cardsModelHint": "卡片任务必须单独填写模型，不继承服务的默认模型",
+      "modelSpecified": "本任务指定；清空则继承此服务的默认模型",
+      "modelInherited": "继承服务默认模型：",
+      "advanced": "能力与参数",
+      "modeHint": "继承沿用服务 · 指定覆盖 · 不发送省略参数",
+      "capabilityHint": "按当前能力声明显示；声明不等于联网验证",
+      "inherit": "继承",
+      "specified": "指定",
+      "mode": "参数模式",
+      "fromProvider": "继承自 ",
+      "fromTask": "配置来源：本任务",
+      "notConfigured": "未配置",
+      "omitted": "请求不携带此参数",
+      "notSent": "当前不发送",
+      "unsupported": "当前能力声明未启用此参数",
+      "retainedValue": "已配置的值 ",
+      "retainedHint": "；保留，不会自动清除",
+      "unset": "未配置，请求不携带此参数",
+      "pendingValue": "输入有效值后保存；当前解析结果尚未改变",
+      "valueRequired": "请输入有效值；如需省略参数，请选择「不发送」",
+      "enterValue": "输入值",
+      "temperature": "温度",
+      "maxTokens": "最大输出 token 数",
+      "temperatureError": "请输入 0–2 之间的数值",
+      "topPError": "请输入 0–1 之间的数值",
+      "capabilities": "搜索、缓存与输出格式",
+      "capabilitiesHint": "查看此任务的能力覆盖；实际使用还取决于协议及具体任务",
+      "pluginDefault": "插件默认声明",
+      "emptySpecifiedHint": "选择「指定」但没有真实值时，只展开空输入框。输入有效值后才保存，不预填占位数字。",
+      "protocol": {
+        "geminiOnly": "此值仅适用于 Gemini，当前协议会在发送前拒绝请求。已配置的值会保留，可选择「不发送」。",
+        "effortNotGemini": "Gemini 不接受此推理参数，会在发送前拒绝请求。请使用 Thinking level / budget，或将此项改为「不发送」。",
+        "thinkingConflict": "Thinking level 与 budget 不能同时发送；请选择其中一项，另一项设为「不发送」。"
+      },
+      "modelUnavailable": "尚未配置模型，当前无法发起此任务请求",
+      "resolvedOnly": "仅为解析值；服务或模型未就绪"
+    },
+    "redesign": {
+      "aiDesc": "默认配置处理日常任务，有需要再单独调整。",
+      "notesDesc": "管理笔记保存位置、记忆卡片与自动处理。",
+      "maintenanceDesc": "先检查，再决定是否修复。每个操作作用清楚。",
+      "defaultUse": "默认使用",
+      "chooseDefault": "请选择默认服务",
+      "providerDefaultModel": "服务的默认聊天模型",
+      "editConnection": "编辑连接",
+      "defaultIndexWarning": "更换默认服务也会影响继承它的语义索引；旧向量可能失效，需要重新生成。",
+      "taskUsage": "各任务使用什么",
+      "effectiveConfig": "当前解析结果，包含尚未保存的更改",
+      "tasks": {
+        "define": "定义",
+        "tag": "标记",
+        "write": "撰写",
+        "verify": "核查",
+        "merge": "合并",
+        "cards": "记忆卡片",
+        "index": "语义索引"
+      },
+      "independent": "独立配置",
+      "customized": "单独设置",
+      "inherited": "继承默认",
+      "unconfigured": "未配置完整",
+      "disabled": "服务已禁用",
+      "protocolDisabled": "所需接口已禁用",
+      "adjust": "调整",
+      "collapse": "收起",
+      "cardsIndependent": "服务与模型独立填写；参数可继承所选服务",
+      "manageConnections": "管理连接",
+      "addConnection": "添加连接",
+      "currentDefault": "当前默认",
+      "chat": "聊天",
+      "embedding": "嵌入",
+      "untested": "尚未测试",
+      "testing": "测试中…",
+      "connectionTest": "仅连接测试",
+      "taskTest": "指定服务任务测试",
+      "testOutcomes": {
+        "success": "通过",
+        "partial": "部分通过",
+        "failed": "未通过",
+        "uncertain": "结果未知"
+      },
+      "test": "测试…",
+      "connectionDetails": "连接详情与更多操作",
+      "testMode": "测试范围",
+      "runTest": "开始测试",
+      "testUsingProvider": "按此服务测试任务",
+      "testScopeNotice": "连接通过不代表所有任务配置都已验证。能力声明也不等于联网验证。",
+      "forcedTestNotice": "强制使用此服务与所选任务参数测试聊天接口，并测试已启用的嵌入接口；会调用 API。",
+      "connectionTestNotice": "测试此服务配置的聊天与嵌入接口，会调用 API。",
+      "createNotes": "创建笔记",
+      "editDirectories": "编辑目录",
+      "autoVerifyCost": "创建笔记后自动核查，会额外调用核查模型。",
+      "memoryCards": "记忆卡片",
+      "cardsModel": "独立卡片模型",
+      "indexModel": "嵌入模型",
+      "semanticSearch": "语义检索与去重",
+      "indexChangeWarning": "更改嵌入服务、模型或维度会使已有向量失效；重新生成会调用嵌入 API。",
+      "indexChecks": "索引检查",
+      "checksNoApi": "检查本身不调用模型；补全缺失向量会调用嵌入 API。",
+      "missingDetails": "查看缺失笔记明细",
+      "orphanDetails": "查看多余文件",
+      "targetedMaintenance": "定向维护",
+      "rebuildNoteCost": "只为指定笔记重新生成向量，会调用嵌入 API。",
+      "fullRebuild": "完整重建语义索引",
+      "rebuildCost": "重新读取笔记、生成向量并替换现有索引，随后重算重复项。可能产生 API 费用，需确认。",
+      "rebuildCancellation": "扫描、生成向量阶段可取消；提交与刷新重复项阶段不可取消。部分完成与失败结果分别保留。",
+      "execution": "执行与诊断",
+      "settingsBackup": "设置备份",
+      "dangerZone": "危险操作",
+      "resetScope": "先备份插件设置和运行数据，再清空设置、队列、工作流、向量和重复项状态。Markdown 笔记会保留，但正文和卡片不在备份中，不能通过此备份回滚。",
+      "resetRecoveryTitle": "备份范围与恢复说明",
+      "resetBackupLocation": "重置备份位于插件目录的 data/backups/reset-*。settings.json 可能包含 API Key，请勿分享；普通设置导出的 JSON 不包含 API Key。",
+      "resetInterruptedRecovery": "复制未完成时不会删除原运行数据。清空中断会尝试恢复完整运行数据；恢复失败会停止启动任务。请修复存储问题后重载插件，不要直接删除恢复标记。",
+      "resetManualRecovery": "成功重置后目前没有一键恢复入口。人工恢复前请禁用插件并另存当前运行数据，按同一份备份的 manifest.json 完整恢复设置和运行态，不要单独恢复队列或工作流。重新启用可能继续待执行请求并产生 API 费用。笔记正文和卡片需要独立的笔记库备份。",
+      "confirmAgain": "会再次确认具体影响范围",
+      "providerAdvanced": "能力与默认参数",
+      "providerAdvancedDesc": "按服务的能力声明设置。声明不等于联网验证；不会自动探测。",
+      "optionalEmbedding": "可选嵌入接口",
+      "chatRequiredForTaskTest": "此连接未启用聊天接口，无法测试聊天任务；仍可测试嵌入连接。"
+    },
+    "displayPreferences": {
+      "title": "显示偏好",
+      "report": "核查报告呈现",
+      "reportDesc": "仅影响以后生成的报告，不改写历史笔记，也不增加模型调用。",
+      "expanded": "普通章节（展开）",
+      "collapsed": "可折叠标注（默认收起）",
+      "filter": "打开任务列表时显示",
+      "filterDesc": "下次打开工作台时使用；失败和中断的统计始终保留，可随时切回全部。",
+      "filters": {
+        "all": "全部任务",
+        "active": "进行中",
+        "failed": "失败任务"
+      },
+      "pageSize": "任务列表每批显示数",
+      "pageSizeDesc": "只控制列表长度与“显示更多”，不改变执行并发或批量操作范围。",
+      "reset": "恢复这三项显示偏好的默认值"
     }
   },
   "modals": {
@@ -453,7 +605,7 @@
     },
     "resetSettings": {
       "title": "备份并重置运行数据",
-      "message": "将先备份插件运行数据，再清空设置、队列、工作流、向量和重复项状态。Markdown 笔记会保留。是否继续？"
+      "message": "将先备份插件设置和运行数据，再清空设置、队列、工作流、向量和重复项状态。备份保存在本地，可能包含 API Key。Markdown 笔记和卡片会保留，但不在备份中，不能通过此备份回滚。是否继续？"
     }
   },
   "crTypes": {
@@ -499,9 +651,9 @@
       "enabled": "启用",
       "disabled": "禁用",
       "nativeWebSearch": "原生搜索",
-      "promptCaching": "提示词缓存",
-      "promptCacheImplicit": "隐式缓存（默认）",
-      "promptCacheExplicit": "显式缓存断点（GPT-6）",
+      "promptCaching": "Responses 缓存优化",
+      "promptCacheImplicit": "服务端默认缓存策略",
+      "promptCacheExplicit": "显式缓存断点（需上游支持）",
       "responseContinuation": "Responses 续传",
       "structuredOutput": "结构化输出",
       "structuredOutputDesc": "Provider 默认结构化输出方式；任务可继承或覆盖。提示词约束始终保留本地 Schema 校验。",
@@ -509,16 +661,39 @@
         "prompt": "提示词约束",
         "json_object": "JSON Object",
         "json_schema": "JSON Schema"
-      }
+      },
+      "promptCachingDesc": "控制本插件发送的缓存参数，不代表关闭服务端自动缓存。实际命中以提供商返回的缓存 token 为准；中转是否支持及如何计费需另行确认。",
+      "promptCachingDisabled": "未启用插件缓存优化"
     },
     "tasks": {
-      "define": { "name": "Define (定义)", "desc": "分析和定义概念的核心含义" },
-      "tag": { "name": "Tag (标记)", "desc": "标记和分类概念" },
-      "write": { "name": "Write (撰写)", "desc": "撰写和扩展概念内容" },
-      "index": { "name": "Index (索引)", "desc": "生成语义向量并建立索引" },
-      "verify": { "name": "Verify (校验)", "desc": "验证和检查概念质量" },
-      "merge": { "name": "Merge (合并)", "desc": "生成重复笔记的可编辑合并草稿" },
-      "cards": { "name": "Cards (记忆卡片)", "desc": "独立配置 Provider 和模型；按知识密度生成，仍受模型上下文、输出 token 和任务超时限制" }
+      "define": {
+        "name": "Define (定义)",
+        "desc": "分析和定义概念的核心含义"
+      },
+      "tag": {
+        "name": "Tag (标记)",
+        "desc": "标记和分类概念"
+      },
+      "write": {
+        "name": "Write (撰写)",
+        "desc": "撰写和扩展概念内容"
+      },
+      "index": {
+        "name": "Index (索引)",
+        "desc": "生成语义向量并建立索引"
+      },
+      "verify": {
+        "name": "Verify (校验)",
+        "desc": "验证和检查概念质量"
+      },
+      "merge": {
+        "name": "Merge (合并)",
+        "desc": "生成重复笔记的可编辑合并草稿"
+      },
+      "cards": {
+        "name": "Cards (记忆卡片)",
+        "desc": "独立配置 Provider 和模型；按知识密度生成，仍受模型上下文、输出 token 和任务超时限制"
+      }
     },
     "reasoningEffortOptions": {
       "notSet": "不设置",

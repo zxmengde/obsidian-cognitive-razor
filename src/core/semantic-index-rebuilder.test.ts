@@ -437,3 +437,17 @@ describe("SemanticIndexRebuilder", () => {
     expect(harness.upsert).toHaveBeenCalledWith({ uid: "b", type: "domain", embedding: [1, 0, 0] });
   });
 });
+
+
+describe("single-note vector success is independent of duplicate refresh", () => {
+  it.each(["error-result", "exception"])("does not report an already written vector missing after %s", async (failure) => {
+    const harness = createHarness({ "notes/a.md": note("a", "Alpha") });
+    if (failure === "exception") harness.refreshNode.mockRejectedValue(new Error("duplicate storage unavailable"));
+    else harness.refreshNode.mockResolvedValue(err("E303_DISK_FULL", "duplicate storage full"));
+
+    await expect(harness.service.embedOne("a")).resolves.toEqual(ok({ indexed: 1, failed: 0 }));
+    expect(harness.embed).toHaveBeenCalledOnce();
+    expect(harness.upsert).toHaveBeenCalledOnce();
+    expect(harness.indexed.has("a")).toBe(true);
+  });
+});

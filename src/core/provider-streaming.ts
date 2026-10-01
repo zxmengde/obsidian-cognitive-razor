@@ -3,6 +3,7 @@ import * as https from "https";
 import type { ClientRequest, IncomingMessage } from "http";
 import { err, ok } from "../types";
 import type { Result } from "../types";
+import { readProviderTokenUsage, type ProviderTokenUsage } from "./provider-token-usage";
 
 export type ProviderStreamProtocol =
   | "openai-chat-completions"
@@ -297,7 +298,7 @@ function parseJsonEvent(raw: string): Result<unknown> {
   }
 }
 
-function parseSseEvents(body: string): Result<StreamEvent[]> {
+function parseSseEvents(body: string, onEvent?: (event: StreamEvent) => void): Result<StreamEvent[]> {
   const lines = body.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
   const hasSseFields = lines.some((line) => /^(?:data|event|id|retry):/.test(line));
   if (!hasSseFields) {
@@ -307,7 +308,9 @@ function parseSseEvents(body: string): Result<StreamEvent[]> {
       if (!trimmed || trimmed.startsWith(":")) continue;
       const parsed = parseJsonEvent(trimmed);
       if (!parsed.ok) return parsed;
-      events.push({ data: parsed.value });
+      const event = { data: parsed.value };
+      events.push(event);
+      onEvent?.(event);
     }
     return events.length > 0 ? ok(events) : streamUnsupported("Provider 没有返回流式事件");
   }
@@ -322,7 +325,9 @@ function parseSseEvents(body: string): Result<StreamEvent[]> {
     }
     const parsed = parseJsonEvent(dataLines.join("\n"));
     if (!parsed.ok) return parsed;
-    events.push({ name: eventName, data: parsed.value });
+    const event = { name: eventName, data: parsed.value };
+    events.push(event);
+    onEvent?.(event);
     eventName = undefined;
     dataLines = [];
     return ok(undefined);
@@ -646,4 +651,28 @@ export function aggregateProviderStream(
     case "gemini-generative-language":
       return aggregateGemini(events.value);
   }
+}
+
+/** Read accounting even when a later stream terminal/answer validation fails.
+ * Usage chunks are cumulative snapshots, never additive. Parsing this metadata
+ * does not affect the stream's existing success, error, or retry classification.
+ */
+export function readProviderStreamUsage(protocol: ProviderStreamProtocol, body: string): ProviderTokenUsage {
+  let reported: Record<string, unknown> | undefined;
+  // Observe successfully decoded events even if a later frame is malformed.
+  // The authoritative aggregation still returns its original error unchanged.
+  parseSseEvents(body, (event) => {
+    const data = asRecord(event.data);
+    if (!data) return;
+    const envelope = protocol === "openai-responses" ? asRecord(data.response) ?? data : data;
+    const key = protocol === "gemini-generative-language" ? "usageMetadata" : "usage";
+    const value = envelope[key];
+    if (value === null || value === undefined) return;
+    // Gemini reports metadata in multiple chunks; match its existing shallow
+    // aggregation while replacing individual cumulative numeric counts.
+    const previous = asRecord(reported?.[key]);
+    const next = asRecord(value);
+    reported = { [key]: protocol === "gemini-generative-language" && previous && next ? { ...previous, ...next } : value };
+  });
+  return readProviderTokenUsage(protocol, reported);
 }

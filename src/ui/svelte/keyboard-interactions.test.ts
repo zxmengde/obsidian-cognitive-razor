@@ -31,7 +31,7 @@ beforeAll(async () => {
       builder.onResolve({ filter: /^(test-host|task-model-host)$/ }, ({ path }) => ({ path, namespace: "test" }));
       builder.onLoad({ filter: /.*/, namespace: "test" }, ({ path }) => ({ resolveDir: process.cwd(), contents: compile(
         path === "task-model-host"
-          ? '<script>import TaskModelCard from "./src/ui/svelte/settings/TaskModelCard.svelte"; let { store, i18n, update } = $props(); let settings = $state(store.getSettings()); const unsubscribe = store.subscribe(value => settings = value); $effect(() => () => unsubscribe());</script><TaskModelCard taskType="write" config={settings.taskModels.write} providers={settings.providers} defaultProviderId={settings.defaultProviderId} isDefault={false} {i18n} onUpdate={update} onReset={() => {}} />'
+          ? '<script>import TaskModelCard from "./src/ui/svelte/settings/TaskModelCard.svelte"; import { resolveTaskModelSnapshot } from "./src/core/task-model-resolver"; let { store, i18n, update } = $props(); let settings = $state(store.getSettings()); const unsubscribe = store.subscribe(value => settings = value); $effect(() => () => unsubscribe());</script><TaskModelCard taskType="write" config={settings.taskModels.write} providers={settings.providers} defaultProviderId={settings.defaultProviderId} resolved={resolveTaskModelSnapshot(settings, "write")} isDefault={false} {i18n} onUpdate={update} onReset={() => {}} />'
           : '<script>import Create from "./src/ui/svelte/workbench/CreateSection.svelte"; import { setWorkbenchContext } from "./src/ui/bridge/context"; let { context, activeFile = null } = $props(); setWorkbenchContext(context);</script><Create {activeFile} />',
         { filename: "TestHost.svelte", css: "injected" },
       ).js.code }));
@@ -40,6 +40,15 @@ beforeAll(async () => {
   ui = new Function(`${result.outputFiles[0].text}; return KeyboardTestUI;`)();
 });
 afterAll(() => { Reflect.deleteProperty(HTMLElement.prototype, "empty"); });
+
+function openTaskParameters(target: HTMLElement): HTMLDetailsElement {
+  const details = target.querySelector<HTMLDetailsElement>(".cr-task-model-card__advanced")!;
+  expect(details.open).toBe(false);
+  details.querySelector("summary")!.click();
+  ui.flushSync();
+  expect(details.open).toBe(true);
+  return details;
+}
 
 describe("keyboard interaction safety", () => {
   it("preserves both task parameter edits when the earlier save is still in progress", async () => {
@@ -62,6 +71,7 @@ describe("keyboard interaction safety", () => {
     const instance = ui.mount(ui.TaskModelHost, { target, props: { store, i18n: new I18n(), update } });
     try {
       ui.flushSync();
+      openTaskParameters(target);
       const changeNumber = (selector: string, value: string) => {
         const element = target.querySelector(selector)!.closest(".cr-task-model-card__field")!.querySelector<HTMLInputElement>('input[type="number"]')!;
         element.value = value;
@@ -87,11 +97,12 @@ describe("keyboard interaction safety", () => {
     const onUpdate = vi.fn(async (type, partial) => store.updateTaskModel(type, partial));
     const instance = ui.mount(ui.TaskModelCard, { target, props: {
       taskType: "write", config: store.getSettings().taskModels.write,
-      providers: settings.providers, defaultProviderId: "provider", isDefault: false,
+      providers: settings.providers, defaultProviderId: "provider", resolved: resolveTaskModelSnapshot(store.getSettings(), "write"), isDefault: false,
       i18n: new I18n(), onUpdate, onReset() {},
     } });
     try {
       ui.flushSync();
+      openTaskParameters(target);
       const select = target.querySelector('#tmc-write-max-tokens')!.closest('.cr-task-model-card__field')!.querySelector('select')!;
       select.value = 'inherit';
       select.dispatchEvent(new Event('change', { bubbles: true }));
@@ -187,4 +198,158 @@ describe("card generation entry", () => {
       }
     } finally { await ui.unmount(instance); target.remove(); }
   });
+});
+
+
+describe("task parameter progressive disclosure", () => {
+  it.each([
+    ["write", "temp"], ["write", "topp"], ["write", "max-tokens"], ["index", "dimension"],
+  ] as const)("keeps empty specified %s/%s local until a real valid value is entered", async (taskType, id) => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.defaultProviderId = "provider";
+    settings.providers.provider = {
+      apiKey: "", enabled: true, apiFormat: "openai-chat-completions", embeddingApiFormat: "openai-embeddings",
+      defaultChatModel: "model", defaultEmbedModel: "embed", capabilities: { temperature: true, topP: true },
+    };
+    const onUpdate = vi.fn();
+    const target = document.body.appendChild(document.createElement("div"));
+    const instance = ui.mount(ui.TaskModelCard, { target, props: {
+      taskType, config: settings.taskModels[taskType], providers: settings.providers, defaultProviderId: "provider",
+      resolved: resolveTaskModelSnapshot(settings, taskType), isDefault: true, i18n: new I18n(), onUpdate, onReset() {},
+    } });
+    try {
+      ui.flushSync();
+      expect(target.querySelector("#tmc-" + taskType + "-provider")).not.toBeNull();
+      expect(onUpdate).not.toHaveBeenCalled();
+      const details = openTaskParameters(target);
+      const nested = details.querySelector<HTMLDetailsElement>("details");
+      if (nested) expect(nested.open).toBe(false);
+      const mode = target.querySelector<HTMLSelectElement>(`#tmc-${taskType}-${id}-mode`)!;
+      mode.value = "set";
+      mode.dispatchEvent(new Event("change", { bubbles: true }));
+      ui.flushSync();
+      const input = target.querySelector<HTMLInputElement>(`#tmc-${taskType}-${id}`)!;
+      expect(input.value).toBe("");
+      expect(onUpdate).not.toHaveBeenCalled();
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      ui.flushSync();
+      expect(onUpdate).not.toHaveBeenCalled();
+      expect(input.getAttribute("aria-invalid")).toBe("true");
+      input.value = id === "temp" || id === "topp" ? "0" : "512";
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      ui.flushSync();
+      expect(onUpdate).toHaveBeenCalledOnce();
+      const key = { temp: "temperature", topp: "topP", "max-tokens": "maxTokens", dimension: "embeddingDimension" }[id];
+      expect(onUpdate).toHaveBeenCalledWith(taskType, { parameters: { [key]: id === "temp" || id === "topp" ? 0 : 512 } });
+    } finally { await ui.unmount(instance); target.remove(); }
+  });
+
+  it("keeps unsupported saved values visible and makes protocol rejection explicit", async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.providers.research = {
+      apiKey: "", enabled: true, apiFormat: "openai-responses", embeddingApiFormat: "disabled",
+      defaultChatModel: "model", defaultEmbedModel: "", capabilities: { reasoning: true },
+      parameters: { temperature: 0.7 },
+    };
+    settings.taskModels.write = { providerId: "research", model: "", parameters: { topP: 0.9, thinkingLevel: "HIGH" } };
+    const onUpdate = vi.fn();
+    const target = document.body.appendChild(document.createElement("div"));
+    const instance = ui.mount(ui.TaskModelCard, { target, props: {
+      taskType: "write", config: settings.taskModels.write, providers: settings.providers, defaultProviderId: "research",
+      resolved: resolveTaskModelSnapshot(settings, "write"), isDefault: false, i18n: new I18n(), onUpdate, onReset() {},
+    } });
+    try {
+      ui.flushSync(); openTaskParameters(target);
+      const topP = target.querySelector('[data-parameter="topP"]')!;
+      expect(topP.textContent).toContain("当前不发送");
+      expect(topP.textContent).toContain("0.9");
+      expect(topP.textContent).toContain(new I18n().t("settings.taskDetails.fromTask"));
+      expect(topP.querySelector<HTMLInputElement>("input")!.value).toBe("0.9");
+      expect(target.querySelector('[data-parameter="thinkingLevel"]')!.textContent).toContain("发送前拒绝请求");
+      expect(onUpdate).not.toHaveBeenCalled();
+    } finally { await ui.unmount(instance); target.remove(); }
+  });
+
+  it("keeps Cards service and model independent of global defaults", async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.defaultProviderId = "research";
+    settings.providers.research = { apiKey: "", enabled: true, apiFormat: "openai-responses", embeddingApiFormat: "disabled", defaultChatModel: "inherited-model", defaultEmbedModel: "" };
+    const target = document.body.appendChild(document.createElement("div"));
+    const onUpdate = vi.fn();
+    const instance = ui.mount(ui.TaskModelCard, { target, props: {
+      taskType: "cards", config: settings.taskModels.cards, providers: settings.providers, defaultProviderId: "research",
+      resolved: resolveTaskModelSnapshot(settings, "cards"), isDefault: true, i18n: new I18n(), onUpdate, onReset() {},
+    } });
+    try {
+      ui.flushSync();
+      expect(target.querySelector<HTMLSelectElement>("#tmc-cards-provider")!.value).toBe("");
+      expect(target.querySelector<HTMLInputElement>("#tmc-cards-model")!.value).toBe("");
+      expect(target.querySelector<HTMLInputElement>("#tmc-cards-model")!.placeholder).not.toContain("inherited-model");
+      expect(target.textContent).toContain("不继承服务的默认模型");
+      expect(onUpdate).not.toHaveBeenCalled();
+    } finally { await ui.unmount(instance); target.remove(); }
+  });
+
+  it("updates inherited previews without saving an empty specified draft when the default provider changes", async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.providers.A = { apiKey: "", enabled: true, apiFormat: "openai-responses", embeddingApiFormat: "disabled", defaultChatModel: "A-model", defaultEmbedModel: "", capabilities: { temperature: true } };
+    settings.providers.B = { ...settings.providers.A, defaultChatModel: "B-model", parameters: { temperature: 0.6 } };
+    settings.defaultProviderId = "A";
+    const store = new SettingsStore({ loadData: async () => settings, saveData: async () => undefined } as never);
+    await store.loadSettings();
+    const update = vi.fn((type, partial) => store.updateTaskModel(type, partial));
+    const target = document.body.appendChild(document.createElement("div"));
+    const instance = ui.mount(ui.TaskModelHost, { target, props: { store, i18n: new I18n(), update } });
+    try {
+      ui.flushSync(); openTaskParameters(target);
+      const mode = target.querySelector<HTMLSelectElement>("#tmc-write-temp-mode")!;
+      mode.value = "set";
+      mode.dispatchEvent(new Event("change", { bubbles: true }));
+      ui.flushSync();
+      expect(target.querySelector<HTMLInputElement>("#tmc-write-temp")!.value).toBe("");
+      expect(update).not.toHaveBeenCalled();
+      await store.updateSettings({ defaultProviderId: "B" });
+      ui.flushSync();
+      const row = target.querySelector('[data-parameter="temperature"]')!;
+      expect(row.textContent).toContain("0.6");
+      expect(row.textContent).toContain("B");
+      expect(target.querySelector<HTMLInputElement>("#tmc-write-temp")!.value).toBe("");
+      expect(store.getSettings().taskModels.write.parameters?.temperature).toBeUndefined();
+      expect(update).not.toHaveBeenCalled();
+      mode.value = "inherit";
+      mode.dispatchEvent(new Event("change", { bubbles: true }));
+      await update.mock.results[0].value;
+      ui.flushSync();
+      expect(target.querySelector("#tmc-write-temp")).toBeNull();
+      expect(resolveTaskModelSnapshot(store.getSettings(), "write").temperature).toBe(0.6);
+      mode.value = "omit";
+      mode.dispatchEvent(new Event("change", { bubbles: true }));
+      await update.mock.results[1].value;
+      ui.flushSync();
+      expect(store.getSettings().taskModels.write.parameters?.temperature).toBeNull();
+      expect(resolveTaskModelSnapshot(store.getSettings(), "write").temperature).toBeUndefined();
+      expect(row.textContent).toContain(new I18n().t("settings.taskDetails.omitted"));
+    } finally { await ui.unmount(instance); target.remove(); }
+  });
+
+  it.each(["provider", "model"] as const)("labels resolved parameters as blocked when the %s is unavailable", async (missing) => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.providers.research = { apiKey: "", enabled: missing !== "provider", apiFormat: "openai-responses", embeddingApiFormat: "disabled", defaultChatModel: missing === "model" ? "" : "model", defaultEmbedModel: "" };
+    settings.taskModels.write = { providerId: "research", model: "", parameters: { maxTokens: 42 } };
+    const target = document.body.appendChild(document.createElement("div"));
+    const i18n = new I18n();
+    const instance = ui.mount(ui.TaskModelCard, { target, props: {
+      taskType: "write", config: settings.taskModels.write, providers: settings.providers, defaultProviderId: "research",
+      resolved: resolveTaskModelSnapshot(settings, "write"), isDefault: false, i18n, onUpdate: vi.fn(), onReset() {},
+    } });
+    try {
+      ui.flushSync(); openTaskParameters(target);
+      const overview = target.querySelector(".cr-task-model-card__overview")!;
+      expect(overview.querySelector('[role="status"]')!.textContent).toContain(i18n.t(`settings.taskDetails.${missing}Unavailable`));
+      const row = target.querySelector('[data-parameter="maxTokens"]')!;
+      expect(row.textContent).toContain("42");
+      expect(row.textContent).toContain(i18n.t("settings.taskDetails.resolvedOnly"));
+    } finally { await ui.unmount(instance); target.remove(); }
+  });
+
 });

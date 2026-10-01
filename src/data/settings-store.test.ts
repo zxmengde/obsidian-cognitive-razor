@@ -628,3 +628,82 @@ describe("SettingsStore optional fields and import/export", () => {
     expect(plugin.saved).toHaveLength(0);
   });
 });
+
+
+describe("SettingsStore presentation controls", () => {
+  const defaults = { verifyReportPresentation: "expanded", queueDefaultFilter: "all", queuePageSize: 50 };
+
+  it("keeps existing report and queue defaults without rewriting old settings", async () => {
+    const legacy = structuredClone(settingsWithProvider()) as unknown as Record<string, unknown>;
+    for (const key of Object.keys(defaults)) delete legacy[key];
+    const plugin = createPlugin(legacy);
+    const store = new SettingsStore(plugin);
+    expect((await store.loadSettings()).ok).toBe(true);
+    expect(store.getSettings()).toMatchObject(defaults);
+    expect(store.getSettings().providers.A.apiKey).toBe("key-a");
+    expect(plugin.saved).toHaveLength(0);
+    expect(legacy).not.toHaveProperty("queuePageSize");
+    const imported = new SettingsStore(createPlugin());
+    expect((await imported.importSettings(JSON.stringify(legacy))).ok).toBe(true);
+    expect(imported.getSettings()).toMatchObject(defaults);
+  });
+
+  it.each([
+    ["verifyReportPresentation", "hidden"], ["verifyReportPresentation", null],
+    ["queueDefaultFilter", "completed"], ["queueDefaultFilter", 0],
+    ["queuePageSize", 0], ["queuePageSize", 26], ["queuePageSize", "25"], ["queuePageSize", null],
+  ])("safely defaults invalid loaded/imported %s=%s", async (key, value) => {
+    const data = { ...structuredClone(DEFAULT_SETTINGS), [key as string]: value };
+    const plugin = createPlugin(data);
+    const store = new SettingsStore(plugin);
+    expect((await store.loadSettings()).ok).toBe(true);
+    expect(store.getSettings()).toMatchObject(defaults);
+    expect(plugin.saved).toHaveLength(0);
+    expect((await store.importSettings(JSON.stringify(data))).ok).toBe(true);
+    expect(store.getSettings()).toMatchObject(defaults);
+  });
+
+  it("persists, reloads and exports valid choices through the existing settings route", async () => {
+    const plugin = createPlugin();
+    const store = new SettingsStore(plugin);
+    const chosen = { verifyReportPresentation: "collapsed", queueDefaultFilter: "failed", queuePageSize: 100 } as const;
+    expect((await store.updateSettings(chosen)).ok).toBe(true);
+    expect(store.getSettings()).toMatchObject(chosen);
+    expect(plugin.saved).toHaveLength(1);
+    const exported = store.exportSettings();
+    expect(JSON.parse(exported)).toMatchObject(chosen);
+    const reloaded = new SettingsStore(createPlugin(plugin.saved[0]));
+    expect((await reloaded.loadSettings()).ok).toBe(true);
+    expect(reloaded.getSettings()).toMatchObject(chosen);
+    const imported = new SettingsStore(createPlugin());
+    expect((await imported.importSettings(exported)).ok).toBe(true);
+    expect(imported.getSettings()).toMatchObject(chosen);
+    expect((await store.updateSettings({ queueDefaultFilter: "active", queuePageSize: 25 })).ok).toBe(true);
+    expect(store.getSettings()).toMatchObject({ queueDefaultFilter: "active", queuePageSize: 25 });
+    expect((await store.updateSettings({ verifyReportPresentation: "expanded", queueDefaultFilter: "all", queuePageSize: 50 })).ok).toBe(true);
+    expect(store.getSettings()).toMatchObject(defaults);
+  });
+
+  it.each([
+    { verifyReportPresentation: "hidden" }, { verifyReportPresentation: undefined },
+    { queueDefaultFilter: "complete" }, { queueDefaultFilter: null },
+    { queuePageSize: 26 }, { queuePageSize: "100" }, { queuePageSize: Number.NaN },
+  ])("rejects invalid live presentation edits atomically: %j", async (invalid) => {
+    const plugin = createPlugin();
+    const store = new SettingsStore(plugin);
+    const before = store.getSettings();
+    const listener = vi.fn();
+    store.subscribe(listener);
+    expect((await store.updateSettings({ concurrency: 2, ...invalid } as never)).ok).toBe(false);
+    expect(store.getSettings()).toEqual(before);
+    expect(plugin.saved).toHaveLength(0);
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it("keeps presentation settings unchanged after a failed save", async () => {
+    const plugin = createPlugin(null, async () => { throw new Error("disk unavailable"); });
+    const store = new SettingsStore(plugin);
+    expect((await store.updateSettings({ verifyReportPresentation: "collapsed", queueDefaultFilter: "active", queuePageSize: 25 })).ok).toBe(false);
+    expect(store.getSettings()).toMatchObject(defaults);
+  });
+});

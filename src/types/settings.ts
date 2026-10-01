@@ -74,6 +74,11 @@ export interface PluginSettings {
     taskTimeoutMs: number;
     logLevel: LogLevel;
     enableAutoVerify: boolean;
+    /** Applies only when creating future verification reports. */
+    verifyReportPresentation: "expanded" | "collapsed";
+    /** Initial queue view only; never changes task execution or stored tasks. */
+    queueDefaultFilter: "all" | "active" | "failed";
+    queuePageSize: 25 | 50 | 100;
     providers: Record<string, ProviderConfig>;
     defaultProviderId: string;
     cardsSourceRoot: string;

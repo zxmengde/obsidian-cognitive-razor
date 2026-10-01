@@ -1,3 +1,4 @@
+import { showWarning } from "../ui/feedback";
 import { CardGenerationService } from "../core/card-generation-service";
 import type { App } from "obsidian";
 import { err } from "../types";
@@ -22,6 +23,7 @@ import type { SemanticIndexPort } from "./settings-application";
 import { TaskQueue } from "../core/task-queue";
 import { TaskRunner } from "../core/task-runner";
 import { VectorIndex } from "../core/vector-index";
+import { recoverInterruptedReset } from "../data/runtime-data-maintenance";
 import {
   resolveVectorIndexConfig,
   vectorIndexConfigsEqual,
@@ -201,6 +203,8 @@ export class PluginRuntime {
     this.requireSuccess(await this.fileStorage.initialize(), "初始化插件数据目录失败");
     this.assertActive(generation);
 
+    this.requireSuccess(await recoverInterruptedReset(this.fileStorage), "恢复未完成重置失败");
+    this.assertActive(generation);
     const recovery = await this.fileStorage.recoverIncompleteWrites();
     const recoveredFiles = this.requireSuccess(recovery, "恢复未完成文件写入失败");
     this.assertActive(generation);
@@ -308,6 +312,9 @@ export class PluginRuntime {
       settingsStore: this.settingsStore,
       logger: this.logger,
       indexNote: (cruid) => this.semanticIndexRebuilder.embedOne(cruid),
+      onIndexingFailed: (noteTitle) => {
+        if (!this.disposed) showWarning(this.i18n.format("workbench.notifications.indexingFailed", { noteTitle }));
+      },
     });
     this.cardGeneration = new CardGenerationService({ storage: this.fileStorage, settings: this.settingsStore, notes: noteRepository, queue: this.taskQueue });
     this.requireSuccess(this.taskQueue.attachWorkflowPort(this.cardGeneration.wrapPort(this.workflowCoordinator.queuePort)), "连接任务队列工作流端口失败");
@@ -367,6 +374,7 @@ export class PluginRuntime {
       expandOrchestrator: this.expandOrchestrator,
       duplicateManager: this.duplicateManager,
       getConceptName: (cruid) => this.getConceptName(cruid),
+      getConceptPath: (cruid) => this.cruidCache.getFile(cruid)?.path ?? null,
       rebuildSemanticNote: (filePath) => this.rebuildSemanticNote(filePath),
       workflowCoordinator: this.workflowCoordinator,
       duplicateMergeService: this.duplicateMergeService,

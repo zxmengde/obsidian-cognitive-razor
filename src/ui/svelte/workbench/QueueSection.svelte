@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { untrack } from 'svelte';
     import { SvelteSet } from 'svelte/reactivity';
     import { getWorkbenchContext } from '../../bridge/context';
     import StatusDot from '../../components/StatusDot.svelte';
@@ -32,10 +33,16 @@
     const queue = ctx.application.queue;
 
     let expanded = $state(true);
-    let stateFilter = $state<QueueFilter>('all');
+    let stateFilter = $state<QueueFilter>(untrack(() => ctx.settingsApplication.getSettings().queueDefaultFilter ?? 'all'));
+    let pageSize = $state(untrack(() => ctx.settingsApplication.getSettings().queuePageSize ?? 50));
     let stageFilter = $state<StageFilter>('all');
     let selectedIds = new SvelteSet<string>();
-    let visibleLimit = $state(50);
+    let visibleLimit = $state(untrack(() => pageSize));
+    const unsubscribeDisplaySettings = ctx.settingsApplication.subscribeSettings(settings => {
+        const nextPageSize = settings.queuePageSize ?? 50;
+        if (nextPageSize !== pageSize) { pageSize = nextPageSize; visibleLimit = nextPageSize; }
+    });
+    $effect(() => () => unsubscribeDisplaySettings());
     let pendingConfirmation = $state<ConfirmAction>(null);
     let uncertainRetryTaskId = $state<string | null>(null);
     let feedback = $state<UiFeedback | null>(null);
@@ -91,12 +98,12 @@
 
     function handleStateFilter(event: Event): void {
         stateFilter = (event.currentTarget as HTMLSelectElement).value as QueueFilter;
-        visibleLimit = 50;
+        visibleLimit = pageSize;
     }
 
     function handleStageFilter(event: Event): void {
         stageFilter = (event.currentTarget as HTMLSelectElement).value as StageFilter;
-        visibleLimit = 50;
+        visibleLimit = pageSize;
     }
 
     function toggleSelectAll(): void {
@@ -321,7 +328,7 @@
                         disabled={actionRunning}
                     />
                     {#if hasMore}
-                        <Button variant="ghost" size="sm" onclick={() => visibleLimit += 50}>
+                        <Button variant="ghost" size="sm" onclick={() => visibleLimit += pageSize}>
                             {t.workbench.queueStatus.showMore} ({filteredTasks.length - displayedTasks.length})
                         </Button>
                     {/if}

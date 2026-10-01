@@ -9,7 +9,7 @@ const WORKFLOW_VERSION = "7.0.0" as const;
 const WORKFLOW_ARTIFACT_KEYS = new Set([
   "version", "workflowId", "kind", "state", "nodeId", "type", "filePath", "noteTitle", "parents",
   "concept", "autoVerify", "tagResult", "accumulated", "conversation", "sources", "pendingStageResult", "contentSnapshot",
-  "noteCreated", "appliedStageIds", "error", "createdAt", "updatedAt",
+  "noteCreated", "appliedStageIds", "error", "createdAt", "updatedAt", "directoryScheme",
 ]);
 const CR_TYPE_SET = new Set<string>(CR_TYPES);
 
@@ -56,6 +56,10 @@ function isSourcePackage(value: unknown): boolean {
   return value.items.every((item) => isRecord(item) && typeof item.url === "string" && item.url.length > 0
     && (item.title === undefined || typeof item.title === "string"));
 }
+function isDirectoryScheme(value: unknown): boolean {
+  return isRecord(value) && Object.keys(value).length === CR_TYPES.length
+    && CR_TYPES.every((type) => typeof value[type] === "string");
+}
 function isValidArtifact(value: unknown): value is WorkflowArtifact {
   if (!isRecord(value) || Object.keys(value).some((key) => !WORKFLOW_ARTIFACT_KEYS.has(key)) || value.version !== WORKFLOW_VERSION
     || typeof value.workflowId !== "string" || !isSafeWorkflowId(value.workflowId)
@@ -64,6 +68,7 @@ function isValidArtifact(value: unknown): value is WorkflowArtifact {
     || typeof value.nodeId !== "string" || typeof value.type !== "string" || !CR_TYPE_SET.has(value.type)
     || typeof value.filePath !== "string" || typeof value.noteTitle !== "string" || !isStringArray(value.parents)
     || typeof value.autoVerify !== "boolean" || !isRecord(value.accumulated)
+    || (value.directoryScheme !== undefined && !isDirectoryScheme(value.directoryScheme))
     || (value.conversation !== undefined && !isWorkflowConversation(value.conversation))
     || (value.sources !== undefined && !isSourcePackage(value.sources))
     || (value.pendingStageResult !== undefined && !isPendingStageResult(value.pendingStageResult))

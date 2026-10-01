@@ -39,12 +39,19 @@
   function syncDraft(draft: DuplicateMergeDraft): void {
     body = draft.body; name = draft.name; aliases = draft.aliases.join(', '); tags = draft.tags.join(', '); parents = draft.parents.join('\n');
   }
-  function openNote(noteName: string): void { void ctx.app.workspace.openLinkText(noteName, '', true); }
+  function openNote(cruid: string): void {
+    const path = ctx.application.duplicates.getConceptPath(cruid);
+    if (!path) {
+      feedback = toSafeErrorFeedback({ code: 'E311_NOT_FOUND' }, t.workbench.notifications.mergeFailed);
+      return;
+    }
+    void ctx.app.workspace.openLinkText(path, '', true);
+  }
   function split(value: string): string[] { return [...new Set(value.split(/[,\n]/).map((item) => item.trim()).filter(Boolean))]; }
   async function confirm(): Promise<void> {
     if (!preview || confirming) return;
     confirming = true; feedback = null;
-    const draft: DuplicateMergeDraft = { ...preview.draft, body, name, aliases: split(aliases), tags: split(tags), parents: split(parents) };
+    const draft: DuplicateMergeDraft = { ...preview.draft, body, name, aliases: split(aliases), tags: split(tags), parents: [...new Set(parents.split(/\r?\n/).map((item) => item.trim()).filter(Boolean))] };
     try {
       const result = await ctx.application.duplicates.confirmMerge(draft, preview.linkRepairPlan);
       if (result.ok) onsuccess(); else feedback = toSafeErrorFeedback(result.error, t.workbench.notifications.mergeFailed);
@@ -62,8 +69,8 @@
       <Button variant={canonical === 'b' ? 'primary' : 'secondary'} onclick={() => { canonical = 'b'; }}>{nameB}</Button>
     </div>
     <div class="cr-merge-actions">
-      <Button variant="ghost" onclick={() => openNote(nameA)}>{t.workbench.duplicates.openNote}</Button>
-      <Button variant="ghost" onclick={() => openNote(nameB)}>{t.workbench.duplicates.openNote}</Button>
+      <Button variant="ghost" onclick={() => openNote(pair.nodeIdA)}>{t.workbench.duplicates.openNote}</Button>
+      <Button variant="ghost" onclick={() => openNote(pair.nodeIdB)}>{t.workbench.duplicates.openNote}</Button>
       <Button variant="primary" loading={loading} onclick={() => void prepare()}>{t.workbench.duplicates.generateDraft}</Button>
     </div>
   {:else}

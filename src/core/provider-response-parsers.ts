@@ -1,6 +1,7 @@
 import { err, ok } from "../types";
 import type { ChatResponse, EmbedResponse, Result, UrlCitation } from "../types";
 import { normalizeExternalHttpUrl } from "./url-utils";
+import { readProviderTokenUsage, tokenUsageCounts, withProviderTokenUsage } from "./provider-token-usage";
 
 interface OpenAIChatResponse {
   choices: Array<{
@@ -114,18 +115,6 @@ export function validateChatFinishReason(
   return ok(undefined);
 }
 
-export function withTokenUsage(
-  response: ChatResponse,
-  usage: Pick<ChatResponse, "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheWriteTokens">,
-): ChatResponse {
-  const result = { ...response };
-  for (const [key, value] of Object.entries(usage)) {
-    if (value !== undefined) {
-      (result as unknown as Record<string, unknown>)[key] = value;
-    }
-  }
-  return result;
-}
 
 export function parseOpenAIChatResponse(raw: unknown): Result<ChatResponse> {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
@@ -146,16 +135,10 @@ export function parseOpenAIChatResponse(raw: unknown): Result<ChatResponse> {
     return err("E207_PROVIDER_RESPONSE_UNSUPPORTED", "API 返回格式异常：缺少 message.content");
   }
 
-  return ok(withTokenUsage({
+  return ok(withProviderTokenUsage({
     content: typeof content === "string" ? content : "",
-    tokensUsed: data.usage?.total_tokens,
     finishReason,
-  }, {
-    inputTokens: data.usage?.prompt_tokens,
-    outputTokens: data.usage?.completion_tokens,
-    cacheReadTokens: data.usage?.prompt_tokens_details?.cached_tokens,
-    cacheWriteTokens: data.usage?.prompt_tokens_details?.cache_write_tokens,
-  }));
+  }, "openai-chat-completions", raw));
 }
 
 export function parseGeminiGenerateResponse(raw: unknown): Result<ChatResponse> {
@@ -178,18 +161,12 @@ export function parseGeminiGenerateResponse(raw: unknown): Result<ChatResponse> 
     return err("E207_PROVIDER_RESPONSE_UNSUPPORTED", "Gemini API 返回格式异常：缺少 candidates 内容");
   }
 
-  const usage = data.usageMetadata;
-  return ok(withTokenUsage({
+  return ok(withProviderTokenUsage({
     content,
     citations: extractGeminiCitations(firstCandidate, content),
     webSearchUsed: firstCandidate?.groundingMetadata !== undefined,
-    tokensUsed: usage?.totalTokenCount,
     finishReason,
-  }, {
-    inputTokens: usage?.promptTokenCount,
-    outputTokens: usage?.candidatesTokenCount,
-    cacheReadTokens: usage?.cachedContentTokenCount,
-  }));
+  }, "gemini-generative-language", raw));
 }
 
 export function parseOpenAIResponsesResponse(raw: unknown): Result<ChatResponse> {
@@ -244,19 +221,13 @@ export function parseOpenAIResponsesResponse(raw: unknown): Result<ChatResponse>
     return err("E207_PROVIDER_RESPONSE_UNSUPPORTED", "API 返回格式异常：Responses 没有可见文本", { responseShape });
   }
 
-  return ok(withTokenUsage({
+  return ok(withProviderTokenUsage({
     content,
     ...(typeof data.id === "string" ? { responseId: data.id } : {}),
     citations: extractResponsesCitations(data, content),
     webSearchUsed: data.output?.some((item) => item.type === "web_search_call") ?? false,
-    tokensUsed: data.usage?.total_tokens,
     finishReason,
-  }, {
-    inputTokens: data.usage?.input_tokens,
-    outputTokens: data.usage?.output_tokens,
-    cacheReadTokens: data.usage?.input_tokens_details?.cached_tokens,
-    cacheWriteTokens: data.usage?.input_tokens_details?.cache_write_tokens,
-  }));
+  }, "openai-responses", raw));
 }
 
 export function parseOpenAIEmbedResponse(raw: unknown): Result<EmbedResponse> {
@@ -271,7 +242,8 @@ export function parseOpenAIEmbedResponse(raw: unknown): Result<EmbedResponse> {
   if (!first || !Array.isArray(first.embedding)) {
     return err("E207_PROVIDER_RESPONSE_UNSUPPORTED", "Embeddings 返回格式异常：缺少 embedding");
   }
-  return ok({ embedding: first.embedding, tokensUsed: data.usage?.total_tokens });
+  const { tokensUsed } = tokenUsageCounts(readProviderTokenUsage("openai-embeddings", raw));
+  return ok({ embedding: first.embedding, ...(tokensUsed !== undefined ? { tokensUsed } : {}) });
 }
 
 function normalizeGeminiFinishReason(reason?: string): string | undefined {

@@ -188,15 +188,24 @@ export class SemanticIndexRebuilder {
     const written = await this.deps.vectorIndex.upsert({ uid: candidate.entry.cruid, type: candidate.type, embedding: embedded.value.embedding });
     if (!written.ok) return ok({ indexed: 0, failed: 1 });
     if (settings.enableDuplicateDetection) {
-      const refreshed = await this.deps.duplicateManager.refreshNode(
-        candidate.entry.cruid,
-        candidate.type,
-        embedded.value.embedding,
-      );
-      if (!refreshed.ok) {
-        this.deps.logger.warn("SemanticIndexRebuilder", "单篇向量已写入，但重复关系刷新失败", {
+      try {
+        const refreshed = await this.deps.duplicateManager.refreshNode(
+          candidate.entry.cruid,
+          candidate.type,
+          embedded.value.embedding,
+        );
+        if (!refreshed.ok) {
+          this.deps.logger.warn("SemanticIndexRebuilder", "单篇向量已写入，但重复关系刷新失败", {
+            cruid,
+            error: refreshed.error,
+          });
+        }
+      } catch (cause) {
+        // The vector is already durable; a derived duplicate refresh failure
+        // must not be reported as a missing vector or invite another charge.
+        this.deps.logger.warn("SemanticIndexRebuilder", "单篇向量已写入，但重复关系刷新异常", {
           cruid,
-          error: refreshed.error,
+          error: cause,
         });
       }
     }

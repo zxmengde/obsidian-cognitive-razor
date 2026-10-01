@@ -4,6 +4,7 @@
 	"description": "Cognitive Razor - 公理化知识管理插件",
 	"main": "main.js",
 	"type": "module",
+	"packageManager": "npm@11.9.0",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"check": "tsc --noEmit --skipLibCheck && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",

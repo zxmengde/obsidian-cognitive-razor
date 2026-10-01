@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { err, ok } from "../types";
 import type { ILogger, WorkflowArtifact } from "../types";
 import type { FileStorage } from "./file-storage";
+import { DEFAULT_SETTINGS } from "./settings-store";
 import { WorkflowStore } from "./workflow-store";
 
 function logger(): ILogger {
@@ -31,6 +32,30 @@ function storage(initial: Record<string, string> = {}) {
 }
 
 describe("WorkflowStore", () => {
+  it("round-trips a detached directory snapshot and accepts older 7.0.0 artifacts without one", async () => {
+    const { fileStorage, files } = storage();
+    const store = new WorkflowStore(fileStorage, logger());
+    const directoryScheme = { ...DEFAULT_SETTINGS.directoryScheme };
+    expect((await store.create({ ...artifact(), directoryScheme })).ok).toBe(true);
+    directoryScheme.entity = "later edit";
+    const reloaded = new WorkflowStore(fileStorage, logger());
+    await reloaded.initialize();
+    expect(reloaded.get("workflow-test")?.directoryScheme).toEqual(DEFAULT_SETTINGS.directoryScheme);
+    const legacy = JSON.parse(files.get("data/workflows/workflow-test.json")!);
+    delete legacy.directoryScheme;
+    files.set("data/workflows/workflow-test.json", JSON.stringify(legacy));
+    const oldReload = new WorkflowStore(fileStorage, logger());
+    await oldReload.initialize();
+    expect(oldReload.get("workflow-test")).toBeDefined();
+    expect(oldReload.get("workflow-test")?.directoryScheme).toBeUndefined();
+  });
+
+  it.each([null, {}, { ...DEFAULT_SETTINGS.directoryScheme, entity: 123 }, { ...DEFAULT_SETTINGS.directoryScheme, extra: "no" }])("rejects malformed directory snapshots: %j", async (directoryScheme) => {
+    const { fileStorage } = storage();
+    const store = new WorkflowStore(fileStorage, logger());
+    expect((await store.create({ ...artifact(), directoryScheme } as WorkflowArtifact)).ok).toBe(false);
+  });
+
   it("never publishes or inherits a failed concurrent patch", async () => {
     const { fileStorage, files } = storage();
     const store = new WorkflowStore(fileStorage, logger());
