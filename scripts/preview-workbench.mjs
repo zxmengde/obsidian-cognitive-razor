@@ -37,7 +37,7 @@ mount(WorkbenchRoot,{target:document.getElementById('app'),props:{app,i18n,appli
 await tick(); await new Promise(resolve=>setTimeout(resolve,60));
 const clickText = text => Array.from(document.querySelectorAll('button')).find(button=>button.textContent.trim()===text)?.click();
 if(params.has('management')) document.querySelector('.cr-queue-management').open=true;
-if(params.has('details')) document.querySelector('.cr-task-feedback details').open=true;
+if(params.has('details')) document.querySelector('.cr-task-feedback').open=true;
 if(params.has('merge')) { clickText(t.workbench.duplicates.merge); await tick(); clickText(t.workbench.duplicates.generateDraft); await tick(); await tick(); }
 await new Promise(resolve=>requestAnimationFrame(resolve));
 const rect = selector => document.querySelector(selector)?.getBoundingClientRect().toJSON();

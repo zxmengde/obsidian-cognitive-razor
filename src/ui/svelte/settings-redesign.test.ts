@@ -103,17 +103,18 @@ describe('approved settings information architecture', () => {
         const h = await harness(false, undefined, false);
         try {
             const before = structuredClone(h.store.getSettings());
-            expect(h.target.querySelectorAll('.cr-task-summary')).toHaveLength(7);
-            expect(h.target.querySelectorAll('[id^="cr-task-trigger-"]')).toHaveLength(0);
+            expect(h.target.querySelectorAll('.cr-task-summary')).toHaveLength(2);
+            expect(h.target.querySelector('.cr-inherited-summary')?.textContent).toContain('定义、标记、核查、合并、记忆卡片');
+            expect(h.target.querySelector('#cr-task-usage')?.textContent).not.toContain('daily · chat-main');
+            expect(h.target.querySelectorAll('[id^="cr-task-trigger-"]')).toHaveLength(2);
             expect(h.target.textContent).toContain('沿用默认');
             expect(h.target.textContent).toContain('research · reasoning-model');
-            expect(h.target.textContent).toContain('不必另建连接');
             h.target.querySelector<HTMLButtonElement>('[aria-label="按任务单独调整（进阶）"]')!.click(); ui.flushSync();
             expect(h.target.querySelectorAll('[id^="cr-task-trigger-"]')).toHaveLength(7);
             await h.openTask('write'); await h.back();
             expect(document.activeElement?.id).toBe('cr-task-trigger-write');
             h.target.querySelector<HTMLButtonElement>('[aria-label="按任务单独调整（进阶）"]')!.click(); ui.flushSync();
-            expect(h.target.querySelectorAll('[id^="cr-task-trigger-"]')).toHaveLength(0);
+            expect(h.target.querySelectorAll('[id^="cr-task-trigger-"]')).toHaveLength(2);
             expect(h.store.getSettings()).toEqual(before);
             expect(h.save).not.toHaveBeenCalled(); expect(h.probe).not.toHaveBeenCalled();
         } finally { await h.cleanup(); }
@@ -129,6 +130,21 @@ describe('approved settings information architecture', () => {
             expect(h.store.getSettings().taskModels.write.providerId).toBe('research');
             await h.application.updateSettings({ defaultProviderId: 'daily' }); await h.settle();
             expect(h.target.textContent).not.toContain('已有可用服务，但尚未选择默认服务');
+            expect(h.probe).not.toHaveBeenCalled();
+        } finally { await h.cleanup(); }
+    });
+
+    it('keeps unavailable inherited tasks individually visible and exposes all seven adjustments', async () => {
+        const h = await harness(false, undefined, false);
+        try {
+            await h.store.updateProvider('daily', { enabled: false }); await h.settle();
+            expect(h.target.querySelector('.cr-inherited-summary')).toBeNull();
+            expect(h.target.querySelectorAll('.cr-task-summary')).toHaveLength(7);
+            expect(h.target.querySelector('#cr-task-trigger-cards')?.textContent).toContain('服务已禁用');
+            expect(h.target.querySelector('#cr-task-trigger-index')?.textContent).toContain('embed-main');
+            await h.openTask('cards'); await h.back();
+            expect(document.activeElement?.id).toBe('cr-task-trigger-cards');
+            expect(h.target.querySelectorAll('[id^="cr-task-trigger-"]')).toHaveLength(7);
             expect(h.probe).not.toHaveBeenCalled();
         } finally { await h.cleanup(); }
     });

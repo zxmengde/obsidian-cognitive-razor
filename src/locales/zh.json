@@ -86,7 +86,9 @@
       "defining": "定义中...",
       "selectType": "请选择概念类型",
       "create": "创建",
-      "clear": "清空输入"
+      "clear": "清空输入",
+      "title": "创建概念",
+      "noteActions": "笔记操作"
     },
     "duplicates": {
       "title": "重复概念",
@@ -163,7 +165,9 @@
       "uncertainRetryConfirmMessage": "上一次请求可能已被 Provider 处理。重新发送可能产生重复内容或重复计费。是否继续？",
       "clearHistory": "清理历史",
       "clearHistoryConfirmTitle": "确认清理任务历史",
-      "clearHistoryConfirmMessage": "将删除已完成、失败和已取消的任务记录，无法恢复。是否继续？"
+      "clearHistoryConfirmMessage": "将删除已完成、失败和已取消的任务记录，无法恢复。是否继续？",
+      "uncertainGroup": "{count} 项请求结果未知，未自动重试；重试可能重复处理或计费。",
+      "compactDetails": "详情"
     },
     "recovery": {
       "title": "需要处理的恢复记录",

@@ -6,6 +6,7 @@
  * requests, raw responses, credentials, or reasoning content.
  */
 
+import { isUncertainTask } from "./task-uncertainty";
 import { taskFailureDiagnostics } from "../data/task-failure-diagnostics";
 import { err, ok } from "../types";
 import type {
@@ -195,7 +196,7 @@ export class TaskQueue {
     this.nextQueueOrder = Math.max(1, parsed.nextQueueOrder);
     let changed = false;
     for (const task of rehydrated) {
-      if (task.state === "failed" && task.error?.kind === "uncertain") {
+      if (task.state === "failed" && isUncertainTask(task)) {
         task.state = "interrupted";
         changed = true;
       }
@@ -282,7 +283,7 @@ export class TaskQueue {
     if (!task) return err("E311_NOT_FOUND", "任务不存在");
     if (task.stageId === "cards") return err("E310_INVALID_STATE", "请通过生成记忆卡片开始新任务；旧卡片任务不会重放");
     if (task.state !== "failed" && task.state !== "interrupted") return err("E310_INVALID_STATE", "只有失败或中断任务可以手动重试");
-    if (task.error?.kind === "uncertain" && !allowUncertain) {
+    if (isUncertainTask(task) && !allowUncertain) {
       return err("E310_INVALID_STATE", "结果未知的请求只能由用户明确确认后手动重试");
     }
     if (this.findActiveConflict(task, task.id)) return err("E320_TASK_CONFLICT", "该笔记已有任务在队列中");
@@ -856,7 +857,7 @@ export class TaskQueue {
   private invalidateSnapshot(): void { this.snapshot = undefined; }
 
   private isTerminal(state: TaskRecord["state"]): boolean { return state === "completed" || state === "failed" || state === "cancelled" || state === "interrupted"; }
-  private canRetryInBulk(task: TaskRecord): boolean { return task.stageId !== "cards" && task.state === "failed" && task.error?.kind !== "uncertain"; }
+  private canRetryInBulk(task: TaskRecord): boolean { return task.stageId !== "cards" && task.state === "failed" && !isUncertainTask(task); }
   private uncertainFailure(message: string): TaskError { return { code: "E206_PROVIDER_REQUEST_UNCERTAIN", message, kind: "uncertain", stage: "provider" }; }
   private executionContext(task: TaskRecord): TaskExecutionContext {
     return {

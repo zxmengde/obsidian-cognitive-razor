@@ -56,6 +56,10 @@
         providerIds.filter(pid => settings.providers[pid]?.enabled && settings.providers[pid]?.apiFormat !== 'disabled'),
     );
 
+    const taskSummaries = $derived(displayTasks.map(taskType => ({ taskType, summary: taskSettingsSummary(settings, taskType) })));
+    const inheritedTasks = $derived(taskSummaries.filter(({ taskType, summary }) => taskType !== 'index' && summary.source === 'inherited' && !summary.issue));
+    const visibleTasks = $derived(overridesOpen ? taskSummaries : taskSummaries.filter(task => !inheritedTasks.includes(task)));
+
     /** 默认 Provider 下拉选项 */
     let defaultProviderOptions = $derived.by(() => {
         const options = [{ value: '', label: i18n.t('settings.redesign.chooseDefault') }, ...enabledChatProviderIds.map(pid => ({ value: pid, label: pid }))];
@@ -198,10 +202,12 @@
         {#if enabledChatProviderIds.length > 0 && !settings.defaultProviderId}
             <p class="cr-task-summary__issue" role="status">{i18n.t('settings.redesign.defaultMissing')}</p>
         {/if}
+        <div class="cr-default-model-row">
         <p class="cr-default-model">{settings.providers[settings.defaultProviderId]?.defaultChatModel || i18n.t('settings.redesign.unconfigured')} <span>· {i18n.t('settings.redesign.providerDefaultModel')}</span></p>
         {#if settings.providers[settings.defaultProviderId]}
             <Button variant="ghost" size="sm" onclick={() => handleEditProvider(settings.defaultProviderId)}>{i18n.t('settings.redesign.editConnection')}</Button>
         {/if}
+        </div>
         <p class="cr-settings-hint">{i18n.t('settings.redesign.defaultIndexWarning')}</p>
     </SettingsSection>
     <SettingsSection title={i18n.t('settings.redesign.taskUsage')} description={i18n.t('settings.redesign.effectiveConfig')}>
@@ -209,25 +215,28 @@
             {i18n.t('settings.redesign.taskOverrides')} · {i18n.t(overridesOpen ? 'settings.redesign.collapse' : 'settings.redesign.expand')}
         </button>
         <div class="cr-task-list" id="cr-task-usage">
-            {#each displayTasks as taskType (taskType)}
-                {@const summary = taskSettingsSummary(settings, taskType)}
+            {#if !overridesOpen && inheritedTasks.length > 0}
+                <div class="cr-inherited-summary">
+                    <span class="cr-task-summary__title">{i18n.t('settings.redesign.inherited')}</span>
+                    <span class="cr-task-summary__model">{inheritedTasks.map(({ taskType }) => i18n.t(`settings.redesign.tasks.${taskType}`)).join('、')}</span>
+                </div>
+            {/if}
+            {#each visibleTasks as { taskType, summary } (taskType)}
                 <section class="cr-task-row">
                     {#snippet summaryCopy()}
                         <span class="cr-task-summary__copy">
                             <span class="cr-task-summary__title">{i18n.t(`settings.redesign.tasks.${taskType}`)} <span class="cr-task-source">{i18n.t(`settings.redesign.${summary.source}`)}</span></span>
-                            <span class="cr-task-summary__model">{summary.resolved.providerId || '—'} · {summary.resolved.model || '—'}</span>
+                            {#if taskType === 'index' || summary.source !== 'inherited' || summary.issue}
+                                <span class="cr-task-summary__model">{summary.resolved.providerId || '—'} · {summary.resolved.model || '—'}</span>
+                            {/if}
                             {#if summary.issue}<span class="cr-task-summary__issue">{i18n.t(`settings.redesign.${summary.issue}`)}</span>{/if}
-                            {#if taskType === 'cards'}<span class="cr-task-summary__hint">{i18n.t('settings.redesign.cardsIndependent')}</span>{/if}
+                            {#if taskType === 'cards' && overridesOpen}<span class="cr-task-summary__hint">{i18n.t('settings.redesign.cardsIndependent')}</span>{/if}
                         </span>
                     {/snippet}
-                    {#if overridesOpen}
                         <button class="cr-task-summary" id={`cr-task-trigger-${taskType}`} onclick={() => onConfigureTask(taskType)}>
                             {@render summaryCopy()}
                             <span class="cr-task-summary__action">{i18n.t('settings.redesign.adjust')} <span aria-hidden="true">›</span></span>
                         </button>
-                    {:else}
-                        <div class="cr-task-summary">{@render summaryCopy()}</div>
-                    {/if}
                 </section>
             {/each}
         </div>
@@ -274,12 +283,14 @@
 
 <style>
     .cr-providers-tab { display: flex; flex-direction: column; }
-    .cr-default-model { margin: var(--cr-space-3) 0 var(--cr-space-1); overflow-wrap: anywhere; }
+    .cr-default-model-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--cr-space-2); margin-top: var(--cr-space-2); }
+    .cr-default-model { margin: 0; overflow-wrap: anywhere; }
     .cr-default-model span, .cr-empty-hint { color: var(--cr-text-muted); font-size: var(--cr-font-sm); }
     .cr-task-overrides-toggle { height: auto; padding: var(--cr-space-2) 0; border: 0; background: transparent; box-shadow: none; color: var(--cr-interactive-accent); font: inherit; text-align: left; cursor: pointer; }
     .cr-task-overrides-toggle:focus-visible { outline: 2px solid var(--cr-border-focus); }
+    .cr-inherited-summary { display: flex; flex-direction: column; gap: var(--cr-space-1); padding: var(--cr-space-3) 0; overflow-wrap: anywhere; }
     .cr-task-row { border-top: 1px solid var(--cr-border); }
-    .cr-task-summary { display: flex; align-items: center; justify-content: space-between; gap: var(--cr-space-3); width: 100%; height: auto; border: 0; border-radius: 0; background: transparent; box-shadow: none; text-align: left; padding: var(--cr-space-4) 0; line-height: var(--cr-line-height-body); color: var(--cr-text-normal); }
+    .cr-task-summary { display: flex; align-items: center; justify-content: space-between; gap: var(--cr-space-3); width: 100%; height: auto; border: 0; border-radius: 0; background: transparent; box-shadow: none; text-align: left; padding: var(--cr-space-3) 0; line-height: var(--cr-line-height-body); color: var(--cr-text-normal); }
     button.cr-task-summary:hover { background: var(--cr-bg-hover); }
     .cr-task-summary:focus-visible { outline: 2px solid var(--cr-border-focus); outline-offset: 2px; }
     .cr-task-summary__copy { display: flex; flex-direction: column; gap: var(--cr-space-1); min-width: 0; overflow-wrap: anywhere; }

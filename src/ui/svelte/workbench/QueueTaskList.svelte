@@ -81,6 +81,18 @@
                 <Icon name={getStateIcon(task.state)} size={16} />
                 <span>{getStateLabel(task.state)}</span>
             </span>
+            {#if failure}
+                    <details class="cr-task-feedback">
+                    <summary>{t.workbench.queueStatus.compactDetails}</summary>
+                    {#if failure.upstreamStatus !== undefined}
+                        <p>{ctx.i18n.format('workbench.queueStatus.upstreamFailure', { status: failure.upstreamStatus })}</p>
+                    {:else if failure.requestTimeoutMs !== undefined}
+                        <p>{ctx.i18n.format('workbench.queueStatus.localTimeout', { seconds: failure.requestTimeoutMs / 1000 })}</p>
+                    {:else}<p>{failure.message}</p>{/if}
+                    {#if failure.elapsedSeconds !== undefined}<p>{ctx.i18n.format('workbench.queueStatus.elapsedRun', { seconds: failure.elapsedSeconds })}</p>{/if}
+                    <p>{failure.uncertain ? t.workbench.queueStatus.uncertainNextStep : failure.details || t.workbench.queueStatus.failureNextStep}</p>
+                    </details>
+            {/if}
             </div>
             <span class="cr-task-actions">
                 {#if task.stageId !== 'cards' && (task.state === 'failed' || task.state === 'interrupted')}
@@ -98,21 +110,6 @@
                     </Button>
                 {/if}
             </span>
-            {#if failure}
-                <div class="cr-task-detail cr-task-feedback" role="note">
-                    <p class:cr-task-warning={failure.uncertain}>{failure.upstreamStatus !== undefined ? ctx.i18n.format('workbench.queueStatus.upstreamSummary', { status: failure.upstreamStatus }) : failure.requestTimeoutMs !== undefined ? t.workbench.queueStatus.timeoutSummary : failure.uncertain ? t.workbench.queueStatus.uncertainSummary : failure.message}</p>
-                    <details>
-                    <summary>{t.workbench.queueStatus.failureDetails}</summary>
-                    {#if failure.upstreamStatus !== undefined}
-                        <p>{ctx.i18n.format('workbench.queueStatus.upstreamFailure', { status: failure.upstreamStatus })}</p>
-                    {:else if failure.requestTimeoutMs !== undefined}
-                        <p>{ctx.i18n.format('workbench.queueStatus.localTimeout', { seconds: failure.requestTimeoutMs / 1000 })}</p>
-                    {:else}<p>{failure.message}</p>{/if}
-                    {#if failure.elapsedSeconds !== undefined}<p>{ctx.i18n.format('workbench.queueStatus.elapsedRun', { seconds: failure.elapsedSeconds })}</p>{/if}
-                    <p>{failure.uncertain ? t.workbench.queueStatus.uncertainNextStep : failure.details || t.workbench.queueStatus.failureNextStep}</p>
-                    </details>
-                </div>
-            {/if}
             {#if task.stageId === 'cards' && task.state === 'completed'}
                 <span class="cr-task-detail">{ctx.i18n.format('cards.completed', { path: task.payload.targetPath ?? task.filePath ?? '' })}</span>
             {:else if task.stageId === 'cards' && (task.state === 'failed' || task.state === 'interrupted')}
@@ -135,10 +132,11 @@
         font-size: var(--font-ui-small);
     }
     .cr-task-feedback p { margin: 0; line-height: var(--cr-line-height-body); }
-    .cr-task-warning { color: var(--cr-status-warning); }
     .cr-task-feedback summary { cursor: pointer; padding: var(--cr-space-1) 0; font-size: var(--cr-font-sm); }
-    .cr-task-feedback details p + p { margin-top: var(--cr-space-2); }
-    .cr-task-feedback { display: flex; flex-direction: column; gap: var(--cr-space-1); }
+    .cr-task-feedback p + p { margin-top: var(--cr-space-2); }
+    .cr-task-feedback { min-width: 0; color: var(--cr-text-muted); font-size: var(--cr-font-sm); overflow-wrap: anywhere; }
+    .cr-task-feedback[open] { flex-basis: 100%; }
+    .cr-task-feedback summary:focus-visible { outline: 2px solid var(--cr-border-focus); outline-offset: 2px; }
     .cr-task-detail { grid-column: 2 / -1; color: var(--cr-text-muted); overflow-wrap: anywhere; }
     .cr-task-item:last-child { border-bottom: 0; }
     .cr-task-item:hover { background: var(--cr-bg-hover); }
@@ -150,7 +148,7 @@
     .cr-task-state--pending { color: var(--cr-task-pending); }
     .cr-task-state--running { color: var(--cr-task-running); }
     .cr-task-state--completed { color: var(--cr-status-success); }
-    .cr-task-state--interrupted { color: var(--cr-task-failed); }
+    .cr-task-state--interrupted { color: var(--cr-text-muted); }
     .cr-task-state--failed { color: var(--cr-task-failed); }
     .cr-task-state--cancelled { color: var(--cr-text-muted); }
     .cr-task-state--running :global(svg) { animation: cr-queue-spin 1s linear infinite; }

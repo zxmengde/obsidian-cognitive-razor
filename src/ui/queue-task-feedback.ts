@@ -1,3 +1,4 @@
+import { isUncertainTask } from '../core/task-uncertainty';
 import type { TaskRecord } from '../types';
 import { taskFailureDiagnostics } from '../data/task-failure-diagnostics';
 import { toSafeErrorFeedback } from './error-feedback';
@@ -5,7 +6,7 @@ import { toSafeErrorFeedback } from './error-feedback';
 /** Only allowlisted error-code text and finite timestamps reach the queue UI. */
 export function queueTaskFeedback(task: TaskRecord, fallback: string) {
     if (task.state !== 'failed' && task.state !== 'interrupted') return undefined;
-    const uncertain = task.error?.kind === 'uncertain' || task.error?.code === 'E206_PROVIDER_REQUEST_UNCERTAIN';
+    const uncertain = isUncertainTask(task);
     const feedback = toSafeErrorFeedback({ code: uncertain ? 'E206_PROVIDER_REQUEST_UNCERTAIN' : task.error?.code }, fallback);
     const { startedAt, finishedAt } = task;
     const elapsed = typeof startedAt === 'number' && typeof finishedAt === 'number'

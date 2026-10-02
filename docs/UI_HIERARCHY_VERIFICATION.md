@@ -87,3 +87,64 @@ No push, merge or deployment has been performed. The known upstream non-streamin
 524 after extended buffering and cloud streaming ECONNREFUSED are not resolved
 or masked by these UI changes. TLS verification stays enabled; no fallback retry
 or parameter changes were introduced. IP:3000 security checks remain separate.
+
+
+## 2026-10-02 narrow-workbench simplification candidate
+
+Baseline: source archive HEAD `4e0f91d48eff785f46000aeec26ba10c6790c9c4`,
+tree `69c0cd3ae89ec2a43ed86281ebe6ffc97be947d9` (matching the supplied upstream
+tree). Extracted once into the existing package/source location; no vault,
+credentials, user notes, or settings data were read or replaced by development.
+
+- The concept input gets its full row; clearing remains inside the field and
+  the primary action has a separate full-width row. Current note context wraps
+  safely, with note actions behind a native keyboard-accessible disclosure.
+- Unknown requests share one count/risk notice per filtered queue. Each task
+  retains stage/state, retry/remove controls, and a compact details disclosure
+  for allowlisted reason, elapsed time and guidance. Existing retry confirmation
+  and history/filter/pagination behavior stay in place.
+- Healthy chat-task defaults are summarized once. Customized, unavailable and
+  embedding tasks remain individual rows; opening the adjustment list reveals
+  every task. Existing task-editor navigation and retained drafts are unchanged.
+- A six-line shared uncertainty predicate also closes an inconsistent-history
+  edge case: E206 with an older `known` kind cannot bypass individual confirmation
+  or enter a bulk retry. Recovery recognizes the same predicate. Integration
+  tests exercise persisted-state load, ordinary bulk retry, explicit retry and
+  the synthetic task runner for both kind values. No API request is involved.
+
+Validation: npm ci with unchanged lockfile; lint, production types/Svelte,
+test types and production build passed. Seven affected test files are covered
+(140 tests total across the initial UI run and the final guard run; overlapping
+queue/feedback tests were rerun after the shared guard changed). The first new
+queue fixture had a non-bubbling synthetic change event and missing required
+error fields; these test-fixture defects were fixed, then that file passed.
+This is targeted coverage, not a full repository test run.
+
+Final pre-host-QA main.js SHA256:
+`f216cae97e74bd2559b4d07d5e5fca7b5ef86bf0e9de131e921d05a4af9cd57c`.
+Build handed to the independent host QA worker for real Obsidian validation.
+Browser proposal rendering was blocked; no proposal screenshot or browser UI
+acceptance is claimed. Actual host QA, commit and publication are pending.
+
+
+Host QA caught a clear-button placement regression: the first candidate targeted
+an absent generic `.cr-btn` class, leaving the clear control in normal flow.
+The selector now targets the actual shared button's `.cr-btn-ghost` class.
+A computed-style assertion supplements the input/draft test; its 24-test file,
+affected-file lint, test types and production build passed again. The new
+`f216cae9...` build was returned to host QA for geometry verification.
+
+### Final host acceptance and regression
+
+The independent real Obsidian QA pass on build `f216cae9...` is complete:
+360/448px layouts and the clear-button position passed; every one of the seven
+task editors was entered and returned from; unconfigured inherited tasks stayed
+visible; a pending blank maxTokens draft survived back/return navigation; unknown
+request retry was opened and cancelled; selecting the three interrupted records
+exposed no bulk retry action. Temporary UI/settings changes were restored.
+No model API calls were made. Real active-task cancellation, Windows and mobile
+were not exercised in this round.
+
+Final complete Vitest run: **75 files / 933 tests passed**. The latest lint,
+production/test type checks, Svelte check (0 errors / 0 warnings), and production
+build passed. Source behavior and the QA-approved build were frozen afterwards.

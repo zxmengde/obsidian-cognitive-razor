@@ -12,7 +12,7 @@ import type {
 } from "../types";
 import type { SettingsStore } from "../data/settings-store";
 import type { TaskRunner } from "./task-runner";
-import { TaskQueue } from "./task-queue";
+import { TaskQueue, QUEUE_STATE_PATH, QUEUE_STATE_VERSION } from "./task-queue";
 
 function createLogger(): ILogger {
   return {
@@ -108,6 +108,38 @@ it("exposes uncertain requests as interrupted and excludes them from bulk retry"
   expect(await queue.retryFailedDurably()).toEqual(ok(0));
   expect(queue.getSnapshot().status).toMatchObject({ interrupted: 1, failed: 0 });
   await queue.dispose();
+});
+
+it.each(["known", "uncertain"] as const)("restores E206/%s history without bulk or unconfirmed retry", async (kind) => {
+  const state = { version: QUEUE_STATE_VERSION, paused: true, nextQueueOrder: 3, tasks: [
+    { id: 'uncertain-history', workflowId: 'history', nodeId: 'history', stageId: 'core', state: 'failed', queueOrder: 1, createdAt: 1, updatedAt: 1, attempt: 1, error: { code: 'E206_PROVIDER_REQUEST_UNCERTAIN', message: 'synthetic', kind } },
+    { id: 'known-history', workflowId: 'known-history', nodeId: 'known-history', stageId: 'core', state: 'failed', queueOrder: 2, createdAt: 1, updatedAt: 1, attempt: 1, error: { code: 'E204_PROVIDER_ERROR', message: 'synthetic', kind: 'known' } },
+  ] };
+  const files = new Map([[QUEUE_STATE_PATH, JSON.stringify(state)]]);
+  const run = vi.fn(async () => ok({ content: 'synthetic' }));
+  const queue = new TaskQueue(createLogger(), createSettingsStore(), {
+    fileStorage: {
+      read: async (path: string) => files.has(path) ? ok(files.get(path)!) : err('E301_FILE_NOT_FOUND', 'missing'),
+      atomicWrite: async (path: string, value: string) => { files.set(path, value); return ok(undefined); },
+    } as never,
+    workflowPort: { resolve: async task => ok({ concept: createConfirmedConcept(task.nodeId) }) },
+  });
+  try {
+    expect((await queue.initialize()).ok).toBe(true);
+    queue.setTaskRunner(createRunner(run));
+    expect(queue.getTask('uncertain-history')).toMatchObject({ state: 'interrupted', attempt: 1 });
+    expect((await queue.retryDurably('uncertain-history')).ok).toBe(false);
+    expect(await queue.retryFailedDurably()).toEqual(ok(1));
+    expect(queue.getTask('uncertain-history')).toMatchObject({ state: 'interrupted', attempt: 1 });
+    expect(queue.getTask('known-history')).toMatchObject({ state: 'pending', attempt: 2 });
+    expect(run).not.toHaveBeenCalled();
+    expect(await queue.retryUncertainDurably('uncertain-history')).toEqual(ok(true));
+    expect(queue.getTask('uncertain-history')).toMatchObject({ state: 'pending', attempt: 2 });
+    expect(run).not.toHaveBeenCalled();
+    await queue.resumeDurably();
+    await vi.waitFor(() => expect(queue.getSnapshot().status.completed).toBe(2));
+    expect(run).toHaveBeenCalledTimes(2);
+  } finally { await queue.dispose(); }
 });
 
 it("cleans business artifacts only after old completed queue history is durably pruned", async () => {

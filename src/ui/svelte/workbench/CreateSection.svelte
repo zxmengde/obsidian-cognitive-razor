@@ -221,8 +221,11 @@
 <!-- 搜索输入区 -->
 <SectionCard>
     <div class="cr-create-section">
+        <label class="cr-create-heading" for="cr-concept-input">{t.workbench.createConcept.title}</label>
         <div class="cr-search-row">
+            <div class="cr-search-field">
             <input
+                id="cr-concept-input"
                 class="cr-search-input"
                 type="text"
                 placeholder={t.workbench.createConcept.placeholder}
@@ -242,6 +245,7 @@
                     <Icon name="x" size={16} />
                 </Button>
             {/if}
+            </div>
             <Button
                 variant="primary"
                 disabled={!hasInput}
@@ -255,7 +259,10 @@
 
         <!-- 操作按钮行：仅在有活跃 Markdown 笔记时显示 -->
         {#if isMarkdown}
+            <div class="cr-note-context">
             <div class="cr-current-note"><span>{t.workbench.createConcept.currentNote}</span><strong title={activeFile?.path}>{activeFile?.basename ?? activeFile?.path.split('/').pop()?.replace(/\.md$/, '')}</strong></div>
+            <details class="cr-note-actions">
+            <summary>{t.workbench.createConcept.noteActions}</summary>
             <div class="cr-action-grid">
                 <Button
                     variant={activePanel === 'expand' ? 'primary' : 'secondary'}
@@ -284,6 +291,8 @@
                     {t.cards.generate}
                 </Button>
                 {/if}
+            </div>
+            </details>
             </div>
         {:else}
             <div class="cr-hint-text">
@@ -322,15 +331,19 @@
 
     .cr-search-row {
         display: flex;
-        align-items: center;
+        flex-direction: column;
         gap: var(--cr-space-2);
     }
 
+    .cr-create-heading { color: var(--cr-text-normal); font-weight: 600; }
+    .cr-search-field { position: relative; width: 100%; min-width: 0; }
+    .cr-search-field :global(.cr-btn-ghost) { position: absolute; top: 50%; right: var(--cr-space-2); transform: translateY(-50%); }
+
     .cr-search-input {
-        flex: 1;
+        width: 100%;
         min-width: 0;
-        height: 40px;
-        padding: 0 var(--cr-space-3);
+        height: 44px;
+        padding: 0 var(--cr-space-10) 0 var(--cr-space-3);
         border: 1px solid var(--cr-border);
         border-radius: var(--cr-radius-md);
         background: var(--cr-bg-base);
@@ -352,14 +365,17 @@
     /* 操作按钮网格 */
     .cr-action-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+        grid-template-columns: 1fr;
         gap: var(--cr-space-2);
     }
 
-    .cr-current-note { display: flex; align-items: baseline; gap: var(--cr-space-2); min-width: 0; font-size: var(--cr-font-sm); }
+    .cr-note-context { margin-top: var(--cr-space-2); min-width: 0; }
+    .cr-note-actions summary { width: fit-content; cursor: pointer; padding: var(--cr-space-2) 0; color: var(--cr-text-muted); font-size: var(--cr-font-sm); }
+    .cr-note-actions summary:focus-visible { outline: 2px solid var(--cr-border-focus); outline-offset: 2px; }
+    .cr-current-note { display: flex; flex-direction: column; gap: var(--cr-space-1); min-width: 0; font-size: var(--cr-font-sm); }
     .cr-current-note span { flex-shrink: 0; color: var(--cr-text-muted); }
-    .cr-current-note strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
-    .cr-search-row :global(.cr-btn-primary) { min-height: 40px; flex-shrink: 0; }
+    .cr-current-note strong { overflow-wrap: anywhere; font-weight: 500; color: var(--cr-text-normal); }
+    .cr-search-row :global(.cr-btn-primary) { width: 100%; min-height: 40px; flex-shrink: 0; }
 
     /* 引导文字 */
     .cr-hint-text {

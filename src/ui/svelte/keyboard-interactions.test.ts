@@ -51,6 +51,41 @@ function openTaskParameters(target: HTMLElement): HTMLDetailsElement {
 }
 
 describe("keyboard interaction safety", () => {
+  it('keeps concept input separate from folded note actions without losing its draft on note changes', async () => {
+    const define = vi.fn(); const verify = vi.fn(); const cards = vi.fn();
+    const target = document.body.appendChild(document.createElement('div'));
+    const i18n = new I18n();
+    const instance = ui.mount(ui.CreateHost, { target, props: { activeFile: { path: 'Synthetic.md', basename: 'Synthetic', extension: 'md' }, context: {
+      i18n, app: { vault: { on: () => ({}), offref() {}, cachedRead: async () => generateMarkdownContent(generateFrontmatter({ cruid: 'synthetic', type: 'entity', name: 'Synthetic' }), '') } },
+      application: { create: { define }, verify: { start: verify }, cards: { start: cards }, queue: { subscribe: () => () => {}, getSnapshot: () => ({ tasks: [] }) } },
+      settingsApplication: { getSettings: () => ({}), subscribeSettings: () => () => undefined },
+    } } });
+    try {
+      ui.flushSync(); await Promise.resolve(); ui.flushSync();
+      const input = target.querySelector<HTMLInputElement>('.cr-search-input')!;
+      const submit = target.querySelector<HTMLButtonElement>('.cr-search-row > .cr-btn-primary')!;
+      expect(submit.disabled).toBe(true);
+      expect(input.parentElement?.contains(submit)).toBe(false);
+      input.value = '保留的概念'; input.dispatchEvent(new Event('input')); ui.flushSync();
+      expect(submit.disabled).toBe(false);
+      const clearButton = target.querySelector<HTMLButtonElement>(`button[aria-label="${i18n.messages.workbench.createConcept.clear}"]`)!;
+      expect(getComputedStyle(clearButton).position).toBe('absolute');
+      const actions = target.querySelector<HTMLDetailsElement>('.cr-note-actions')!;
+      expect(actions.open).toBe(false);
+      actions.querySelector('summary')!.click(); ui.flushSync();
+      expect(actions.open).toBe(true);
+      expect(actions.querySelectorAll('button')).toHaveLength(3);
+      expect(verify).not.toHaveBeenCalled(); expect(cards).not.toHaveBeenCalled(); expect(define).not.toHaveBeenCalled();
+      (instance as { setActiveFile(file: unknown): void }).setActiveFile({ path: 'Second.md', basename: 'Second', extension: 'md' }); ui.flushSync();
+      expect(target.querySelector('.cr-current-note')?.textContent).toContain('Second');
+      expect(input.value).toBe('保留的概念');
+      (instance as { setActiveFile(file: unknown): void }).setActiveFile(null); ui.flushSync();
+      expect(target.querySelector('.cr-note-actions')).toBeNull(); expect(input.value).toBe('保留的概念');
+      target.querySelector<HTMLButtonElement>(`button[aria-label="${i18n.messages.workbench.createConcept.clear}"]`)!.click(); ui.flushSync();
+      expect(input.value).toBe(''); expect(submit.disabled).toBe(true);
+    } finally { await ui.unmount(instance); target.remove(); }
+  });
+
   it.each(['completed', 'failed', 'interrupted', 'cancelled'] as const)('clears the Verify started notice after its workflow becomes %s', async (terminal) => {
     let state: string = 'running';
     let notify = () => {};

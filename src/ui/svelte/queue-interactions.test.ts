@@ -76,7 +76,9 @@ describe("queue user actions with synthetic application responses", () => {
       expect(target.querySelector<HTMLDetailsElement>('.cr-queue-management')!.open).toBe(false);
       const details = rows[1].querySelector<HTMLDetailsElement>('details')!;
       expect(details.open).toBe(false);
-      expect(rows[1].querySelector('.cr-task-warning')?.textContent).toContain('重试可能重复计费');
+      expect(target.querySelectorAll('.cr-queue-uncertain-notice')).toHaveLength(1);
+      expect(target.querySelector('.cr-queue-uncertain-notice')?.textContent).toContain('重试可能重复处理或计费');
+      expect(rows[1].querySelector('.cr-task-warning')).toBeNull();
       expect(rows[1].querySelector('.cr-task-state')?.closest('details')).toBeNull();
       details.querySelector('summary')!.click(); ui.flushSync();
       expect(details.open).toBe(true); expect(details.textContent).toContain('必须由你单独确认');
@@ -84,6 +86,34 @@ describe("queue user actions with synthetic application responses", () => {
       expect(history.open).toBe(true);
       expect(history.querySelector('.cr-task-item')?.textContent).toContain('Completed history');
       expect(f.queue.retryUncertain).not.toHaveBeenCalled();
+    } finally { await ui.unmount(instance); target.remove(); }
+  });
+
+  it("groups repeated uncertainty once and keeps code-only E206 behind explicit retry confirmation", async () => {
+    const f = fixture();
+    f.tasks.push({ ...f.tasks[1], id: 'code-only', noteTitle: 'Code-only uncertainty', state: 'failed', error: { code: 'E206_PROVIDER_REQUEST_UNCERTAIN', kind: 'known', message: 'synthetic' } });
+    f.status.failed++; f.status.total++;
+    const target = document.body.appendChild(document.createElement('div'));
+    const instance = ui.mount(ui.QueueHost, { target, props: f });
+    try {
+      ui.flushSync();
+      expect(target.querySelectorAll('.cr-queue-uncertain-notice')).toHaveLength(1);
+      expect(target.querySelector('.cr-queue-uncertain-notice')?.textContent).toContain('2 项请求结果未知');
+      expect(target.querySelectorAll('.cr-task-feedback')).toHaveLength(3);
+      const row = target.querySelectorAll('.cr-task-item')[2];
+      row.querySelector<HTMLButtonElement>(`button[aria-label="${f.labels.retry}"]`)!.click(); ui.flushSync();
+      expect(f.queue.retry).not.toHaveBeenCalled(); expect(f.queue.retryUncertain).not.toHaveBeenCalled();
+      target.querySelector<HTMLButtonElement>('[role="dialog"] .cr-btn-secondary')!.click(); ui.flushSync();
+      expect(target.querySelector('[role="dialog"]')).toBeNull();
+      expect(f.queue.retryUncertain).not.toHaveBeenCalled();
+      for (const input of Array.from(target.querySelectorAll<HTMLInputElement>('.cr-task-select'))) input.click();
+      ui.flushSync();
+      const batch = Array.from(target.querySelectorAll('button')).find(button => button.textContent?.includes(f.labels.retrySelected))!;
+      expect(batch.textContent).toContain('(1)');
+      batch.click(); await vi.waitFor(() => expect(f.queue.retry).toHaveBeenCalledExactlyOnceWith('known'));
+      const filter = target.querySelector<HTMLSelectElement>('.cr-queue-select-label select')!;
+      filter.value = 'completed'; filter.dispatchEvent(new Event('change', { bubbles: true })); ui.flushSync();
+      expect(target.querySelector('.cr-queue-uncertain-notice')).toBeNull();
     } finally { await ui.unmount(instance); target.remove(); }
   });
 

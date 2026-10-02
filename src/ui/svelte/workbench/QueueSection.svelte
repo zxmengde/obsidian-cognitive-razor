@@ -13,6 +13,7 @@
     import { TASK_STAGE_IDS } from '../../../types';
     import type { QueueStatus, TaskRecord, TaskStageId, TaskState } from '../../../types';
     import { toSafeErrorFeedback, type UiFeedback } from '../../error-feedback';
+    import { isUncertainTask } from '../../../core/task-uncertainty';
     import { stageLabel } from '../../stage-labels';
 
     type DotStatus = 'idle' | 'running' | 'paused' | 'error';
@@ -62,18 +63,19 @@
     }));
     const primaryTasks = $derived(stateFilter === 'all' ? filteredTasks.filter(task => task.state !== 'completed' && task.state !== 'cancelled') : filteredTasks);
     const historyTasks = $derived(stateFilter === 'all' ? filteredTasks.filter(task => task.state === 'completed' || task.state === 'cancelled') : []);
+    const uncertainCount = $derived(primaryTasks.filter(task => (task.state === 'failed' || task.state === 'interrupted') && isUncertainTask(task)).length);
     const displayedTasks = $derived(primaryTasks.slice(0, visibleLimit));
     const selectableTasks = $derived([...primaryTasks, ...(historyOpen ? historyTasks : [])]);
     const selectedTasks = $derived(tasks.filter((task) => selectedIds.has(task.id)));
     const selectedActive = $derived(selectedTasks.filter((task) => task.state === 'pending' || task.state === 'running'));
-    const selectedFailed = $derived(selectedTasks.filter((task) => task.stageId !== 'cards' && task.state === 'failed' && task.error?.kind !== 'uncertain'));
+    const selectedFailed = $derived(selectedTasks.filter((task) => task.stageId !== 'cards' && task.state === 'failed' && !isUncertainTask(task)));
     const selectedRemovable = $derived(selectedTasks.filter((task) => task.state !== 'running'));
-    const retryableFailedCount = $derived(tasks.filter((task) => task.stageId !== 'cards' && task.state === 'failed' && task.error?.kind !== 'uncertain').length);
+    const retryableFailedCount = $derived(tasks.filter((task) => task.stageId !== 'cards' && task.state === 'failed' && !isUncertainTask(task)).length);
     const allFilteredSelected = $derived(selectableTasks.length > 0 && selectableTasks.every((task) => selectedIds.has(task.id)));
     const hasMore = $derived(displayedTasks.length < primaryTasks.length);
 
     const dotStatus: DotStatus = $derived.by(() => {
-        if (status.failed > 0 || status.interrupted > 0) return 'error';
+        if (status.failed > 0) return 'error';
         if (status.paused) return 'paused';
         if (status.running > 0) return 'running';
         return 'idle';
@@ -163,7 +165,8 @@
     }
 
     function handleRetry(taskId: string): void {
-        if (tasks.find((task) => task.id === taskId)?.error?.kind === 'uncertain') {
+        const task = tasks.find((task) => task.id === taskId);
+        if (task && isUncertainTask(task)) {
             uncertainRetryTaskId = taskId;
             return;
         }
@@ -241,6 +244,9 @@
 
         {#if expanded}
             <div class="cr-queue-details">
+                {#if uncertainCount > 0}
+                    <p class="cr-queue-uncertain-notice" role="note">{ctx.i18n.format('workbench.queueStatus.uncertainGroup', { count: uncertainCount })}</p>
+                {/if}
                 <details class="cr-queue-management">
                     <summary>{t.workbench.queueStatus.manageQueue}</summary>
                 <div class="cr-queue-summary" role="toolbar" aria-label={t.workbench.queueStatus.summary}>
@@ -400,6 +406,7 @@
 {/if}
 
 <style>
+    .cr-queue-uncertain-notice { margin: 0; color: var(--cr-text-muted); font-size: var(--cr-font-sm); line-height: var(--cr-line-height-body); }
     .cr-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
     .cr-queue-management, .cr-queue-history { min-width: 0; }
     summary { cursor: pointer; color: var(--cr-text-muted); font-size: var(--cr-font-sm); padding: var(--cr-space-2) 0; line-height: var(--cr-line-height-body); }
