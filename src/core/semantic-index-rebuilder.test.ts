@@ -258,6 +258,25 @@ describe("SemanticIndexRebuilder", () => {
     expect(harness.replaceAll).not.toHaveBeenCalled();
   });
 
+  it("discards an embedding result delivered after cancellation and permits a fresh rebuild", async () => {
+    const harness = createHarness({ 'notes/a.md': note('a') });
+    const normalEmbed = harness.embed.getMockImplementation()!;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    harness.embed.mockImplementationOnce(async (...args) => {
+      await gate;
+      return normalEmbed(...args);
+    });
+    const rebuilding = harness.service.rebuild();
+    await vi.waitFor(() => expect(harness.embed).toHaveBeenCalledOnce());
+    harness.service.cancel(); release();
+    expect(await rebuilding).toMatchObject({ ok: false, error: { code: 'E310_INVALID_STATE' } });
+    expect(harness.replaceAll).not.toHaveBeenCalled();
+    expect(harness.rebuildFromIndex).not.toHaveBeenCalled();
+    expect(await harness.service.rebuild()).toMatchObject({ ok: true, value: { indexed: 1 } });
+    expect(harness.replaceAll).toHaveBeenCalledOnce();
+  });
+
   it("reports duplicate refresh failure without rolling back a committed index", async () => {
     const harness = createHarness({ "notes/a.md": note("a") });
     harness.rebuildFromIndex.mockResolvedValue(err("E303_DISK_FULL", "disk full"));

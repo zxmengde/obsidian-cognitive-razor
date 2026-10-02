@@ -24,9 +24,9 @@
 
 <style>
     .cr-section-card {
-        background: var(--cr-bg-secondary);
-        border: 1px solid var(--cr-border);
+        background: transparent;
+        border: 0;
         border-radius: var(--cr-radius-md);
-        padding: var(--cr-space-3);
+        padding: 0;
     }
 </style>

@@ -215,6 +215,36 @@ describe("workflow user scenarios", () => {
     expect(reload.files.get("Acceptance.md")?.match(/<!-- cognitive-razor:verify-report -->/g)).toHaveLength(1);
   });
 
+  it("recovers a paid Verify result after a second crash during recovery without resending", async () => {
+    let crashBytes: Map<string, string> | undefined;
+    const f = await fixture(undefined, (point, context) => {
+      if (point === "pending-checkpoint" && context.stageId === "verify") {
+        crashBytes = new Map(f.files);
+        throw new Error("first synthetic crash");
+      }
+    });
+    await create(f);
+    f.start();
+    await vi.waitFor(() => expect(crashBytes).toBeDefined());
+    const recoveringBytes = new Map(crashBytes!);
+    let secondCrashBytes: Map<string, string> | undefined;
+    const recovering = await fixture(recoveringBytes, (point, context) => {
+      if (point === "vault-commit-confirmed" && context.stageId === "verify") {
+        secondCrashBytes = new Map(recoveringBytes);
+        throw new Error("second synthetic crash");
+      }
+    });
+    recovering.start();
+    await vi.waitFor(() => expect(secondCrashBytes).toBeDefined());
+    expect(recovering.run).not.toHaveBeenCalled();
+    const reload = await fixture(new Map(secondCrashBytes!));
+    reload.start();
+    await completed(reload);
+    expect(reload.run).not.toHaveBeenCalled();
+    expect(reload.files.get("Acceptance.md")?.match(/<!-- cognitive-razor:verify-report -->/g)).toHaveLength(1);
+    expect(reload.files.get("Acceptance.md")).toBe(secondCrashBytes!.get("Acceptance.md"));
+  });
+
   it("keeps the final receipt when saving queue completion fails, then recovers without a model call", async () => {
     const f = await fixture();
     const write = f.storage.atomicWrite.bind(f.storage);
@@ -450,4 +480,57 @@ it("retains interrupted requests after reset deletion fails and never resends th
   const crashReload = await fixture(crashBytes); crashReload.start();
   await new Promise((resolve) => setTimeout(resolve, 50));
   expect(crashReload.run).not.toHaveBeenCalled(); expect(crashReload.queue.getSnapshot().status.interrupted).toBe(1);
+});
+
+
+it("preserves edits across duplicate Verify clicks, cancellation, late result and fresh-instance recovery", async () => {
+  const f = await fixture(); await create(f); f.start(); await completed(f); f.run.mockClear();
+  let release!: (value: Result<Record<string, unknown>>) => void;
+  f.run.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+  const starts = await Promise.all([f.coordinator.startVerify("Acceptance.md"), f.coordinator.startVerify("Acceptance.md")]);
+  expect(starts.filter(r => r.ok)).toHaveLength(1);
+  await vi.waitFor(() => expect(release).toBeDefined());
+  const task = f.queue.getSnapshot().tasks.find(t => t.state === "running")!;
+  const edited = f.files.get("Acceptance.md") + "\n用户保留的新编辑"; f.files.set("Acceptance.md", edited);
+  expect((await f.queue.cancelDurably(task.id)).ok).toBe(true);
+  const reload = await fixture(new Map(f.files)); reload.start();
+  release(ok({ reportText: "迟到结果不得覆盖", responseId: "late" }));
+  await vi.waitFor(() => expect(f.queue.getSnapshot().status.running).toBe(0));
+  expect(f.files.get("Acceptance.md")).toBe(edited); expect(reload.files.get("Acceptance.md")).toBe(edited);
+  expect(reload.run).not.toHaveBeenCalled(); expect(reload.queue.getTask(task.id)).toMatchObject({ state: "interrupted", error: { code: "E206_PROVIDER_REQUEST_UNCERTAIN" } });
+  expect((await reload.coordinator.startVerify("Acceptance.md")).ok).toBe(true);
+  await vi.waitFor(() => expect(reload.queue.getSnapshot().status.completed).toBe(5));
+  expect(reload.run).toHaveBeenCalledOnce(); expect(reload.files.get("Acceptance.md")).toContain("用户保留的新编辑");
+  expect(reload.files.get("Acceptance.md")).not.toContain("迟到结果不得覆盖");
+  expect(f.files.get("Acceptance.md")).toBe(edited);
+  expect(reload.files.get("Acceptance.md")?.match(/<!-- cognitive-razor:verify-report -->/g)).toHaveLength(1);
+});
+
+it("does not resend an uncertain Verify after two serialized reloads", async () => {
+  const f = await fixture(); await create(f); f.start(); await completed(f); f.run.mockClear();
+  f.run.mockResolvedValueOnce(err("E206_PROVIDER_REQUEST_UNCERTAIN", "synthetic disconnect"));
+  const before = f.files.get("Acceptance.md"); expect((await f.coordinator.startVerify("Acceptance.md")).ok).toBe(true);
+  await vi.waitFor(() => expect(f.queue.getSnapshot().tasks.some(t => t.state === "interrupted")).toBe(true));
+  const reload = await fixture(new Map(f.files)); reload.start();
+  const again = await fixture(new Map(reload.files)); again.start();
+  expect(f.run).toHaveBeenCalledOnce(); expect(reload.run).not.toHaveBeenCalled(); expect(again.run).not.toHaveBeenCalled();
+  expect(again.files.get("Acceptance.md")).toBe(before);
+  expect(again.queue.getSnapshot().tasks.some(t => t.state === "interrupted")).toBe(true);
+});
+
+it("retains a paid Verify result on edit conflict across restart and local retry without another model call", async () => {
+  const f = await fixture(); await create(f); f.start(); await completed(f); f.run.mockClear();
+  let release!: (value: Result<Record<string, unknown>>) => void;
+  f.run.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+  await f.coordinator.startVerify("Acceptance.md"); await vi.waitFor(() => expect(release).toBeDefined());
+  const edited = f.files.get("Acceptance.md") + "\n生成期间的用户修改"; f.files.set("Acceptance.md", edited);
+  release(ok({ reportText: "已付费但待解决冲突", responseId: "synthetic-paid" }));
+  await vi.waitFor(() => expect(f.queue.getSnapshot().status.failed).toBe(1));
+  const task = f.queue.getSnapshot().tasks.find(t => t.state === "failed")!;
+  const reload = await fixture(new Map(f.files)); reload.start();
+  expect((await reload.queue.retryDurably(task.id)).ok).toBe(true);
+  await vi.waitFor(() => expect(reload.queue.getTask(task.id)?.state).toBe("failed"));
+  expect(reload.queue.getTask(task.id)?.error?.code).toBe("E320_TASK_CONFLICT");
+  expect(reload.run).not.toHaveBeenCalled(); expect(reload.files.get("Acceptance.md")).toBe(edited);
+  expect(reload.store.list().some(a => a.pendingStageResult?.result.reportText === "已付费但待解决冲突")).toBe(true);
 });

@@ -60,7 +60,8 @@ describe("current UI architecture", () => {
     expect(section).not.toContain("error.message");
     expect(section).not.toContain("queueStatus.details");
     expect(section).not.toContain("queueStatus.failureSummary");
-    expect(list).not.toContain("task.error");
+    expect(list).toContain("queueTaskFeedback");
+    expect(list).not.toContain("task.error.message");
 
     const locale = JSON.parse(read("src/locales/zh.json")) as {
       workbench: { queueStatus: Record<string, unknown> };
@@ -325,7 +326,9 @@ describe("current UI architecture", () => {
     const source = read("src/ui/svelte/settings/SettingsRoot.svelte");
 
     expect(source).toContain("'providers' | 'workflow' | 'backup'");
-    expect(source).toContain("<ProvidersTab {expandedTask} />");
+    expect(source).toContain("<ProvidersTab onConfigureTask={configureTask} {overridesOpen}");
+    expect(source).toContain("<TaskDetails taskType={task}");
+    expect(read("src/ui/svelte/settings/ProvidersTab.svelte")).not.toContain("<TaskModelCard");
     expect(source).toContain("<WorkflowTab onConfigureTask={configureTask} />");
     expect(source).toContain("<MaintenanceTab />");
     expect(read("src/ui/svelte/settings/MaintenanceTab.svelte")).toContain("<BackupTab />");
@@ -424,7 +427,10 @@ describe("current UI architecture", () => {
     const confirm = read("src/ui/components/ConfirmModal.svelte");
     const provider = read("src/ui/svelte/modals/ProviderModal.svelte");
 
-    expect(shell).toContain("<svelte:window onkeydown={handleKeydown} />");
+    expect(shell).toContain("dialogEl?.ownerDocument");
+    expect(shell).toContain("ownerWindow.addEventListener('keydown', handleKeydown)");
+    expect(shell).toContain("ownerWindow.removeEventListener('keydown', handleKeydown)");
+    expect(shell).not.toContain("<svelte:window");
     expect(shell).toContain("previousActiveElement.isConnected");
     expect(shell).toContain("aria-modal=\"true\"");
     expect(confirm).toContain("<ModalShell");
@@ -520,7 +526,7 @@ describe("current UI architecture", () => {
     expect(expand).toContain("submissionGeneration === loadGeneration");
     expect(expand).not.toContain("replaceSelection(getCreatableIndices(result.value))");
     expect(expand).toContain("String(selected.size)");
-    expect(providers).toContain("settingsApplication.updateTaskModel(type, partial)");
+    expect(read("src/ui/svelte/settings/TaskDetails.svelte")).toContain("settingsApplication.updateTaskModel(type, partial)");
     expect(workflowSettings).not.toContain("<TaskModelCard");
     expect(providers).toContain("ctx.settingsApplication.updateProvider(id, config)");
     expect(providers).not.toContain("sanitizeTaskModelsForProvider");

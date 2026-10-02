@@ -33,14 +33,16 @@
     const queue = ctx.application.queue;
 
     let expanded = $state(true);
+    let historyOpen = $state(false);
     let stateFilter = $state<QueueFilter>(untrack(() => ctx.settingsApplication.getSettings().queueDefaultFilter ?? 'all'));
     let pageSize = $state(untrack(() => ctx.settingsApplication.getSettings().queuePageSize ?? 50));
+    let historyLimit = $state(untrack(() => pageSize));
     let stageFilter = $state<StageFilter>('all');
     let selectedIds = new SvelteSet<string>();
     let visibleLimit = $state(untrack(() => pageSize));
     const unsubscribeDisplaySettings = ctx.settingsApplication.subscribeSettings(settings => {
         const nextPageSize = settings.queuePageSize ?? 50;
-        if (nextPageSize !== pageSize) { pageSize = nextPageSize; visibleLimit = nextPageSize; }
+        if (nextPageSize !== pageSize) { pageSize = nextPageSize; visibleLimit = nextPageSize; historyLimit = nextPageSize; }
     });
     $effect(() => () => unsubscribeDisplaySettings());
     let pendingConfirmation = $state<ConfirmAction>(null);
@@ -58,14 +60,17 @@
             || task.state === stateFilter;
         return stateMatches && (stageFilter === 'all' || task.stageId === stageFilter);
     }));
-    const displayedTasks = $derived(filteredTasks.slice(0, visibleLimit));
+    const primaryTasks = $derived(stateFilter === 'all' ? filteredTasks.filter(task => task.state !== 'completed' && task.state !== 'cancelled') : filteredTasks);
+    const historyTasks = $derived(stateFilter === 'all' ? filteredTasks.filter(task => task.state === 'completed' || task.state === 'cancelled') : []);
+    const displayedTasks = $derived(primaryTasks.slice(0, visibleLimit));
+    const selectableTasks = $derived([...primaryTasks, ...(historyOpen ? historyTasks : [])]);
     const selectedTasks = $derived(tasks.filter((task) => selectedIds.has(task.id)));
     const selectedActive = $derived(selectedTasks.filter((task) => task.state === 'pending' || task.state === 'running'));
     const selectedFailed = $derived(selectedTasks.filter((task) => task.stageId !== 'cards' && task.state === 'failed' && task.error?.kind !== 'uncertain'));
     const selectedRemovable = $derived(selectedTasks.filter((task) => task.state !== 'running'));
     const retryableFailedCount = $derived(tasks.filter((task) => task.stageId !== 'cards' && task.state === 'failed' && task.error?.kind !== 'uncertain').length);
-    const allFilteredSelected = $derived(filteredTasks.length > 0 && filteredTasks.every((task) => selectedIds.has(task.id)));
-    const hasMore = $derived(displayedTasks.length < filteredTasks.length);
+    const allFilteredSelected = $derived(selectableTasks.length > 0 && selectableTasks.every((task) => selectedIds.has(task.id)));
+    const hasMore = $derived(displayedTasks.length < primaryTasks.length);
 
     const dotStatus: DotStatus = $derived.by(() => {
         if (status.failed > 0 || status.interrupted > 0) return 'error';
@@ -83,9 +88,10 @@
         return t.workbench.queueStatus.noTasks;
     });
 
-    const statsText: string = $derived(
-        `${t.workbench.queueStatus.total} ${status.total} · ${t.workbench.queueStatus.pending} ${status.pending} · ${t.workbench.queueStatus.running} ${status.running} · ${t.workbench.queueStatus.failed} ${status.failed} · ${t.cards.interrupted} ${status.interrupted}`,
-    );
+    const statsText = $derived(ctx.i18n.format('workbench.queueStatus.attentionSummary', {
+        attention: status.failed + status.interrupted,
+        active: status.pending + status.running,
+    }));
 
     $effect(() => {
         const taskIds = new SvelteSet(tasks.map((task) => task.id));
@@ -109,9 +115,9 @@
     function toggleSelectAll(): void {
         const next = new SvelteSet(selectedIds);
         if (allFilteredSelected) {
-            for (const task of filteredTasks) next.delete(task.id);
+            for (const task of selectableTasks) next.delete(task.id);
         } else {
-            for (const task of filteredTasks) next.add(task.id);
+            for (const task of selectableTasks) next.add(task.id);
         }
         selectedIds.clear();
         for (const taskId of next) selectedIds.add(taskId);
@@ -214,7 +220,8 @@
     <div class="cr-queue-section">
         <div class="cr-queue-status-bar">
             <button class="cr-queue-status-info" type="button" onclick={() => expanded = !expanded} aria-expanded={expanded}>
-                <StatusDot status={dotStatus} label={statusLabel} />
+                <StatusDot status={dotStatus} />
+                <span class="cr-visually-hidden">{statusLabel}</span>
                 <span class="cr-queue-title">{t.workbench.queueStatus.title}</span>
                 <span class="cr-queue-stats" aria-live="polite">{statsText}</span>
                 <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={16} />
@@ -234,6 +241,8 @@
 
         {#if expanded}
             <div class="cr-queue-details">
+                <details class="cr-queue-management">
+                    <summary>{t.workbench.queueStatus.manageQueue}</summary>
                 <div class="cr-queue-summary" role="toolbar" aria-label={t.workbench.queueStatus.summary}>
                     <button type="button" class:active={stateFilter === 'active'} onclick={() => stateFilter = 'active'}>
                         <span>{t.workbench.queueStatus.active}</span><strong>{status.pending + status.running}</strong>
@@ -317,6 +326,7 @@
                     {/if}
                 </div>
 
+                </details>
                 {#if displayedTasks.length > 0}
                     <QueueTaskList
                         tasks={displayedTasks}
@@ -329,11 +339,22 @@
                     />
                     {#if hasMore}
                         <Button variant="ghost" size="sm" onclick={() => visibleLimit += pageSize}>
-                            {t.workbench.queueStatus.showMore} ({filteredTasks.length - displayedTasks.length})
+                            {t.workbench.queueStatus.showMore} ({primaryTasks.length - displayedTasks.length})
                         </Button>
                     {/if}
                 {:else}
                     <EmptyState message={t.workbench.queueStatus.noFilteredTasks} icon="inbox" />
+                {/if}
+                {#if historyTasks.length > 0}
+                    <details class="cr-queue-history" bind:open={historyOpen}>
+                        <summary>{t.workbench.queueStatus.history} <span>{historyTasks.length}</span></summary>
+                        {#if historyOpen}
+                        <QueueTaskList tasks={historyTasks.slice(0, historyLimit)} {selectedIds} onselect={selectTask} onretry={handleRetry} oncancel={handleCancel} onremove={handleRemove} disabled={actionRunning} />
+                        {#if historyTasks.length > historyLimit}
+                            <Button variant="ghost" size="sm" onclick={() => historyLimit += pageSize}>{t.workbench.queueStatus.showMore} ({historyTasks.length - historyLimit})</Button>
+                        {/if}
+                        {/if}
+                    </details>
                 {/if}
             </div>
         {/if}
@@ -348,8 +369,8 @@
     <ConfirmModal
         title={t.workbench.queueStatus.cancelAllConfirmTitle}
         message={t.workbench.queueStatus.cancelAllConfirmMessage}
-        confirmLabel={t.workbench.queueStatus.cancel}
-        cancelLabel={t.common.cancel}
+        confirmLabel={t.workbench.queueStatus.confirmCancelTasks}
+        cancelLabel={t.workbench.queueStatus.keepTasks}
         danger={true}
         onconfirm={confirmBatchAction}
         oncancel={() => pendingConfirmation = null}
@@ -379,12 +400,20 @@
 {/if}
 
 <style>
+    .cr-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+    .cr-queue-management, .cr-queue-history { min-width: 0; }
+    summary { cursor: pointer; color: var(--cr-text-muted); font-size: var(--cr-font-sm); padding: var(--cr-space-2) 0; line-height: var(--cr-line-height-body); }
+    .cr-queue-management[open] { padding-bottom: var(--cr-space-3); border-bottom: 1px solid var(--cr-border); }
+    .cr-queue-management[open] > div { margin-top: var(--cr-space-3); }
+    .cr-queue-history { border-top: 1px solid var(--cr-border); }
+    .cr-queue-history summary span { margin-left: var(--cr-space-2); font-variant-numeric: tabular-nums; }
+
     .cr-queue-section { display: flex; flex-direction: column; gap: var(--cr-space-2); }
-    .cr-queue-status-bar { display: flex; align-items: center; gap: var(--cr-space-2); }
-    .cr-queue-status-info { display: flex; align-items: center; gap: var(--cr-space-2); flex: 1; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+    .cr-queue-status-bar { display: flex; align-items: flex-start; gap: var(--cr-space-2); }
+    .cr-queue-status-info { display: flex; flex-wrap: wrap; align-items: center; gap: var(--cr-space-2); flex: 1; min-width: 0; height: auto; min-height: 32px; box-shadow: none; border-radius: 0; line-height: var(--cr-line-height-body); padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
     .cr-queue-title { font-weight: 600; color: var(--cr-text-normal); }
-    .cr-queue-stats { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cr-text-muted); font-size: var(--font-ui-smaller); }
-    .cr-queue-details { display: flex; flex-direction: column; gap: var(--cr-space-3); margin-top: var(--cr-space-3); }
+    .cr-queue-stats { flex-basis: 100%; order: 1; min-width: 0; white-space: normal; overflow-wrap: anywhere; color: var(--cr-text-muted); font-size: var(--font-ui-smaller); }
+    .cr-queue-details { display: flex; flex-direction: column; gap: var(--cr-space-3); margin-top: var(--cr-space-1); }
     .cr-queue-summary { display: grid; grid-template-columns: repeat(4, 1fr); border-block: 1px solid var(--cr-border); }
     .cr-queue-summary button { display: flex; justify-content: space-between; gap: var(--cr-space-2); padding: var(--cr-space-2); border: 0; border-right: 1px solid var(--cr-border); background: transparent; color: var(--cr-text-muted); cursor: pointer; }
     .cr-queue-summary button:last-child { border-right: 0; }
@@ -397,6 +426,12 @@
     .cr-queue-actions { padding-block: var(--cr-space-1); }
     .cr-queue-actions :global(button) { display: inline-flex; align-items: center; gap: var(--cr-space-1); }
     @media (max-width: 620px) {
+        .cr-queue-summary { grid-template-columns: repeat(2, 1fr); }
+        .cr-queue-summary button:nth-child(2) { border-right: 0; }
+        .cr-queue-summary button:nth-child(-n + 2) { border-bottom: 1px solid var(--cr-border); }
+        .cr-queue-select-all { margin-left: 0; }
+    }
+    @container cr-workbench (max-width: 620px) {
         .cr-queue-summary { grid-template-columns: repeat(2, 1fr); }
         .cr-queue-summary button:nth-child(2) { border-right: 0; }
         .cr-queue-summary button:nth-child(-n + 2) { border-bottom: 1px solid var(--cr-border); }

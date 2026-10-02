@@ -12,7 +12,8 @@ export function isSafeCardPath(value: unknown): value is string {
 }
 
 export function captureCardInput(path: string, content: string, source: string, target: string): Result<CardPayload & { nodeId: string; noteTitle: string }> {
-  if (![path, source, target].every(isSafeCardPath) || !path.startsWith(`${source}/`) || !path.endsWith(".md")) return err("E101_INVALID_INPUT", "源笔记必须位于配置的知识库目录内");
+  if (![path, source, target].every(isSafeCardPath) || !path.endsWith(".md")) return err("E101_INVALID_INPUT", "源笔记必须位于配置的知识库目录内");
+  if (!path.startsWith(`${source}/`)) return err("E103_CARDS_SOURCE_OUTSIDE_ROOT", "源笔记必须位于配置的知识库目录内");
   const extracted = extractFrontmatter(content);
   if (!extracted) return err("E101_INVALID_INPUT", "只能为 Cognitive Razor 节点生成记忆卡片");
   const body = stripVerifyReport(extracted.body).trim();

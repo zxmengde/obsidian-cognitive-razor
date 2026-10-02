@@ -1,7 +1,7 @@
 <!-- AI 服务与任务模型设置。 -->
 <script lang="ts">
     import { getSettingsContext } from '../../bridge/context';
-    import type { PluginSettings, ProviderConfig, Result, TaskType, TaskModelConfig } from '../../../types';
+    import type { PluginSettings, ProviderConfig, Result, TaskType } from '../../../types';
     import type { ProviderProbeAttemptReason, ProviderProbeRequest } from '../../../core/model-gateway';
     import {
         toProviderProbeReadModel,
@@ -16,11 +16,13 @@
     import Button from '../../components/Button.svelte';
     import { resolveTaskModelSnapshot } from '../../../core/task-model-resolver';
 
-    import TaskModelCard from './TaskModelCard.svelte';
     import { taskSettingsSummary } from '../../settings-summaries';
 
-    let { expandedTask = undefined }: { expandedTask?: TaskType } = $props();
-    let openTask = $derived(expandedTask);
+    let { onConfigureTask, overridesOpen, onToggleOverrides }: {
+        onConfigureTask: (task: TaskType) => void;
+        overridesOpen: boolean;
+        onToggleOverrides: () => void;
+    } = $props();
     const displayTasks: TaskType[] = ['define', 'tag', 'write', 'verify', 'merge', 'cards', 'index'];
 
     const ctx = getSettingsContext();
@@ -193,6 +195,9 @@
         <SettingItem name={i18n.t('settings.redesign.defaultUse')}>
             <Select value={settings.defaultProviderId} options={defaultProviderOptions} ariaLabel={i18n.t('settings.provider.defaultProvider')} onchange={handleDefaultProviderChange} />
         </SettingItem>
+        {#if enabledChatProviderIds.length > 0 && !settings.defaultProviderId}
+            <p class="cr-task-summary__issue" role="status">{i18n.t('settings.redesign.defaultMissing')}</p>
+        {/if}
         <p class="cr-default-model">{settings.providers[settings.defaultProviderId]?.defaultChatModel || i18n.t('settings.redesign.unconfigured')} <span>· {i18n.t('settings.redesign.providerDefaultModel')}</span></p>
         {#if settings.providers[settings.defaultProviderId]}
             <Button variant="ghost" size="sm" onclick={() => handleEditProvider(settings.defaultProviderId)}>{i18n.t('settings.redesign.editConnection')}</Button>
@@ -200,25 +205,29 @@
         <p class="cr-settings-hint">{i18n.t('settings.redesign.defaultIndexWarning')}</p>
     </SettingsSection>
     <SettingsSection title={i18n.t('settings.redesign.taskUsage')} description={i18n.t('settings.redesign.effectiveConfig')}>
-        <div class="cr-task-list">
+        <button type="button" class="cr-task-overrides-toggle" onclick={onToggleOverrides} aria-label={i18n.t('settings.redesign.taskOverrides')} aria-expanded={overridesOpen} aria-controls="cr-task-usage">
+            {i18n.t('settings.redesign.taskOverrides')} · {i18n.t(overridesOpen ? 'settings.redesign.collapse' : 'settings.redesign.expand')}
+        </button>
+        <div class="cr-task-list" id="cr-task-usage">
             {#each displayTasks as taskType (taskType)}
                 {@const summary = taskSettingsSummary(settings, taskType)}
-                <section class="cr-task-row" class:is-open={openTask === taskType}>
-                    <button class="cr-task-summary" id={`cr-task-trigger-${taskType}`} aria-expanded={openTask === taskType} aria-controls={`cr-task-panel-${taskType}`} onclick={() => openTask = openTask === taskType ? undefined : taskType}>
+                <section class="cr-task-row">
+                    {#snippet summaryCopy()}
                         <span class="cr-task-summary__copy">
                             <span class="cr-task-summary__title">{i18n.t(`settings.redesign.tasks.${taskType}`)} <span class="cr-task-source">{i18n.t(`settings.redesign.${summary.source}`)}</span></span>
                             <span class="cr-task-summary__model">{summary.resolved.providerId || '—'} · {summary.resolved.model || '—'}</span>
                             {#if summary.issue}<span class="cr-task-summary__issue">{i18n.t(`settings.redesign.${summary.issue}`)}</span>{/if}
                             {#if taskType === 'cards'}<span class="cr-task-summary__hint">{i18n.t('settings.redesign.cardsIndependent')}</span>{/if}
                         </span>
-                        <span class="cr-task-summary__action">{i18n.t(openTask === taskType ? 'settings.redesign.collapse' : 'settings.redesign.adjust')} <span aria-hidden="true">{openTask === taskType ? '⌃' : '›'}</span></span>
-                    </button>
-                    <div id={`cr-task-panel-${taskType}`} role="region" aria-labelledby={`cr-task-trigger-${taskType}`}>
-                        {#if openTask === taskType}
-                            <TaskModelCard {taskType} config={settings.taskModels[taskType]} providers={settings.providers} defaultProviderId={settings.defaultProviderId} resolved={summary.resolved} isDefault={settingsApplication.isTaskModelDefault(taskType)} {i18n} onUpdate={(type: TaskType, partial: Partial<TaskModelConfig>) => void settingsApplication.updateTaskModel(type, partial)} onReset={(type: TaskType) => void settingsApplication.resetTaskModel(type)} />
-                            {#if taskType === 'index'}<p class="cr-settings-hint">{i18n.t('settings.redesign.indexChangeWarning')}</p>{/if}
-                        {/if}
-                    </div>
+                    {/snippet}
+                    {#if overridesOpen}
+                        <button class="cr-task-summary" id={`cr-task-trigger-${taskType}`} onclick={() => onConfigureTask(taskType)}>
+                            {@render summaryCopy()}
+                            <span class="cr-task-summary__action">{i18n.t('settings.redesign.adjust')} <span aria-hidden="true">›</span></span>
+                        </button>
+                    {:else}
+                        <div class="cr-task-summary">{@render summaryCopy()}</div>
+                    {/if}
                 </section>
             {/each}
         </div>
@@ -267,14 +276,16 @@
     .cr-providers-tab { display: flex; flex-direction: column; }
     .cr-default-model { margin: var(--cr-space-3) 0 var(--cr-space-1); overflow-wrap: anywhere; }
     .cr-default-model span, .cr-empty-hint { color: var(--cr-text-muted); font-size: var(--cr-font-sm); }
+    .cr-task-overrides-toggle { height: auto; padding: var(--cr-space-2) 0; border: 0; background: transparent; box-shadow: none; color: var(--cr-interactive-accent); font: inherit; text-align: left; cursor: pointer; }
+    .cr-task-overrides-toggle:focus-visible { outline: 2px solid var(--cr-border-focus); }
     .cr-task-row { border-top: 1px solid var(--cr-border); }
-    .cr-task-summary { display: flex; align-items: center; justify-content: space-between; gap: var(--cr-space-3); width: 100%; height: auto; border: 0; border-radius: 0; background: transparent; box-shadow: none; text-align: left; padding: var(--cr-space-3) 0; color: var(--cr-text-normal); }
-    .cr-task-summary:hover { background: var(--cr-bg-hover); }
+    .cr-task-summary { display: flex; align-items: center; justify-content: space-between; gap: var(--cr-space-3); width: 100%; height: auto; border: 0; border-radius: 0; background: transparent; box-shadow: none; text-align: left; padding: var(--cr-space-4) 0; line-height: var(--cr-line-height-body); color: var(--cr-text-normal); }
+    button.cr-task-summary:hover { background: var(--cr-bg-hover); }
     .cr-task-summary:focus-visible { outline: 2px solid var(--cr-border-focus); outline-offset: 2px; }
     .cr-task-summary__copy { display: flex; flex-direction: column; gap: var(--cr-space-1); min-width: 0; overflow-wrap: anywhere; }
-    .cr-task-summary__title { font-weight: 600; font-size: var(--font-ui-medium); }
+    .cr-task-summary__title { font-weight: 600; font-size: var(--cr-font-base); }
     .cr-task-source { margin-left: var(--cr-space-2); font-weight: 400; color: var(--cr-text-muted); font-size: var(--cr-font-xs); }
-    .cr-task-summary__model { color: var(--cr-text-muted); font-size: var(--font-ui-small); }
+    .cr-task-summary__model { color: var(--cr-text-muted); font-size: var(--cr-font-sm); }
     .cr-task-summary__hint, .cr-task-summary__action { font-size: var(--cr-font-xs); color: var(--cr-text-muted); }
     .cr-task-summary__action { flex-shrink: 0; }
     .cr-task-summary__issue { color: var(--cr-status-warning); font-size: var(--cr-font-xs); }

@@ -8,11 +8,11 @@ import type {
 } from "../types";
 import type { ModelGateway } from "./model-gateway";
 import type { PromptManager } from "./prompt-manager";
+import { buildVerifyMetaContext } from "./verify-metadata";
 import { stripVerifyReport } from "./semantic-index-text";
 import { ResponsePipeline } from "./response-pipeline";
 import {
   buildTaskChatRequest,
-  buildTaskMetaContext,
   createTaskError,
   getTaskAbortError,
   buildSourcePackage,
@@ -43,7 +43,7 @@ export class VerifyTaskExecutor {
         return createTaskError(task, { code: "E102_MISSING_FIELD", message: "缺少待验证内容 (currentContent)" });
       }
 
-      const metaContext = buildTaskMetaContext(payload);
+      const metaContext = buildVerifyMetaContext(payload);
       const prompt = this.deps.promptManager.build("verify", {
         CTX_META: metaContext,
         CTX_CURRENT: stripVerifyReport(payload.currentContent),

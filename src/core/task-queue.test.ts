@@ -687,12 +687,15 @@ describe("TaskQueue runtime model", () => {
     queue.setTaskRunner(createRunner(async () => err(
       "E206_PROVIDER_REQUEST_UNCERTAIN",
       "result unknown",
+      { kind: "upstream-http", status: 524, rawResponse: "synthetic secret body" },
     )));
     const id = await enqueue(queue, createWriteTask("uncertain-retry"));
     await vi.waitFor(() => expect(queue.getTask(id)?.state).toBe("interrupted"));
     await queue.pauseDurably();
 
     expect(queue.getTask(id)?.error?.kind).toBe("uncertain");
+    expect(queue.getTask(id)?.error?.upstreamStatus).toBe(524);
+    expect(JSON.stringify(queue.getTask(id)?.error)).not.toContain("synthetic secret body");
     await expect(queue.retryFailedDurably()).resolves.toEqual(ok(0));
     expect(queue.getTask(id)?.state).toBe("interrupted");
     await expect(queue.retryDurably(id)).resolves.toMatchObject({ ok: false, error: { code: "E310_INVALID_STATE" } });

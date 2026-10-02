@@ -47,6 +47,8 @@ function isSafeTaskError(value: unknown): value is TaskError {
   return typeof error.code === "string" && typeof error.message === "string" &&
     (error.kind === "known" || error.kind === "uncertain") &&
     (error.stage === undefined || typeof error.stage === "string") &&
+    (error.upstreamStatus === undefined || [408, 502, 503, 504, 524].includes(error.upstreamStatus as number)) &&
+    (error.requestTimeoutMs === undefined || (Number.isSafeInteger(error.requestTimeoutMs) && (error.requestTimeoutMs as number) > 0)) &&
     (error.providerAttempts === undefined ||
       (Number.isSafeInteger(error.providerAttempts) && (error.providerAttempts as number) > 0));
 }

@@ -41,7 +41,7 @@ document.getElementById('fail-save').onclick = () => { failNextSave = true; docu
 document.getElementById('theme').onclick = () => document.body.classList.toggle('light');
 document.getElementById('narrow').onclick = () => document.getElementById('app').style.width = '320px';
 document.getElementById('wide').onclick = () => document.getElementById('app').style.width = '820px';
-mount(SettingsRoot, {target:document.getElementById('app'), props:{app:{},i18n:new I18n(),settingsApplication:application}});
+mount(SettingsRoot, {target:document.getElementById('app'), props:{app:{},i18n:new I18n(),settingsApplication:application,onTabNavigate:() => window.scrollTo({top:0})}});
 })();`;
 await build({ stdin: { contents: entry, resolveDir: process.cwd() }, bundle: true, outfile: path.join(out, 'preview.js'), format: 'iife', conditions: ['svelte', 'browser'], mainFields: ['svelte', 'browser', 'module', 'main'], alias: { obsidian: './__mocks__/obsidian.ts', '@': './src' }, plugins: [sveltePlugin({ preprocess: sveltePreprocess(), compilerOptions: { css: 'injected' } })] });
 await copyFile('styles.css', path.join(out, 'styles.css'));

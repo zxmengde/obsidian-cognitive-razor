@@ -37,11 +37,12 @@
 
 <style>
     .cr-settings-section {
-        padding: var(--cr-space-4) 0;
+        padding: var(--cr-space-6) 0;
         border-bottom: 1px solid var(--cr-border);
     }
 
-    .cr-settings-section:first-child {
+    /* Page headers precede the first section, so :first-child never matched. */
+    .cr-settings-section:first-of-type {
         padding-top: 0;
     }
 
@@ -54,7 +55,7 @@
         align-items: flex-start;
         justify-content: space-between;
         gap: var(--cr-space-4);
-        margin-bottom: var(--cr-space-2);
+        margin-bottom: var(--cr-space-3);
     }
 
     .cr-settings-section__heading {
@@ -63,8 +64,9 @@
 
     .cr-settings-section h3 {
         margin: 0;
+        padding: 0;
         color: var(--cr-text-normal);
-        font-size: var(--font-ui-medium);
+        font-size: calc(var(--cr-font-base) + 1px);
         font-weight: 600;
     }
 

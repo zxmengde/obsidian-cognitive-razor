@@ -707,3 +707,24 @@ describe("SettingsStore presentation controls", () => {
     expect(store.getSettings()).toMatchObject(defaults);
   });
 });
+
+
+describe("stream transport compatibility", () => {
+  it("loads a legacy file with Node default without rewriting disk", async () => {
+    const legacy = structuredClone(DEFAULT_SETTINGS) as Partial<PluginSettings>; delete legacy.streamingTransport;
+    const plugin = createPlugin(legacy); const store = new SettingsStore(plugin); await store.loadSettings();
+    expect(store.getSettings().streamingTransport).toBe("node-http"); expect(plugin.saved).toHaveLength(0);
+  });
+  it("persists renderer selection, reloads it, and explicitly rolls back to Node", async () => {
+    const plugin = createPlugin(); const store = new SettingsStore(plugin); await store.loadSettings();
+    expect((await store.updateSettings({ streamingTransport: "renderer-fetch" })).ok).toBe(true);
+    const reloaded = new SettingsStore(createPlugin(plugin.saved.at(-1))); await reloaded.loadSettings();
+    expect(reloaded.getSettings().streamingTransport).toBe("renderer-fetch");
+    expect((await reloaded.updateSettings({ streamingTransport: "node-http" })).ok).toBe(true); expect(reloaded.getSettings().streamingTransport).toBe("node-http");
+  });
+  it("rejects invalid live choices and normalizes invalid saved values without a write", async () => {
+    const plugin = createPlugin({ ...DEFAULT_SETTINGS, streamingTransport: "auto" }); const store = new SettingsStore(plugin); await store.loadSettings();
+    expect(store.getSettings().streamingTransport).toBe("node-http");
+    expect((await store.updateSettings({ streamingTransport: "auto" as never })).ok).toBe(false); expect(plugin.saved).toHaveLength(0);
+  });
+});

@@ -12,18 +12,21 @@
     let {
         name,
         description = '',
+        inlineControl = false,
         children,
     }: {
         /** 设置项标签名称 */
         name: string;
         /** 可选的说明文字 */
         description?: string;
+        /** Keep a compact control (such as a switch) beside its wrapping label. */
+        inlineControl?: boolean;
         /** 右侧控件插槽 */
         children?: Snippet;
     } = $props();
 </script>
 
-<div class="cr-setting-item">
+<div class="cr-setting-item" class:cr-setting-item--inline-control={inlineControl}>
     <div class="cr-setting-item__info">
         <div class="cr-setting-item__name">{name}</div>
         {#if description}
@@ -43,7 +46,7 @@
         align-items: center;
         justify-content: space-between;
         gap: var(--cr-space-4);
-        padding: 14px 0;
+        padding: var(--cr-space-4) 0;
         border-bottom: 1px solid var(--cr-border);
         min-height: 40px;
     }
@@ -55,7 +58,7 @@
 
     .cr-setting-item__name {
         color: var(--cr-text-normal);
-        font-size: var(--font-ui-medium);
+        font-size: var(--cr-font-base);
         line-height: 1.4;
     }
 

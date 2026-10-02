@@ -64,12 +64,10 @@
     let taskProbeType = $state<Exclude<TaskType, 'index'>>('write');
     let lastTaskProbeType = $state<Exclude<TaskType, 'index'> | undefined>();
 
-    /** 遮蔽 API Key 显示 */
-    let maskedKey = $derived(
-        config.apiKey
-            ? config.apiKey.slice(0, 4) + '••••' + config.apiKey.slice(-4)
-            : '—'
-    );
+    /** Summary must never expose even a fragment of the saved credential. */
+    let keyStatus = $derived(i18n.t(config.apiKey.trim()
+        ? 'settings.provider.apiKeyConfigured'
+        : 'settings.provider.apiKeyNotConfigured'));
 
     let apiFormatLabel = $derived(
         i18n.t(`modals.providerConfig.apiFormats.${config.apiFormat === 'disabled'
@@ -136,7 +134,7 @@
         <details class="cr-provider-details">
             <summary>{i18n.t('settings.redesign.connectionDetails')}</summary>
             <dl>
-                <dt>API Key</dt><dd>{maskedKey}</dd>
+                <dt>API Key</dt><dd>{keyStatus}</dd>
                 <dt>Base URL</dt><dd>{config.baseUrl || '—'}</dd>
                 <dt>API</dt><dd>{apiFormatLabel}</dd>
                 <dt>{i18n.t('settings.provider.model')}</dt><dd>{config.defaultChatModel || '—'}</dd>
@@ -174,7 +172,7 @@
     .cr-provider-card { padding: var(--cr-space-3) 0; border-bottom: 1px solid var(--cr-border); }
     .cr-provider-card__header { display: flex; align-items: center; justify-content: space-between; gap: var(--cr-space-2); }
     .cr-provider-card__summary { min-width: 0; overflow-wrap: anywhere; }
-    .cr-provider-card__name { color: var(--cr-text-normal); font-size: var(--font-ui-medium); }
+    .cr-provider-card__name { color: var(--cr-text-normal); font-size: var(--cr-font-base); }
     .cr-provider-card__scope { color: var(--cr-text-muted); font-size: var(--cr-font-sm); margin: var(--cr-space-1) 0; }
     .cr-provider-card__badge { font-size: var(--cr-font-xs); color: var(--cr-interactive-accent); border-radius: var(--cr-radius-sm); background: var(--background-modifier-hover); padding: 2px 6px; margin-left: var(--cr-space-1); }
     .cr-provider-card--disabled .cr-provider-card__name { color: var(--cr-text-muted); }

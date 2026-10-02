@@ -3,7 +3,7 @@ import { DEFAULT_MODEL_CAPABILITIES } from "../types";
 
 export function resolveTaskModelSnapshot(settings: PluginSettings, taskType: TaskType, providerRef?: string): ResolvedTaskConfig {
   const task = settings.taskModels[taskType];
-  const providerId = providerRef || task.providerId || (taskType === "cards" ? "" : settings.defaultProviderId);
+  const providerId = providerRef || task.providerId || settings.defaultProviderId;
   const provider = settings.providers[providerId];
   const capabilities = {
     ...DEFAULT_MODEL_CAPABILITIES,
@@ -27,7 +27,7 @@ export function resolveTaskModelSnapshot(settings: PluginSettings, taskType: Tas
     if (value === null) delete parameters[key as keyof ModelParameters];
     else if (value !== undefined) Object.assign(parameters, { [key]: value });
   }
-  const model = task.model.trim() || (taskType === "cards" ? "" : (taskType === "index" ? provider?.defaultEmbedModel : provider?.defaultChatModel)?.trim()) || "";
+  const model = task.model.trim() || (taskType === "index" ? provider?.defaultEmbedModel : provider?.defaultChatModel)?.trim() || "";
   return {
     providerId,
     providerSnapshot: provider ? JSON.parse(JSON.stringify(provider)) : undefined,

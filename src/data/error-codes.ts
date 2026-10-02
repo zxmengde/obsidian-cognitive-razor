@@ -46,6 +46,15 @@ export const ERROR_CODE_INFO = {
     fixSuggestion: "请补全必要字段后重试。",
   },
 
+  E103_CARDS_SOURCE_OUTSIDE_ROOT: {
+    code: "E103_CARDS_SOURCE_OUTSIDE_ROOT",
+    name: "CARDS_SOURCE_OUTSIDE_ROOT",
+    description: "源笔记必须位于配置的知识库目录内",
+    category: "INPUT_VALIDATION",
+    retryable: false,
+    fixSuggestion: "请在设置 → 笔记与卡片中检查知识库根目录，或打开该目录内的笔记再生成卡片；不会自动移动笔记。",
+  },
+
   // E2xx Provider/AI（通常可重试）
   E201_PROVIDER_TIMEOUT: {
     code: "E201_PROVIDER_TIMEOUT",
@@ -217,7 +226,7 @@ export const ERROR_CODE_INFO = {
     description: "Provider 未配置",
     category: "CONFIG",
     retryable: false,
-    fixSuggestion: "请先在设置页配置 Provider 与 API Key。",
+    fixSuggestion: "请在设置 → AI 与模型中选择默认服务并检查模型与连接。若已有服务，请检查任务是否仍使用旧的单独设置；可在进阶任务设置中恢复默认。",
   },
   E404_TEMPLATE_NOT_FOUND: {
     code: "E404_TEMPLATE_NOT_FOUND",

@@ -1,3 +1,4 @@
+import { createRendererStreamRequester } from "./renderer-fetch-stream";
 import { requestUrl, type RequestUrlParam } from "obsidian";
 import {
   ProviderStreamAbortError,
@@ -34,7 +35,10 @@ export class ObsidianProviderTransport implements ProviderTransport {
   private readonly activeControllers = new Set<AbortController>();
   private disposed = false;
 
-  constructor(private readonly streamRequester: ProviderStreamRequester = requestProviderStream) {}
+  constructor(
+    private readonly streamRequester: ProviderStreamRequester = requestProviderStream,
+    private readonly rendererRequester: ProviderStreamRequester = createRendererStreamRequester((...args) => window.fetch(...args)),
+  ) {}
 
   async requestJson(
     params: RequestUrlParam,
@@ -94,7 +98,8 @@ export class ObsidianProviderTransport implements ProviderTransport {
         }
       }
 
-      return await this.streamRequester({ ...input, signal: controller.signal });
+      const requester = input.transport === "renderer-fetch" ? this.rendererRequester : this.streamRequester;
+      return await requester({ ...input, signal: controller.signal });
     } finally {
       if (input.signal && abortHandler) input.signal.removeEventListener("abort", abortHandler);
       this.activeControllers.delete(controller);

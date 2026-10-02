@@ -101,7 +101,7 @@ function fixture(options: FixtureOptions = {}) {
   const atomicWrite = vi.fn(async (path: string, content: string): Promise<Result<void>> => { storageFiles.set(path, content); return ok(undefined); });
   const storage: FileStorage = { exists: async (path: string) => storageFiles.has(path), read: async (path: string) => ok(storageFiles.get(path) ?? ""), atomicWrite } as unknown as FileStorage;
   const reindex = vi.fn(async (): Promise<Result<{ indexed: number; failed: number }>> => ok({ indexed: 1, failed: 0 }));
-  const service = new DuplicateMergeService({
+  const createService = () => new DuplicateMergeService({
     app: app as never,
     fileStorage: storage,
     noteRepository,
@@ -113,7 +113,8 @@ function fixture(options: FixtureOptions = {}) {
     reindex,
     logger,
   });
-  return { service, app, files, active, vault, noteRepository, providerManager, duplicateManager, storage, atomicWrite, storageFiles, pair, canonical, redundant, incoming, reindex };
+  const service = createService();
+  return { service, createService, app, files, active, vault, noteRepository, providerManager, duplicateManager, storage, atomicWrite, storageFiles, pair, canonical, redundant, incoming, reindex };
 }
 
 describe("DuplicateMergeService", () => {
@@ -491,6 +492,60 @@ describe("DuplicateMergeService", () => {
     expect(f.files.get(f.canonical.file.path)?.content).toBe(canonicalContent);
     expect(f.files.get(f.incoming.file.path)?.content).toBe(incomingContent);
     expect(f.files.has(f.redundant.file.path)).toBe(false);
+  });
+
+  it.each([false, true])("reloads a partial link repair and preserves user edits=%s across another recovery failure", async (editDuringRecovery) => {
+    const f = fixture();
+    const second = note("incoming-second", "Inbox/Second.md", "[[archive/Redundant]]");
+    f.files.set(second.file.path, second);
+    const prepared = await f.service.prepareMerge(f.pair.id, "canonical");
+    if (!prepared.ok) throw new Error("preview failed");
+    const entries = prepared.value.linkRepairPlan.entries;
+    expect(entries).toHaveLength(2);
+    const firstEntry = entries[0];
+    const lastEntry = entries[1];
+    const replace = f.noteRepository.replaceIfUnchanged.getMockImplementation()!;
+    // Fail after one incoming note has actually changed; the journal still
+    // records canonical-written and must infer the first repair from bytes.
+    f.noteRepository.replaceIfUnchanged.mockImplementation(async (path, expected, content) => {
+      if (path === lastEntry.path) throw new Error("synthetic adapter interruption");
+      return replace(path, expected, content);
+    });
+    await expect(f.service.confirmMerge(prepared.value.draft, prepared.value.linkRepairPlan)).rejects.toThrow("synthetic adapter interruption");
+    expect(f.files.get(firstEntry.path)?.content).toBe(firstEntry.replacementContent);
+    expect(f.files.get(lastEntry.path)?.content).toBe(lastEntry.expectedContent);
+    expect(f.vault.trash).not.toHaveBeenCalled();
+    const id = f.service.getRecoveryOperations()[0].id;
+    await f.service.dispose();
+    f.noteRepository.replaceIfUnchanged.mockImplementation(replace);
+    if (editDuringRecovery) f.files.get(lastEntry.path)!.content += "\n用户在恢复前编辑";
+    const protectedContent = f.files.get(lastEntry.path)!.content;
+    const reloaded = f.createService();
+    expect((await reloaded.initialize()).ok).toBe(true);
+    // A second failure at the links-repaired checkpoint leaves the earlier
+    // durable phase intact. A fresh instance must not repeat successful writes.
+    if (!editDuringRecovery) f.atomicWrite.mockResolvedValueOnce(err("E303_DISK_FULL", "synthetic disk full"));
+    const resumed = await reloaded.resumeMerge(id);
+    expect(resumed).toMatchObject({ ok: false, error: { code: editDuringRecovery ? "E320_TASK_CONFLICT" : "E303_DISK_FULL" } });
+    expect(f.vault.trash).not.toHaveBeenCalled();
+    await reloaded.dispose();
+    const again = f.createService();
+    expect((await again.initialize()).ok).toBe(true);
+    f.noteRepository.replaceIfUnchanged.mockClear();
+    const final = await again.resumeMerge(id);
+    if (editDuringRecovery) {
+      expect(final).toMatchObject({ ok: false, error: { code: "E320_TASK_CONFLICT" } });
+      expect(f.files.get(lastEntry.path)?.content).toBe(protectedContent);
+      expect(f.vault.trash).not.toHaveBeenCalled();
+      expect(again.getRecoveryOperations()).toHaveLength(1);
+    } else {
+      expect(final).toMatchObject({ ok: true, value: { phase: "completed" } });
+      expect(f.noteRepository.replaceIfUnchanged).not.toHaveBeenCalled();
+      expect(f.vault.trash).toHaveBeenCalledOnce();
+      expect(again.getRecoveryOperations()).toEqual([]);
+    }
+    expect(f.providerManager.chat).toHaveBeenCalledOnce();
+    await again.dispose();
   });
 
   it("drops a completed merge from the durable log so it cannot grow without bound", async () => {

@@ -64,6 +64,28 @@ describe("VerifyTaskExecutor", () => {
     expect(body.previous_response_id).toBe(promptCaching ? undefined : "resp_write");
   });
 
+  it("supplies real snapshot metadata through a user-customized Verify template without rewriting it", async () => {
+    const logger: ILogger = { debug() {}, info() {}, warn() {}, error() {} };
+    const custom = '<system_instructions>CUSTOM_VERIFY_POLICY<output_format>自定义输出</output_format></system_instructions>\n<context_slots>{{CTX_META}}\n{{CTX_CURRENT}}</context_slots>\n<task_instruction>保留我的审计规则</task_instruction>';
+    const promptManager = new PromptManager({ read: async (path: string) => ok(path.endsWith('/operations/verify.md') ? custom : await readFile(path, 'utf8')) } as FileStorage, logger);
+    expect((await promptManager.preloadAllTemplates()).ok).toBe(true);
+    const chat = vi.fn(async (_request: ChatRequest) => ok({ content: '## 我的自定义报告\n正文', finishReason: 'stop' }));
+    const executor = new VerifyTaskExecutor({ providerManager: { chat } as unknown as ModelGateway, promptManager, responsePipeline: new ResponsePipeline(new Validator()), logger });
+    const currentContent = '---\nname: Actual name\ncruid: synthetic\ntype: mechanism\n---\n# Different fixture heading\nBody unchanged.';
+    const task: TaskRecord<'verify'> = { id: 'verify-custom', nodeId: 'synthetic', stageId: 'verify', state: 'running', createdAt: 0, updatedAt: 0, attempt: 1, payload: { filePath: 'Fixture.md', noteType: 'mechanism', currentContent } };
+    const result = await executor.execute(task, new AbortController().signal, { attemptReason: 'initial', modelSnapshot: { providerId: 'provider', model: 'model', capabilities: { temperature: false, topP: false, reasoning: false, structuredOutput: 'prompt', nativeWebSearch: false, promptCaching: false, responseContinuation: false } } });
+    expect(result).toMatchObject({ ok: true, value: { reportText: '## 我的自定义报告\n正文' } });
+    const request = chat.mock.calls[0][0];
+    expect(request.messages[0].content).toContain('CUSTOM_VERIFY_POLICY');
+    const user = request.messages.at(-1)!.content;
+    expect(user).toContain('"name": "Actual name"');
+    expect(user).not.toContain('standard_name_cn');
+    expect(user).toContain(currentContent);
+    expect(user).toContain('保留我的审计规则');
+    expect(task.payload.currentContent).toBe(currentContent);
+    expect(chat).toHaveBeenCalledOnce();
+  });
+
   it("preserves citation positions when trimming report whitespace", async () => {
     const logger: ILogger = { debug() {}, info() {}, warn() {}, error() {} };
     const executor = new VerifyTaskExecutor({

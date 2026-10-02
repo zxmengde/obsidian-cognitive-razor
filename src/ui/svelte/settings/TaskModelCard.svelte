@@ -1,4 +1,4 @@
-<!-- Expanded contents of one task. The task list owns the outer accordion. -->
+<!-- Parameter editor reused by the dedicated task detail view. -->
 <script lang="ts">
     import type { ModelCapabilities, TaskType, TaskModelConfig, ProviderConfig, ResolvedTaskConfig } from '../../../types';
     import Select from '../../components/Select.svelte';
@@ -71,8 +71,7 @@
         ...(taskType !== 'cards' ? ['responseContinuation' as const] : []),
     ]);
     let providerOptions = $derived.by(() => {
-        const opts = [{ value: '', label: taskType === 'cards' ? i18n.t('cards.chooseProvider')
-            : isEmbeddingTask && providers[defaultProviderId]?.embeddingApiFormat !== 'openai-embeddings'
+        const opts = [{ value: '', label: isEmbeddingTask && providers[defaultProviderId]?.embeddingApiFormat !== 'openai-embeddings'
                 ? i18n.t('taskModels.fields.defaultProviderNoEmbedding') : i18n.t('settings.taskDetails.defaultProvider') }];
         for (const [id, provider] of Object.entries(providers)) {
             if (provider.enabled && (isEmbeddingTask ? provider.embeddingApiFormat === 'openai-embeddings' : provider.apiFormat !== 'disabled')) {
@@ -183,7 +182,7 @@
 <div class="cr-task-model-card">
     <div class="cr-task-model-card__overview">
         <div class="cr-task-model-card__overview-heading">
-            <span class="cr-task-model-card__description">{text(taskType === 'cards' ? 'independent' : isDefault ? 'defaultConfig' : 'customConfig')}</span>
+            <span class="cr-task-model-card__description">{text(isDefault ? 'defaultConfig' : 'customConfig')}</span>
             {#if !isDefault}
                 <Button variant="ghost" size="sm" onclick={handleReset} ariaLabel={i18n.t('taskModels.reset')}>{i18n.t('taskModels.reset')}</Button>
             {/if}
@@ -200,14 +199,14 @@
     <div class="cr-task-model-card__basic cr-task-model-card__field">
         <label for={`tmc-${taskType}-provider`}>{text('provider')}</label>
         <Select id={`tmc-${taskType}-provider`} value={config.providerId} options={providerOptions} onchange={(value) => onUpdate(taskType, { providerId: value })} />
-        <p class="cr-task-model-card__description">{taskType === 'cards' ? text('cardsProviderHint') : config.providerId ? text('fromTask') : text('defaultProviderHint')}</p>
+        <p class="cr-task-model-card__description">{config.providerId ? text('fromTask') : text('defaultProviderHint')}</p>
     </div>
     <div class="cr-task-model-card__basic cr-task-model-card__field">
         <label for={`tmc-${taskType}-model`}>{text('model')}</label>
         <TextInput id={`tmc-${taskType}-model`} value={config.model}
-            placeholder={taskType === 'cards' ? i18n.t('cards.modelPlaceholder') : inheritedModel || text('modelMissing')}
+            placeholder={inheritedModel || text('modelMissing')}
             onchange={(value) => onUpdate(taskType, { model: value })} />
-        <p class="cr-task-model-card__description">{taskType === 'cards' ? text('cardsModelHint') : config.model.trim() ? text('modelSpecified') : `${text('modelInherited')}${inheritedModel || text('modelMissing')}`}</p>
+        <p class="cr-task-model-card__description">{config.model.trim() ? text('modelSpecified') : `${text('modelInherited')}${inheritedModel || text('modelMissing')}`}</p>
     </div>
 
     <details class="cr-task-model-card__advanced">
@@ -315,8 +314,8 @@
     .cr-task-model-card p { margin: 0; }
     .cr-task-model-card__overview { padding: var(--cr-space-3) 0 var(--cr-space-5); }
     .cr-task-model-card__overview-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--cr-space-2); }
-    .cr-task-model-card__resolved { font-size: var(--font-ui-medium); line-height: 1.5; overflow-wrap: anywhere; margin: var(--cr-space-2) 0 !important; }
-    .cr-task-model-card__description { color: var(--cr-text-muted); font-size: var(--font-ui-small); line-height: 1.6; overflow-wrap: anywhere; }
+    .cr-task-model-card__resolved { font-size: var(--cr-font-base); line-height: 1.5; overflow-wrap: anywhere; margin: var(--cr-space-2) 0 !important; }
+    .cr-task-model-card__description { color: var(--cr-text-muted); font-size: var(--cr-font-sm); line-height: 1.6; overflow-wrap: anywhere; }
     .cr-task-model-card__basic { display: flex; flex-direction: column; gap: var(--cr-space-2); padding: var(--cr-space-5) 0; border-top: 1px solid var(--cr-border); }
     .cr-task-model-card__basic :global(input), .cr-task-model-card__basic :global(select) { box-sizing: border-box; width: 100%; max-width: 100%; min-width: 0; min-height: 36px; background-color: var(--cr-bg-secondary); }
     .cr-task-model-card__advanced, .cr-task-model-card__capabilities { border-top: 1px solid var(--cr-border); }
@@ -331,14 +330,14 @@
     .cr-task-model-card__parameter label { min-width: 0; line-height: 1.6; padding-top: var(--cr-space-1); overflow-wrap: anywhere; }
     .cr-task-model-card__parameter-controls { grid-column: 2; grid-row: 1 / span 2; display: flex; flex-direction: column; gap: var(--cr-space-2); min-width: 0; }
     .cr-task-model-card__parameter-controls :global(input), .cr-task-model-card__parameter-controls :global(select) { box-sizing: border-box; width: 100%; min-width: 0; max-width: 100%; min-height: 36px; background-color: var(--cr-bg-secondary); }
-    .cr-task-model-card__number { border: 1px solid var(--cr-border); border-radius: var(--cr-radius-sm); padding: var(--cr-space-1) var(--cr-space-2); color: var(--cr-text-normal); font-size: var(--font-ui-small); }
+    .cr-task-model-card__number { border: 1px solid var(--cr-border); border-radius: var(--cr-radius-sm); padding: var(--cr-space-1) var(--cr-space-2); color: var(--cr-text-normal); font-size: var(--cr-font-sm); }
     .cr-task-model-card__number:focus-visible { outline: 2px solid var(--cr-border-focus); outline-offset: -1px; }
     .cr-task-model-card__number[aria-invalid='true'] { border-color: var(--cr-status-error); }
-    .cr-task-model-card__parameter-result { display: flex; flex-direction: column; gap: var(--cr-space-1); min-width: 0; font-size: var(--font-ui-small); line-height: 1.5; overflow-wrap: anywhere; }
+    .cr-task-model-card__parameter-result { display: flex; flex-direction: column; gap: var(--cr-space-1); min-width: 0; font-size: var(--cr-font-sm); line-height: 1.5; overflow-wrap: anywhere; }
     .cr-task-model-card__effective-value { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--cr-space-2); }
-    .cr-task-model-card__effective-value strong { font-size: var(--font-ui-medium); font-weight: 600; }
-    .cr-task-model-card__warning { color: var(--cr-status-warning); font-size: var(--font-ui-small); line-height: 1.6; overflow-wrap: anywhere; }
-    .cr-task-model-card__error { color: var(--cr-status-error); font-size: var(--font-ui-small); line-height: 1.5; }
+    .cr-task-model-card__effective-value strong { font-size: var(--cr-font-base); font-weight: 600; }
+    .cr-task-model-card__warning { color: var(--cr-status-warning); font-size: var(--cr-font-sm); line-height: 1.6; overflow-wrap: anywhere; }
+    .cr-task-model-card__error { color: var(--cr-status-error); font-size: var(--cr-font-sm); line-height: 1.5; }
     .cr-task-model-card__capabilities > summary { font-weight: 400; }
     .cr-task-model-card__footnote { border-top: 1px solid var(--cr-border); padding: var(--cr-space-5) 0; }
     @media (max-width: 420px) {

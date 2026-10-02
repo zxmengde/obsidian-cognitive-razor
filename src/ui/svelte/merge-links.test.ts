@@ -48,6 +48,88 @@ function fixture() {
 }
 
 describe("Merge dialog link fidelity", () => {
+  it("portals into the owning window, retains keyboard focus and removes the overlay on teardown", async () => {
+    const f = fixture();
+    const frame = document.body.appendChild(document.createElement('iframe'));
+    const owner = frame.contentDocument!;
+    const opener = owner.body.appendChild(owner.createElement('button'));
+    opener.focus();
+    const pane = owner.body.appendChild(owner.createElement('div'));
+    pane.style.cssText = 'width: 360px; container-type: inline-size; overflow: hidden; transform: translateX(0)';
+    const onclose = vi.fn();
+    const instance = ui.mount(ui.MergeHost, { target: pane, props: { context: f.context, pair: f.pair, onclose, onsuccess: vi.fn() } });
+    try {
+      ui.flushSync();
+      const overlay = owner.querySelector('.cr-modal-overlay')!;
+      expect(overlay.parentElement).toBe(owner.body);
+      expect(overlay.classList.contains('cr-scope')).toBe(true);
+      expect(pane.querySelector('[role="dialog"]')).toBeNull();
+      expect(overlay.querySelector('.cr-modal-footer .cr-btn-primary')).not.toBeNull();
+      expect(overlay.querySelector('.cr-modal-content .cr-modal-footer')).toBeNull();
+      await vi.waitFor(() => expect(overlay.contains(owner.activeElement)).toBe(true));
+      const buttons = overlay.querySelectorAll<HTMLButtonElement>('button');
+      buttons[buttons.length - 1].focus();
+      buttons[buttons.length - 1].dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+      expect(owner.activeElement).toBe(buttons[0]);
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
+      expect(onclose).not.toHaveBeenCalled();
+      frame.contentWindow!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
+      expect(onclose).toHaveBeenCalledOnce();
+    } finally {
+      await ui.unmount(instance);
+      expect(owner.querySelector('.cr-modal-overlay')).toBeNull();
+      await vi.waitFor(() => expect(owner.activeElement).toBe(opener));
+      frame.remove();
+    }
+  });
+
+  it("ignores a preview arriving after the user closes the dialog", async () => {
+    const f = fixture();
+    const result = await f.prepareMerge(); f.prepareMerge.mockClear();
+    let release!: (value: typeof result) => void;
+    f.prepareMerge.mockImplementation(() => new Promise(resolve => { release = resolve; }));
+    const target = document.body.appendChild(document.createElement('div'));
+    const onsuccess = vi.fn();
+    const instance = ui.mount(ui.MergeHost, { target, props: { context: f.context, pair: f.pair, onclose: vi.fn(), onsuccess } });
+    ui.flushSync();
+    document.body.querySelector<HTMLButtonElement>('.cr-modal-footer .cr-btn-primary')!.click();
+    ui.flushSync();
+    expect(f.prepareMerge).toHaveBeenCalledOnce();
+    await ui.unmount(instance);
+    release(result); await Promise.resolve(); ui.flushSync();
+    expect(document.body.querySelector('.cr-modal-overlay')).toBeNull();
+    expect(f.confirmMerge).not.toHaveBeenCalled(); expect(onsuccess).not.toHaveBeenCalled();
+    target.remove();
+  });
+
+  it("locks every draft field until the merge commit resolves and restores edits on failure", async () => {
+    const f = fixture();
+    let rejectCommit!: (reason: unknown) => void;
+    f.confirmMerge.mockImplementation(() => new Promise((_resolve, reject) => { rejectCommit = reject; }));
+    const target = document.body.appendChild(document.createElement("div"));
+    const onsuccess = vi.fn();
+    const instance = ui.mount(ui.MergeHost, { target, props: { context: f.context, pair: f.pair, onclose: vi.fn(), onsuccess } });
+    const labels = f.context.i18n.messages.workbench.duplicates;
+    const click = (text: string) => Array.from(document.body.querySelectorAll("button")).find(button => button.textContent?.trim() === text)!.click();
+    try {
+      ui.flushSync(); click(labels.generateDraft);
+      await vi.waitFor(() => { ui.flushSync(); expect(document.body.querySelectorAll("textarea")).toHaveLength(2); });
+      const name = document.body.querySelector("input")!;
+      name.value = "Human reviewed name";
+      name.dispatchEvent(new Event("change", { bubbles: true }));
+      ui.flushSync(); click(labels.confirmMerge); ui.flushSync();
+      expect(f.confirmMerge).toHaveBeenCalledOnce();
+      expect(f.confirmMerge.mock.calls[0][0].name).toBe("Human reviewed name");
+      expect(Array.from(document.body.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea")).every(field => field.disabled)).toBe(true);
+      rejectCommit(new Error("synthetic private upstream body"));
+      await vi.waitFor(() => { ui.flushSync(); expect(name.disabled).toBe(false); });
+      expect(name.value).toBe("Human reviewed name");
+      expect(document.body.querySelector('[role="alert"]')).not.toBeNull();
+      expect(document.body.textContent).not.toContain("synthetic private upstream body");
+      expect(onsuccess).not.toHaveBeenCalled();
+    } finally { rejectCommit?.(new Error("test cleanup")); await ui.unmount(instance); target.remove(); }
+  });
+
   it("opens each human-review candidate by its current CRUID path and preserves comma parents after edits", async () => {
     const f = fixture();
     const target = document.body.appendChild(document.createElement("div"));
@@ -56,7 +138,7 @@ describe("Merge dialog link fidelity", () => {
     try {
       ui.flushSync();
       const labels = f.context.i18n.messages.workbench.duplicates;
-      const open = Array.from(target.querySelectorAll("button")).filter((button) => button.textContent?.trim() === labels.openNote);
+      const open = Array.from(document.body.querySelectorAll("button")).filter((button) => button.textContent?.trim() === labels.openNote);
       expect(open).toHaveLength(2);
       open[0].click(); open[1].click();
       expect(f.openLinkText.mock.calls).toEqual([["Current/Same.md", "", true], ["Archive/Same.md", "", true]]);
@@ -64,14 +146,14 @@ describe("Merge dialog link fidelity", () => {
       open[1].click();
       expect(f.openLinkText).toHaveBeenLastCalledWith("Moved/Same.md", "", true);
       expect(f.prepareMerge).not.toHaveBeenCalled();
-      Array.from(target.querySelectorAll("button")).find((button) => button.textContent?.trim() === labels.generateDraft)!.click();
-      await vi.waitFor(() => { ui.flushSync(); expect(target.querySelectorAll("textarea")).toHaveLength(2); });
-      const parents = target.querySelector<HTMLTextAreaElement>("textarea")!;
+      Array.from(document.body.querySelectorAll("button")).find((button) => button.textContent?.trim() === labels.generateDraft)!.click();
+      await vi.waitFor(() => { ui.flushSync(); expect(document.body.querySelectorAll("textarea")).toHaveLength(2); });
+      const parents = document.body.querySelector<HTMLTextAreaElement>("textarea")!;
       expect(parents.value).toBe("[[Domain/A, B]]\n[[Domain/Remove]]");
       parents.value = "[[Domain/A, B]]\n[[Domain/User Replacement]]\n[[Domain/A, B]]";
       parents.dispatchEvent(new Event("input", { bubbles: true }));
       ui.flushSync();
-      Array.from(target.querySelectorAll("button")).find((button) => button.textContent?.trim() === labels.confirmMerge)!.click();
+      Array.from(document.body.querySelectorAll("button")).find((button) => button.textContent?.trim() === labels.confirmMerge)!.click();
       await vi.waitFor(() => expect(f.confirmMerge).toHaveBeenCalledOnce());
       expect(f.confirmMerge.mock.calls[0][0]).toMatchObject({ parents: ["[[Domain/A, B]]", "[[Domain/User Replacement]]"] });
       await vi.waitFor(() => expect(onsuccess).toHaveBeenCalledOnce());
@@ -85,12 +167,12 @@ describe("Merge dialog link fidelity", () => {
     const instance = ui.mount(ui.MergeHost, { target, props: { context: f.context, pair: f.pair, onclose: vi.fn(), onsuccess: vi.fn() } });
     try {
       ui.flushSync();
-      Array.from(target.querySelectorAll("button")).find((button) => button.textContent?.trim() === f.context.i18n.messages.workbench.duplicates.openNote)!.click();
+      Array.from(document.body.querySelectorAll("button")).find((button) => button.textContent?.trim() === f.context.i18n.messages.workbench.duplicates.openNote)!.click();
       ui.flushSync();
       expect(f.getConceptPath).toHaveBeenCalledWith("a");
       expect(f.openLinkText).not.toHaveBeenCalled();
       expect(f.prepareMerge).not.toHaveBeenCalled();
-      expect(target.textContent).toContain("资源或对象不存在");
+      expect(document.body.textContent).toContain("资源或对象不存在");
     } finally { await ui.unmount(instance); target.remove(); }
   });
 });

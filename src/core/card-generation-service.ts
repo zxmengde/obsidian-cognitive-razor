@@ -43,7 +43,7 @@ export class CardGenerationService {
     try {
       const settings = this.deps.settings.getSettings();
       const model = resolveTaskModelSnapshot(settings, "cards");
-      if (!model.providerId || !model.model || !model.providerSnapshot || model.providerSnapshot.enabled === false) return err("E401_PROVIDER_NOT_CONFIGURED", "请先在设置中配置记忆卡片的独立 Provider 和模型");
+      if (!model.providerId || !model.model || !model.providerSnapshot || model.providerSnapshot.enabled === false) return err("E401_PROVIDER_NOT_CONFIGURED", "请先选择默认服务和聊天模型，或配置记忆卡片的任务覆盖");
       const captured = captureCardInput(filePath, await this.deps.notes.readByPath(filePath), settings.cardsSourceRoot, settings.cardsTargetRoot);
       if (!captured.ok) return captured;
       const { nodeId, noteTitle, ...input } = captured.value;

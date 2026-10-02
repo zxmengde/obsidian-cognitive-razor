@@ -6,6 +6,7 @@
  * requests, raw responses, credentials, or reasoning content.
  */
 
+import { taskFailureDiagnostics } from "../data/task-failure-diagnostics";
 import { err, ok } from "../types";
 import type {
   ILogger,
@@ -562,7 +563,7 @@ export class TaskQueue {
       handle = setTimeout(() => {
         if (!this.executionService.isCurrent(task, token)) return;
         try { runner.abort(task.id); } catch (cause) { this.logger.warn("TaskQueue", "超时后中断任务失败", { taskId: task.id, cause: String(cause) }); }
-        void this.finishFailure(task, this.uncertainFailure("任务执行超时，Provider 是否完成请求未知；不会自动重试"), token);
+        void this.finishFailure(task, { ...this.uncertainFailure("任务执行超时，Provider 是否完成请求未知；不会自动重试"), details: { timeoutMs: Math.max(1000, timeoutMs) } }, token);
       }, Math.max(1000, timeoutMs));
       this.executionService.setTimeout(task.id, token, handle);
       while (this.pendingCancellations.has(task.id)) await this.pendingCancellations.get(task.id);
@@ -653,6 +654,7 @@ export class TaskQueue {
     const taskError: TaskError = {
       code: failure.code,
       message: failure.message,
+      ...(failure.code === "E206_PROVIDER_REQUEST_UNCERTAIN" ? taskFailureDiagnostics(failure.details) : {}),
       kind: failure.kind ?? (failure.code === "E206_PROVIDER_REQUEST_UNCERTAIN" ? "uncertain" : "known"),
       stage: this.classifyFailure(failure.code),
       ...(providerAttempts === undefined ? {} : { providerAttempts }),

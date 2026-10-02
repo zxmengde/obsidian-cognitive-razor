@@ -5,16 +5,28 @@
     let {
         titleId,
         wide = false,
+        hostLevel = false,
+        footer,
         dismissible = true,
         oncancel,
         children,
     }: {
         titleId: string;
         wide?: boolean;
+        hostLevel?: boolean;
+        footer?: Snippet;
         dismissible?: boolean;
         oncancel: () => void;
         children?: Snippet;
     } = $props();
+
+    // Escape pane containment (container-type/transform/overflow) while staying
+    // in the owning Obsidian window. Svelte retains component context/events.
+    function portal(node: HTMLDivElement) {
+        if (!hostLevel) return;
+        node.ownerDocument.body.appendChild(node);
+        return { destroy() { node.remove(); } };
+    }
 
     let dialogEl: HTMLDivElement | undefined = $state(undefined);
 
@@ -39,7 +51,7 @@
 
         const first = focusable[0];
         const last = focusable[focusable.length - 1];
-        const activeElement = document.activeElement;
+        const activeElement = dialogEl?.ownerDocument.activeElement ?? null;
 
         if (event.shiftKey && (activeElement === first || !dialogEl?.contains(activeElement))) {
             event.preventDefault();
@@ -65,18 +77,26 @@
     }
 
     onMount(() => {
-        const previousActiveElement = document.activeElement instanceof HTMLElement
-            ? document.activeElement
+        // Obsidian can mount the same component in a separate window. Own the
+        // keyboard listener, focus and timers in the document hosting this dialog.
+        const ownerDocument = dialogEl?.ownerDocument;
+        const ownerWindow = ownerDocument?.defaultView;
+        if (!ownerDocument || !ownerWindow) return;
+        const activeElement = ownerDocument.activeElement;
+        const previousActiveElement = activeElement && 'focus' in activeElement
+            ? activeElement as HTMLElement
             : null;
-        const focusTimer = window.setTimeout(() => {
+        ownerWindow.addEventListener('keydown', handleKeydown);
+        const focusTimer = ownerWindow.setTimeout(() => {
             const firstFocusable = getFocusableElements()[0];
             (firstFocusable ?? dialogEl)?.focus();
         }, 0);
 
         return () => {
-            window.clearTimeout(focusTimer);
+            ownerWindow.removeEventListener('keydown', handleKeydown);
+            ownerWindow.clearTimeout(focusTimer);
             if (!previousActiveElement) return;
-            window.setTimeout(() => {
+            ownerWindow.setTimeout(() => {
                 if (previousActiveElement.isConnected) {
                     previousActiveElement.focus();
                 }
@@ -85,10 +105,9 @@
     });
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="cr-modal-overlay" onmousedown={requestCancel}>
+<div class="cr-modal-overlay cr-scope" use:portal onmousedown={requestCancel}>
     <div
         bind:this={dialogEl}
         class="cr-modal-dialog"
@@ -99,9 +118,10 @@
         tabindex="-1"
         onmousedown={(event: MouseEvent) => event.stopPropagation()}
     >
-        {#if children}
-            {@render children()}
-        {/if}
+        <div class="cr-modal-content">
+            {#if children}{@render children()}{/if}
+        </div>
+        {#if footer}<div class="cr-modal-footer">{@render footer()}</div>{/if}
     </div>
 </div>
 
@@ -109,7 +129,7 @@
     .cr-modal-overlay {
         position: fixed;
         inset: 0;
-        z-index: var(--layer-modal);
+        z-index: var(--cr-layer-modal);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -123,15 +143,20 @@
         width: 100%;
         max-width: 480px;
         max-height: calc(100vh - 2 * var(--cr-space-4));
-        overflow-y: auto;
-        padding: var(--cr-space-6);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        padding: 0;
         border: 1px solid var(--cr-border);
         border-radius: var(--cr-radius-md);
         background: var(--cr-bg-base);
         box-shadow: var(--cr-shadow-lg);
     }
 
+    .cr-modal-content { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: var(--cr-space-6); }
+    .cr-modal-footer { flex-shrink: 0; border-top: 1px solid var(--cr-border); padding: var(--cr-space-4) var(--cr-space-6); background: var(--cr-bg-base); }
+
     .cr-modal-dialog--wide {
-        max-width: 520px;
+        max-width: 720px;
     }
 </style>

@@ -10,7 +10,10 @@ export type ProviderStreamProtocol =
   | "openai-responses"
   | "gemini-generative-language";
 
+export type ProviderStreamTransport = "node-http" | "renderer-fetch";
+
 export interface ProviderStreamRequest {
+  transport?: ProviderStreamTransport;
   url: string;
   headers: Record<string, string>;
   body: string;
@@ -18,10 +21,37 @@ export interface ProviderStreamRequest {
   signal?: AbortSignal;
 }
 
+export interface ProviderStreamDiagnostics {
+  chunkCount: number;
+  byteCount: number;
+  firstResponseMs: number;
+  firstChunkMs: number | null;
+  chunkSpanMs: number;
+  maxChunkGapMs: number;
+}
+
 export interface ProviderStreamResponse {
+  diagnostics?: ProviderStreamDiagnostics;
   status: number;
   headers: Record<string, string>;
   body: string;
+}
+
+/** Whitelist-only completion event; never expose raw headers, URLs or body. */
+export function safeStreamResponseEvidence(response: ProviderStreamResponse, transport: ProviderStreamTransport) {
+  const rawType = (Object.entries(response.headers).find(([key]) => key.toLowerCase() === "content-type")?.[1] ?? "").split(";", 1)[0].trim().toLowerCase();
+  const responseContentType = ["text/event-stream", "application/json", "application/x-ndjson"].includes(rawType) ? rawType : "unknown";
+  let framing: "SSE" | "JSON" | "unknown" = "unknown";
+  if (/^(?:data|event|id|retry):/m.test(response.body)) framing = "SSE";
+  else { try { JSON.parse(response.body); framing = "JSON"; } catch { /* Unknown framing stays unknown. */ } }
+  const finite = (value: unknown): number | null => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+  return {
+    event: "STREAM_RESPONSE_EVIDENCE", transport, responseContentType, framing,
+    dispatchCount: 1,
+    chunkCount: finite(response.diagnostics?.chunkCount), byteCount: finite(response.diagnostics?.byteCount),
+    firstResponseMs: finite(response.diagnostics?.firstResponseMs), firstChunkMs: finite(response.diagnostics?.firstChunkMs),
+    chunkSpanMs: finite(response.diagnostics?.chunkSpanMs), maxChunkGapMs: finite(response.diagnostics?.maxChunkGapMs),
+  };
 }
 
 export type ProviderStreamRequester = (
@@ -44,7 +74,23 @@ export class ProviderStreamAbortError extends Error {
   }
 }
 
+const SAFE_NETWORK_CODES = new Set([
+  "ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EPIPE",
+  "ENETUNREACH", "EHOSTUNREACH", "EACCES", "EPERM", "EPROTO",
+  "CERT_HAS_EXPIRED", "CERT_NOT_YET_VALID", "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "SELF_SIGNED_CERT_IN_CHAIN", "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "ERR_TLS_CERT_ALTNAME_INVALID",
+]);
+
+/** Never infer a diagnostic from a URL, certificate text or raw error message. */
+export function safeStreamNetworkCode(cause: unknown): string {
+  if (!cause || typeof cause !== "object") return "UNKNOWN";
+  const code = (cause as { code?: unknown }).code;
+  return typeof code === "string" && SAFE_NETWORK_CODES.has(code) ? code : "UNKNOWN";
+}
+
 export class ProviderStreamNetworkError extends Error {
+  readonly networkCode: string;
   constructor(
     readonly phase: ProviderStreamPhase,
     message: string,
@@ -52,6 +98,7 @@ export class ProviderStreamNetworkError extends Error {
   ) {
     super(message);
     this.name = "ProviderStreamNetworkError";
+    this.networkCode = safeStreamNetworkCode(cause);
   }
 }
 
@@ -60,6 +107,17 @@ export function hasProviderStreamFraming(
   headers: Record<string, string>,
   body: string,
 ): boolean {
+  // Some relays retain an SSE MIME type even when returning one complete
+  // protocol envelope. Do not feed its message into the delta aggregator.
+  try {
+    const payload = asRecord(JSON.parse(body));
+    if (payload && (
+      (Array.isArray(payload.choices) && payload.choices.some((choice) => asRecord(choice)?.message !== undefined))
+      || Array.isArray(payload.candidates)
+      || Array.isArray(payload.output)
+      || typeof payload.output_text === "string"
+    )) return false;
+  } catch { /* Actual framed events continue through the stream parser. */ }
   const contentType = (Object.entries(headers).find(([key]) => key.toLowerCase() === "content-type")?.[1] ?? "").toLowerCase();
   if (contentType.includes("text/event-stream") || contentType.includes("ndjson")) {
     return true;

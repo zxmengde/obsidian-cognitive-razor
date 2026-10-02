@@ -47,8 +47,23 @@
     let defining = $state(false);
     let defineResult = $state<DefinePreview | null>(null);
     let feedback = $state<UiFeedback | null>(null);
+    let feedbackSourcePath = $state<string | undefined>();
+    $effect(() => {
+        if (feedbackSourcePath && feedbackSourcePath !== activeFile?.path) {
+            feedback = null;
+            feedbackSourcePath = undefined;
+        }
+    });
     let activePanel = $state<ActivePanel>('none');
     let verifying = $state(false);
+    let verifyWorkflowId: string | undefined;
+    function clearFinishedVerifyNotice(): void {
+        if (!verifyWorkflowId) return;
+        const active = application.queue.getSnapshot().tasks.some(task => task.workflowId === verifyWorkflowId && (task.state === 'pending' || task.state === 'running'));
+        if (active) return;
+        verifyWorkflowId = undefined;
+        if (feedback?.level === 'success' && feedback.message === t.workbench.notifications.verifyStarted) feedback = null;
+    }
     let generatingCards = $state(false);
     let isCRNode = $state(false);
     let defineAbortController: AbortController | undefined;
@@ -69,6 +84,7 @@
         return () => { disposed = true; ctx.app.vault.offref(event); };
     });
     const unsubscribeQueue = application.queue.subscribe((event) => {
+        clearFinishedVerifyNotice();
         if (event.type === 'task-completed' && event.task.stageId === 'cards') reportSuccess(ctx.i18n.format("cards.completed", { path: event.task.payload.targetPath }));
     });
     $effect(() => () => unsubscribeQueue());
@@ -92,13 +108,16 @@
         inputValue = '';
         defineResult = null;
         feedback = null;
+        feedbackSourcePath = undefined;
     }
 
     function reportError(errorValue: unknown, fallback: string): void {
+        feedbackSourcePath = undefined;
         feedback = toSafeErrorFeedback(errorValue, fallback);
     }
 
     function reportSuccess(message: string): void {
+        feedbackSourcePath = undefined;
         feedback = { level: 'success', message };
     }
 
@@ -108,6 +127,7 @@
 
         defining = true;
         feedback = null;
+        feedbackSourcePath = undefined;
         defineResult = null;
         const controller = new AbortController();
         defineAbortController = controller;
@@ -145,10 +165,14 @@
         const filePath = activeFile.path;
         verifying = true;
         feedback = null;
+        feedbackSourcePath = undefined;
         try {
             const result = await application.verify.start(filePath);
             if (result.ok) {
+                verifyWorkflowId = result.value;
                 reportSuccess(t.workbench.notifications.verifyStarted);
+                // A fast task can finish before start() resolves.
+                clearFinishedVerifyNotice();
             } else {
                 reportError(result.error, t.workbench.notifications.unknownFailure);
             }
@@ -180,11 +204,15 @@
         const path = activeFile.path;
         generatingCards = true;
         feedback = null;
+        feedbackSourcePath = undefined;
         try {
             const result = await application.cards.start(path);
             if (result.ok) reportSuccess(ctx.i18n.format("cards.queued", { path: result.value }));
             else if (result.error.code === "E401_PROVIDER_NOT_CONFIGURED") feedback = { level: "error", message: t.cards.configureFirst };
-            else reportError(result.error, t.cards.failed);
+            else {
+                reportError(result.error, t.cards.failed);
+                if (result.error.code === "E103_CARDS_SOURCE_OUTSIDE_ROOT") feedbackSourcePath = path;
+            }
         } catch (error) { reportError(error, t.cards.failed); }
         finally { generatingCards = false; }
     }
@@ -216,18 +244,18 @@
             {/if}
             <Button
                 variant="primary"
-                size="icon"
                 disabled={!hasInput}
                 loading={defining}
                 onclick={() => void handleDefine()}
                 ariaLabel={t.workbench.createConcept.startButton}
             >
-                {#if !defining}<Icon name="corner-down-left" size={16} />{/if}
+                {t.workbench.createConcept.startButton}
             </Button>
         </div>
 
         <!-- 操作按钮行：仅在有活跃 Markdown 笔记时显示 -->
         {#if isMarkdown}
+            <div class="cr-current-note"><span>{t.workbench.createConcept.currentNote}</span><strong title={activeFile?.path}>{activeFile?.basename ?? activeFile?.path.split('/').pop()?.replace(/\.md$/, '')}</strong></div>
             <div class="cr-action-grid">
                 <Button
                     variant={activePanel === 'expand' ? 'primary' : 'secondary'}
@@ -324,13 +352,14 @@
     /* 操作按钮网格 */
     .cr-action-grid {
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
         gap: var(--cr-space-2);
     }
 
-    @media (max-width: 600px) {
-        .cr-action-grid { grid-template-columns: 1fr; }
-    }
+    .cr-current-note { display: flex; align-items: baseline; gap: var(--cr-space-2); min-width: 0; font-size: var(--cr-font-sm); }
+    .cr-current-note span { flex-shrink: 0; color: var(--cr-text-muted); }
+    .cr-current-note strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+    .cr-search-row :global(.cr-btn-primary) { min-height: 40px; flex-shrink: 0; }
 
     /* 引导文字 */
     .cr-hint-text {

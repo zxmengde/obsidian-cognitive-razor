@@ -14,6 +14,7 @@
     let { onConfigureTask }: { onConfigureTask: (task: TaskType) => void } = $props();
     const { i18n, settingsApplication } = getSettingsContext();
     const directoryKeys: (keyof DirectoryScheme)[] = ['domain', 'issue', 'theory', 'entity', 'mechanism'];
+    let directoriesExpanded = $state(false);
     let settings = $state<PluginSettings>(settingsApplication.getSettings());
     let rebuildState = $state(settingsApplication.getSemanticIndexRebuildState());
     let saveState = $state(settingsApplication.getSaveState());
@@ -29,7 +30,7 @@
 <div class="cr-workflow-tab">
     <header class="cr-settings-page-heading"><h2>{i18n.t('settings.tabs.workflow')}</h2><p>{i18n.t('settings.redesign.notesDesc')}</p></header>
     <SettingsSection title={i18n.t('settings.redesign.createNotes')}>
-        <details class="cr-settings-disclosure">
+        <details class="cr-settings-disclosure" bind:open={directoriesExpanded}>
             <summary>{i18n.t('settings.redesign.editDirectories')}</summary>
             <p class="cr-settings-hint">{i18n.t('settings.advanced.directoryScheme.desc')}</p>
             {#each directoryKeys as key (key)}
@@ -38,10 +39,12 @@
                 </SettingItem>
             {/each}
         </details>
-        <div class="cr-directory-summary">
-            {#each directoryKeys as key (key)}<p><span>{i18n.t(`crTypes.${key}`)}</span><span>{settings.directoryScheme[key] || '/'}</span></p>{/each}
-        </div>
-        <SettingItem name={i18n.t('settings.advanced.features.enableAutoVerify')} description={i18n.t('settings.redesign.autoVerifyCost')}>
+        {#if !directoriesExpanded}
+            <div class="cr-directory-summary">
+                {#each directoryKeys as key (key)}<p><span>{i18n.t(`crTypes.${key}`)}</span><span>{settings.directoryScheme[key] || '/'}</span></p>{/each}
+            </div>
+        {/if}
+        <SettingItem inlineControl name={i18n.t('settings.advanced.features.enableAutoVerify')} description={i18n.t('settings.redesign.autoVerifyCost')}>
             <Toggle checked={settings.enableAutoVerify} ariaLabel={i18n.t('settings.advanced.features.enableAutoVerify')} onchange={(value) => void settingsApplication.updateSettings({ enableAutoVerify: value })} />
         </SettingItem>
     </SettingsSection>
@@ -55,10 +58,10 @@
         <p class="cr-settings-hint">{i18n.t('settings.redesign.cardsIndependent')}</p>
     </SettingsSection>
     <SettingsSection title={i18n.t('settings.redesign.semanticSearch')}>
-        <SettingItem name={i18n.t('settings.advanced.semanticIndexing.enabled')} description={i18n.t('settings.advanced.semanticIndexing.enabledDesc')}>
+        <SettingItem inlineControl name={i18n.t('settings.advanced.semanticIndexing.enabled')} description={i18n.t('settings.advanced.semanticIndexing.enabledDesc')}>
             <Toggle checked={settings.enableSemanticIndexing} disabled={locked} ariaLabel={i18n.t('settings.advanced.semanticIndexing.enabled')} onchange={(value) => void settingsApplication.updateSettings({ enableSemanticIndexing: value })} />
         </SettingItem>
-        <SettingItem name={i18n.t('settings.advanced.semanticIndexing.duplicates')} description={i18n.t('settings.advanced.semanticIndexing.duplicatesDesc')}>
+        <SettingItem inlineControl name={i18n.t('settings.advanced.semanticIndexing.duplicates')} description={i18n.t('settings.advanced.semanticIndexing.duplicatesDesc')}>
             <Toggle checked={settings.enableDuplicateDetection} disabled={!settings.enableSemanticIndexing || locked} ariaLabel={i18n.t('settings.advanced.semanticIndexing.duplicates')} onchange={(value) => void settingsApplication.updateSettings({ enableDuplicateDetection: value })} />
         </SettingItem>
         {#if settings.enableSemanticIndexing && settings.enableDuplicateDetection}

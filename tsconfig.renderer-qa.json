@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.test.json",
+  "include": ["scripts/qa-tests/*.qa.ts", "vitest.renderer-qa.config.mts", "__mocks__/**/*.ts"],
+  "exclude": ["node_modules"]
+}

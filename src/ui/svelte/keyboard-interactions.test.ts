@@ -32,7 +32,7 @@ beforeAll(async () => {
       builder.onLoad({ filter: /.*/, namespace: "test" }, ({ path }) => ({ resolveDir: process.cwd(), contents: compile(
         path === "task-model-host"
           ? '<script>import TaskModelCard from "./src/ui/svelte/settings/TaskModelCard.svelte"; import { resolveTaskModelSnapshot } from "./src/core/task-model-resolver"; let { store, i18n, update } = $props(); let settings = $state(store.getSettings()); const unsubscribe = store.subscribe(value => settings = value); $effect(() => () => unsubscribe());</script><TaskModelCard taskType="write" config={settings.taskModels.write} providers={settings.providers} defaultProviderId={settings.defaultProviderId} resolved={resolveTaskModelSnapshot(settings, "write")} isDefault={false} {i18n} onUpdate={update} onReset={() => {}} />'
-          : '<script>import Create from "./src/ui/svelte/workbench/CreateSection.svelte"; import { setWorkbenchContext } from "./src/ui/bridge/context"; let { context, activeFile = null } = $props(); setWorkbenchContext(context);</script><Create {activeFile} />',
+          : '<script>import Create from "./src/ui/svelte/workbench/CreateSection.svelte"; import { setWorkbenchContext } from "./src/ui/bridge/context"; let { context, activeFile = null } = $props(); setWorkbenchContext(context); export function setActiveFile(file) { activeFile = file; }</script><Create {activeFile} />',
         { filename: "TestHost.svelte", css: "injected" },
       ).js.code }));
     } }, sveltePlugin({ preprocess: sveltePreprocess(), compilerOptions: { css: "injected" } })],
@@ -51,6 +51,71 @@ function openTaskParameters(target: HTMLElement): HTMLDetailsElement {
 }
 
 describe("keyboard interaction safety", () => {
+  it.each(['completed', 'failed', 'interrupted', 'cancelled'] as const)('clears the Verify started notice after its workflow becomes %s', async (terminal) => {
+    let state: string = 'running';
+    let notify = () => {};
+    const unsubscribe = vi.fn();
+    const start = vi.fn(async () => ({ ok: true, value: 'verify-workflow' }));
+    const i18n = new I18n();
+    const target = document.body.appendChild(document.createElement('div'));
+    const instance = ui.mount(ui.CreateHost, { target, props: { activeFile: { path: 'Synthetic.md', extension: 'md' }, context: {
+      i18n, app: { vault: { on: () => ({}), offref() {}, cachedRead: async () => '' } },
+      application: { verify: { start }, queue: {
+        subscribe: (listener: (event: { type: string }) => void) => { notify = () => listener({ type: 'queue-paused' }); return unsubscribe; },
+        getSnapshot: () => ({ tasks: [{ workflowId: 'verify-workflow', state }] }),
+      } }, settingsApplication: { getSettings: () => ({}), subscribeSettings: () => () => undefined },
+    } } });
+    try {
+      ui.flushSync();
+      const verify = Array.from(target.querySelectorAll('button')).find(button => button.textContent?.trim() === i18n.messages.workbench.buttons.verify)!;
+      verify.click();
+      await vi.waitFor(() => { ui.flushSync(); expect(target.textContent).toContain(i18n.messages.workbench.notifications.verifyStarted); });
+      notify(); ui.flushSync();
+      expect(target.textContent).toContain(i18n.messages.workbench.notifications.verifyStarted);
+      state = terminal; notify(); ui.flushSync();
+      expect(target.textContent).not.toContain(i18n.messages.workbench.notifications.verifyStarted);
+      // A workflow which terminates before start() resolves cannot leave a stale notice either.
+      verify.click();
+      await vi.waitFor(() => expect(start).toHaveBeenCalledTimes(2));
+      await Promise.resolve(); ui.flushSync();
+      expect(target.textContent).not.toContain(i18n.messages.workbench.notifications.verifyStarted);
+    } finally { await ui.unmount(instance); target.remove(); }
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
+  it("owns keyboard and focus in the dialog's popout document", async () => {
+    const frame = document.body.appendChild(document.createElement("iframe"));
+    const popout = frame.contentDocument!;
+    const ownerWindow = frame.contentWindow!;
+    const opener = popout.body.appendChild(popout.createElement("button"));
+    opener.focus();
+    const target = popout.body.appendChild(popout.createElement("div"));
+    const oncancel = vi.fn();
+    const instance = ui.mount(ui.ConfirmModal, { target, props: {
+      title: "确认", message: "测试", confirmLabel: "确定", cancelLabel: "取消", onconfirm: vi.fn(), oncancel,
+    } });
+    try {
+      ui.flushSync();
+      await vi.waitFor(() => expect(popout.activeElement).toBe(target.querySelector("button")));
+      const buttons = target.querySelectorAll("button");
+      buttons[1].focus();
+      const tab = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+      buttons[1].dispatchEvent(tab);
+      expect(tab.defaultPrevented).toBe(true);
+      expect(popout.activeElement).toBe(buttons[0]);
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", cancelable: true }));
+      expect(oncancel).not.toHaveBeenCalled();
+      ownerWindow.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", cancelable: true }));
+      expect(oncancel).toHaveBeenCalledOnce();
+    } finally {
+      await ui.unmount(instance);
+      await vi.waitFor(() => expect(popout.activeElement).toBe(opener));
+      ownerWindow.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", cancelable: true }));
+      expect(oncancel).toHaveBeenCalledOnce();
+      frame.remove();
+    }
+  });
+
   it("preserves both task parameter edits when the earlier save is still in progress", async () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     settings.providers.provider = {
@@ -177,6 +242,35 @@ describe("keyboard interaction safety", () => {
 
 
 describe("card generation entry", () => {
+  it('clears a source-root error on note switch, including a late result for the old note', async () => {
+    let release!: (value: unknown) => void;
+    const start = vi.fn(() => new Promise(resolve => { release = resolve; }));
+    const target = document.body.appendChild(document.createElement('div'));
+    const content = generateMarkdownContent(generateFrontmatter({ cruid: 'node', type: 'entity', name: 'Synthetic' }), 'body');
+    const instance = ui.mount(ui.CreateHost, { target, props: { activeFile: { path: 'Outside.md', extension: 'md' }, context: {
+      i18n: new I18n(), app: { vault: { cachedRead: async () => content, on: () => ({}), offref() {} } },
+      application: { queue: { subscribe: () => () => undefined }, cards: { start } },
+      settingsApplication: { getSettings: () => ({}), subscribeSettings: () => () => undefined },
+    } } });
+    const switchNote = (path: string) => { (instance as { setActiveFile: (file: object) => void }).setActiveFile({ path, extension: 'md' }); ui.flushSync(); };
+    const error = { ok: false, error: { code: 'E103_CARDS_SOURCE_OUTSIDE_ROOT', message: 'private path' } };
+    try {
+      ui.flushSync(); await Promise.resolve(); ui.flushSync();
+      const button = Array.from(target.querySelectorAll('button')).find(button => button.textContent?.includes('生成记忆卡片'))!;
+      button.click(); release(error);
+      await vi.waitFor(() => { ui.flushSync(); expect(target.querySelector('[role="alert"]')).not.toBeNull(); });
+      switchNote('C-知识库/Valid.md');
+      expect(target.querySelector('[role="alert"]')).toBeNull();
+      switchNote('Outside.md'); await Promise.resolve(); ui.flushSync();
+      Array.from(target.querySelectorAll('button')).find(button => button.textContent?.includes('生成记忆卡片'))!.click();
+      expect(start).toHaveBeenCalledTimes(2);
+      switchNote('C-知识库/Valid.md'); release(error);
+      await Promise.resolve(); await Promise.resolve(); ui.flushSync();
+      expect(target.querySelector('[role="alert"]')).toBeNull();
+      expect(start).toHaveBeenCalledTimes(2);
+    } finally { await ui.unmount(instance); target.remove(); }
+  });
+
   it.each([false, true])("shows the card action only for a CR node (%s)", async (isNode) => {
     const target = document.body.appendChild(document.createElement("div"));
     const start = vi.fn(async () => ({ ok: true, value: "D-习题库/测试-decks.md" }));
@@ -270,7 +364,7 @@ describe("task parameter progressive disclosure", () => {
     } finally { await ui.unmount(instance); target.remove(); }
   });
 
-  it("keeps Cards service and model independent of global defaults", async () => {
+  it("shows Cards inherited service and model without persisting placeholder values", async () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     settings.defaultProviderId = "research";
     settings.providers.research = { apiKey: "", enabled: true, apiFormat: "openai-responses", embeddingApiFormat: "disabled", defaultChatModel: "inherited-model", defaultEmbedModel: "" };
@@ -284,8 +378,8 @@ describe("task parameter progressive disclosure", () => {
       ui.flushSync();
       expect(target.querySelector<HTMLSelectElement>("#tmc-cards-provider")!.value).toBe("");
       expect(target.querySelector<HTMLInputElement>("#tmc-cards-model")!.value).toBe("");
-      expect(target.querySelector<HTMLInputElement>("#tmc-cards-model")!.placeholder).not.toContain("inherited-model");
-      expect(target.textContent).toContain("不继承服务的默认模型");
+      expect(target.querySelector<HTMLInputElement>("#tmc-cards-model")!.placeholder).toContain("inherited-model");
+      expect(target.textContent).toContain("继承服务默认模型：inherited-model");
       expect(onUpdate).not.toHaveBeenCalled();
     } finally { await ui.unmount(instance); target.remove(); }
   });

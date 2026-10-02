@@ -3,7 +3,7 @@
 
   职责：
   - 渲染 3 个按工作流组织的 Tab 按钮（AI 与模型、笔记与卡片、维护与备份）
-  - sticky 定位，当前 tab 下划线高亮
+  - 正常文档流，不覆盖滚动内容；当前 tab 下划线高亮
   - ArrowLeft/Right 键盘快捷键切换 Tab
   - 正确的 ARIA 属性（role="tablist", role="tab"）
 
@@ -83,28 +83,29 @@
 
 <style>
     .cr-settings-nav {
-        position: sticky;
-        top: 0;
-        z-index: 10;
         display: flex;
-        gap: var(--cr-space-1);
+        gap: var(--cr-space-6);
         border-bottom: 1px solid var(--cr-border);
         background: var(--cr-bg-base);
-        padding: 0 var(--cr-space-2);
+        padding: 0;
     }
 
-    .cr-settings-nav-tab {
+    .cr-settings-nav .cr-settings-nav-tab {
         position: relative;
-        padding: var(--cr-space-2) var(--cr-space-3);
-        border: none;
-        background: none;
+        padding: var(--cr-space-3) 0;
+        height: auto;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+        background: transparent;
         color: var(--cr-text-muted);
-        font-size: var(--cr-font-sm);
+        font-size: var(--cr-font-base);
+        line-height: var(--cr-line-height-body);
         cursor: pointer;
         transition: color 0.15s ease;
         white-space: normal;
         min-width: 0;
-        flex: 1;
+        flex: 0 1 auto;
     }
 
     .cr-settings-nav-tab:hover {
@@ -127,8 +128,8 @@
         content: '';
         position: absolute;
         bottom: -1px;
-        left: var(--cr-space-2);
-        right: var(--cr-space-2);
+        left: 0;
+        right: 0;
         height: 2px;
         background: var(--cr-interactive-accent);
         border-radius: 1px 1px 0 0;

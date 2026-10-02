@@ -4,6 +4,7 @@
     import Icon from '../../components/Icon.svelte';
     import type { TaskRecord, TaskState } from '../../../types';
     import { formatStandardName } from '../../../core/naming-utils';
+    import { queueTaskFeedback } from '../../queue-task-feedback';
     import { stageLabel } from '../../stage-labels';
 
     let {
@@ -63,6 +64,7 @@
 <div class="cr-task-list" role="list">
     {#each tasks as task (task.id)}
         {@const displayName = getTaskDisplayName(task)}
+        {@const failure = queueTaskFeedback(task, t.workbench.notifications.unknownFailure)}
         <div class="cr-task-item cr-task-item--{task.state}" role="listitem">
             <input
                 class="cr-task-select"
@@ -73,15 +75,17 @@
             />
 
             <span class="cr-task-name" title={task.stageId === "cards" ? `${displayName} → ${task.payload.targetPath ?? ""}` : displayName}>{displayName}</span>
+            <div class="cr-task-meta">
             <span class="cr-task-stage" title={task.stageId}>{stageLabel(task.stageId, t)}</span>
             <span class="cr-task-state cr-task-state--{task.state}">
                 <Icon name={getStateIcon(task.state)} size={16} />
                 <span>{getStateLabel(task.state)}</span>
             </span>
+            </div>
             <span class="cr-task-actions">
                 {#if task.stageId !== 'cards' && (task.state === 'failed' || task.state === 'interrupted')}
-                    <Button variant="ghost" size="icon" disabled={disabled} onclick={() => onretry(task.id)} ariaLabel={t.workbench.queueStatus.retry}>
-                        <Icon name="refresh-cw" size={16} />
+                    <Button variant="ghost" size="sm" disabled={disabled} onclick={() => onretry(task.id)} ariaLabel={t.workbench.queueStatus.retry}>
+                        {t.workbench.queueStatus.retry}
                     </Button>
                 {/if}
                 {#if task.state === 'pending' || task.state === 'running'}
@@ -94,6 +98,21 @@
                     </Button>
                 {/if}
             </span>
+            {#if failure}
+                <div class="cr-task-detail cr-task-feedback" role="note">
+                    <p class:cr-task-warning={failure.uncertain}>{failure.upstreamStatus !== undefined ? ctx.i18n.format('workbench.queueStatus.upstreamSummary', { status: failure.upstreamStatus }) : failure.requestTimeoutMs !== undefined ? t.workbench.queueStatus.timeoutSummary : failure.uncertain ? t.workbench.queueStatus.uncertainSummary : failure.message}</p>
+                    <details>
+                    <summary>{t.workbench.queueStatus.failureDetails}</summary>
+                    {#if failure.upstreamStatus !== undefined}
+                        <p>{ctx.i18n.format('workbench.queueStatus.upstreamFailure', { status: failure.upstreamStatus })}</p>
+                    {:else if failure.requestTimeoutMs !== undefined}
+                        <p>{ctx.i18n.format('workbench.queueStatus.localTimeout', { seconds: failure.requestTimeoutMs / 1000 })}</p>
+                    {:else}<p>{failure.message}</p>{/if}
+                    {#if failure.elapsedSeconds !== undefined}<p>{ctx.i18n.format('workbench.queueStatus.elapsedRun', { seconds: failure.elapsedSeconds })}</p>{/if}
+                    <p>{failure.uncertain ? t.workbench.queueStatus.uncertainNextStep : failure.details || t.workbench.queueStatus.failureNextStep}</p>
+                    </details>
+                </div>
+            {/if}
             {#if task.stageId === 'cards' && task.state === 'completed'}
                 <span class="cr-task-detail">{ctx.i18n.format('cards.completed', { path: task.payload.targetPath ?? task.filePath ?? '' })}</span>
             {:else if task.stageId === 'cards' && (task.state === 'failed' || task.state === 'interrupted')}
@@ -107,20 +126,26 @@
     .cr-task-list { display: flex; flex-direction: column; gap: 1px; }
     .cr-task-item {
         display: grid;
-        grid-template-columns: 20px minmax(0, 1fr) minmax(64px, auto) minmax(86px, auto) 56px;
+        grid-template-columns: 20px minmax(0, 1fr) auto 76px;
         align-items: center;
         gap: var(--cr-space-2);
         min-height: 40px;
-        padding: var(--cr-space-1) var(--cr-space-2);
+        padding: var(--cr-space-3) 0;
         border-bottom: 1px solid var(--cr-border);
         font-size: var(--font-ui-small);
     }
+    .cr-task-feedback p { margin: 0; line-height: var(--cr-line-height-body); }
+    .cr-task-warning { color: var(--cr-status-warning); }
+    .cr-task-feedback summary { cursor: pointer; padding: var(--cr-space-1) 0; font-size: var(--cr-font-sm); }
+    .cr-task-feedback details p + p { margin-top: var(--cr-space-2); }
+    .cr-task-feedback { display: flex; flex-direction: column; gap: var(--cr-space-1); }
     .cr-task-detail { grid-column: 2 / -1; color: var(--cr-text-muted); overflow-wrap: anywhere; }
     .cr-task-item:last-child { border-bottom: 0; }
     .cr-task-item:hover { background: var(--cr-bg-hover); }
     .cr-task-select { width: 16px; height: 16px; margin: 0; }
     .cr-task-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cr-text-normal); }
-    .cr-task-stage { color: var(--cr-text-muted); font-family: var(--font-monospace); font-size: var(--font-ui-smaller); }
+    .cr-task-meta { display: flex; align-items: center; flex-wrap: wrap; gap: var(--cr-space-1) var(--cr-space-2); min-width: 0; }
+    .cr-task-stage { color: var(--cr-text-muted); font-size: var(--font-ui-smaller); }
     .cr-task-state { display: inline-flex; align-items: center; gap: var(--cr-space-1); min-width: 86px; font-size: var(--font-ui-smaller); }
     .cr-task-state--pending { color: var(--cr-task-pending); }
     .cr-task-state--running { color: var(--cr-task-running); }
@@ -129,14 +154,22 @@
     .cr-task-state--failed { color: var(--cr-task-failed); }
     .cr-task-state--cancelled { color: var(--cr-text-muted); }
     .cr-task-state--running :global(svg) { animation: cr-queue-spin 1s linear infinite; }
-    .cr-task-actions { display: grid; grid-auto-flow: column; grid-auto-columns: 28px; justify-content: end; min-width: 28px; }
+    .cr-task-actions { display: grid; grid-auto-flow: column; grid-template-columns: auto 28px; justify-content: end; min-width: 28px; }
     @keyframes cr-queue-spin { to { transform: rotate(360deg); } }
     @media (max-width: 620px) {
-        .cr-task-item { grid-template-columns: 20px minmax(0, 1fr) minmax(56px, auto) 56px; }
-        .cr-task-state { grid-column: 2 / 4; grid-row: 2; }
+        .cr-task-item { grid-template-columns: 20px minmax(0, 1fr) 76px; }
+        .cr-task-select { grid-column: 1; grid-row: 1; }
+        .cr-task-name { grid-column: 2; grid-row: 1; white-space: normal; overflow-wrap: anywhere; }
+        .cr-task-actions { grid-column: 3; grid-row: 1; }
+        .cr-task-meta { grid-column: 2 / -1; grid-row: 2; }
+        .cr-task-stage, .cr-task-state { min-width: 0; overflow-wrap: anywhere; }
     }
     @container cr-workbench (max-width: 620px) {
-        .cr-task-item { grid-template-columns: 20px minmax(0, 1fr) minmax(56px, auto) 56px; }
-        .cr-task-state { grid-column: 2 / 4; grid-row: 2; }
+        .cr-task-item { grid-template-columns: 20px minmax(0, 1fr) 76px; }
+        .cr-task-select { grid-column: 1; grid-row: 1; }
+        .cr-task-name { grid-column: 2; grid-row: 1; white-space: normal; overflow-wrap: anywhere; }
+        .cr-task-actions { grid-column: 3; grid-row: 1; }
+        .cr-task-meta { grid-column: 2 / -1; grid-row: 2; }
+        .cr-task-stage, .cr-task-state { min-width: 0; overflow-wrap: anywhere; }
     }
 </style>

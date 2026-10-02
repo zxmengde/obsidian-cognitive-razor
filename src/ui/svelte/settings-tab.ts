@@ -18,6 +18,7 @@ export class CRSettingTab extends PluginSettingTab {
       app: this.app,
       i18n: this.plugin.getI18n(),
       settingsApplication: this.plugin.getSettingsApplication(),
+      onTabNavigate: () => { this.containerEl.scrollTop = 0; },
     }).destroy;
   }
 

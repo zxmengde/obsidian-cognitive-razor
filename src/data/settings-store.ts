@@ -59,6 +59,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   providerTimeoutMs: 60_000,
   providerMaxAttempts: 3,
   enableStreamingKeepalive: false,
+  streamingTransport: "node-http",
 };
 
 const API_FORMATS = new Set<ProviderApiFormat>([
@@ -101,6 +102,7 @@ const BOOLEAN_SETTING_RULES = [
   { key: "enableStreamingKeepalive", defaultValue: DEFAULT_SETTINGS.enableStreamingKeepalive },
 ] as const;
 const PRESENTATION_SETTING_RULES = [
+  { key: "streamingTransport", values: ["node-http", "renderer-fetch"] },
   { key: "verifyReportPresentation", values: ["expanded", "collapsed"] },
   { key: "queueDefaultFilter", values: ["all", "active", "failed"] },
   { key: "queuePageSize", values: [25, 50, 100] },
@@ -512,6 +514,7 @@ function normalizeSettings(raw: unknown, strictPresentationSettings = false): Re
     providerTimeoutMs: scalar.providerTimeoutMs,
     providerMaxAttempts: scalar.providerMaxAttempts,
     enableStreamingKeepalive: scalar.enableStreamingKeepalive,
+    streamingTransport: scalar.streamingTransport,
   });
 }
 

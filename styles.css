@@ -76,6 +76,8 @@
     --cr-radius-lg: var(--radius-l, 12px);
     --cr-radius-pill: 999px;
 
+    --cr-layer-modal: var(--layer-modal, 1000);
+
     /* === 阴影 === */
     --cr-shadow-sm: var(--shadow-s);
     --cr-shadow-lg: var(--shadow-l);
@@ -92,9 +94,10 @@
     --cr-confidence-low: var(--cr-text-muted);
 
     /* === 排版 === */
-    --cr-font-base: var(--font-text-size, 14px);
-    --cr-font-sm: 13px;
-    --cr-font-xs: 11px;
+    --cr-font-base: var(--font-ui-medium, 14px);
+    --cr-font-sm: var(--font-ui-small, 13px);
+    --cr-font-xs: var(--font-ui-smaller, 12px);
+    --cr-settings-title-size: 1.7em;
     --cr-line-height-body: 1.5;
     --cr-line-height-compact: 1.3;
 }
@@ -137,12 +140,15 @@
 .cr-scope .cr-btn-secondary,
 .cr-scope .cr-btn-ghost,
 .cr-scope .cr-btn-danger {
-    height: 32px;
+    height: auto;
+    min-height: 32px;
+    white-space: normal;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: var(--cr-space-1);
-    line-height: 1;
+    line-height: 1.3;
+    box-shadow: none;
 }
 
 /* --- Primary --- */
@@ -270,16 +276,18 @@
 
 /* 小尺寸：28px 高 */
 .cr-scope .cr-btn--sm {
-    height: 28px;
+    height: auto;
+    min-height: 28px;
     padding: var(--cr-space-1) var(--cr-space-2);
     font-size: var(--font-ui-smaller);
-    line-height: 1;
+    line-height: 1.3;
 }
 
 /* 图标按钮：28px × 28px 正方形 */
 .cr-scope .cr-btn--icon {
     width: 28px;
     height: 28px;
+    min-height: 28px;
     padding: 0;
     display: inline-flex;
     align-items: center;
@@ -411,6 +419,10 @@
    8. 响应式布局（容器查询）
    ======================================== */
 
+/* Workbench sizing inherits the host UI scale, not Markdown heading scale. */
+.cr-workbench-root { font-size: var(--cr-font-base); line-height: var(--cr-line-height-body); }
+.cr-workbench-root *, .cr-workbench-root *::before, .cr-workbench-root *::after { box-sizing: border-box; }
+
 /* 工作台面板：设为容器查询上下文 */
 .cr-workbench-root {
     container-type: inline-size;
@@ -446,29 +458,34 @@
 /* Settings use the host's theme and available pane width, including split panes. */
 .cr-settings-root { container-type: inline-size; min-width: 0; }
 .cr-settings-root *, .cr-settings-root *::before, .cr-settings-root *::after { box-sizing: border-box; }
-.cr-settings-root .cr-settings-page-heading { margin: 8px 0 24px; }
-.cr-settings-root .cr-settings-page-heading h2 { font-size: var(--h2-size, 1.5em); margin: 0 0 8px; }
-.cr-settings-root .cr-settings-page-heading p, .cr-settings-root .cr-settings-hint { color: var(--text-muted); line-height: 1.6; font-size: var(--font-ui-small, 13px); margin: 8px 0; overflow-wrap: anywhere; }
+/* Quiet settings actions must not inherit Obsidian's native button shadow. */
+.cr-scope .cr-settings-root .cr-btn-ghost { box-shadow: none; color: var(--cr-interactive-accent); }
+.cr-settings-root .cr-settings-page-heading { margin: 0 0 var(--cr-space-4); }
+.cr-settings-root .cr-settings-page-heading h2 { font-size: 1.45em; margin: 0 0 8px; padding: 0; }
+.cr-settings-root .cr-settings-page-heading p, .cr-settings-root .cr-settings-hint { color: var(--text-muted); line-height: 1.6; font-size: var(--cr-font-sm, 14px); margin: 8px 0; overflow-wrap: anywhere; }
+.cr-settings-root .cr-settings-page-heading p { margin-bottom: 0; }
 .cr-settings-root .cr-settings-disclosure summary, .cr-settings-root .cr-result-details summary { cursor: pointer; color: var(--text-muted); padding: 8px 0; }
 .cr-settings-root summary:focus-visible, .cr-settings-root button:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 2px; }
-.cr-settings-root input, .cr-settings-root select { max-width: 100%; min-width: 0; }
+.cr-scope .cr-settings-root input, .cr-scope .cr-settings-root select { max-width: 100%; min-width: 0; font-size: var(--cr-font-sm); }
 .cr-settings-root .cr-setting-item__desc { overflow-wrap: anywhere; }
 .cr-settings-root .cr-setting-item__control { max-width: 60%; flex-wrap: wrap; justify-content: flex-end; }
+/* Outrank Svelte scoped selectors even when their CSS is injected later. */
 @container (max-width: 520px) {
-    .cr-settings-root .cr-setting-item { flex-direction: column; align-items: stretch; gap: 8px; }
-    .cr-settings-root .cr-setting-item__control { max-width: 100%; justify-content: flex-start; }
-    .cr-settings-root .cr-setting-item__control > input, .cr-settings-root .cr-setting-item__control > select { width: 100%; }
-    .cr-settings-root .cr-setting-item__control .cr-slider { max-width: 100%; min-width: 0; width: 100%; }
-    .cr-settings-root .cr-slider__number { flex: 0 0 56px; }
-    .cr-settings-root .cr-settings-section__header { flex-wrap: wrap; gap: 8px; }
-    .cr-settings-root .cr-missing-item { grid-template-columns: 1fr; }
-    .cr-settings-root .cr-settings-nav { padding: 0; gap: 0; }
-    .cr-settings-root .cr-settings-nav-tab { padding: 10px 4px; font-size: 13px; }
-    .cr-settings-root .cr-settings-content { padding-left: 0; padding-right: 0; }
+    /* Only longer controls need their own line; switches stay beside the label. */
+    .cr-scope .cr-settings-root .cr-setting-item:not(.cr-setting-item--inline-control) { flex-direction: column; align-items: stretch; gap: 8px; }
+    .cr-scope .cr-settings-root .cr-setting-item__control { max-width: 100%; justify-content: flex-start; }
+    .cr-scope .cr-settings-root .cr-setting-item__control > input, .cr-scope .cr-settings-root .cr-setting-item__control > select { width: 100%; }
+    .cr-scope .cr-settings-root .cr-setting-item__control .cr-slider { max-width: 100%; min-width: 0; width: 100%; }
+    .cr-scope .cr-settings-root .cr-slider__number { flex: 0 0 56px; }
+    .cr-scope .cr-settings-root .cr-settings-section__header { flex-wrap: wrap; gap: 8px; }
+    .cr-scope .cr-settings-root .cr-missing-item { grid-template-columns: 1fr; }
+    .cr-scope .cr-settings-root .cr-settings-nav { gap: var(--cr-space-4); }
+    .cr-scope .cr-settings-root .cr-settings-nav .cr-settings-nav-tab { padding: 10px 0; font-size: var(--cr-font-sm); }
+    .cr-scope .cr-settings-root .cr-settings-content { padding-left: 0; padding-right: 0; }
 }
 
 @container (max-width: 420px) {
-    .cr-settings-root .cr-task-model-card__parameter { grid-template-columns: minmax(0, 1fr) minmax(100px, 42%); gap: var(--cr-space-2); }
-    .cr-settings-root .cr-task-model-card__parameter-result { grid-column: 1 / -1; }
-    .cr-settings-root .cr-task-model-card__parameter-controls { grid-row: auto; }
+    .cr-scope .cr-settings-root .cr-task-model-card__parameter { grid-template-columns: minmax(0, 1fr) minmax(100px, 42%); gap: var(--cr-space-2); }
+    .cr-scope .cr-settings-root .cr-task-model-card__parameter-result { grid-column: 1 / -1; }
+    .cr-scope .cr-settings-root .cr-task-model-card__parameter-controls { grid-row: auto; }
 }

@@ -61,13 +61,13 @@ describe('task parameter presentation', () => {
             .toMatchObject({ protocolIssue: 'effortNotGemini' });
     });
 
-    it('does not invent a value for empty parameters or independent Cards settings', () => {
+    it('does not invent embedding values and shows actual inherited Cards parameters', () => {
         const settings = fixture();
         expect(describeTaskParameter('embeddingDimension', settings.taskModels.index, resolveTaskModelSnapshot(settings, 'index')))
             .toMatchObject({ value: undefined, configuredValue: undefined, source: 'none' });
         const cards = resolveTaskModelSnapshot(settings, 'cards');
-        expect(cards).toMatchObject({ providerId: '', model: '' });
-        expect(describeTaskParameter('temperature', settings.taskModels.cards, cards)).toMatchObject({ value: undefined, source: 'none' });
+        expect(cards).toMatchObject({ providerId: 'research', model: 'chat' });
+        expect(describeTaskParameter('temperature', settings.taskModels.cards, cards)).toMatchObject({ value: 0.7, source: 'provider' });
     });
 
     it('respects explicit task capabilities and the provider legacy web search declaration', () => {

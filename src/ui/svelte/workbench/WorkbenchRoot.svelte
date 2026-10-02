@@ -61,11 +61,12 @@
     .cr-workbench-root {
         max-width: 900px;
         margin: 0 auto;
-        padding: var(--cr-space-4) var(--cr-space-3);
+        padding: var(--cr-space-4);
         display: flex;
         flex-direction: column;
         gap: var(--cr-space-5);
     }
 
-    .cr-section { width: 100%; }
+    .cr-section { width: 100%; min-width: 0; }
+    .cr-section + .cr-section { border-top: 1px solid var(--cr-border); padding-top: var(--cr-space-5); }
 </style>

@@ -399,6 +399,7 @@
             />
         </SettingItem>
         <SettingItem
+            inlineControl
             name={i18n.t('settings.advanced.queue.streamingKeepalive')}
             description={i18n.t('settings.advanced.queue.streamingKeepaliveDesc')}
         >
@@ -408,6 +409,13 @@
                 onchange={async (value) => { await settingsApplication.updateSettings({ enableStreamingKeepalive: value }); }}
             />
         </SettingItem>
+        {#if settings.enableStreamingKeepalive}
+        <SettingItem name={i18n.t('settings.advanced.queue.streamingTransport')} description={i18n.t('settings.advanced.queue.streamingTransportDesc')}>
+            <Select value={settings.streamingTransport} ariaLabel={i18n.t('settings.advanced.queue.streamingTransport')}
+                options={[{value:'node-http',label:i18n.t('settings.advanced.queue.streamingNode')},{value:'renderer-fetch',label:i18n.t('settings.advanced.queue.streamingRenderer')}]}
+                onchange={async (value) => { await settingsApplication.updateSettings({ streamingTransport: value as PluginSettings['streamingTransport'] }); }} />
+        </SettingItem>
+        {/if}
         <SettingItem
             name={i18n.t('settings.advanced.queue.providerMaxAttempts')}
             description={i18n.t('settings.advanced.queue.providerMaxAttemptsDesc')}

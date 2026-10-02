@@ -89,4 +89,6 @@ export interface PluginSettings {
     providerMaxAttempts: number;
     /** 通过流式传输保持聊天连接，但仍等待完整响应后一次性处理。 */
     enableStreamingKeepalive: boolean;
+    /** 请求发送前固定流式通道，默认保留 Node。 */
+    streamingTransport: "node-http" | "renderer-fetch";
 }

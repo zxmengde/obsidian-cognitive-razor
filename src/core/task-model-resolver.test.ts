@@ -111,3 +111,19 @@ describe("resolveTaskModelSnapshot", () => {
     });
   });
 });
+
+it("lets Cards inherit missing fields while keeping explicit overrides and snapshots intact", () => {
+  const current = settings();
+  current.taskModels.cards = { providerId: "", model: "" };
+  const original = structuredClone(current);
+  const inherited = resolveTaskModelSnapshot(current, "cards");
+  expect(inherited.providerId).toBe(current.defaultProviderId);
+  expect(inherited.model).toBe(current.providers[current.defaultProviderId].defaultChatModel);
+  expect(current).toEqual(original);
+  current.taskModels.cards = { providerId: "openai", model: "custom-cards" };
+  expect(resolveTaskModelSnapshot(current, "cards")).toMatchObject({ providerId: "openai", model: "custom-cards" });
+  current.defaultProviderId = "openai";
+  expect(inherited.providerId).toBe(original.defaultProviderId);
+  current.taskModels.cards = { providerId: "missing-existing-override", model: "kept" };
+  expect(resolveTaskModelSnapshot(current, "cards")).toMatchObject({ providerId: "missing-existing-override", model: "kept", providerSnapshot: undefined });
+});

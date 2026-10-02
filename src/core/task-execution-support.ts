@@ -184,22 +184,7 @@ export function getTaskAbortError<T>(task: TaskRecord, signal: AbortSignal): Res
  * response. Source lists and unpositioned citations are intentionally not
  * guessed into claims.
  */
-export function insertPositionedCitationLinks(report: string, citations?: UrlCitation[]): string {
-  const positioned = (citations ?? [])
-    .filter((citation) => Number.isSafeInteger(citation.startIndex) && Number.isSafeInteger(citation.endIndex)
-      && citation.startIndex! >= 0 && citation.endIndex! > citation.startIndex! && citation.endIndex! <= report.length)
-    .sort((left, right) => right.endIndex! - left.endIndex! || right.startIndex! - left.startIndex!);
-  const usedRanges = new Set<string>();
-  let output = report;
-  for (const citation of positioned) {
-    const range = `${citation.startIndex}:${citation.endIndex}`;
-    if (usedRanges.has(range)) continue;
-    usedRanges.add(range);
-    const label = (citation.title?.trim() || citation.url).replace(/[\\[\]]/g, "\\$&");
-    output = `${output.slice(0, citation.endIndex)} [${label}](${citation.url})${output.slice(citation.endIndex)}`;
-  }
-  return output;
-}
+export { insertPositionedCitationLinks } from "./positioned-citations";
 
 /** Allow a continuation fallback only when the server explicitly rejects the
  * stored response id. Uncertain transport failures must never duplicate a call. */

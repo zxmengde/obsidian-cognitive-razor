@@ -82,7 +82,7 @@
         gap: var(--cr-space-1);
         padding: 0 var(--cr-space-3);
         color: var(--text-muted);
-        font-size: var(--font-ui-small);
+        font-size: var(--cr-font-sm);
     }
 
     .cr-provider-probe-status__row {
@@ -99,7 +99,7 @@
         margin: 0;
         padding: 0 var(--cr-space-3);
         color: var(--text-warning);
-        font-size: var(--font-ui-small);
+        font-size: var(--cr-font-sm);
     }
 
     .cr-provider-probe-status :global(button) {

@@ -4,7 +4,7 @@ import { requestUrl } from "obsidian";
 import type { ILogger, ProviderConfig, Result, ResolvedTaskConfig } from "../types";
 import type { SettingsStore } from "../data/settings-store";
 import { ProviderManager } from "./provider-manager";
-import { ProviderStreamAbortError } from "./provider-streaming";
+import { ProviderStreamAbortError, ProviderStreamNetworkError, safeStreamNetworkCode } from "./provider-streaming";
 import { InMemoryExternalCallLedger } from "./external-call-ledger";
 
 vi.mock("obsidian", () => ({
@@ -24,6 +24,7 @@ function createSettingsStore(overrides: {
   providerTimeoutMs?: number;
   providerMaxAttempts?: number;
   enableStreamingKeepalive?: boolean;
+  streamingTransport?: "node-http" | "renderer-fetch";
   provider?: Partial<ProviderConfig>;
 } = {}): SettingsStore {
   return {
@@ -31,6 +32,7 @@ function createSettingsStore(overrides: {
       providerTimeoutMs: overrides.providerTimeoutMs ?? 60000,
       providerMaxAttempts: overrides.providerMaxAttempts ?? 3,
       enableStreamingKeepalive: overrides.enableStreamingKeepalive ?? false,
+      streamingTransport: overrides.streamingTransport ?? "node-http",
       providers: {
         "provider-1": {
           apiKey: "test-api-key",
@@ -55,6 +57,7 @@ describe("ProviderManager", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   it("adds response_format to chat completion request bodies when provided", async () => {
@@ -1842,5 +1845,90 @@ describe("stream accounting consistency", () => {
     expect(log).not.toHaveProperty("cacheHitRate");
     expect(log).not.toHaveProperty("uncachedInputTokens");
     expect(streamRequester).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("stream transport safe diagnostics", () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+  it.each(["ENOTFOUND", "ECONNRESET", "ERR_TLS_CERT_ALTNAME_INVALID", "EPERM", "sensitive-unrecognized-code"])("records only safe diagnostics for %s without fallback or retry", async (code) => {
+    const cause = Object.assign(new Error("private endpoint and request content"), { code });
+    const streamRequester = vi.fn().mockRejectedValue(new ProviderStreamNetworkError("before-response", "private error text", cause));
+    const logger = createLogger(); logger.warn = vi.fn();
+    const manager = new ProviderManager(createSettingsStore({ enableStreamingKeepalive: true }), logger, undefined, streamRequester);
+    const result = await manager.chat({ providerId: "provider-1", model: "model", messages: [{ role: "user", content: "synthetic input" }] });
+    const expectedCode = code === "sensitive-unrecognized-code" ? "UNKNOWN" : code;
+    expect(result).toMatchObject({ ok: false, error: { code: "E206_PROVIDER_REQUEST_UNCERTAIN", details: { transport: "node-http", phase: "before-response", networkCode: expectedCode, providerAttempts: 1 } } });
+    expect(logger.warn).toHaveBeenCalledWith("ProviderManager", "流式传输失败（安全诊断）", { event: "STREAM_TRANSPORT_FAILURE", transport: "node-http", phase: "before-response", networkCode: expectedCode });
+    expect(JSON.stringify(result)).not.toMatch(/private|sensitive-unrecognized-code/);
+    expect(streamRequester).toHaveBeenCalledOnce();
+    expect(requestUrl).not.toHaveBeenCalled();
+    manager.dispose();
+  });
+  it("does not parse network codes from raw text", () => {
+    expect(safeStreamNetworkCode(new Error("ECONNRESET secret"))).toBe("UNKNOWN");
+    expect(safeStreamNetworkCode({ code: { private: true } })).toBe("UNKNOWN");
+    expect(safeStreamNetworkCode(null)).toBe("UNKNOWN");
+  });
+});
+
+
+describe("explicit production renderer transport", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const request = { providerId: "provider-1", model: "model", messages: [{ role: "user" as const, content: "synthetic" }] };
+  function response(body: string, status = 200): Response {
+    return { status, type: "cors", headers: new Headers({ "content-type": "text/event-stream" }), body: new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode(body)); c.close(); } }) } as Response;
+  }
+  const success = 'data: {"choices":[{"delta":{"content":"complete"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n';
+  it("uses the selected renderer once and preserves its selection during settings edits", async () => {
+    const store = createSettingsStore({ enableStreamingKeepalive: true, streamingTransport: "renderer-fetch" });
+    let release!: (r: Response) => void;
+    const fetcher = vi.fn(() => new Promise<Response>(r => { release = r; })); vi.stubGlobal("fetch", fetcher);
+    const node = vi.fn(); const manager = new ProviderManager(store, createLogger(), undefined, node);
+    const result = manager.chat(request);
+    vi.spyOn(store, "getSettings").mockImplementation(createSettingsStore({ enableStreamingKeepalive: true }).getSettings);
+    release(response(success)); expect(await result).toMatchObject({ ok: true, value: { content: "complete" } });
+    expect(fetcher).toHaveBeenCalledOnce(); expect(node).not.toHaveBeenCalled(); manager.dispose();
+  });
+  it("preserves the default Node requester and never probes renderer", async () => {
+    const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+    const node = vi.fn(async () => ({ status: 200, headers: { "content-type": "text/event-stream" }, body: success }));
+    const manager = new ProviderManager(createSettingsStore({ enableStreamingKeepalive: true }), createLogger(), undefined, node);
+    expect((await manager.chat(request)).ok).toBe(true); expect(node).toHaveBeenCalledOnce(); expect(fetcher).not.toHaveBeenCalled(); manager.dispose();
+  });
+  it("does not activate renderer when streaming is off", async () => {
+    const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+    vi.mocked(requestUrl).mockResolvedValue({ status: 200, json: { choices: [{ message: { content: "complete" }, finish_reason: "stop" }] }, text: "", headers: {}, arrayBuffer: new ArrayBuffer(0) });
+    const manager = new ProviderManager(createSettingsStore({ streamingTransport: "renderer-fetch" }), createLogger());
+    expect((await manager.chat(request)).ok).toBe(true); expect(fetcher).not.toHaveBeenCalled(); manager.dispose();
+  });
+  it("renderer server_error does not retry despite maxAttempts=3", async () => {
+    const fetcher = vi.fn(async () => response('data: {"error":{"code":"server_error"}}\n\n')); vi.stubGlobal("fetch", fetcher);
+    const node = vi.fn(); const manager = new ProviderManager(createSettingsStore({ enableStreamingKeepalive: true, streamingTransport: "renderer-fetch" }), createLogger(), undefined, node);
+    expect(await manager.chat(request)).toMatchObject({ ok: false, error: { code: "E204_PROVIDER_ERROR" } }); expect(fetcher).toHaveBeenCalledOnce(); expect(node).not.toHaveBeenCalled(); manager.dispose();
+  });
+  it("CORS-style rejection stays E206 with selected transport and no raw details or fallback", async () => {
+    const fetcher = vi.fn(async () => { throw Error("private endpoint body"); }); vi.stubGlobal("fetch", fetcher);
+    const node = vi.fn(); const manager = new ProviderManager(createSettingsStore({ enableStreamingKeepalive: true, streamingTransport: "renderer-fetch" }), createLogger(), undefined, node);
+    const result = await manager.chat(request); expect(result).toMatchObject({ ok: false, error: { code: "E206_PROVIDER_REQUEST_UNCERTAIN", details: { transport: "renderer-fetch", phase: "before-response" } } });
+    expect(JSON.stringify(result)).not.toContain("private"); expect(fetcher).toHaveBeenCalledOnce(); expect(node).not.toHaveBeenCalled(); manager.dispose();
+  });
+  it("renderer HTTP rejection keeps status without retaining error body", async () => {
+    const fetcher = vi.fn(async () => response("private error body", 401)); vi.stubGlobal("fetch", fetcher);
+    const manager = new ProviderManager(createSettingsStore({ enableStreamingKeepalive: true, streamingTransport: "renderer-fetch" }), createLogger());
+    const result = await manager.chat(request); expect(result).toMatchObject({ ok: false, error: { code: "E203_INVALID_API_KEY", details: { status: 401 } } }); expect(JSON.stringify(result)).not.toContain("private error body"); expect(fetcher).toHaveBeenCalledOnce(); manager.dispose();
+  });
+  it("retains complete JSON compatibility and emits only whitelisted framing evidence", async () => {
+    const fetcher = vi.fn(async () => response(JSON.stringify({ choices: [{ message: { content: "private answer" }, finish_reason: "stop" }] })));
+    vi.stubGlobal("fetch", fetcher); const logger = { ...createLogger(), debug: vi.fn() };
+    const manager = new ProviderManager(createSettingsStore({ enableStreamingKeepalive: true, streamingTransport: "renderer-fetch" }), logger);
+    expect(await manager.chat(request)).toMatchObject({ ok: true, value: { content: "private answer" } });
+    const evidence = logger.debug.mock.calls.find(call => (call[2] as { event?: string } | undefined)?.event === "STREAM_RESPONSE_EVIDENCE")?.[2];
+    expect(evidence).toMatchObject({ transport: "renderer-fetch", framing: "JSON", chunkCount: 1, dispatchCount: 1 });
+    expect(JSON.stringify(evidence)).not.toMatch(/private answer|Authorization|test-api-key|example\.test/); expect(fetcher).toHaveBeenCalledOnce(); manager.dispose();
+  });
+  it("renderer cancel after dispatch remains uncertain and never falls back", async () => {
+    const fetcher = vi.fn(() => new Promise<Response>(() => {})); vi.stubGlobal("fetch", fetcher);
+    const node = vi.fn(); const manager = new ProviderManager(createSettingsStore({ enableStreamingKeepalive: true, streamingTransport: "renderer-fetch" }), createLogger(), undefined, node);
+    const c = new AbortController(); const result = manager.chat(request, c.signal); c.abort(); expect(await result).toMatchObject({ ok: false, error: { code: "E206_PROVIDER_REQUEST_UNCERTAIN" } }); expect(fetcher).toHaveBeenCalledOnce(); expect(node).not.toHaveBeenCalled(); manager.dispose();
   });
 });

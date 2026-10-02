@@ -31,6 +31,7 @@ import {
   aggregateProviderStream,
   readProviderStreamUsage,
   hasProviderStreamFraming,
+  safeStreamResponseEvidence,
   ProviderStreamAbortError,
   ProviderStreamNetworkError,
   ProviderStreamTimeoutError,
@@ -47,6 +48,7 @@ import type { ModelGateway } from "./model-gateway";
 import type { ProviderProbeRequest } from "./model-gateway";
 import type {
   ProviderStreamProtocol,
+  ProviderStreamTransport,
 } from "./provider-streaming";
 import {
   ObsidianProviderTransport,
@@ -749,6 +751,7 @@ export class ProviderManager implements ModelGateway {
     authScheme: ProviderAuthScheme = "bearer",
     requestLabel?: string,
     callContext?: ProviderCallContext,
+    streamTransport: ProviderStreamTransport = "node-http",
   ): Promise<Result<T>> {
     const attempt = this.ledger.begin(callContext ?? {
       kind: "model",
@@ -786,6 +789,7 @@ export class ProviderManager implements ModelGateway {
 
       attempt.markSent();
       const response = await this.transport.requestStream({
+        transport: streamTransport,
         url: streamUrl,
         headers: {
           "Content-Type": "application/json",
@@ -797,9 +801,10 @@ export class ProviderManager implements ModelGateway {
         signal,
       });
       attempt.markResponseReceived();
+      this.logger.debug("ProviderManager", "流式响应证据（不含正文）", safeStreamResponseEvidence(response, streamTransport));
 
       if (response.status < 200 || response.status >= 300) {
-        const mapped = this.mapHttpError(response.status, response.body, apiKey);
+        const mapped = this.mapHttpError(response.status, streamTransport === "renderer-fetch" ? "" : response.body, apiKey);
         attempt.finish(mapped.ok ? "succeeded" : mapped.error.code === "E206_PROVIDER_REQUEST_UNCERTAIN" ? "uncertain" : "known-failure", mapped.ok ? undefined : mapped.error.code);
         return mapped;
       }
@@ -845,18 +850,28 @@ export class ProviderManager implements ModelGateway {
       }
       if (error instanceof ProviderStreamTimeoutError) {
         attempt.finish("uncertain", "E206_PROVIDER_REQUEST_UNCERTAIN");
-        return err("E206_PROVIDER_REQUEST_UNCERTAIN", "Provider 流式请求空闲超时，结果未知；为避免重复计费未自动重试", {
+        return err("E206_PROVIDER_REQUEST_UNCERTAIN", "Provider 流式请求超时，结果未知；为避免重复计费未自动重试", {
+          transport: streamTransport,
+          timeoutKind: "timeoutKind" in error ? error.timeoutKind : "idle",
           timeoutMs: error.timeoutMs,
           phase: error.phase,
         });
       }
       if (error instanceof ProviderStreamNetworkError) {
-        const rawError = sanitizeProviderErrorDetail(error.message, apiKey);
+        // Fixed diagnostic fields only: no endpoint, headers, certificate body,
+        // request payload or original error message goes into this log event.
+        this.logger.warn("ProviderManager", "流式传输失败（安全诊断）", {
+          event: "STREAM_TRANSPORT_FAILURE",
+          transport: streamTransport,
+          phase: error.phase,
+          networkCode: error.networkCode,
+        });
         attempt.finish("uncertain", "E206_PROVIDER_REQUEST_UNCERTAIN");
         return err("E206_PROVIDER_REQUEST_UNCERTAIN", "Provider 流式连接中断，结果未知；为避免重复计费未自动重试", {
           kind: "network",
           phase: error.phase,
-          rawError,
+          transport: streamTransport,
+          networkCode: error.networkCode,
         });
       }
       const rawError = error instanceof Error ? error.message : String(error);
@@ -894,6 +909,8 @@ export class ProviderManager implements ModelGateway {
       attemptReason?: AttemptReason;
     },
   ): Promise<Result<ChatResponse>> {
+    // Capture once before dispatch; settings changes cannot switch a running request or retry.
+    const streamTransport: ProviderStreamTransport = this.settingsStore.getSettings().streamingTransport === "renderer-fetch" ? "renderer-fetch" : "node-http";
     const apiFormat = providerConfig.apiFormat as Exclude<ProviderApiFormat, "disabled">;
     const entry = CHAT_PROTOCOL_DISPATCH[apiFormat];
     const baseUrl = providerConfig.baseUrl || DEFAULT_ENDPOINTS[apiFormat];
@@ -928,9 +945,10 @@ export class ProviderManager implements ModelGateway {
       options.requestLabel ?? request.requestLabel,
       this.callContext(options.callKind, request.providerId, request.model, apiFormat, options.callLabel ?? request.requestLabel, reason),
       entry.adapter,
+      streamTransport,
     );
 
-    const result = options.withRetry
+    const result = options.withRetry && !(options.streaming && streamTransport === "renderer-fetch")
       ? await this.executeWithProviderRetry(
         execute,
         request.providerId,
@@ -955,9 +973,10 @@ export class ProviderManager implements ModelGateway {
     requestLabel: string | undefined,
     callContext: ProviderCallContext | undefined,
     adapter: ProtocolAdapterMetadata,
+    streamTransport: ProviderStreamTransport = "node-http",
   ): Promise<Result<ChatResponse>> {
     return useStreaming
-      ? this.executeStreamRequest(url, body, apiKey, signal, adapter.streamProtocol, adapter.parseResponse, {}, adapter.authScheme, requestLabel, callContext)
+      ? this.executeStreamRequest(url, body, apiKey, signal, adapter.streamProtocol, adapter.parseResponse, {}, adapter.authScheme, requestLabel, callContext, streamTransport)
       : this.executeJsonRequest(url, body, apiKey, signal, adapter.parseResponse, adapter.extraHeaders ?? {}, adapter.authScheme, callContext);
   }
 

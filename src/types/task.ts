@@ -57,6 +57,9 @@ export type TaskFailureKind = "known" | "uncertain";
 
 /** 任务错误记录 */
 export interface TaskError {
+    /** Safe transport diagnostics; no raw response or request content. */
+    upstreamStatus?: number;
+    requestTimeoutMs?: number;
     code: string;
     message: string;
     kind: TaskFailureKind;

@@ -35,6 +35,16 @@ const state: PersistedQueueState = {
 };
 
 describe("QueueStateStore", () => {
+  it.each([{}, { upstreamStatus: 524 }, { requestTimeoutMs: 60000 }])("round-trips safe diagnostics and older errors without diagnostics (%j)", async (diagnostics) => {
+    const { fileStorage } = storage();
+    const store = new QueueStateStore(fileStorage);
+    const next: PersistedQueueState = { ...state, tasks: [{ id: "synthetic", workflowId: "workflow", nodeId: "note", stageId: "verify", state: "interrupted", queueOrder: 1, createdAt: 1, updatedAt: 61000, startedAt: 1000, finishedAt: 61000, attempt: 1,
+      error: { code: "E206_PROVIDER_REQUEST_UNCERTAIN", kind: "uncertain", message: "safe", ...diagnostics },
+    }] };
+    expect((await store.save(next)).ok).toBe(true);
+    expect(await new QueueStateStore(fileStorage).load()).toEqual(ok({ kind: "ready", state: next }));
+  });
+
   it("preserves unknown stage records without blocking known tasks or overwriting unknown data", async () => {
     const unknown = { id: "old", workflowId: "old-workflow", nodeId: "old-node", stageId: "retired-stage", state: "pending", queueOrder: 1, createdAt: 1, updatedAt: 1, attempt: 1 };
     const { fileStorage, files } = storage({ [QUEUE_STATE_PATH]: JSON.stringify({ ...state, tasks: [unknown] }) });

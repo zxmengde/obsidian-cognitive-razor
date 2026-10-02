@@ -1,7 +1,16 @@
+import { captureCardInput } from "../core/card-generation";
 import { describe, expect, it } from "vitest";
 import { toHostErrorFeedback, toSafeErrorFeedback } from "./error-feedback";
 
 describe("UI error feedback", () => {
+  it("projects a Cards source-root failure to a specific safe action without showing source paths or content", () => {
+    const result = captureCardInput("Private/hidden-note.md", "private note body", "Knowledge", "Cards");
+    expect(result).toMatchObject({ ok: false, error: { code: "E103_CARDS_SOURCE_OUTSIDE_ROOT" } });
+    const feedback = toSafeErrorFeedback(result, "fallback");
+    expect(feedback.message).toBe("源笔记必须位于配置的知识库目录内");
+    expect(feedback.details).toContain("设置 → 笔记与卡片");
+    expect(JSON.stringify(feedback)).not.toMatch(/Private|hidden-note|private note body/);
+  });
   it("projects a known error code to safe user language", () => {
     const feedback = toSafeErrorFeedback(
       { code: "E206_PROVIDER_REQUEST_UNCERTAIN", message: "raw upstream body" },

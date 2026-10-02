@@ -152,6 +152,29 @@ describe("card generation durable flow", () => {
     expect(await f.queue.retryFailedDurably()).toEqual(ok(0));
   });
 
+  it("persists cancellation across reload and ignores a delayed offline result while a fresh generation succeeds", async () => {
+    const f = await fixture();
+    let release!: (value: Result<Record<string, unknown>>) => void;
+    f.run.mockImplementation(() => new Promise(resolve => { release = resolve; }));
+    await f.service.start(sourcePath); f.start();
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+    const task = f.queue.getSnapshot().tasks[0];
+    expect(await f.queue.cancelDurably(task.id)).toEqual(ok(true));
+    const restored = await fixture(new Map(f.files)); restored.start();
+    expect(restored.queue.getTask(task.id)?.state).toBe('interrupted');
+    expect(restored.run).not.toHaveBeenCalled();
+    expect(await restored.queue.retryFailedDurably()).toEqual(ok(0));
+    release(ok({ markdown: 'late offline result must be discarded' }));
+    await f.queue.dispose();
+    expect(f.files.has(targetPath)).toBe(false);
+    expect((await restored.service.start(sourcePath)).ok).toBe(true);
+    await vi.waitFor(() => expect(restored.queue.getSnapshot().status.completed).toBe(1));
+    expect(restored.run).toHaveBeenCalledOnce();
+    expect(restored.files.get(targetPath)).not.toContain('late offline result');
+    expect(restored.queue.getTask(task.id)?.state).toBe('interrupted');
+    expect(restored.files.get(sourcePath)).toBe(sourceContent);
+  });
+
   it("restores pending snapshots but interrupts running requests without replay", async () => {
     const f = await fixture();
     await f.service.start(sourcePath);
@@ -167,7 +190,18 @@ describe("card generation durable flow", () => {
     await f.queue.cancelAllActiveDurably(); resolve(ok({ markdown: "late" }));
   });
 
-  it("requires an explicit cards model and rejects ordinary notes or paths outside the source root", async () => {
+  it("uses the default chat configuration for Cards without creating a separate provider", async () => {
+    const f = await fixture();
+    f.settings.defaultProviderId = "cards";
+    f.settings.taskModels.cards = { providerId: "", model: "" };
+    expect(resolveTaskModelSnapshot(f.settings, "cards")).toMatchObject({ providerId: "cards", model: "other" });
+    expect((await f.service.start(sourcePath)).ok).toBe(true);
+    expect(f.queue.getSnapshot().status.pending).toBe(1);
+    expect(f.run).not.toHaveBeenCalled();
+    expect(f.settings.taskModels.cards).toEqual({ providerId: "", model: "" });
+  });
+
+  it("requires an available resolved model and rejects ordinary notes or paths outside the source root", async () => {
     const f = await fixture();
     f.settings.taskModels.cards = { providerId: "", model: "" };
     expect(await f.service.start(sourcePath)).toMatchObject({ ok: false, error: { code: "E401_PROVIDER_NOT_CONFIGURED" } });
