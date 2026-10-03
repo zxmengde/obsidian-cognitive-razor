@@ -69,7 +69,6 @@
                 <span class="cr-task-stage">{stageLabel(task.stageId, t)}</span>
                 <span class="cr-task-state cr-task-state--{task.state}">{failure?.uncertain ? t.workbench.product.unknown : getStateLabel(task.state)}</span>
             </div>
-            {#if task.state === 'running'}<div class="cr-task-progress" role="status" aria-label={t.workbench.queueStatus.running}><span></span></div>{/if}
             {#if failure}
                 <details class="cr-task-feedback">
                     <summary>{t.workbench.queueStatus.compactDetails} ›</summary>
@@ -102,7 +101,7 @@
     .cr-task-actions { justify-self: end; }
     .cr-task-actions :global(button) { min-height: 0; padding: 0; font-size: var(--cr-font-xs); }
     .cr-task-meta { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; color: var(--cr-text-muted); font-size: var(--cr-font-xs); min-width: 0; }
-    .cr-task-item--selectable .cr-task-meta, .cr-task-item--selectable .cr-task-feedback, .cr-task-item--selectable .cr-task-progress { grid-column: 2 / -1; }
+    .cr-task-item--selectable .cr-task-meta, .cr-task-item--selectable .cr-task-feedback { grid-column: 2 / -1; }
     .cr-task-stage::after { content: ' ·'; }
     .cr-task-state--running { color: var(--cr-interactive-accent); }
     .cr-task-feedback { grid-column: 1 / -1; min-width: 0; font-size: var(--cr-font-xs); color: var(--cr-text-muted); }
@@ -117,9 +116,5 @@
     .cr-task-technical[open] { flex-basis: 100%; }
     .cr-task-technical p { margin-top: 12px; }
     .cr-task-detail { grid-column: 1 / -1; color: var(--cr-text-muted); font-size: var(--cr-font-xs); overflow-wrap: anywhere; }
-    .cr-task-progress { grid-column: 1 / -1; height: 3px; background: var(--cr-bg-selected); overflow: hidden; margin: 4px 0; }
-    .cr-task-progress span { display: block; width: 24%; height: 100%; background: var(--cr-interactive-accent); animation: cr-task-progress 1.6s ease-in-out infinite alternate; }
-    @keyframes cr-task-progress { to { transform: translateX(300%); } }
-    @media (prefers-reduced-motion: reduce) { .cr-task-progress span { animation: none; width: 100%; opacity: 0.5; } }
     @container cr-workbench (max-width: 620px) { .cr-task-meta { white-space: normal; overflow-wrap: anywhere; } }
 </style>

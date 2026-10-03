@@ -196,20 +196,19 @@ describe("queue user actions with synthetic application responses", () => {
     } finally { if (instance) await ui.unmount(instance); target.remove(); await queue.dispose(); await restored.dispose(); manager.dispose(); request.mockRestore(); }
   });
 
-  it('labels keep and cancel distinctly and dispatches only the confirmed choice', async () => {
+  it('removes cancel-all and the decorative running bar while retaining state and individual cancel', async () => {
     const f = fixture(); f.tasks[0].state = 'running'; f.status.running = 1; f.status.failed = 0;
     const target = document.body.appendChild(document.createElement('div'));
     const instance = ui.mount(ui.QueueHost, { target, props: f });
     try {
       ui.flushSync();
-      const open = Array.from(target.querySelectorAll('button')).find(button => button.textContent?.trim() === f.labels.cancelAllActive)!;
-      open.click(); ui.flushSync();
-      const buttons = target.querySelectorAll<HTMLButtonElement>('[role="dialog"] button');
-      expect(Array.from(buttons).map(button => button.textContent?.trim())).toEqual(['保留任务', '取消任务']);
-      buttons[0].click(); ui.flushSync(); expect(f.queue.cancelAllActive).not.toHaveBeenCalled();
-      open.click(); ui.flushSync();
-      target.querySelector<HTMLButtonElement>('[role="dialog"] .cr-btn-danger')!.click();
-      await vi.waitFor(() => expect(f.queue.cancelAllActive).toHaveBeenCalledOnce());
+      target.querySelector<HTMLDetailsElement>('.cr-queue-management')!.querySelector('summary')!.click(); ui.flushSync();
+      expect(Array.from(target.querySelectorAll('button')).some(button => button.textContent?.trim() === f.labels.cancelAllActive)).toBe(false);
+      expect(target.querySelector('.cr-task-progress')).toBeNull();
+      expect(target.querySelector('.cr-task-state--running')?.textContent).toBe(f.labels.running);
+      expect(f.queue.cancelAllActive).not.toHaveBeenCalled();
+      target.querySelector<HTMLButtonElement>(`button[aria-label="${f.labels.cancel}"]`)!.click();
+      await vi.waitFor(() => expect(f.queue.cancel).toHaveBeenCalledExactlyOnceWith('known'));
     } finally { await ui.unmount(instance); target.remove(); }
   });
 
@@ -255,7 +254,6 @@ describe("queue user actions with synthetic application responses", () => {
     expect(section).toContain('width: 100%; min-width: 0; min-height: 28px; max-width: 100%;');
     expect(create).toContain('.cr-note-actions { display: grid; grid-template-columns: repeat(3, minmax(0,1fr));');
     expect(create).toContain('.cr-note-action { width: 100%; min-width: 0; min-height: 32px;');
-    expect(create).toContain('.cr-note-ineligible { grid-column: 1 / -1; }');
     expect(create).not.toContain('cr-note-action-description');
     expect(list).toContain('grid-template-columns: minmax(0,1fr) auto;');
     expect(list).toContain('flex-wrap: wrap;');
@@ -264,6 +262,19 @@ describe("queue user actions with synthetic application responses", () => {
     expect(section).toContain('.cr-queue-history-tools { display: grid; grid-template-columns: minmax(0,1fr) auto;');
     expect(section).not.toContain('cr-queue-summary');
     expect(section).not.toContain('text-overflow: ellipsis');
+  });
+
+  it('inherits host theme colors and font tokens without a separate dark/light palette', () => {
+    const styles = readFileSync('styles.css', 'utf8');
+    expect(styles).toContain('--cr-bg-base: var(--background-primary);');
+    expect(styles).toContain('--cr-bg-secondary: var(--background-secondary);');
+    expect(styles).toContain('--cr-text-normal: var(--text-normal);');
+    expect(styles).toContain('--cr-interactive-accent: var(--interactive-accent);');
+    expect(styles).toContain('--cr-font-base: var(--font-ui-medium, 14px);');
+    expect(styles).not.toMatch(/#[\da-f]{3,8}\b/i);
+    expect(styles).not.toContain('.theme-dark .cr-scope');
+    expect(styles).not.toContain('.theme-light .cr-scope');
+    expect(styles).not.toContain('--cr-font-base: 14px;');
   });
 
   it("requires a separate confirmation for an uncertain retry and suppresses double dispatch", async () => {

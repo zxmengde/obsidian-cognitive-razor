@@ -133,7 +133,9 @@ describe("keyboard interaction safety", () => {
       expect(target.querySelector('.cr-current-note')?.textContent).toContain('Second');
       expect(input.value).toBe('保留的概念');
       (instance as { setActiveFile(file: unknown): void }).setActiveFile(null); ui.flushSync();
-      expect(target.querySelector('.cr-note-actions')).toBeNull(); expect(input.value).toBe('保留的概念');
+      expect(target.querySelectorAll('.cr-note-actions button')).toHaveLength(3);
+      expect(Array.from(target.querySelectorAll<HTMLButtonElement>('.cr-note-actions button')).every(button => button.disabled)).toBe(true);
+      expect(input.value).toBe('保留的概念');
       createTab.click(); ui.flushSync();
       expect(input.value).toBe('保留的概念');
       target.querySelector<HTMLButtonElement>(`button[aria-label="${i18n.messages.workbench.createConcept.clear}"]`)!.click(); ui.flushSync();
@@ -395,7 +397,7 @@ describe("card generation entry", () => {
     } finally { await ui.unmount(instance); target.remove(); }
   });
 
-  it.each([false, true])("shows the card action only for a CR node (%s)", async (isNode) => {
+  it.each([false, true])("always shows one card action across both tabs while preserving CR eligibility (%s)", async (isNode) => {
     const target = document.body.appendChild(document.createElement("div"));
     const start = vi.fn(async () => ({ ok: true, value: "D-习题库/测试-decks.md" }));
     const content = isNode ? generateMarkdownContent(generateFrontmatter({ cruid: "node", type: "entity", name: "测试" }), "正文") : "普通笔记";
@@ -406,14 +408,21 @@ describe("card generation entry", () => {
     } } });
     try {
       ui.flushSync(); await Promise.resolve(); ui.flushSync();
-      const cardButton = Array.from(target.querySelectorAll("button")).find((button) => button.textContent?.includes("生成记忆卡片"));
-      expect(!!cardButton).toBe(isNode);
+      const cardButtons = Array.from(target.querySelectorAll("button")).filter((button) => button.textContent?.includes("生成记忆卡片"));
+      expect(cardButtons).toHaveLength(1);
+      const cardButton = cardButtons[0];
+      expect(cardButton.closest('[hidden]')).toBeNull();
+      expect(cardButton.disabled).toBe(!isNode);
+      target.querySelector<HTMLButtonElement>('#cr-intent-note')!.click(); ui.flushSync();
+      expect(cardButton.closest('[hidden]')).toBeNull();
+      target.querySelector<HTMLButtonElement>('#cr-intent-create')!.click(); ui.flushSync();
+      expect(cardButton.closest('[hidden]')).toBeNull();
       expect(target.textContent).not.toContain("重建当前笔记向量");
-      if (cardButton) {
+      if (isNode) {
         cardButton.click();
         expect(start).toHaveBeenCalledWith("C-知识库/测试.md");
         await vi.waitFor(() => expect(target.textContent).toContain("D-习题库/测试-decks.md"));
-      }
+      } else { cardButton.click(); expect(start).not.toHaveBeenCalled(); expect(cardButton.title).toContain('不是概念笔记'); }
     } finally { await ui.unmount(instance); target.remove(); }
   });
 });

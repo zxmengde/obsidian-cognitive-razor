@@ -5,8 +5,8 @@
   - 全宽搜索输入框（含清除/提交按钮、Enter 键触发 Define）
   - Define 加载状态（按钮动画 + 输入框禁用）
   - Define 成功后显示类型置信度表格
-  - 操作按钮行（拓展、核查）
-  - 无活跃笔记时隐藏按钮行显示引导文字
+  - 常显操作按钮行（拓展、核查、卡片），两个意图面板共享一处入口
+  - 无活跃笔记或不适用时禁用对应按钮，保留原执行校验
 
 -->
 <script lang="ts">
@@ -100,6 +100,7 @@
     // 派生状态
     let hasInput = $derived(inputValue.trim().length > 0);
     let isMarkdown = $derived(activeFile?.extension === 'md');
+    const cardsActionTitle = $derived(!isMarkdown ? product.noNote : !isCRNode ? product.nonConcept : product.cardsDesc);
 
     function handleIntentKey(event: KeyboardEvent): void {
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
@@ -263,14 +264,12 @@
     <div id="cr-intent-note-panel" role="tabpanel" aria-labelledby="cr-intent-note" hidden={intent !== 'note'}>
         {#if isMarkdown}
             <div class="cr-current-note"><h2>{activeFile?.basename ?? activeFile?.path.split('/').pop()?.replace(/\.md$/, '')}</h2><p>{activeFile?.path.includes('/') ? activeFile.path.slice(0, activeFile.path.lastIndexOf('/')) : product.rootFolder}</p></div>
-            <div class="cr-note-actions">
-                <button class="cr-btn-secondary cr-note-action" type="button" aria-expanded={activePanel === 'expand'} title={product.expandDesc} onclick={() => togglePanel('expand')}>{product.expandTitle}</button>
-                <button class="cr-btn-secondary cr-note-action" type="button" disabled={verifying} aria-busy={verifying ? 'true' : undefined} onclick={() => void handleVerify()} aria-label={t.workbench.buttons.verify} title={product.verifyDesc}>{#if verifying}<span class="cr-loading-spinner" aria-hidden="true"></span>{/if}{t.workbench.buttons.verify}</button>
-                {#if isCRNode}
-                    <button class="cr-btn-secondary cr-note-action" type="button" disabled={generatingCards} aria-busy={generatingCards ? 'true' : undefined} onclick={() => void handleCards()} aria-label={t.cards.generate} title={product.cardsDesc}>{#if generatingCards}<span class="cr-loading-spinner" aria-hidden="true"></span>{/if}{t.cards.generate}</button>
-                {:else}<p class="cr-note-ineligible">{product.nonConcept}</p>{/if}
-            </div>
         {:else}<p class="cr-note-empty">{product.noNote}</p>{/if}
+    </div>
+    <div class="cr-note-actions">
+        <button class="cr-btn-secondary cr-note-action" type="button" disabled={!isMarkdown} aria-expanded={activePanel === 'expand'} title={isMarkdown ? product.expandDesc : product.noNote} onclick={() => { intent = 'note'; togglePanel('expand'); }}>{product.expandTitle}</button>
+        <button class="cr-btn-secondary cr-note-action" type="button" disabled={!isMarkdown || verifying} aria-busy={verifying ? 'true' : undefined} onclick={() => void handleVerify()} aria-label={t.workbench.buttons.verify} title={isMarkdown ? product.verifyDesc : product.noNote}>{#if verifying}<span class="cr-loading-spinner" aria-hidden="true"></span>{/if}{t.workbench.buttons.verify}</button>
+        <button class="cr-btn-secondary cr-note-action" type="button" disabled={!isMarkdown || !isCRNode || generatingCards} aria-busy={generatingCards ? 'true' : undefined} onclick={() => void handleCards()} aria-label={t.cards.generate} title={cardsActionTitle}>{#if generatingCards}<span class="cr-loading-spinner" aria-hidden="true"></span>{/if}{t.cards.generate}</button>
     </div>
 </div>
 {#if feedback}<InlineAlert level={feedback.level} message={feedback.message} details={feedback.details} {detailsToggleLabels} />{/if}
@@ -295,8 +294,7 @@
     .cr-result-heading h2 { min-width: 0; }
     .cr-text-action { flex-shrink: 0; height: auto; padding: 0; border: 0; box-shadow: none; background: none; color: var(--cr-interactive-accent); font-size: var(--cr-font-xs); }
     .cr-current-note p { margin-bottom: 15px; }
-    .cr-note-actions { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); align-items: center; gap: 8px; }
+    .cr-note-actions { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); align-items: center; gap: 8px; margin-top: 16px; }
     .cr-note-action { width: 100%; min-width: 0; min-height: 32px; padding: 6px; box-sizing: border-box; border-radius: var(--cr-field-radius); font-size: var(--cr-font-sm); font-weight: 600; overflow-wrap: anywhere; }
-    .cr-note-ineligible { grid-column: 1 / -1; }
-    .cr-note-empty, .cr-note-ineligible { color: var(--cr-text-muted); font-size: var(--cr-font-xs); line-height: 1.7; margin: 14px 0; }
+    .cr-note-empty { color: var(--cr-text-muted); font-size: var(--cr-font-xs); line-height: 1.7; margin: 14px 0; }
 </style>

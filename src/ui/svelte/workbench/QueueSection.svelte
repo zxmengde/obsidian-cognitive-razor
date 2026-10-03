@@ -17,7 +17,7 @@
 
     type QueueFilter = 'all' | 'active' | TaskState;
     type StageFilter = 'all' | TaskStageId;
-    type ConfirmAction = 'cancel-active' | 'clear-history' | null;
+    type ConfirmAction = 'clear-history' | null;
 
     let {
         status,
@@ -191,9 +191,8 @@
     }
 
     async function confirmBatchAction(): Promise<void> {
-        const action = pendingConfirmation;
         pendingConfirmation = null;
-        await runQueueAction(() => (action === 'cancel-active' ? queue.cancelAllActive() : queue.removeTerminal()));
+        await runQueueAction(() => queue.removeTerminal());
     }
 </script>
 
@@ -272,12 +271,6 @@
                             {t.workbench.queueStatus.retryFailed}
                         </Button>
                     {/if}
-                    {#if status.pending > 0 || status.running > 0}
-                        <Button variant="ghost" size="sm" disabled={actionRunning} onclick={() => pendingConfirmation = 'cancel-active'}>
-                            <Icon name="x-circle" size={16} />
-                            {t.workbench.queueStatus.cancelAllActive}
-                        </Button>
-                    {/if}
                 </div>
 
                 </details>
@@ -320,17 +313,7 @@
     <InlineAlert level={feedback.level} message={feedback.message} details={feedback.details} {detailsToggleLabels} />
 {/if}
 
-{#if pendingConfirmation === 'cancel-active'}
-    <ConfirmModal
-        title={t.workbench.queueStatus.cancelAllConfirmTitle}
-        message={t.workbench.queueStatus.cancelAllConfirmMessage}
-        confirmLabel={t.workbench.queueStatus.confirmCancelTasks}
-        cancelLabel={t.workbench.queueStatus.keepTasks}
-        danger={true}
-        onconfirm={confirmBatchAction}
-        oncancel={() => pendingConfirmation = null}
-    />
-{:else if pendingConfirmation === 'clear-history'}
+{#if pendingConfirmation === 'clear-history'}
     <ConfirmModal
         title={t.workbench.queueStatus.clearHistoryConfirmTitle}
         message={t.workbench.queueStatus.clearHistoryConfirmMessage}
@@ -357,7 +340,7 @@
 <style>
     .cr-queue-section { position: relative; min-width: 0; }
     .cr-queue-status-bar { display: flex; align-items: baseline; gap: 12px; margin-bottom: 24px; padding-right: 80px; }
-    .cr-queue-title { margin: 0; padding: 0; font-size: 15px; font-weight: 600; color: var(--cr-text-normal); }
+    .cr-queue-title { margin: 0; padding: 0; font-size: var(--cr-font-base); font-weight: 600; color: var(--cr-text-normal); }
     .cr-queue-status-bar :global(button) { padding: 0; font-size: var(--cr-font-xs); min-height: 0; }
     .cr-queue-management > summary { position: absolute; right: 0; top: 1px; list-style: none; color: var(--cr-text-muted); font-size: var(--cr-font-xs); cursor: pointer; }
     .cr-queue-management > summary::-webkit-details-marker { display: none; }

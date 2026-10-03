@@ -40,7 +40,8 @@ describe("current UI architecture", () => {
     expect(list).toContain("formatStandardName");
     expect(list).not.toContain("NAMING_TEMPLATE");
     expect(list).not.toContain("TYPE_LABELS");
-    expect(section).toContain("queue.cancelAllActive()");
+    expect(section).not.toContain("queue.cancelAllActive()");
+    expect(list).not.toContain("cr-task-progress");
     expect(section).toContain("queue.retryFailed()");
     expect(section).toContain("queue.removeTerminal()");
     expect(section).toContain("selectedIds");
@@ -551,7 +552,7 @@ describe("current UI architecture", () => {
     const duplicateItem = read("src/ui/svelte/workbench/DuplicateItem.svelte");
 
     expect(create).toContain("if (!activeFile || verifying) return");
-    expect(create).toContain("disabled={verifying}");
+    expect(create).toContain("disabled={!isMarkdown || verifying}");
     expect(create).toContain("{#if verifying}");
     expect(create).toContain("defineAbortController?.abort('create panel unmounted')");
     expect(create).toContain("application.create.define(inputValue.trim(), controller.signal)");
