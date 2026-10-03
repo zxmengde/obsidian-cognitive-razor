@@ -43,14 +43,20 @@
   保留应用明确提供的 Authorization；拒绝浏览器禁止头，不复制 Node 的
   Connection/Accept-Encoding。CORS/CSP/TLS/权限拒绝原样失败，不绕过。
 - idle沿用 providerTimeoutMs，从发出等待响应头起计时；响应头和非空字节续时，
-  空chunk不续。独立总时限10分钟，响应上限8MiB；现有任务级超时可能更早取消。
+  空chunk不续。原QA包的独立总时限为10分钟；2026-10-03起当前生产默认改为
+  该次 providerTimeoutMs，显式 totalTimeoutMs 仅供有界诊断/adapter测试覆盖。
+  保活不延长总时限。响应上限8MiB；现有任务级超时可能更早取消。
 - 取消、卸载、idle/total超时及时settle并abort；即使mock fetch不合作也不阻塞，
   迟到头/字节不能变成成功，清理listener/timer/reader。
 - fetch拒绝/读流失败只保留安全错误和阶段，无原始异常；E206不推断未发送。
   QA流式HTTP错误映射只使用状态，不把上游错误正文复制到诊断details。
   timeout详情包括renderer-fetch和idle/total；网络错误不能被误标成node-http。
 
-## 本容器验证
+## 原 QA 候选验证（历史包）
+
+以下记录属于原 QA 候选包；902 项等数字及旧包 SHA256 不是本轮独立
+总时限修正后的新验证或构建证据。当前候选须另行报告合成专项、整体回归
+与宿主验收，不把这些历史结果自动继承为通过。
 
 - lint、check、check:test、QA专用类型检查、生产build均通过。
 - 全量：74文件/902项测试通过（含新增12项adapter测试）。

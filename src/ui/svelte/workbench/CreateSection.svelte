@@ -10,12 +10,12 @@
 
 -->
 <script lang="ts">
+    import { taskSettingsSummary } from '../../settings-summaries';
     import { extractFrontmatter } from '../../../core/frontmatter-utils';
     import type { TFile } from 'obsidian';
     import { getWorkbenchContext } from '../../bridge/context';
     import Button from '../../components/Button.svelte';
     import Icon from '../../components/Icon.svelte';
-    import SectionCard from '../../components/SectionCard.svelte';
     import InlinePanel from '../../components/InlinePanel.svelte';
     import InlineAlert from '../../components/InlineAlert.svelte';
     import TypeTable from './TypeTable.svelte';
@@ -44,6 +44,14 @@
 
     // 组件状态
     let inputValue = $state('');
+    let intent = $state<'create' | 'note'>('create');
+    let editingInput = $state(false);
+    let creating = $state(false);
+    const product = t.workbench.product;
+    let settings = $state(ctx.settingsApplication.getSettings());
+    const unsubscribeSettings = ctx.settingsApplication.subscribeSettings(value => settings = value);
+    $effect(() => () => unsubscribeSettings());
+    const defineUnavailable = $derived(Boolean(settings.providers && settings.taskModels && taskSettingsSummary(settings, 'define').issue));
     let defining = $state(false);
     let defineResult = $state<DefinePreview | null>(null);
     let feedback = $state<UiFeedback | null>(null);
@@ -93,6 +101,14 @@
     let hasInput = $derived(inputValue.trim().length > 0);
     let isMarkdown = $derived(activeFile?.extension === 'md');
 
+    function handleIntentKey(event: KeyboardEvent): void {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        intent = event.key === 'Home' ? 'create' : event.key === 'End' ? 'note' : intent === 'create' ? 'note' : 'create';
+        if (intent === 'create') closePanel();
+        (event.currentTarget as HTMLElement).parentElement?.querySelector<HTMLButtonElement>(`#cr-intent-${intent}`)?.focus();
+    }
+
     /** 切换面板：再次点击同一按钮则收起 */
     function togglePanel(panel: ActivePanel): void {
         activePanel = activePanel === panel ? 'none' : panel;
@@ -107,6 +123,7 @@
     function clearInput(): void {
         inputValue = '';
         defineResult = null;
+        editingInput = false;
         feedback = null;
         feedbackSourcePath = undefined;
     }
@@ -123,7 +140,7 @@
 
     /** 触发 Define 流程 */
     async function handleDefine(): Promise<void> {
-        if (!hasInput || defining) return;
+        if (!hasInput || defining || defineUnavailable) return;
 
         defining = true;
         feedback = null;
@@ -137,6 +154,7 @@
             if (controller.signal.aborted) return;
             if (result.ok) {
                 defineResult = result.value;
+                editingInput = false;
             } else {
                 reportError(result.error, t.workbench.notifications.defineFailed);
             }
@@ -185,18 +203,19 @@
 
     /** 选择类型并创建（TypeTable 回调） */
     async function handleCreateType(type: CRType): Promise<void> {
-        if (!defineResult) return;
+        if (!defineResult || creating) return;
         const confirmed = confirmDefinePreview(defineResult, type);
         if (!confirmed.ok) {
             reportError(confirmed.error, t.workbench.notifications.defineFailed);
             return;
         }
-        const result = await application.create.confirm(confirmed.value);
-        if (result.ok) {
-            clearInput();
-        } else {
-            reportError(result.error, t.workbench.notifications.unknownFailure);
-        }
+        creating = true;
+        try {
+            const result = await application.create.confirm(confirmed.value);
+            if (result.ok) clearInput();
+            else reportError(result.error, t.workbench.notifications.unknownFailure);
+        } catch (error) { reportError(error, t.workbench.notifications.unknownFailure); }
+        finally { creating = false; }
     }
 
     async function handleCards(): Promise<void> {
@@ -218,171 +237,68 @@
     }
 </script>
 
-<!-- 搜索输入区 -->
-<SectionCard>
-    <div class="cr-create-section">
-        <label class="cr-create-heading" for="cr-concept-input">{t.workbench.createConcept.title}</label>
-        <div class="cr-search-row">
-            <div class="cr-search-field">
-            <input
-                id="cr-concept-input"
-                class="cr-search-input"
-                type="text"
-                placeholder={t.workbench.createConcept.placeholder}
-                bind:value={inputValue}
-                onkeydown={handleKeydown}
-                disabled={defining}
-                aria-label={t.workbench.createConcept.placeholder}
-            />
-            {#if hasInput}
-                <Button
-                    variant="ghost"
-                    size="icon"
-                    onclick={clearInput}
-                    disabled={defining}
-                    ariaLabel={t.workbench.createConcept.clear}
-                >
-                    <Icon name="x" size={16} />
-                </Button>
-            {/if}
+<div class="cr-create-section">
+    <div class="cr-intent-switch" role="tablist" aria-label={product.title}>
+        <button id="cr-intent-create" type="button" role="tab" tabindex={intent === 'create' ? 0 : -1} onkeydown={handleIntentKey} aria-selected={intent === 'create'} aria-controls="cr-intent-create-panel" class:active={intent === 'create'} onclick={() => { intent = 'create'; closePanel(); }}>{product.newConcept}</button>
+        <button id="cr-intent-note" type="button" role="tab" tabindex={intent === 'note' ? 0 : -1} onkeydown={handleIntentKey} aria-selected={intent === 'note'} aria-controls="cr-intent-note-panel" class:active={intent === 'note'} onclick={() => intent = 'note'}>{product.currentNote}</button>
+    </div>
+    <div id="cr-intent-create-panel" role="tabpanel" aria-labelledby="cr-intent-create" hidden={intent !== 'create'}>
+        {#if !defineResult || editingInput}
+            <h2 class="cr-create-heading">{product.prompt}</h2>
+            <p class="cr-create-intro">{product.intro}</p>
+            <div class="cr-search-row">
+                <div class="cr-search-field">
+                    <input id="cr-concept-input" class="cr-search-input" type="text" placeholder={product.placeholder}
+                        bind:value={inputValue} oninput={() => defineResult = null} onkeydown={handleKeydown} disabled={defining || creating} aria-label={t.workbench.createConcept.placeholder} />
+                    {#if hasInput}<Button variant="ghost" size="icon" onclick={clearInput} disabled={defining || creating} ariaLabel={t.workbench.createConcept.clear}><Icon name="x" size={16} /></Button>{/if}
+                </div>
+                <Button variant="primary" disabled={!hasInput || creating || defineUnavailable} loading={defining} onclick={() => void handleDefine()} ariaLabel={t.workbench.createConcept.startButton}>{t.workbench.createConcept.startButton}</Button>
             </div>
-            <Button
-                variant="primary"
-                disabled={!hasInput}
-                loading={defining}
-                onclick={() => void handleDefine()}
-                ariaLabel={t.workbench.createConcept.startButton}
-            >
-                {t.workbench.createConcept.startButton}
-            </Button>
-        </div>
-
-        <!-- 操作按钮行：仅在有活跃 Markdown 笔记时显示 -->
-        {#if isMarkdown}
-            <div class="cr-note-context">
-            <div class="cr-current-note"><span>{t.workbench.createConcept.currentNote}</span><strong title={activeFile?.path}>{activeFile?.basename ?? activeFile?.path.split('/').pop()?.replace(/\.md$/, '')}</strong></div>
-            <details class="cr-note-actions">
-            <summary>{t.workbench.createConcept.noteActions}</summary>
-            <div class="cr-action-grid">
-                <Button
-                    variant={activePanel === 'expand' ? 'primary' : 'secondary'}
-                    size="sm"
-                    onclick={() => togglePanel('expand')}
-                >
-                    {t.workbench.buttons.expand}
-                </Button>
-                <Button
-                    variant="secondary"
-                    size="sm"
-                    loading={verifying}
-                    disabled={verifying}
-                    onclick={() => void handleVerify()}
-                >
-                    {t.workbench.buttons.verify}
-                </Button>
-                {#if isCRNode}
-                <Button
-                    variant="secondary"
-                    size="sm"
-                    loading={generatingCards}
-                    disabled={generatingCards}
-                    onclick={() => void handleCards()}
-                >
-                    {t.cards.generate}
-                </Button>
-                {/if}
-            </div>
-            </details>
-            </div>
+            <p class="cr-create-help" role="status">{defineUnavailable ? product.notConfigured : product.afterIdentify}</p>
         {:else}
-            <div class="cr-hint-text">
-                {t.workbench.buttons.openNoteHint}
-            </div>
+            <div class="cr-result-heading"><h2>{inputValue}</h2><button class="cr-text-action" type="button" disabled={creating} onclick={() => editingInput = true}>{product.editInput}</button></div>
+            <TypeTable concept={defineResult} oncreate={handleCreateType} disabled={creating} />
         {/if}
     </div>
-</SectionCard>
-
-<!-- Define 结果：类型置信度表格 -->
-{#if defineResult}
-    <TypeTable
-        concept={defineResult}
-        oncreate={handleCreateType}
-    />
-{/if}
-
-<!-- 操作反馈 -->
-{#if feedback}
-    <InlineAlert level={feedback.level} message={feedback.message} details={feedback.details} {detailsToggleLabels} />
-{/if}
-
-<!-- 内联展开面板区 -->
-{#if isMarkdown}
-    <InlinePanel expanded={activePanel === 'expand'} onclose={closePanel}>
-        <ExpandPanel {activeFile} onclose={closePanel} />
-    </InlinePanel>
-{/if}
+    <div id="cr-intent-note-panel" role="tabpanel" aria-labelledby="cr-intent-note" hidden={intent !== 'note'}>
+        {#if isMarkdown}
+            <div class="cr-current-note"><h2>{activeFile?.basename ?? activeFile?.path.split('/').pop()?.replace(/\.md$/, '')}</h2><p>{activeFile?.path.includes('/') ? activeFile.path.slice(0, activeFile.path.lastIndexOf('/')) : product.rootFolder}</p></div>
+            <div class="cr-note-actions">
+                <button class="cr-note-action" type="button" aria-expanded={activePanel === 'expand'} onclick={() => togglePanel('expand')}><span><strong>{product.expandTitle}</strong><small>{product.expandDesc}</small></span><Icon name="chevron-right" size={16} /></button>
+                <button class="cr-note-action" type="button" disabled={verifying} onclick={() => void handleVerify()} aria-label={t.workbench.buttons.verify}><span><strong>{t.workbench.buttons.verify}</strong><small>{product.verifyDesc}</small></span>{#if verifying}<span class="cr-loading-spinner"></span>{:else}<Icon name="chevron-right" size={16} />{/if}</button>
+                {#if isCRNode}<button class="cr-note-action" type="button" disabled={generatingCards} onclick={() => void handleCards()} aria-label={t.cards.generate}><span><strong>{t.cards.generate}</strong><small>{product.cardsDesc}</small></span>{#if generatingCards}<span class="cr-loading-spinner"></span>{:else}<Icon name="chevron-right" size={16} />{/if}</button>
+                {:else}<p class="cr-note-ineligible">{product.nonConcept}</p>{/if}
+            </div>
+        {:else}<p class="cr-note-empty">{product.noNote}</p>{/if}
+    </div>
+</div>
+{#if feedback}<InlineAlert level={feedback.level} message={feedback.message} details={feedback.details} {detailsToggleLabels} />{/if}
+{#if isMarkdown && intent === 'note'}<InlinePanel expanded={activePanel === 'expand'} onclose={closePanel}><ExpandPanel {activeFile} onclose={closePanel} /></InlinePanel>{/if}
 
 <style>
-    .cr-create-section {
-        display: flex;
-        flex-direction: column;
-        gap: var(--cr-space-3);
-    }
-
-    .cr-search-row {
-        display: flex;
-        flex-direction: column;
-        gap: var(--cr-space-2);
-    }
-
-    .cr-create-heading { color: var(--cr-text-normal); font-weight: 600; }
-    .cr-search-field { position: relative; width: 100%; min-width: 0; }
-    .cr-search-field :global(.cr-btn-ghost) { position: absolute; top: 50%; right: var(--cr-space-2); transform: translateY(-50%); }
-
-    .cr-search-input {
-        width: 100%;
-        min-width: 0;
-        height: 44px;
-        padding: 0 var(--cr-space-10) 0 var(--cr-space-3);
-        border: 1px solid var(--cr-border);
-        border-radius: var(--cr-radius-md);
-        background: var(--cr-bg-base);
-        color: var(--cr-text-normal);
-        font-size: var(--cr-font-base);
-        outline: none;
-        transition: border-color 0.15s;
-    }
-
-    .cr-search-input:focus {
-        border-color: var(--cr-border-focus);
-    }
-
-    .cr-search-input:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-    }
-
-    /* 操作按钮网格 */
-    .cr-action-grid {
-        display: grid;
-        grid-template-columns: 1fr;
-        gap: var(--cr-space-2);
-    }
-
-    .cr-note-context { margin-top: var(--cr-space-2); min-width: 0; }
-    .cr-note-actions summary { width: fit-content; cursor: pointer; padding: var(--cr-space-2) 0; color: var(--cr-text-muted); font-size: var(--cr-font-sm); }
-    .cr-note-actions summary:focus-visible { outline: 2px solid var(--cr-border-focus); outline-offset: 2px; }
-    .cr-current-note { display: flex; flex-direction: column; gap: var(--cr-space-1); min-width: 0; font-size: var(--cr-font-sm); }
-    .cr-current-note span { flex-shrink: 0; color: var(--cr-text-muted); }
-    .cr-current-note strong { overflow-wrap: anywhere; font-weight: 500; color: var(--cr-text-normal); }
-    .cr-search-row :global(.cr-btn-primary) { width: 100%; min-height: 40px; flex-shrink: 0; }
-
-    /* 引导文字 */
-    .cr-hint-text {
-        font-size: var(--cr-font-sm);
-        color: var(--cr-text-muted);
-        text-align: center;
-        padding: var(--cr-space-2) 0;
-    }
-
+    .cr-create-section { min-width: 0; }
+    [hidden] { display: none; }
+    .cr-intent-switch { display: grid; grid-template-columns: 1fr 1fr; padding: 3px; gap: 3px; min-height: 36px; border-radius: var(--cr-field-radius); background: var(--cr-bg-secondary); margin-bottom: 26px; }
+    .cr-intent-switch button { height: auto; min-height: 30px; width: 100%; padding: 4px 8px; border: 0; box-shadow: none; background: transparent; border-radius: 5px; color: var(--cr-text-muted); font-size: var(--cr-font-sm); }
+    .cr-intent-switch button.active { background: var(--cr-bg-selected); color: var(--cr-text-normal); font-weight: 600; }
+    h2 { font-size: var(--cr-heading-workbench); line-height: 1.4; margin: 0; padding: 0; color: var(--cr-text-normal); overflow-wrap: anywhere; }
+    .cr-create-intro, .cr-current-note p { margin: 8px 0 21px; font-size: var(--cr-font-xs); color: var(--cr-text-muted); line-height: 1.7; overflow-wrap: anywhere; }
+    .cr-search-row { display: flex; flex-direction: column; gap: 10px; }
+    .cr-search-field { position: relative; min-width: 0; }
+    .cr-search-field :global(.cr-btn-ghost) { position: absolute; top: 50%; right: 8px; transform: translateY(-50%); }
+    .cr-search-input { width: 100%; height: 42px; padding: 0 40px 0 12px; border: 1px solid var(--cr-border); border-radius: var(--cr-field-radius); background: var(--cr-bg-field); color: var(--cr-text-normal); font-size: var(--cr-font-sm); box-shadow: none; }
+    .cr-search-input:focus { border-color: var(--cr-border-focus); }
+    .cr-search-row :global(.cr-btn-primary) { width: 100%; min-height: 38px; border-radius: var(--cr-field-radius); }
+    .cr-create-help { margin: 16px 0 0; font-size: var(--cr-font-fine); line-height: 1.7; color: var(--cr-text-faint); }
+    .cr-result-heading { display: flex; align-items: baseline; gap: 12px; justify-content: space-between; margin-bottom: 24px; }
+    .cr-result-heading h2 { min-width: 0; }
+    .cr-text-action { flex-shrink: 0; height: auto; padding: 0; border: 0; box-shadow: none; background: none; color: var(--cr-interactive-accent); font-size: var(--cr-font-xs); }
+    .cr-current-note p { margin-bottom: 15px; }
+    .cr-note-actions { display: flex; flex-direction: column; }
+    .cr-note-action { display: flex; justify-content: space-between; align-items: center; width: 100%; text-align: left; height: auto; min-height: 73px; padding: 14px 0; border: 0; border-bottom: 1px solid var(--cr-border); border-radius: 0; background: transparent; box-shadow: none; color: var(--cr-text-muted); }
+    .cr-note-action span { min-width: 0; }
+    .cr-note-action strong, .cr-note-action small { display: block; }
+    .cr-note-action strong { color: var(--cr-text-normal); font-size: var(--cr-font-base); font-weight: 600; }
+    .cr-note-action small { font-size: var(--cr-font-xs); margin-top: 8px; }
+    .cr-note-empty, .cr-note-ineligible { color: var(--cr-text-muted); font-size: var(--cr-font-xs); line-height: 1.7; margin: 14px 0; }
 </style>

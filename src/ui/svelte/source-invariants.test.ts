@@ -216,6 +216,19 @@ describe("current UI architecture", () => {
     );
   });
 
+  it("defines every plugin-owned visual token used by production components", () => {
+    const sources = [read("styles.css"), ...collectSvelteSources("src/ui").map(read)].join("\n");
+    const defined = new Set([...sources.matchAll(/(--cr-[\w-]+)\s*:/g)].map(match => match[1]));
+    const used = new Set([...sources.matchAll(/var\((--cr-[\w-]+)/g)].map(match => match[1]));
+    expect([...used].filter(token => !defined.has(token))).toEqual([]);
+    expect(read("styles.css")).toContain("--cr-overlay-warning-10:");
+    expect(read("styles.css")).toContain(".cr-scope .cr-btn-primary { font-weight: 600; }");
+    const defaultSelectRule = read("styles.css").match(/\.cr-scope \.cr-settings-root \.cr-providers-tab > \.cr-settings-section:first-of-type > select \{([^}]+)\}/)?.[1];
+    expect(defaultSelectRule).toContain("background-color: var(--cr-bg-field)");
+    expect(defaultSelectRule).not.toMatch(/(?:^|;)\s*background\s*:/);
+
+  });
+
   it("keeps user-visible UI copy in the locale source", () => {
     const files = [...collectSvelteSources("src/ui"), "src/ui/svelte/workbench-view.ts"];
     const bareChineseLiteral = /"[^"\r\n]*[\u4e00-\u9fff][^"\r\n]*"|'[^'\r\n]*[\u4e00-\u9fff][^'\r\n]*'|`[^`\r\n]*[\u4e00-\u9fff][^`\r\n]*`/;
@@ -329,7 +342,7 @@ describe("current UI architecture", () => {
     expect(source).toContain("<ProvidersTab onConfigureTask={configureTask} {overridesOpen}");
     expect(source).toContain("<TaskDetails taskType={task}");
     expect(read("src/ui/svelte/settings/ProvidersTab.svelte")).not.toContain("<TaskModelCard");
-    expect(source).toContain("<WorkflowTab onConfigureTask={configureTask} />");
+    expect(source).toContain("<WorkflowTab />");
     expect(source).toContain("<MaintenanceTab />");
     expect(read("src/ui/svelte/settings/MaintenanceTab.svelte")).toContain("<BackupTab />");
     expect(existsSync("src/ui/svelte/settings/DataTab.svelte")).toBe(false);
@@ -476,7 +489,7 @@ describe("current UI architecture", () => {
     expect(source).toContain("value={settings.taskTimeoutMs / 1000}");
     expect(source).toContain("taskTimeoutMs: value * 1000");
     expect(source).toContain("ariaLabel=");
-    expect(workflow).toContain("directoryScheme: { [key]: value }");
+    expect(read("src/ui/svelte/settings/LocationsEditor.svelte")).toContain("settingsApplication.updateSettings(candidate)");
     expect(workflow).not.toContain("rebuildSemanticIndex()");
     expect(source).not.toContain("...settings.directoryScheme");
   });
@@ -538,7 +551,8 @@ describe("current UI architecture", () => {
     const duplicateItem = read("src/ui/svelte/workbench/DuplicateItem.svelte");
 
     expect(create).toContain("if (!activeFile || verifying) return");
-    expect(create).toContain("loading={verifying}");
+    expect(create).toContain("disabled={verifying}");
+    expect(create).toContain("{#if verifying}");
     expect(create).toContain("defineAbortController?.abort('create panel unmounted')");
     expect(create).toContain("application.create.define(inputValue.trim(), controller.signal)");
     expect(duplicates).toContain("dismissingIds.has(pair.id)");

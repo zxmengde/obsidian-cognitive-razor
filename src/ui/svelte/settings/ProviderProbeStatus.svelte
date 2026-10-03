@@ -39,9 +39,17 @@
 <div class="cr-provider-probe-status">
     <InlineAlert
         level={alertLevel}
-        message={i18n.t(`settings.provider.probe.outcome.${result.outcome}`)}
+        message={i18n.t(result.target && result.target.scope !== 'connection' ? `settings.redesign.testOutcomes.${result.outcome}` : `settings.provider.probe.outcome.${result.outcome}`)}
         {detailsToggleLabels}
     />
+    {#if result.target}
+        <p class="cr-provider-probe-status__target">{i18n.t('settings.product.testedScope')} · {i18n.t(result.target.scope === 'connection' ? 'settings.product.connectionScope' : `settings.redesign.tasks.${result.target.scope}`)}{#if result.target.temporaryProvider}<span> · {i18n.t('settings.product.temporaryProvider')}</span>{/if}<br />{result.target.providerId} · {result.target.model || '—'}{#if result.target.scope === 'index'}<span>&nbsp;·&nbsp;</span>{i18n.t('settings.product.requestedDimension')}: {result.target.requestedDimensions ?? i18n.t('settings.product.automatic')}{/if}</p>
+    {/if}
+    {#if result.embeddingProbe && result.target?.scope === 'index' && result.embeddingProbe.actualDimensions !== undefined}
+        <p class="cr-provider-probe-status__target">{i18n.t('settings.product.actualDimension')}: {result.embeddingProbe.actualDimensions}</p>
+    {:else if result.embeddingProbe && result.target?.scope !== 'index'}
+        <p class="cr-provider-probe-status__target">{i18n.t('settings.provider.probe.embedding')} · {result.embeddingProbe.model} · {i18n.t('settings.product.requestedDimension')}: {result.embeddingProbe.requestedDimensions ?? i18n.t('settings.product.automatic')}{#if result.embeddingProbe.actualDimensions !== undefined} · {i18n.t('settings.product.actualDimension')}: {result.embeddingProbe.actualDimensions}{/if}</p>
+    {/if}
     <div class="cr-provider-probe-status__capabilities">
         <div class="cr-provider-probe-status__row">
             <span>{i18n.t('settings.provider.probe.chat')}</span>
@@ -71,6 +79,7 @@
 </div>
 
 <style>
+    .cr-provider-probe-status__target { margin: 0; color: var(--cr-text-muted); font-size: var(--cr-font-sm); overflow-wrap: anywhere; }
     .cr-provider-probe-status {
         display: flex;
         flex-direction: column;

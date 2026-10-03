@@ -11,8 +11,6 @@
     import { fade } from 'svelte/transition';
     import { SvelteSet } from 'svelte/reactivity';
     import { getWorkbenchContext } from '../../bridge/context';
-    import Collapsible from '../../components/Collapsible.svelte';
-    import EmptyState from '../../components/EmptyState.svelte';
     import Button from '../../components/Button.svelte';
     import InlineAlert from '../../components/InlineAlert.svelte';
     import DuplicateItem from './DuplicateItem.svelte';
@@ -35,7 +33,10 @@
         collapse: t.common.details.collapse,
     };
 
-    let collapsed = $state(false);
+    let collapsed = $state(true);
+    let displaySettings = $state(ctx.settingsApplication.getSettings());
+    const unsubscribeSettings = ctx.settingsApplication.subscribeSettings(value => displaySettings = value);
+    $effect(() => () => unsubscribeSettings());
     let feedback = $state<UiFeedback | null>(null);
     const dismissingIds = new SvelteSet<string>();
     let activeMergePair = $state<DuplicatePair | null>(null);
@@ -52,9 +53,6 @@
         return duplicates.getConceptName(nodeId) ?? nodeId;
     }
 
-    function handleToggle(newCollapsed: boolean): void {
-        collapsed = newCollapsed;
-    }
 
     /**
      * The recovery log is a service read model, not an event stream: a merge
@@ -136,12 +134,12 @@
     </section>
 {/if}
 
-<Collapsible
-    title={t.workbench.duplicates.title}
-    count={pairs.length}
-    {collapsed}
-    onToggle={handleToggle}
->
+<section class="cr-duplicates-section">
+    <button class="cr-duplicates-heading" type="button" aria-expanded={!collapsed} onclick={() => collapsed = !collapsed}>
+        <strong>{t.workbench.product.similarNotes}</strong>
+        <span>{!displaySettings.enableSemanticIndexing ? t.workbench.product.indexDisabled : !displaySettings.enableDuplicateDetection ? t.workbench.product.duplicatesDisabled : pairs.length > 0 ? ctx.i18n.format('workbench.product.similarCount', {count: pairs.length}) : t.workbench.product.noSimilar} {pairs.length > 0 ? '›' : ''}</span>
+    </button>
+    {#if !collapsed}
     {#if sortedPairs.length > 0}
         <div class="cr-dup-list">
             {#each sortedPairs as pair (pair.id)}
@@ -158,9 +156,10 @@
             {/each}
         </div>
     {:else}
-        <EmptyState message={t.workbench.duplicates.empty} />
+        <p class="cr-duplicates-empty">{!displaySettings.enableSemanticIndexing ? t.workbench.product.indexDisabled : !displaySettings.enableDuplicateDetection ? t.workbench.product.duplicatesDisabled : t.workbench.product.noSimilar}</p>
     {/if}
-</Collapsible>
+    {/if}
+</section>
 
 {#if activeMergePair}
     <MergeModal
@@ -179,6 +178,12 @@
 {/if}
 
 <style>
+    .cr-duplicates-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; width: 100%; text-align: left; padding: 0; height: auto; border: 0; box-shadow: none; background: none; color: var(--cr-text-normal); }
+    .cr-duplicates-heading strong { font-size: var(--cr-font-base); font-weight: 600; }
+    .cr-duplicates-heading span { font-size: var(--cr-font-xs); color: var(--cr-text-muted); }
+    .cr-duplicates-empty { color: var(--cr-text-muted); font-size: var(--cr-font-xs); margin-top: 18px; }
+    .cr-dup-list { margin-top: 20px; }
+
     .cr-dup-list {
         display: flex;
         flex-direction: column;

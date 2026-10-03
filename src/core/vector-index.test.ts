@@ -5,6 +5,8 @@ import type { ConceptVector, CRType, ILogger, VectorIndexMeta } from "../types";
 import { FileStorage } from "../data/file-storage";
 import { VectorIndex } from "./vector-index";
 import type { CruidCache } from "./cruid-cache";
+import { DEFAULT_SETTINGS } from "../data/settings-store";
+import { resolveVectorIndexConfig } from "./vector-config";
 
 interface StorageControls {
   failNextMetaWrite: boolean;
@@ -735,5 +737,69 @@ describe("FileStorage 向量边界", () => {
     const result = await storage.readVectorIndexMeta();
 
     expect(result).toMatchObject({ ok: false, error: { code: "E101_INVALID_INPUT" } });
+  });
+});
+
+// Exercise the effective configuration through the real mutation boundary,
+// not only the profile comparator, using synthetic metadata/vector storage.
+describe("effective endpoint configuration transitions", () => {
+  function config(baseUrl: string, apiKey = "test-only") {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.providers.embedding = {
+      apiKey, baseUrl, enabled: true, apiFormat: "disabled",
+      embeddingApiFormat: "openai-embeddings", defaultChatModel: "",
+      defaultEmbedModel: "embed", parameters: { embeddingDimension: 3 },
+    };
+    settings.defaultProviderId = "embedding";
+    return resolveVectorIndexConfig(settings);
+  }
+
+  it("retains registered and physical vectors for equivalent origin and /v1 URLs", async () => {
+    const before = config("https://relay.example");
+    const after = config("https://relay.example/v1/");
+    const storage = createStorage();
+    const index = createIndex(storage, before.model, before.dimension, before.profile);
+    expect((await index.load()).ok).toBe(true);
+    expect((await index.upsert({ uid: "node", type: "domain", embedding: [1, 0, 0] })).ok).toBe(true);
+    expect((await index.reconfigure(after.model, after.dimension, after.profile)).ok).toBe(true);
+    expect(index.has("node")).toBe(true);
+    expect(storage.vectors.has("domain/node")).toBe(true);
+  });
+
+  it("clears incompatible registered and physical vectors after a deployment query change", async () => {
+    const before = config("https://relay.example/v1?deployment=alpha");
+    const after = config("https://relay.example/v1?deployment=beta");
+    const storage = createStorage();
+    const index = createIndex(storage, before.model, before.dimension, before.profile);
+    expect((await index.load()).ok).toBe(true);
+    expect((await index.upsert({ uid: "node", type: "domain", embedding: [1, 0, 0] })).ok).toBe(true);
+    expect((await index.reconfigure(after.model, after.dimension, after.profile)).ok).toBe(true);
+    expect(index.has("node")).toBe(false);
+    expect(storage.vectors.has("domain/node")).toBe(false);
+  });
+
+  it("retains vectors when recognized query or header credentials rotate", async () => {
+    const before = config("https://relay.example/v1?deployment=alpha&api_key=old", "old-header");
+    const after = config("https://relay.example/v1?API_KEY=new&deployment=alpha", "new-header");
+    const storage = createStorage();
+    const index = createIndex(storage, before.model, before.dimension, before.profile);
+    expect((await index.load()).ok).toBe(true);
+    expect((await index.upsert({ uid: "node", type: "domain", embedding: [1, 0, 0] })).ok).toBe(true);
+    expect((await index.reconfigure(after.model, after.dimension, after.profile)).ok).toBe(true);
+    expect(index.has("node")).toBe(true);
+    expect(storage.vectors.has("domain/node")).toBe(true);
+  });
+
+  it("corrects an old bare-origin identity once, then keeps equivalent canonical URLs stable", async () => {
+    const oldBareProfile = JSON.stringify({ providerId: "embedding", endpoint: "https://relay.example", apiFormat: "openai-embeddings", model: "embed" });
+    const canonical = config("https://relay.example");
+    const storage = createStorage(createMeta({ node: { type: "domain" } }, "embed", 3, oldBareProfile), [createVector("node")]);
+    const index = createIndex(storage, canonical.model, canonical.dimension, canonical.profile);
+    expect((await index.load()).ok).toBe(true);
+    expect(index.has("node")).toBe(false);
+    const writesAfterCorrection = storage.mocks.writeVectorIndexMeta.mock.calls.length;
+    const equivalent = config("https://relay.example/v1");
+    expect((await index.reconfigure(equivalent.model, equivalent.dimension, equivalent.profile)).ok).toBe(true);
+    expect(storage.mocks.writeVectorIndexMeta.mock.calls.length).toBe(writesAfterCorrection);
   });
 });

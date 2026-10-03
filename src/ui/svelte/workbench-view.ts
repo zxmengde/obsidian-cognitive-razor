@@ -47,6 +47,11 @@ export class WorkbenchView extends ItemView {
         i18n: this.plugin.getI18n(),
         settingsApplication: this.plugin.getSettingsApplication(),
         application,
+        onOpenSettings: () => {
+          const settings = (this.app as unknown as { setting?: { open(): void; openTabById(id: string): void } }).setting;
+          settings?.open();
+          settings?.openTabById(this.plugin.manifest.id);
+        },
       });
       this.cleanup = destroy;
     } catch (error) {

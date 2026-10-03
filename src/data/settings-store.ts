@@ -18,11 +18,11 @@ import type {
 import { DEFAULT_MODEL_CAPABILITIES } from "../types";
 
 const DEFAULT_DIRECTORY_SCHEME: DirectoryScheme = {
-  domain: "1-领域",
-  issue: "2-议题",
-  theory: "3-理论",
-  entity: "4-实体",
-  mechanism: "5-机制",
+  domain: "C-知识库/1-领域",
+  issue: "C-知识库/2-议题",
+  theory: "C-知识库/3-理论",
+  entity: "C-知识库/4-实体",
+  mechanism: "C-知识库/5-机制",
 };
 
 export const DEFAULT_TASK_TIMEOUT_MS = 3 * 60 * 1000;

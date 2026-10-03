@@ -8,6 +8,7 @@ import type {
   ProviderConfig,
   Result,
   ResolvedTaskConfig,
+  TaskType,
 } from "../types";
 
 export type ProviderProbeAttemptReason = Extract<ProviderAttemptReason, "initial" | "manual-retry">;
@@ -18,6 +19,8 @@ export interface ProviderProbeRequest {
   attemptReason?: ProviderProbeAttemptReason;
   /** Optional task snapshot for a capability-aware probe. */
   taskConfig?: ResolvedTaskConfig;
+  /** Index probes exercise only the effective embedding model/dimensions. */
+  taskType?: TaskType;
 }
 
 export interface ProviderProbeGateway {

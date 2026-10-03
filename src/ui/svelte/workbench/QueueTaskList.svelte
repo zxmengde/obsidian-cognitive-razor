@@ -15,6 +15,7 @@
         oncancel,
         onremove,
         disabled = false,
+        selectable = false,
     }: {
         tasks: TaskRecord[];
         selectedIds: Set<string>;
@@ -23,6 +24,7 @@
         oncancel: (taskId: string) => void;
         onremove: (taskId: string) => void;
         disabled?: boolean;
+        selectable?: boolean;
     } = $props();
 
     const ctx = getWorkbenchContext();
@@ -49,125 +51,75 @@
         }[state];
     }
 
-    function getStateIcon(state: TaskState): string {
-        return {
-            interrupted: 'circle-pause',
-            pending: 'clock',
-            running: 'loader-circle',
-            completed: 'check-circle-2',
-            failed: 'alert-triangle',
-            cancelled: 'ban',
-        }[state];
-    }
+
 </script>
 
 <div class="cr-task-list" role="list">
     {#each tasks as task (task.id)}
         {@const displayName = getTaskDisplayName(task)}
         {@const failure = queueTaskFeedback(task, t.workbench.notifications.unknownFailure)}
-        <div class="cr-task-item cr-task-item--{task.state}" role="listitem">
-            <input
-                class="cr-task-select"
-                type="checkbox"
-                checked={selectedIds.has(task.id)}
-                onchange={(event) => onselect(task.id, event.currentTarget.checked)}
-                aria-label={`${t.workbench.queueStatus.selectTask} ${displayName}`}
-            />
-
-            <span class="cr-task-name" title={task.stageId === "cards" ? `${displayName} → ${task.payload.targetPath ?? ""}` : displayName}>{displayName}</span>
-            <div class="cr-task-meta">
-            <span class="cr-task-stage" title={task.stageId}>{stageLabel(task.stageId, t)}</span>
-            <span class="cr-task-state cr-task-state--{task.state}">
-                <Icon name={getStateIcon(task.state)} size={16} />
-                <span>{getStateLabel(task.state)}</span>
-            </span>
-            {#if failure}
-                    <details class="cr-task-feedback">
-                    <summary>{t.workbench.queueStatus.compactDetails}</summary>
-                    {#if failure.upstreamStatus !== undefined}
-                        <p>{ctx.i18n.format('workbench.queueStatus.upstreamFailure', { status: failure.upstreamStatus })}</p>
-                    {:else if failure.requestTimeoutMs !== undefined}
-                        <p>{ctx.i18n.format('workbench.queueStatus.localTimeout', { seconds: failure.requestTimeoutMs / 1000 })}</p>
-                    {:else}<p>{failure.message}</p>{/if}
-                    {#if failure.elapsedSeconds !== undefined}<p>{ctx.i18n.format('workbench.queueStatus.elapsedRun', { seconds: failure.elapsedSeconds })}</p>{/if}
-                    <p>{failure.uncertain ? t.workbench.queueStatus.uncertainNextStep : failure.details || t.workbench.queueStatus.failureNextStep}</p>
-                    </details>
-            {/if}
-            </div>
+        <div class="cr-task-item cr-task-item--{task.state}" class:cr-task-item--selectable={selectable} role="listitem">
+            {#if selectable}<input class="cr-task-select" type="checkbox" checked={selectedIds.has(task.id)} onchange={(event) => onselect(task.id, event.currentTarget.checked)} aria-label={`${t.workbench.queueStatus.selectTask} ${displayName}`} />{/if}
+            <span class="cr-task-name" title={task.stageId === 'cards' ? `${displayName} → ${task.payload.targetPath ?? ''}` : displayName}>{displayName}</span>
             <span class="cr-task-actions">
-                {#if task.stageId !== 'cards' && (task.state === 'failed' || task.state === 'interrupted')}
-                    <Button variant="ghost" size="sm" disabled={disabled} onclick={() => onretry(task.id)} ariaLabel={t.workbench.queueStatus.retry}>
-                        {t.workbench.queueStatus.retry}
-                    </Button>
-                {/if}
-                {#if task.state === 'pending' || task.state === 'running'}
-                    <Button variant="ghost" size="icon" disabled={disabled} onclick={() => oncancel(task.id)} ariaLabel={t.workbench.queueStatus.cancel}>
-                        <Icon name="x" size={16} />
-                    </Button>
-                {:else}
-                    <Button variant="ghost" size="icon" disabled={disabled} onclick={() => onremove(task.id)} ariaLabel={t.workbench.queueStatus.delete}>
-                        <Icon name="trash-2" size={16} />
-                    </Button>
-                {/if}
+                {#if task.state === 'pending' || task.state === 'running'}<Button variant="ghost" size="sm" disabled={disabled} onclick={() => oncancel(task.id)} ariaLabel={t.workbench.queueStatus.cancel}>{t.workbench.queueStatus.cancel}</Button>
+                {:else if selectable}<Button variant="ghost" size="icon" disabled={disabled} onclick={() => onremove(task.id)} ariaLabel={t.workbench.queueStatus.delete}><Icon name="trash-2" size={16} /></Button>{/if}
             </span>
-            {#if task.stageId === 'cards' && task.state === 'completed'}
-                <span class="cr-task-detail">{ctx.i18n.format('cards.completed', { path: task.payload.targetPath ?? task.filePath ?? '' })}</span>
-            {:else if task.stageId === 'cards' && (task.state === 'failed' || task.state === 'interrupted')}
-                <span class="cr-task-detail">{t.cards.regenerateHint}</span>
+            <div class="cr-task-meta">
+                <span class="cr-task-stage">{stageLabel(task.stageId, t)}</span>
+                <span class="cr-task-state cr-task-state--{task.state}">{failure?.uncertain ? t.workbench.product.unknown : getStateLabel(task.state)}</span>
+            </div>
+            {#if task.state === 'running'}<div class="cr-task-progress" role="status" aria-label={t.workbench.queueStatus.running}><span></span></div>{/if}
+            {#if failure}
+                <details class="cr-task-feedback">
+                    <summary>{t.workbench.queueStatus.compactDetails} ›</summary>
+                    <div class="cr-task-resolution" class:cr-task-resolution--uncertain={failure.uncertain}>
+                        {#if failure.uncertain}<strong>{t.workbench.product.confirmLast}</strong><p>{t.workbench.product.unknownHint}</p>{:else}<p>{failure.message}</p>{/if}
+                        <details class="cr-task-technical"><summary>{t.workbench.product.technicalDetails} ›</summary>
+                            {#if failure.upstreamStatus !== undefined}<p>{ctx.i18n.format('workbench.queueStatus.upstreamFailure', {status: failure.upstreamStatus})}</p>
+                            {:else if failure.requestTimeoutMs !== undefined}<p>{ctx.i18n.format('workbench.queueStatus.localTimeout', {seconds: failure.requestTimeoutMs / 1000})}</p>
+                            {:else}<p>{failure.message}</p>{/if}
+                            {#if failure.elapsedSeconds !== undefined}<p>{ctx.i18n.format('workbench.queueStatus.elapsedRun', {seconds: failure.elapsedSeconds})}</p>{/if}
+                            <p>{failure.uncertain ? t.workbench.queueStatus.uncertainNextStep : failure.details || t.workbench.queueStatus.failureNextStep}</p>
+                        </details>
+                        {#if task.stageId !== 'cards' && (task.state === 'failed' || task.state === 'interrupted')}<Button variant="ghost" size="sm" disabled={disabled} onclick={() => onretry(task.id)} ariaLabel={t.workbench.queueStatus.retry}>{failure.uncertain ? t.workbench.product.resend : t.workbench.queueStatus.retry}</Button>{/if}
+                    </div>
+                </details>
             {/if}
+            {#if task.stageId === 'cards' && task.state === 'completed'}<span class="cr-task-detail">{ctx.i18n.format('cards.completed', {path: task.payload.targetPath ?? task.filePath ?? ''})}</span>
+            {:else if task.stageId === 'cards' && (task.state === 'failed' || task.state === 'interrupted')}<span class="cr-task-detail">{t.cards.regenerateHint}</span>{/if}
         </div>
     {/each}
 </div>
-
 <style>
-    .cr-task-list { display: flex; flex-direction: column; gap: 1px; }
-    .cr-task-item {
-        display: grid;
-        grid-template-columns: 20px minmax(0, 1fr) auto 76px;
-        align-items: center;
-        gap: var(--cr-space-2);
-        min-height: 40px;
-        padding: var(--cr-space-3) 0;
-        border-bottom: 1px solid var(--cr-border);
-        font-size: var(--font-ui-small);
-    }
-    .cr-task-feedback p { margin: 0; line-height: var(--cr-line-height-body); }
-    .cr-task-feedback summary { cursor: pointer; padding: var(--cr-space-1) 0; font-size: var(--cr-font-sm); }
-    .cr-task-feedback p + p { margin-top: var(--cr-space-2); }
-    .cr-task-feedback { min-width: 0; color: var(--cr-text-muted); font-size: var(--cr-font-sm); overflow-wrap: anywhere; }
-    .cr-task-feedback[open] { flex-basis: 100%; }
-    .cr-task-feedback summary:focus-visible { outline: 2px solid var(--cr-border-focus); outline-offset: 2px; }
-    .cr-task-detail { grid-column: 2 / -1; color: var(--cr-text-muted); overflow-wrap: anywhere; }
+    .cr-task-list { display: flex; flex-direction: column; }
+    .cr-task-item { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: baseline; gap: 10px 12px; padding: 14px 0 20px; border-bottom: 1px solid var(--cr-border); }
+    .cr-task-item:first-child { padding-top: 0; }
     .cr-task-item:last-child { border-bottom: 0; }
-    .cr-task-item:hover { background: var(--cr-bg-hover); }
+    .cr-task-item--selectable { grid-template-columns: 20px minmax(0,1fr) auto; }
     .cr-task-select { width: 16px; height: 16px; margin: 0; }
-    .cr-task-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cr-text-normal); }
-    .cr-task-meta { display: flex; align-items: center; flex-wrap: wrap; gap: var(--cr-space-1) var(--cr-space-2); min-width: 0; }
-    .cr-task-stage { color: var(--cr-text-muted); font-size: var(--font-ui-smaller); }
-    .cr-task-state { display: inline-flex; align-items: center; gap: var(--cr-space-1); min-width: 86px; font-size: var(--font-ui-smaller); }
-    .cr-task-state--pending { color: var(--cr-task-pending); }
-    .cr-task-state--running { color: var(--cr-task-running); }
-    .cr-task-state--completed { color: var(--cr-status-success); }
-    .cr-task-state--interrupted { color: var(--cr-text-muted); }
-    .cr-task-state--failed { color: var(--cr-task-failed); }
-    .cr-task-state--cancelled { color: var(--cr-text-muted); }
-    .cr-task-state--running :global(svg) { animation: cr-queue-spin 1s linear infinite; }
-    .cr-task-actions { display: grid; grid-auto-flow: column; grid-template-columns: auto 28px; justify-content: end; min-width: 28px; }
-    @keyframes cr-queue-spin { to { transform: rotate(360deg); } }
-    @media (max-width: 620px) {
-        .cr-task-item { grid-template-columns: 20px minmax(0, 1fr) 76px; }
-        .cr-task-select { grid-column: 1; grid-row: 1; }
-        .cr-task-name { grid-column: 2; grid-row: 1; white-space: normal; overflow-wrap: anywhere; }
-        .cr-task-actions { grid-column: 3; grid-row: 1; }
-        .cr-task-meta { grid-column: 2 / -1; grid-row: 2; }
-        .cr-task-stage, .cr-task-state { min-width: 0; overflow-wrap: anywhere; }
-    }
-    @container cr-workbench (max-width: 620px) {
-        .cr-task-item { grid-template-columns: 20px minmax(0, 1fr) 76px; }
-        .cr-task-select { grid-column: 1; grid-row: 1; }
-        .cr-task-name { grid-column: 2; grid-row: 1; white-space: normal; overflow-wrap: anywhere; }
-        .cr-task-actions { grid-column: 3; grid-row: 1; }
-        .cr-task-meta { grid-column: 2 / -1; grid-row: 2; }
-        .cr-task-stage, .cr-task-state { min-width: 0; overflow-wrap: anywhere; }
-    }
+    .cr-task-name { color: var(--cr-text-normal); font-size: var(--cr-font-base); font-weight: 600; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+    .cr-task-actions { justify-self: end; }
+    .cr-task-actions :global(button) { min-height: 0; padding: 0; font-size: var(--cr-font-xs); }
+    .cr-task-meta { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; color: var(--cr-text-muted); font-size: var(--cr-font-xs); min-width: 0; }
+    .cr-task-item--selectable .cr-task-meta, .cr-task-item--selectable .cr-task-feedback, .cr-task-item--selectable .cr-task-progress { grid-column: 2 / -1; }
+    .cr-task-stage::after { content: ' ·'; }
+    .cr-task-state--running { color: var(--cr-interactive-accent); }
+    .cr-task-feedback { grid-column: 1 / -1; min-width: 0; font-size: var(--cr-font-xs); color: var(--cr-text-muted); }
+    .cr-task-feedback summary { cursor: pointer; list-style: none; padding: 0; font-size: var(--cr-font-xs); }
+    .cr-task-resolution { margin-top: 12px; padding: 12px; background: var(--cr-bg-secondary); border-radius: var(--cr-field-radius); display: flex; align-items: baseline; flex-wrap: wrap; gap: 14px 12px; }
+    .cr-task-resolution--uncertain { background: var(--cr-overlay-warning-10); }
+    .cr-task-resolution > strong { width: 100%; font-size: var(--cr-font-sm); color: var(--cr-status-warning); }
+    .cr-task-resolution > p { width: 100%; }
+    .cr-task-resolution p { margin: 0; line-height: 1.75; overflow-wrap: anywhere; }
+    .cr-task-resolution :global(.cr-btn-ghost) { margin-left: auto; padding: 0; min-height: 28px; color: var(--cr-interactive-accent); font-size: var(--cr-font-xs); }
+    .cr-task-technical { min-width: 0; flex: 1; }
+    .cr-task-technical[open] { flex-basis: 100%; }
+    .cr-task-technical p { margin-top: 12px; }
+    .cr-task-detail { grid-column: 1 / -1; color: var(--cr-text-muted); font-size: var(--cr-font-xs); overflow-wrap: anywhere; }
+    .cr-task-progress { grid-column: 1 / -1; height: 3px; background: var(--cr-bg-selected); overflow: hidden; margin: 4px 0; }
+    .cr-task-progress span { display: block; width: 24%; height: 100%; background: var(--cr-interactive-accent); animation: cr-task-progress 1.6s ease-in-out infinite alternate; }
+    @keyframes cr-task-progress { to { transform: translateX(300%); } }
+    @media (prefers-reduced-motion: reduce) { .cr-task-progress span { animation: none; width: 100%; opacity: 0.5; } }
+    @container cr-workbench (max-width: 620px) { .cr-task-meta { white-space: normal; overflow-wrap: anywhere; } }
 </style>

@@ -2,10 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RequestUrlParam } from "obsidian";
 import { requestUrl } from "obsidian";
 import type { ILogger, ProviderConfig, Result, ResolvedTaskConfig } from "../types";
+import { ok } from "../types";
 import type { SettingsStore } from "../data/settings-store";
 import { ProviderManager } from "./provider-manager";
 import { ProviderStreamAbortError, ProviderStreamNetworkError, safeStreamNetworkCode } from "./provider-streaming";
 import { InMemoryExternalCallLedger } from "./external-call-ledger";
+import { DEFAULT_SETTINGS } from "../data/settings-store";
+import { resolveTaskModelSnapshot } from "./task-model-resolver";
 
 vi.mock("obsidian", () => ({
   requestUrl: vi.fn(),
@@ -1445,6 +1448,120 @@ describe("ProviderManager", () => {
       expect(result.value.chat).toBe(false);
       expect(result.value.embedding).toBe(true);
     }
+  });
+
+  it("tests only the effective Index model and dimensions from the resolver snapshot", async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.providers["provider-1"] = {
+      apiKey: "test-api-key", baseUrl: "https://example.test/v1", enabled: true,
+      apiFormat: "openai-chat-completions", embeddingApiFormat: "openai-embeddings",
+      defaultChatModel: "chat-default", defaultEmbedModel: "embed-default",
+      parameters: { embeddingDimension: 3 },
+    };
+    settings.defaultProviderId = "provider-1";
+    settings.taskModels.index = { providerId: "", model: "effective-index", parameters: { embeddingDimension: 2 } };
+    vi.mocked(requestUrl).mockResolvedValue({ status: 200, json: { data: [{ embedding: [1, 0] }] }, text: "" } as never);
+    const manager = new ProviderManager({ getSettings: () => settings } as SettingsStore, createLogger());
+    const result = await manager.probe({ providerId: "provider-1", taskType: "index", taskConfig: resolveTaskModelSnapshot(settings, "index") });
+    expect(requestUrl).toHaveBeenCalledOnce();
+    const request = vi.mocked(requestUrl).mock.calls[0][0] as RequestUrlParam;
+    expect(request.url).toBe("https://example.test/v1/embeddings");
+    expect(JSON.parse(request.body as string)).toEqual({ model: "effective-index", input: "connection test", dimensions: 2 });
+    expect(result).toEqual(ok({
+      chat: false, chatError: undefined, embedding: true, embeddingError: undefined,
+      embeddingProbe: { model: "effective-index", requestedDimensions: 2, actualDimensions: 2 },
+    }));
+  });
+
+  it("resolves the current Index configuration when the caller does not supply a snapshot", async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.providers["provider-1"] = {
+      apiKey: "test-api-key", baseUrl: "https://example.test", enabled: true,
+      apiFormat: "disabled", embeddingApiFormat: "openai-embeddings",
+      defaultChatModel: "", defaultEmbedModel: "inherited-embed", parameters: { embeddingDimension: 2 },
+    };
+    settings.defaultProviderId = "provider-1";
+    vi.mocked(requestUrl).mockResolvedValue({ status: 200, json: { data: [{ embedding: [1, 0] }] }, text: "" } as never);
+    const manager = new ProviderManager({ getSettings: () => settings } as SettingsStore, createLogger());
+    const result = await manager.probe({ providerId: "provider-1", taskType: "index" });
+    expect(result).toMatchObject({ ok: true, value: { embeddingProbe: { model: "inherited-embed", requestedDimensions: 2, actualDimensions: 2 } } });
+    expect(JSON.parse((vi.mocked(requestUrl).mock.calls[0][0] as RequestUrlParam).body as string)).toMatchObject({ model: "inherited-embed", dimensions: 2 });
+  });
+
+  it("does not re-inherit a Provider dimension that the Index explicitly omitted", async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.providers["provider-1"] = {
+      apiKey: "test-api-key", baseUrl: "https://example.test/v1", enabled: true,
+      apiFormat: "openai-chat-completions", embeddingApiFormat: "openai-embeddings",
+      defaultChatModel: "chat", defaultEmbedModel: "embed", parameters: { embeddingDimension: 3 },
+    };
+    settings.defaultProviderId = "provider-1";
+    settings.taskModels.index.parameters = { embeddingDimension: null };
+    vi.mocked(requestUrl).mockResolvedValue({ status: 200, json: { data: [{ embedding: [1, 0] }] }, text: "" } as never);
+    const manager = new ProviderManager({ getSettings: () => settings } as SettingsStore, createLogger());
+    const result = await manager.probe({ providerId: "provider-1", taskType: "index", taskConfig: resolveTaskModelSnapshot(settings, "index") });
+    expect(result.ok).toBe(true);
+    expect(JSON.parse((vi.mocked(requestUrl).mock.calls[0][0] as RequestUrlParam).body as string)).not.toHaveProperty("dimensions");
+  });
+
+  it("rejects an Index probe for a different Provider instead of silently forcing the route", async () => {
+    const manager = new ProviderManager(createSettingsStore(), createLogger());
+    const snapshot: ResolvedTaskConfig = { providerId: "other-provider", model: "embed", capabilities: { temperature: false, topP: false, reasoning: false, structuredOutput: "prompt", nativeWebSearch: false, promptCaching: false, responseContinuation: false } };
+    const result = await manager.probe({ providerId: "provider-1", taskType: "index", taskConfig: snapshot });
+    expect(result).toMatchObject({ ok: false, error: { code: "E101_INVALID_INPUT" } });
+    expect(requestUrl).not.toHaveBeenCalled();
+  });
+
+  it("rejects a wrong-dimensional Index response without a fallback chat request or automatic probe retry", async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.providers["provider-1"] = { apiKey: "test-api-key", baseUrl: "https://example.test/v1", enabled: true, apiFormat: "openai-chat-completions", embeddingApiFormat: "openai-embeddings", defaultChatModel: "chat", defaultEmbedModel: "embed", parameters: { embeddingDimension: 3 } };
+    settings.defaultProviderId = "provider-1";
+    vi.mocked(requestUrl).mockResolvedValue({ status: 200, json: { data: [{ embedding: [1, 0] }] }, text: "" } as never);
+    const manager = new ProviderManager({ getSettings: () => settings } as SettingsStore, createLogger());
+    const result = await manager.probe({ providerId: "provider-1", taskType: "index", taskConfig: resolveTaskModelSnapshot(settings, "index") });
+    expect(result).toMatchObject({ ok: false, error: { code: "E211_MODEL_SCHEMA_VIOLATION" } });
+    expect(requestUrl).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a missing or disabled effective Index configuration offline", async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.providers["provider-1"] = { apiKey: "test-api-key", baseUrl: "https://example.test/v1", enabled: true, apiFormat: "disabled", embeddingApiFormat: "openai-embeddings", defaultChatModel: "", defaultEmbedModel: "" };
+    settings.defaultProviderId = "provider-1";
+    const manager = new ProviderManager({ getSettings: () => settings } as SettingsStore, createLogger());
+    expect(await manager.probe({ providerId: "provider-1", taskType: "index" })).toMatchObject({ ok: false, error: { code: "E101_INVALID_INPUT" } });
+    settings.providers["provider-1"].enabled = false;
+    expect(await manager.probe({ providerId: "provider-1", taskType: "index" })).toMatchObject({ ok: false, error: { code: "E401_PROVIDER_NOT_CONFIGURED" } });
+    expect(requestUrl).not.toHaveBeenCalled();
+  });
+
+  it("includes the Provider dimension in a service-only embedding connection probe", async () => {
+    vi.mocked(requestUrl).mockResolvedValue({ status: 200, json: { data: [{ embedding: [1, 0] }] }, text: "" } as never);
+    const manager = new ProviderManager(createSettingsStore({ provider: { apiFormat: "disabled", parameters: { embeddingDimension: 2 } } }), createLogger());
+    const result = await manager.probe({ providerId: "provider-1" });
+    expect(JSON.parse((vi.mocked(requestUrl).mock.calls[0][0] as RequestUrlParam).body as string)).toMatchObject({ model: "embed", dimensions: 2 });
+    expect(result).toMatchObject({ ok: true, value: { embeddingProbe: { model: "embed", requestedDimensions: 2, actualDimensions: 2 } } });
+  });
+
+  it.each(["cards", "write"] as const)("tests only the actual %s chat task on a dual-capability Provider", async (taskType) => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.providers["provider-1"] = {
+      apiKey: "test-api-key", baseUrl: "https://example.test/v1", enabled: true,
+      apiFormat: "openai-chat-completions", embeddingApiFormat: "openai-embeddings",
+      defaultChatModel: "chat-default", defaultEmbedModel: "unsupported-embedding",
+    };
+    settings.defaultProviderId = "provider-1";
+    settings.taskModels[taskType].model = `actual-${taskType}`;
+    vi.mocked(requestUrl)
+      .mockResolvedValueOnce({ status: 200, json: { choices: [{ message: { content: "OK" }, finish_reason: "stop" }] }, text: "" } as never)
+      .mockResolvedValue({ status: 400, json: {}, text: JSON.stringify({ error: { message: "embedding unsupported" } }) } as never);
+    const manager = new ProviderManager({ getSettings: () => settings } as SettingsStore, createLogger());
+    const result = await manager.probe({ providerId: "provider-1", taskType, taskConfig: resolveTaskModelSnapshot(settings, taskType) });
+    expect(requestUrl).toHaveBeenCalledOnce();
+    const request = vi.mocked(requestUrl).mock.calls[0][0] as RequestUrlParam;
+    expect(request.url).toBe("https://example.test/v1/chat/completions");
+    expect(JSON.parse(request.body as string)).toMatchObject({ model: `actual-${taskType}` });
+    expect(result).toMatchObject({ ok: true, value: { chat: true, embedding: false, embeddingError: undefined } });
+    if (result.ok) expect(result.value).not.toHaveProperty("embeddingProbe");
   });
 
   it("probes chat and embedding endpoints independently", async () => {

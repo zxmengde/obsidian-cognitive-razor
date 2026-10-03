@@ -2,7 +2,6 @@
     import { untrack } from 'svelte';
     import { SvelteSet } from 'svelte/reactivity';
     import { getWorkbenchContext } from '../../bridge/context';
-    import StatusDot from '../../components/StatusDot.svelte';
     import Button from '../../components/Button.svelte';
     import Icon from '../../components/Icon.svelte';
     import SectionCard from '../../components/SectionCard.svelte';
@@ -16,7 +15,6 @@
     import { isUncertainTask } from '../../../core/task-uncertainty';
     import { stageLabel } from '../../stage-labels';
 
-    type DotStatus = 'idle' | 'running' | 'paused' | 'error';
     type QueueFilter = 'all' | 'active' | TaskState;
     type StageFilter = 'all' | TaskStageId;
     type ConfirmAction = 'cancel-active' | 'clear-history' | null;
@@ -33,7 +31,7 @@
     const t = ctx.i18n.messages;
     const queue = ctx.application.queue;
 
-    let expanded = $state(true);
+    let managing = $state(false);
     let historyOpen = $state(false);
     let stateFilter = $state<QueueFilter>(untrack(() => ctx.settingsApplication.getSettings().queueDefaultFilter ?? 'all'));
     let pageSize = $state(untrack(() => ctx.settingsApplication.getSettings().queuePageSize ?? 50));
@@ -64,6 +62,7 @@
     const primaryTasks = $derived(stateFilter === 'all' ? filteredTasks.filter(task => task.state !== 'completed' && task.state !== 'cancelled') : filteredTasks);
     const historyTasks = $derived(stateFilter === 'all' ? filteredTasks.filter(task => task.state === 'completed' || task.state === 'cancelled') : []);
     const uncertainCount = $derived(primaryTasks.filter(task => (task.state === 'failed' || task.state === 'interrupted') && isUncertainTask(task)).length);
+    const attentionCount = $derived(primaryTasks.filter(task => task.state === 'failed' || task.state === 'interrupted').length);
     const displayedTasks = $derived(primaryTasks.slice(0, visibleLimit));
     const selectableTasks = $derived([...primaryTasks, ...(historyOpen ? historyTasks : [])]);
     const selectedTasks = $derived(tasks.filter((task) => selectedIds.has(task.id)));
@@ -73,27 +72,6 @@
     const retryableFailedCount = $derived(tasks.filter((task) => task.stageId !== 'cards' && task.state === 'failed' && !isUncertainTask(task)).length);
     const allFilteredSelected = $derived(selectableTasks.length > 0 && selectableTasks.every((task) => selectedIds.has(task.id)));
     const hasMore = $derived(displayedTasks.length < primaryTasks.length);
-
-    const dotStatus: DotStatus = $derived.by(() => {
-        if (status.failed > 0) return 'error';
-        if (status.paused) return 'paused';
-        if (status.running > 0) return 'running';
-        return 'idle';
-    });
-
-    const statusLabel: string = $derived.by(() => {
-        if (status.failed > 0) return t.workbench.queueStatus.hasFailures;
-        if (status.interrupted > 0) return t.cards.hasInterrupted;
-        if (status.paused) return t.workbench.queueStatus.paused;
-        if (status.running > 0) return t.workbench.queueStatus.running;
-        if (status.pending > 0) return t.workbench.queueStatus.pending;
-        return t.workbench.queueStatus.noTasks;
-    });
-
-    const statsText = $derived(ctx.i18n.format('workbench.queueStatus.attentionSummary', {
-        attention: status.failed + status.interrupted,
-        active: status.pending + status.running,
-    }));
 
     $effect(() => {
         const taskIds = new SvelteSet(tasks.map((task) => task.id));
@@ -222,33 +200,15 @@
 <SectionCard>
     <div class="cr-queue-section">
         <div class="cr-queue-status-bar">
-            <button class="cr-queue-status-info" type="button" onclick={() => expanded = !expanded} aria-expanded={expanded}>
-                <StatusDot status={dotStatus} />
-                <span class="cr-visually-hidden">{statusLabel}</span>
-                <span class="cr-queue-title">{t.workbench.queueStatus.title}</span>
-                <span class="cr-queue-stats" aria-live="polite">{statsText}</span>
-                <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={16} />
-            </button>
+            <h2 class="cr-queue-title">{t.workbench.product.tasks}</h2>
             {#if status.paused || status.pending > 0 || status.running > 0}
-                <Button
-                    variant="ghost"
-                    size="icon"
-                    disabled={actionRunning}
-                    onclick={handleTogglePause}
-                    ariaLabel={status.paused ? t.workbench.queueStatus.resumeQueue : t.workbench.queueStatus.pauseQueue}
-                >
-                    <Icon name={status.paused ? 'play' : 'pause'} size={16} />
-                </Button>
+                <Button variant="ghost" size="sm" disabled={actionRunning} onclick={handleTogglePause} ariaLabel={status.paused ? t.workbench.queueStatus.resumeQueue : t.workbench.queueStatus.pauseQueue}>{status.paused ? t.workbench.queueStatus.resumeQueue : t.workbench.queueStatus.pauseQueue}</Button>
             {/if}
         </div>
-
-        {#if expanded}
             <div class="cr-queue-details">
-                {#if uncertainCount > 0}
-                    <p class="cr-queue-uncertain-notice" role="note">{ctx.i18n.format('workbench.queueStatus.uncertainGroup', { count: uncertainCount })}</p>
-                {/if}
-                <details class="cr-queue-management">
-                    <summary>{t.workbench.queueStatus.manageQueue}</summary>
+                <details class="cr-queue-management" bind:open={managing}>
+                    <summary aria-label={t.workbench.queueStatus.manageQueue}>{managing ? t.workbench.product.doneManage : t.workbench.product.manage}</summary>
+                <p class="cr-queue-overall">{ctx.i18n.format('workbench.product.needsHandling', {count: status.failed + status.interrupted})}</p>
                 <div class="cr-queue-summary" role="toolbar" aria-label={t.workbench.queueStatus.summary}>
                     <button type="button" class:active={stateFilter === 'active'} onclick={() => stateFilter = 'active'}>
                         <span>{t.workbench.queueStatus.active}</span><strong>{status.pending + status.running}</strong>
@@ -333,10 +293,12 @@
                 </div>
 
                 </details>
+                {#if attentionCount > 0}<p class="cr-queue-uncertain-notice" role="status">{ctx.i18n.format(uncertainCount === attentionCount ? 'workbench.product.needsAttention' : 'workbench.product.needsHandling', {count: attentionCount})}</p>{/if}
                 {#if displayedTasks.length > 0}
                     <QueueTaskList
                         tasks={displayedTasks}
                         {selectedIds}
+                        selectable={managing}
                         onselect={selectTask}
                         onretry={handleRetry}
                         oncancel={handleCancel}
@@ -349,13 +311,13 @@
                         </Button>
                     {/if}
                 {:else}
-                    <EmptyState message={t.workbench.queueStatus.noFilteredTasks} icon="inbox" />
+                    {#if tasks.length === 0}<div class="cr-queue-empty"><p>{t.workbench.product.noTasks}</p><p>{t.workbench.product.noTasksHint}</p></div>{:else if stateFilter !== 'all'}<EmptyState message={t.workbench.queueStatus.noFilteredTasks} icon="inbox" />{/if}
                 {/if}
                 {#if historyTasks.length > 0}
                     <details class="cr-queue-history" bind:open={historyOpen}>
-                        <summary>{t.workbench.queueStatus.history} <span>{historyTasks.length}</span></summary>
+                        <summary><span>{ctx.i18n.format('workbench.product.historySummary', {completed: status.completed, cancelled: status.cancelled})}</span><span>{t.workbench.product.viewHistory} ›</span></summary>
                         {#if historyOpen}
-                        <QueueTaskList tasks={historyTasks.slice(0, historyLimit)} {selectedIds} onselect={selectTask} onretry={handleRetry} oncancel={handleCancel} onremove={handleRemove} disabled={actionRunning} />
+                        <QueueTaskList tasks={historyTasks.slice(0, historyLimit)} {selectedIds} selectable={managing} onselect={selectTask} onretry={handleRetry} oncancel={handleCancel} onremove={handleRemove} disabled={actionRunning} />
                         {#if historyTasks.length > historyLimit}
                             <Button variant="ghost" size="sm" onclick={() => historyLimit += pageSize}>{t.workbench.queueStatus.showMore} ({historyTasks.length - historyLimit})</Button>
                         {/if}
@@ -363,7 +325,6 @@
                     </details>
                 {/if}
             </div>
-        {/if}
     </div>
 </SectionCard>
 
@@ -406,42 +367,28 @@
 {/if}
 
 <style>
-    .cr-queue-uncertain-notice { margin: 0; color: var(--cr-text-muted); font-size: var(--cr-font-sm); line-height: var(--cr-line-height-body); }
-    .cr-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-    .cr-queue-management, .cr-queue-history { min-width: 0; }
-    summary { cursor: pointer; color: var(--cr-text-muted); font-size: var(--cr-font-sm); padding: var(--cr-space-2) 0; line-height: var(--cr-line-height-body); }
-    .cr-queue-management[open] { padding-bottom: var(--cr-space-3); border-bottom: 1px solid var(--cr-border); }
-    .cr-queue-management[open] > div { margin-top: var(--cr-space-3); }
-    .cr-queue-history { border-top: 1px solid var(--cr-border); }
-    .cr-queue-history summary span { margin-left: var(--cr-space-2); font-variant-numeric: tabular-nums; }
-
-    .cr-queue-section { display: flex; flex-direction: column; gap: var(--cr-space-2); }
-    .cr-queue-status-bar { display: flex; align-items: flex-start; gap: var(--cr-space-2); }
-    .cr-queue-status-info { display: flex; flex-wrap: wrap; align-items: center; gap: var(--cr-space-2); flex: 1; min-width: 0; height: auto; min-height: 32px; box-shadow: none; border-radius: 0; line-height: var(--cr-line-height-body); padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
-    .cr-queue-title { font-weight: 600; color: var(--cr-text-normal); }
-    .cr-queue-stats { flex-basis: 100%; order: 1; min-width: 0; white-space: normal; overflow-wrap: anywhere; color: var(--cr-text-muted); font-size: var(--font-ui-smaller); }
-    .cr-queue-details { display: flex; flex-direction: column; gap: var(--cr-space-3); margin-top: var(--cr-space-1); }
-    .cr-queue-summary { display: grid; grid-template-columns: repeat(4, 1fr); border-block: 1px solid var(--cr-border); }
-    .cr-queue-summary button { display: flex; justify-content: space-between; gap: var(--cr-space-2); padding: var(--cr-space-2); border: 0; border-right: 1px solid var(--cr-border); background: transparent; color: var(--cr-text-muted); cursor: pointer; }
-    .cr-queue-summary button:last-child { border-right: 0; }
-    .cr-queue-summary button:hover, .cr-queue-summary button.active { background: var(--cr-bg-hover); color: var(--cr-text-normal); }
-    .cr-queue-summary strong { color: var(--cr-text-normal); }
-    .cr-queue-toolbar, .cr-queue-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--cr-space-2); }
-    .cr-queue-select-label { display: inline-flex; align-items: center; gap: var(--cr-space-1); color: var(--cr-text-muted); font-size: var(--font-ui-smaller); }
+    .cr-queue-section { position: relative; min-width: 0; }
+    .cr-queue-status-bar { display: flex; align-items: baseline; gap: 12px; margin-bottom: 24px; padding-right: 80px; }
+    .cr-queue-title { margin: 0; padding: 0; font-size: 15px; font-weight: 600; color: var(--cr-text-normal); }
+    .cr-queue-status-bar :global(button) { padding: 0; font-size: var(--cr-font-xs); min-height: 0; }
+    .cr-queue-management > summary { position: absolute; right: 0; top: 1px; list-style: none; color: var(--cr-text-muted); font-size: var(--cr-font-xs); cursor: pointer; }
+    .cr-queue-management > summary::-webkit-details-marker { display: none; }
+    .cr-queue-management[open] { margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--cr-border); }
+    .cr-queue-management[open] > div { margin-top: 12px; }
+    .cr-queue-uncertain-notice { margin: 0 0 16px; color: var(--cr-status-warning); font-size: var(--cr-font-sm); }
+    .cr-queue-overall { color: var(--cr-text-muted); font-size: var(--cr-font-xs); }
+    .cr-queue-summary { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
+    .cr-queue-summary button { display: flex; justify-content: space-between; gap: 8px; padding: 8px; border: 1px solid var(--cr-border); background: transparent; color: var(--cr-text-muted); height: auto; min-height: 32px; box-shadow: none; }
+    .cr-queue-summary button.active { background: var(--cr-bg-selected); color: var(--cr-text-normal); }
+    .cr-queue-toolbar, .cr-queue-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+    .cr-queue-select-label { display: inline-flex; align-items: center; gap: 4px; color: var(--cr-text-muted); font-size: var(--cr-font-xs); }
     .cr-queue-select-label select { min-height: 28px; max-width: 150px; }
-    .cr-queue-select-all { display: inline-flex; align-items: center; gap: var(--cr-space-1); margin-left: auto; color: var(--cr-text-muted); font-size: var(--font-ui-smaller); }
-    .cr-queue-actions { padding-block: var(--cr-space-1); }
-    .cr-queue-actions :global(button) { display: inline-flex; align-items: center; gap: var(--cr-space-1); }
-    @media (max-width: 620px) {
-        .cr-queue-summary { grid-template-columns: repeat(2, 1fr); }
-        .cr-queue-summary button:nth-child(2) { border-right: 0; }
-        .cr-queue-summary button:nth-child(-n + 2) { border-bottom: 1px solid var(--cr-border); }
-        .cr-queue-select-all { margin-left: 0; }
-    }
+    .cr-queue-select-all { display: inline-flex; align-items: center; gap: 4px; color: var(--cr-text-muted); font-size: var(--cr-font-xs); }
+    .cr-queue-history { margin-top: 20px; border-top: 1px solid var(--cr-border); }
+    .cr-queue-history > summary { display: flex; justify-content: space-between; gap: 12px; padding-top: 16px; font-size: var(--cr-font-xs); color: var(--cr-text-muted); cursor: pointer; list-style: none; }
+    .cr-queue-empty p { margin: 0; color: var(--cr-text-muted); font-size: var(--cr-font-sm); line-height: 1.7; }
+    .cr-queue-empty p + p { margin-top: 12px; font-size: var(--cr-font-xs); color: var(--cr-text-faint); }
     @container cr-workbench (max-width: 620px) {
-        .cr-queue-summary { grid-template-columns: repeat(2, 1fr); }
-        .cr-queue-summary button:nth-child(2) { border-right: 0; }
-        .cr-queue-summary button:nth-child(-n + 2) { border-bottom: 1px solid var(--cr-border); }
-        .cr-queue-select-all { margin-left: 0; }
+        .cr-queue-toolbar { align-items: flex-start; }
     }
 </style>

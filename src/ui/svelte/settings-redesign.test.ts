@@ -66,7 +66,7 @@ async function harness(failSave = false, saveDelay?: () => Promise<void>, expand
         ui.flushSync();
     }
     const button = (label: string) => {
-        const result = Array.from(target.querySelectorAll<HTMLElement>('button, [role="button"]')).find(el => el.textContent?.trim() === label);
+        const result = Array.from(target.querySelectorAll<HTMLElement>('button, [role="button"]')).find(el => el.textContent?.trim().replace(/\s*›$/, '') === label);
         if (!result) throw new Error(`Missing button: ${label}`);
         return result;
     };
@@ -87,6 +87,107 @@ async function harness(failSave = false, saveDelay?: () => Promise<void>, expand
 }
 
 describe('approved settings information architecture', () => {
+    it('keeps connection actions folded and preserves temporary forced-provider probes without editing tasks', async () => {
+        const h = await harness();
+        try {
+            const card = Array.from(h.target.querySelectorAll<HTMLElement>('.cr-provider-card')).find(el => el.querySelector('.cr-provider-card__name')?.textContent?.includes('daily'))!;
+            const menu = card.querySelector<HTMLDetailsElement>('.cr-provider-extra')!;
+            expect(menu.open).toBe(false);
+            expect(h.target.querySelector<HTMLSelectElement>('[aria-label="默认 Provider"] option[value="daily"]')?.textContent).toContain('daily · chat-main');
+            const before = structuredClone(h.store.getSettings().taskModels);
+            menu.querySelector('summary')!.click(); ui.flushSync();
+            card.querySelector<HTMLButtonElement>('.cr-provider-link')!.click(); ui.flushSync();
+            const mode = card.querySelector<HTMLSelectElement>('[aria-label="测试范围"]')!;
+            mode.value = 'temporary'; mode.dispatchEvent(new Event('change', { bubbles: true })); ui.flushSync();
+            card.querySelector<HTMLButtonElement>('.cr-provider-test button')!.click(); await h.settle();
+            expect((h.probe.mock.calls[0] as unknown as [unknown])[0]).toMatchObject({ providerId: 'daily', taskType: 'write', taskConfig: { providerId: 'daily', model: 'reasoning-model' } });
+            expect(card.querySelector('.cr-provider-probe-status__target')?.textContent).toContain('临时使用此连接');
+            expect(h.store.getSettings().taskModels).toEqual(before); expect(h.save).not.toHaveBeenCalled();
+        } finally { await h.cleanup(); }
+    });
+    it('retains location preview and original configuration after save failure, then retries once', async () => {
+        const h = await harness(true);
+        try {
+            h.click('笔记与卡片'); h.target.querySelector<HTMLButtonElement>('#cr-locations-edit')!.click(); ui.flushSync();
+            const input = h.target.querySelector<HTMLInputElement>('[aria-label="知识库根目录"]')!;
+            input.value = 'New/Root'; input.dispatchEvent(new Event('change', { bubbles: true })); ui.flushSync();
+            h.click('预览变化'); h.click('确认并保存位置'); await h.settle();
+            expect(h.store.getSettings().cardsSourceRoot).toBe(DEFAULT_SETTINGS.cardsSourceRoot);
+            expect(h.target.querySelector('.cr-location-preview')).toBeTruthy();
+            expect(h.target.querySelector('.cr-location-editor [role="alert"]')).toBeTruthy();
+            h.click('确认并保存位置'); await h.settle();
+            expect(h.store.getSettings().cardsSourceRoot).toBe('New/Root'); expect(h.save).toHaveBeenCalledTimes(2);
+        } finally { await h.cleanup(); }
+    });
+    it('rejects a stale location preview without overwriting externally updated locations', async () => {
+        const h = await harness();
+        try {
+            h.click('笔记与卡片'); h.target.querySelector<HTMLButtonElement>('#cr-locations-edit')!.click(); ui.flushSync();
+            h.click('预览变化');
+            await h.store.updateSettings({ cardsTargetRoot: 'Changed/Decks' }); await h.settle(); h.save.mockClear();
+            h.click('确认并保存位置'); await h.settle();
+            expect(h.store.getSettings().cardsTargetRoot).toBe('Changed/Decks');
+            expect(h.target.querySelector('.cr-location-editor')?.textContent).toContain('预览期间位置已改变');
+            expect(h.save).not.toHaveBeenCalled();
+        } finally { await h.cleanup(); }
+    });
+    it('tests the actual index task snapshot and invalidates the displayed result after edits', async () => {
+        const h = await harness();
+        try {
+            await h.store.updateTaskModel('index', { providerId: 'research', model: 'actual-embed', parameters: { embeddingDimension: 256 } }); await h.settle();
+            const task = await h.openTask('index');
+            const button = task.querySelector<HTMLButtonElement>('.cr-task-details__probe button')!;
+            button.click(); await h.settle();
+            expect(h.probe).toHaveBeenCalledOnce();
+            expect((h.probe.mock.calls[0] as unknown as [unknown])[0]).toMatchObject({ providerId: 'research', taskType: 'index', taskConfig: { providerId: 'research', model: 'actual-embed', embeddingDimension: 256 } });
+            expect(task.querySelector('.cr-provider-probe-status__target')?.textContent?.replace(/\s+/g, ' ')).toContain('research · actual-embed · 请求维度: 256');
+            expect(task.querySelector('.cr-provider-probe-status__capabilities')?.textContent).toContain(new I18n().t('settings.provider.probe.status.disabled'));
+            await h.store.updateTaskModel('index', { model: 'changed-embed' }); await h.settle();
+            expect(task.querySelector('.cr-provider-probe-status')).toBeNull();
+            h.probe.mockResolvedValueOnce({ ok: false, error: { code: 'E211_MODEL_SCHEMA_VIOLATION', message: 'Synthetic' } } as never);
+            button.click(); await h.settle();
+            expect(task.querySelector('.cr-provider-probe-status__target')?.textContent).toContain('changed-embed');
+            expect(task.querySelector('.cr-provider-probe-status')?.textContent).toContain(new I18n().t('settings.redesign.testOutcomes.failed'));
+        } finally { await h.cleanup(); }
+    });
+    it('makes model inheritance explicit and never persists an empty specified draft', async () => {
+        const h = await harness();
+        try {
+            const cards = await h.openTask('cards');
+            const mode = cards.querySelector<HTMLSelectElement>('#tmc-cards-model-mode')!;
+            expect(mode.value).toBe('inherit'); expect(cards.querySelector('#tmc-cards-model')).toBeNull();
+            mode.value = 'specified'; mode.dispatchEvent(new Event('change', { bubbles: true })); await h.settle();
+            expect(h.store.getSettings().taskModels.cards.model).toBe('chat-main');
+            const model = cards.querySelector<HTMLInputElement>('#tmc-cards-model')!;
+            model.value = ''; model.dispatchEvent(new Event('change', { bubbles: true })); await h.settle();
+            expect(h.store.getSettings().taskModels.cards.model).toBe('chat-main'); expect(cards.querySelector('[role="alert"]')).toBeTruthy();
+            await h.back(); await h.openTask('cards'); expect(model.value).toBe('');
+            mode.value = 'inherit'; mode.dispatchEvent(new Event('change', { bubbles: true })); await h.settle();
+            expect(h.store.getSettings().taskModels.cards.model).toBe(''); expect(h.probe).not.toHaveBeenCalled();
+        } finally { await h.cleanup(); }
+    });
+    it('leaves seven legacy custom paths intact until conversion is previewed and confirmed', async () => {
+        const h = await harness();
+        try {
+            const legacy = { directoryScheme: { domain: 'Old/A', issue: 'Old/B', theory: 'Different/C', entity: 'D', mechanism: 'E' }, cardsSourceRoot: 'Original', cardsTargetRoot: 'Decks' };
+            await h.store.updateSettings(legacy); await h.settle(); h.save.mockClear();
+            h.click('笔记与卡片'); expect(h.target.querySelector('.cr-location-heading')?.textContent).toContain('自定义位置');
+            expect(h.target.querySelector('.cr-location-example')).toBeNull();
+            expect(h.target.querySelector('.cr-workflow-tab')?.textContent).toContain('机制笔记目录不在卡片来源范围内');
+            expect(h.store.getSettings()).toMatchObject(legacy);
+            h.target.querySelector<HTMLButtonElement>('#cr-locations-edit')!.click(); ui.flushSync();
+            expect(h.target.querySelector<HTMLInputElement>('[aria-label="领域"]')?.value).toBe('Old/A');
+            const mode = h.target.querySelector<HTMLSelectElement>('.cr-location-editor select')!;
+            mode.value = 'unified'; mode.dispatchEvent(new Event('change', { bubbles: true })); ui.flushSync();
+            h.click('预览变化'); expect(h.target.querySelectorAll('.cr-location-change')).toHaveLength(7);
+            expect(h.store.getSettings()).toMatchObject(legacy); expect(h.save).not.toHaveBeenCalled();
+            h.click('确认并保存位置'); await h.settle();
+            expect(h.store.getSettings().directoryScheme.domain).toBe('Original/1-领域');
+            expect(h.store.getSettings().cardsTargetRoot).toBe('Decks'); expect(h.save).toHaveBeenCalledOnce();
+            expect(h.target.querySelector('.cr-location-example')?.textContent).toContain('Original/5-机制/笔记.md → Decks/5-机制/笔记-decks.md');
+            expect(h.probe).not.toHaveBeenCalled(); expect(h.ensure).not.toHaveBeenCalled();
+        } finally { await h.cleanup(); }
+    });
     it.each(['', 'x', 'prefix-test-only-suffix'])('shows only configuration status for a saved credential (%s)', async (key) => {
         const h = await harness();
         try {
@@ -103,18 +204,18 @@ describe('approved settings information architecture', () => {
         const h = await harness(false, undefined, false);
         try {
             const before = structuredClone(h.store.getSettings());
-            expect(h.target.querySelectorAll('.cr-task-summary')).toHaveLength(2);
-            expect(h.target.querySelector('.cr-inherited-summary')?.textContent).toContain('定义、标记、核查、合并、记忆卡片');
-            expect(h.target.querySelector('#cr-task-usage')?.textContent).not.toContain('daily · chat-main');
-            expect(h.target.querySelectorAll('[id^="cr-task-trigger-"]')).toHaveLength(2);
+            expect(h.target.querySelectorAll('.cr-task-summary')).toHaveLength(3);
+            expect(h.target.querySelector('.cr-other-task-summary')?.textContent).toContain('定义、标记、撰写、核查、合并');
+            expect(h.target.querySelector('#cr-task-trigger-cards')?.textContent).toContain('daily · chat-main');
+            expect(h.target.querySelectorAll('[id^="cr-task-trigger-"]')).toHaveLength(3);
             expect(h.target.textContent).toContain('沿用默认');
-            expect(h.target.textContent).toContain('research · reasoning-model');
+            expect(h.target.querySelector('[aria-label="按任务单独调整（进阶）"]')?.textContent).toContain('4 项沿用默认');
             h.target.querySelector<HTMLButtonElement>('[aria-label="按任务单独调整（进阶）"]')!.click(); ui.flushSync();
             expect(h.target.querySelectorAll('[id^="cr-task-trigger-"]')).toHaveLength(7);
             await h.openTask('write'); await h.back();
             expect(document.activeElement?.id).toBe('cr-task-trigger-write');
             h.target.querySelector<HTMLButtonElement>('[aria-label="按任务单独调整（进阶）"]')!.click(); ui.flushSync();
-            expect(h.target.querySelectorAll('[id^="cr-task-trigger-"]')).toHaveLength(2);
+            expect(h.target.querySelectorAll('[id^="cr-task-trigger-"]')).toHaveLength(3);
             expect(h.store.getSettings()).toEqual(before);
             expect(h.save).not.toHaveBeenCalled(); expect(h.probe).not.toHaveBeenCalled();
         } finally { await h.cleanup(); }
@@ -141,6 +242,7 @@ describe('approved settings information architecture', () => {
             expect(h.target.querySelector('.cr-inherited-summary')).toBeNull();
             expect(h.target.querySelectorAll('.cr-task-summary')).toHaveLength(7);
             expect(h.target.querySelector('#cr-task-trigger-cards')?.textContent).toContain('服务已禁用');
+            h.target.querySelector<HTMLButtonElement>('[aria-label="按任务单独调整（进阶）"]')!.click(); ui.flushSync();
             expect(h.target.querySelector('#cr-task-trigger-index')?.textContent).toContain('embed-main');
             await h.openTask('cards'); await h.back();
             expect(document.activeElement?.id).toBe('cr-task-trigger-cards');
@@ -187,8 +289,8 @@ describe('approved settings information architecture', () => {
             expect(getComputedStyle(title).paddingRight).toBe('0px');
             expect(getComputedStyle(h.target.querySelector<HTMLElement>('.cr-settings-content')!).paddingLeft).toBe('0px');
             expect(getComputedStyle(h.target.querySelector<HTMLElement>('[role="tablist"]')!).position).not.toBe('sticky');
-            expect(h.button('编辑连接').tagName).toBe('BUTTON');
-            expect(getComputedStyle(h.button('编辑连接')).boxShadow).toBe('none');
+            expect(h.button('编辑').tagName).toBe('BUTTON');
+            expect(getComputedStyle(h.button('编辑')).boxShadow).toBe('none');
             for (const tab of Array.from(h.target.querySelectorAll<HTMLElement>('[role="tab"]'))) {
                 const css = getComputedStyle(tab);
                 expect(css.flexGrow).toBe('0');
@@ -226,41 +328,44 @@ describe('approved settings information architecture', () => {
             expect(h.target.scrollTop).toBe(0);
             expect(h.navigate).toHaveBeenCalledTimes(2);
             h.target.scrollTop = 120;
+            h.target.querySelector<HTMLButtonElement>('#cr-locations-edit')!.click(); ui.flushSync();
             const rootInput = h.target.querySelector<HTMLInputElement>('[aria-label="知识库根目录"]')!;
             rootInput.value = 'Example/cards-source';
             rootInput.dispatchEvent(new Event('change', { bubbles: true })); await h.settle();
             expect(h.target.scrollTop).toBe(120);
             expect(h.navigate).toHaveBeenCalledTimes(2);
+            expect(h.store.getSettings().cardsSourceRoot).toBe(DEFAULT_SETTINGS.cardsSourceRoot);
+            expect(h.save).not.toHaveBeenCalled();
+            h.click('预览变化'); h.click('确认并保存位置'); await h.settle();
             expect(h.store.getSettings().cardsSourceRoot).toBe('Example/cards-source');
             expect(h.save).toHaveBeenCalledOnce();
             expect(h.probe).not.toHaveBeenCalled(); expect(h.ensure).not.toHaveBeenCalled();
         } finally { await h.cleanup(); }
     });
-    it('shows either the directory summary or its editor and keeps edited paths after collapsing', async () => {
+    it('previews all seven location fields before an atomic save and cancels without writes', async () => {
         const h = await harness();
         try {
             h.click('笔记与卡片');
-            const details = h.target.querySelector<HTMLDetailsElement>('.cr-settings-disclosure')!;
-            const summary = details.querySelector('summary')!;
-            expect(h.target.querySelectorAll('.cr-directory-summary p')).toHaveLength(5);
-            summary.click(); await h.settle();
-            expect(details.open).toBe(true);
-            expect(h.target.querySelector('.cr-directory-summary')).toBeNull();
-            expect(details.querySelectorAll('input')).toHaveLength(5);
+            expect(h.target.querySelectorAll('.cr-location-paths dd')).toHaveLength(5);
+            const open = () => { h.target.querySelector<HTMLButtonElement>('#cr-locations-edit')!.click(); ui.flushSync(); };
+            open();
+            expect(h.target.querySelectorAll('.cr-location-editor input')).toHaveLength(7);
+            const root = h.target.querySelector<HTMLInputElement>('[aria-label="知识库根目录"]')!;
+            root.value = 'Example/Knowledge'; root.dispatchEvent(new Event('change', { bubbles: true })); await h.settle();
+            h.click('预览变化');
+            expect(h.target.querySelectorAll('.cr-location-change')).toHaveLength(7);
+            expect(h.target.querySelector('.cr-location-preview')?.textContent).toContain('Example/Knowledge/1-领域');
+            expect(h.store.getSettings().cardsSourceRoot).toBe(DEFAULT_SETTINGS.cardsSourceRoot);
             expect(h.save).not.toHaveBeenCalled();
-
-            const input = details.querySelector<HTMLInputElement>('input')!;
-            input.value = 'Example/domain';
-            input.dispatchEvent(new Event('change', { bubbles: true })); await h.settle();
-            expect(h.store.getSettings().directoryScheme.domain).toBe('Example/domain');
-            summary.click(); await h.settle();
-            expect(details.open).toBe(false);
-            expect(h.target.querySelector('.cr-directory-summary')?.textContent).toContain('Example/domain');
-            summary.click(); await h.settle();
-            expect(details.querySelector<HTMLInputElement>('input')?.value).toBe('Example/domain');
-            expect(h.target.querySelector('.cr-directory-summary')).toBeNull();
-            expect(h.save).toHaveBeenCalledOnce();
-            expect(h.probe).not.toHaveBeenCalled(); expect(h.ensure).not.toHaveBeenCalled();
+            h.click('取消');
+            expect(h.target.querySelector('.cr-location-editor')).toBeNull(); expect(h.save).not.toHaveBeenCalled();
+            open(); const input = h.target.querySelector<HTMLInputElement>('[aria-label="知识库根目录"]')!;
+            input.value = 'Example/Knowledge'; input.dispatchEvent(new Event('change', { bubbles: true })); ui.flushSync();
+            h.click('预览变化'); h.click('确认并保存位置'); await h.settle();
+            expect(h.store.getSettings().directoryScheme.domain).toBe('Example/Knowledge/1-领域');
+            expect(h.store.getSettings().cardsSourceRoot).toBe('Example/Knowledge');
+            expect(h.target.querySelector('.cr-location-editor')).toBeNull();
+            expect(h.save).toHaveBeenCalledOnce(); expect(h.probe).not.toHaveBeenCalled(); expect(h.ensure).not.toHaveBeenCalled();
         } finally { await h.cleanup(); }
     });
     it('shows slider numbers once while preserving unit conversion, range edits and clamping', async () => {
@@ -293,6 +398,26 @@ describe('approved settings information architecture', () => {
             expect(h.probe).not.toHaveBeenCalled(); expect(h.ensure).not.toHaveBeenCalled();
         } finally { await h.cleanup(); }
     });
+    it('persists both 3600-second timeout controls as milliseconds across settings reload', async () => {
+        const h = await harness();
+        const locale = new I18n();
+        try {
+            h.click('维护与备份');
+            h.click(locale.t('settings.redesign.execution'));
+            for (const label of ['taskTimeout', 'networkTimeout']) {
+                const input = h.target.querySelector<HTMLInputElement>(`input[type="number"][aria-label="${locale.t(`settings.advanced.queue.${label}`)}"]`)!;
+                input.value = '3600';
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+                await h.settle();
+                expect(input.value).toBe('3600');
+            }
+            const saved = (h.save.mock.lastCall as unknown as [typeof DEFAULT_SETTINGS])[0];
+            const reloaded = new SettingsStore({ loadData: async () => saved, saveData: async () => undefined } as never);
+            expect((await reloaded.loadSettings()).ok).toBe(true);
+            expect(reloaded.getSettings()).toMatchObject({ taskTimeoutMs: 3_600_000, providerTimeoutMs: 3_600_000 });
+            expect(h.save).toHaveBeenCalledTimes(2);
+        } finally { await h.cleanup(); }
+    });
     it('opts only compact switch controls into inline rows and preserves their changes', async () => {
         const h = await harness();
         const locale = new I18n();
@@ -306,7 +431,7 @@ describe('approved settings information architecture', () => {
             for (const control of Array.from(h.target.querySelectorAll('input'))) {
                 expect(control.closest('.cr-setting-item')?.classList.contains('cr-setting-item--inline-control')).toBe(false);
             }
-            const autoVerify = switches.find(control => control.getAttribute('aria-label') === locale.t('settings.advanced.features.enableAutoVerify'))!;
+            const autoVerify = switches.find(control => control.getAttribute('aria-label')?.startsWith(locale.t('settings.product.autoVerify')))!;
             autoVerify.click(); await h.settle();
             expect(h.store.getSettings().enableAutoVerify).toBe(true);
             expect(autoVerify.getAttribute('aria-checked')).toBe('true');
@@ -318,6 +443,50 @@ describe('approved settings information architecture', () => {
             keepalive.click(); await h.settle();
             expect(h.store.getSettings().enableStreamingKeepalive).toBe(!previous);
             expect(h.save).toHaveBeenCalledTimes(2);
+        } finally { await h.cleanup(); }
+    });
+    it('keeps generation rows compact and folds threshold and API explanations with display options', async () => {
+        const h = await harness();
+        const locale = new I18n();
+        try {
+            h.click('笔记与卡片');
+            const workflow = h.target.querySelector<HTMLElement>('.cr-workflow-tab')!;
+            const generation = Array.from(workflow.querySelectorAll<HTMLElement>('.cr-settings-section')).find(section => section.querySelector('h3')?.textContent === locale.t('settings.product.generation'))!;
+            const rows = Array.from(generation.querySelectorAll<HTMLElement>('.cr-setting-item'));
+            expect(rows).toHaveLength(3);
+            expect(rows.map(row => row.querySelector('.cr-setting-item__name')?.textContent)).toEqual(['创建后自动核查', '语义索引', '发现相似笔记']);
+            expect(rows.map(row => row.querySelector('.cr-feature-status')?.textContent)).toEqual(['关闭', '开启', '开启']);
+            expect(generation.querySelector('.cr-setting-item__desc')).toBeNull();
+            expect(generation.querySelector('.cr-slider')).toBeNull();
+            const auto = rows[0].querySelector<HTMLElement>('[role="switch"]')!;
+            expect(auto.getAttribute('aria-label')).toContain(locale.t('settings.redesign.autoVerifyCost'));
+            expect(auto.closest('[title]')?.getAttribute('title')).toBe(locale.t('settings.redesign.autoVerifyCost'));
+            const options = workflow.querySelector<HTMLDetailsElement>('.cr-settings-disclosure')!;
+            expect(options.open).toBe(false);
+            expect(options.querySelector('.cr-feature-explanations')?.textContent).toContain(locale.t('settings.redesign.autoVerifyCost'));
+            expect(options.querySelector('.cr-feature-explanations')?.textContent).toContain(locale.t('settings.advanced.semanticIndexing.enabledDesc'));
+            options.querySelector('summary')!.click(); ui.flushSync();
+            expect(options.open).toBe(true);
+            const threshold = options.querySelector<HTMLInputElement>(`input[type="number"][aria-label="${locale.t('settings.similarityThreshold.name')}"]`)!;
+            threshold.value = '0.82'; threshold.dispatchEvent(new Event('change', { bubbles: true })); await h.settle();
+            expect(h.store.getSettings().similarityThreshold).toBe(0.82);
+            auto.click(); await h.settle();
+            expect(rows[0].querySelector('.cr-feature-status')?.textContent).toBe('开启');
+            rows[1].querySelector<HTMLElement>('[role="switch"]')!.click(); await h.settle();
+            expect(rows[1].querySelector('.cr-feature-status')?.textContent).toBe('关闭');
+            expect(rows[2].querySelector('.cr-feature-status')?.textContent).toBe('需先开启索引');
+            expect(rows[2].querySelector('[role="switch"]')?.getAttribute('aria-disabled')).toBe('true');
+            expect(h.store.getSettings().enableDuplicateDetection).toBe(true);
+            expect(options.querySelector('.cr-slider')).toBeNull();
+            rows[1].querySelector<HTMLElement>('[role="switch"]')!.click(); await h.settle();
+            expect(rows[2].querySelector('.cr-feature-status')?.textContent).toBe('开启');
+            expect(options.querySelector<HTMLInputElement>(`input[type="number"][aria-label="${locale.t('settings.similarityThreshold.name')}"]`)?.value).toBe('0.82');
+            rows[2].querySelector<HTMLElement>('[role="switch"]')!.click(); await h.settle();
+            expect(h.store.getSettings().enableDuplicateDetection).toBe(false);
+            expect(rows[2].querySelector('.cr-feature-status')?.textContent).toBe('关闭');
+            options.querySelector('summary')!.click(); ui.flushSync();
+            expect(options.open).toBe(false);
+            expect(h.probe).not.toHaveBeenCalled(); expect(h.ensure).not.toHaveBeenCalled();
         } finally { await h.cleanup(); }
     });
     it('shows transport only within enabled streaming advanced controls and persists explicit selection', async () => {
@@ -354,7 +523,8 @@ describe('approved settings information architecture', () => {
             expect(h.target.querySelectorAll('.cr-task-detail-view:not([hidden]) .cr-task-model-card')).toHaveLength(1);
             expect(h.target.querySelector('#tmc-write-model')?.closest('.cr-task-detail-view')?.hasAttribute('hidden')).toBe(true);
             h.click('笔记与卡片');
-            expect(h.target.querySelector<HTMLInputElement>('[aria-label="知识库根目录"]')).toBeTruthy();
+            expect(h.target.querySelector('#cr-locations-edit')).toBeTruthy();
+            expect(h.target.querySelector('.cr-location-paths')?.textContent).toContain(DEFAULT_SETTINGS.cardsSourceRoot);
             h.target.querySelector<HTMLDetailsElement>('details')!.open = true;
             h.click('维护与备份');
             expect(h.target.textContent).toContain('Markdown 笔记会保留');
@@ -365,16 +535,19 @@ describe('approved settings information architecture', () => {
             expect(h.save).not.toHaveBeenCalled(); expect(h.probe).not.toHaveBeenCalled(); expect(h.ensure).not.toHaveBeenCalled();
         } finally { await h.cleanup(); }
     });
-    it('links card settings back to the shared task editor', async () => {
+    it('keeps cards and index editing exclusively on AI and models', async () => {
         const h = await harness();
         try {
             h.click('笔记与卡片'); await h.settle();
-            h.click('调整'); await h.settle();
-            expect(h.target.querySelector('.cr-providers-tab')).toBeNull();
+            expect(h.target.querySelectorAll('[id^="cr-task-trigger-"]')).toHaveLength(0);
+            expect(h.target.querySelectorAll('.cr-task-model-card')).toHaveLength(0);
+            expect(h.target.querySelector('.cr-workflow-tab')?.textContent).not.toContain('卡片使用模型');
+            h.click('AI 与模型'); await h.openTask('cards');
             expect(document.activeElement?.id).toBe('cr-task-detail-heading-cards');
-            expect(h.navigate).toHaveBeenCalledTimes(2);
             expect(h.target.querySelectorAll('.cr-task-model-card')).toHaveLength(1);
             expect(h.target.textContent).toContain('跟随当前默认服务');
+            expect(h.target.querySelector<HTMLSelectElement>('#tmc-cards-model-mode')?.value).toBe('inherit');
+            expect(h.target.querySelector('#tmc-cards-model')).toBeNull();
             expect(h.save).not.toHaveBeenCalled();
         } finally { await h.cleanup(); }
     });
@@ -394,7 +567,8 @@ describe('approved settings information architecture', () => {
             await h.back();
             expect(write.hidden).toBe(true);
             const cards = await h.openTask('cards');
-            expect(cards.querySelector<HTMLInputElement>('#tmc-cards-model')?.value).toBe('');
+            expect(cards.querySelector<HTMLInputElement>('#tmc-cards-model')).toBeNull();
+            expect(cards.querySelector<HTMLSelectElement>('#tmc-cards-model-mode')?.value).toBe('inherit');
             expect(cards.querySelector<HTMLSelectElement>('#tmc-cards-provider')?.value).toBe('');
             expect(cards.querySelector('[role="alert"]')).toBeNull();
             h.click('维护与备份'); await h.settle();
@@ -431,7 +605,8 @@ describe('approved settings information architecture', () => {
             expect(document.activeElement?.id).toBe('cr-task-detail-heading-cards');
             expect(h.target.querySelectorAll('.cr-task-detail-view:not([hidden])')).toHaveLength(1);
             expect(h.target.querySelectorAll('#tmc-write-model')).toHaveLength(1);
-            expect(h.target.querySelectorAll('#tmc-cards-model')).toHaveLength(1);
+            expect(h.target.querySelectorAll('#tmc-cards-model-mode')).toHaveLength(1);
+            expect(h.target.querySelectorAll('#tmc-cards-model')).toHaveLength(0);
             // A retained, hidden editor cannot take over the current route.
             h.target.querySelector<HTMLInputElement>('#tmc-write-model')!.closest('.cr-task-detail-view')!.querySelector<HTMLButtonElement>('.cr-task-details__back')!.click();
             await h.settle();
@@ -520,7 +695,7 @@ describe('approved settings information architecture', () => {
     it('opens and cancels provider editing without persisting or probing', async () => {
         const h = await harness();
         try {
-            h.click('编辑连接');
+            h.click('编辑');
             expect(h.target.querySelector('#pm-chat-model')).toBeTruthy();
             expect(h.target.querySelector<HTMLDetailsElement>('.cr-provider-disclosure:last-of-type')?.open).toBe(false);
             h.click('取消');
@@ -584,11 +759,11 @@ describe('display preferences do not change task execution', () => {
             expect(target.querySelectorAll('[role="listitem"]')).toHaveLength(63);
             await ui.unmount(queueInstance); queueInstance = ui.mount(ui.QueueHost, { target, props }); ui.flushSync();
             expect(target.querySelectorAll('[role="listitem"]')).toHaveLength(2);
-            expect(target.textContent).toContain('需处理 3 · 进行中 0');
+            expect(target.textContent).toContain('需要处理 · 3 项');
             const filter = target.querySelector<HTMLSelectElement>('.cr-queue-select-label select')!;
             filter.value = 'active'; filter.dispatchEvent(new Event('change', { bubbles: true })); ui.flushSync();
             expect(target.querySelectorAll('[role="listitem"]')).toHaveLength(0);
-            expect(target.textContent).toContain('需处理 3 · 进行中 0');
+            expect(target.textContent).toContain('需要处理 · 3 项');
             expect(h.probe).not.toHaveBeenCalled(); expect(h.ensure).not.toHaveBeenCalled();
         } finally { if (queueInstance) await ui.unmount(queueInstance); target.remove(); await h.cleanup(); }
     });

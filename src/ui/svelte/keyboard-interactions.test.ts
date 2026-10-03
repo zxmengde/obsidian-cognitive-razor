@@ -51,7 +51,7 @@ function openTaskParameters(target: HTMLElement): HTMLDetailsElement {
 }
 
 describe("keyboard interaction safety", () => {
-  it('keeps concept input separate from folded note actions without losing its draft on note changes', async () => {
+  it('separates the two intentions and preserves the concept draft across note changes', async () => {
     const define = vi.fn(); const verify = vi.fn(); const cards = vi.fn();
     const target = document.body.appendChild(document.createElement('div'));
     const i18n = new I18n();
@@ -70,10 +70,13 @@ describe("keyboard interaction safety", () => {
       expect(submit.disabled).toBe(false);
       const clearButton = target.querySelector<HTMLButtonElement>(`button[aria-label="${i18n.messages.workbench.createConcept.clear}"]`)!;
       expect(getComputedStyle(clearButton).position).toBe('absolute');
-      const actions = target.querySelector<HTMLDetailsElement>('.cr-note-actions')!;
-      expect(actions.open).toBe(false);
-      actions.querySelector('summary')!.click(); ui.flushSync();
-      expect(actions.open).toBe(true);
+      const createTab = target.querySelector<HTMLButtonElement>('#cr-intent-create')!;
+      const noteTab = target.querySelector<HTMLButtonElement>('#cr-intent-note')!;
+      expect(target.querySelector<HTMLElement>('#cr-intent-note-panel')!.hidden).toBe(true);
+      noteTab.click(); ui.flushSync();
+      expect(target.querySelector<HTMLElement>('#cr-intent-create-panel')!.hidden).toBe(true);
+      expect(noteTab.getAttribute('aria-selected')).toBe('true');
+      const actions = target.querySelector<HTMLElement>('.cr-note-actions')!;
       expect(actions.querySelectorAll('button')).toHaveLength(3);
       expect(verify).not.toHaveBeenCalled(); expect(cards).not.toHaveBeenCalled(); expect(define).not.toHaveBeenCalled();
       (instance as { setActiveFile(file: unknown): void }).setActiveFile({ path: 'Second.md', basename: 'Second', extension: 'md' }); ui.flushSync();
@@ -81,6 +84,8 @@ describe("keyboard interaction safety", () => {
       expect(input.value).toBe('保留的概念');
       (instance as { setActiveFile(file: unknown): void }).setActiveFile(null); ui.flushSync();
       expect(target.querySelector('.cr-note-actions')).toBeNull(); expect(input.value).toBe('保留的概念');
+      createTab.click(); ui.flushSync();
+      expect(input.value).toBe('保留的概念');
       target.querySelector<HTMLButtonElement>(`button[aria-label="${i18n.messages.workbench.createConcept.clear}"]`)!.click(); ui.flushSync();
       expect(input.value).toBe(''); expect(submit.disabled).toBe(true);
     } finally { await ui.unmount(instance); target.remove(); }
@@ -102,7 +107,8 @@ describe("keyboard interaction safety", () => {
     } } });
     try {
       ui.flushSync();
-      const verify = Array.from(target.querySelectorAll('button')).find(button => button.textContent?.trim() === i18n.messages.workbench.buttons.verify)!;
+      target.querySelector<HTMLButtonElement>('#cr-intent-note')!.click(); ui.flushSync();
+      const verify = target.querySelector<HTMLButtonElement>(`button[aria-label="${i18n.messages.workbench.buttons.verify}"]`)!;
       verify.click();
       await vi.waitFor(() => { ui.flushSync(); expect(target.textContent).toContain(i18n.messages.workbench.notifications.verifyStarted); });
       notify(); ui.flushSync();
@@ -249,9 +255,42 @@ describe("keyboard interaction safety", () => {
       input.dispatchEvent(new Event("input", { bubbles: true }));
       ui.flushSync();
       input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
-      await vi.waitFor(() => expect(target.querySelectorAll('[role="row"]')).toHaveLength(5));
+      await vi.waitFor(() => expect(target.querySelectorAll('.cr-type-table__row')).toHaveLength(3));
+      target.querySelector<HTMLButtonElement>('.cr-type-table__other')!.click(); ui.flushSync();
+      expect(target.querySelectorAll('.cr-type-table__row')).toHaveLength(5);
       expect(target.textContent).toContain("entity English Name");
     } finally { await ui.unmount(instance); target.remove(); }
+  });
+
+  it('preserves selected candidate across intentions and admits a creation only once', async () => {
+    const target = document.body.appendChild(document.createElement('div'));
+    let release!: (value: unknown) => void;
+    const confirm = vi.fn((_concept: unknown) => new Promise(resolve => { release = resolve; }));
+    const define = vi.fn(async () => ({ ok: true, value: { coreDefinition: 'fixture', candidates: Object.fromEntries(CR_TYPES.map((type, index) => [type, { name: { chinese: type, english: type }, confidence: 0.9 - index * 0.1 }])) } }));
+    const instance = ui.mount(ui.CreateHost, {target, props: {context: {
+      i18n: new I18n(), app: {vault: {on: () => ({}), offref() {}}},
+      application: {queue: {subscribe: () => () => undefined}, create: {define, confirm}},
+      settingsApplication: {getSettings: () => ({}), subscribeSettings: () => () => undefined},
+    }}});
+    try {
+      ui.flushSync(); const input = target.querySelector<HTMLInputElement>('.cr-search-input')!;
+      input.value = 'fixture concept'; input.dispatchEvent(new Event('input')); ui.flushSync();
+      input.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}));
+      await vi.waitFor(() => expect(target.querySelector('.cr-type-table')).not.toBeNull());
+      target.querySelector<HTMLButtonElement>('.cr-type-table__other')!.click(); ui.flushSync();
+      const candidate = target.querySelector<HTMLInputElement>('input[type="radio"][value="mechanism"]')!;
+      candidate.click(); ui.flushSync();
+      target.querySelector<HTMLButtonElement>('#cr-intent-note')!.click(); ui.flushSync();
+      target.querySelector<HTMLButtonElement>('#cr-intent-create')!.click(); ui.flushSync();
+      expect(candidate.checked).toBe(true); expect(define).toHaveBeenCalledOnce();
+      expect(target.querySelector('.cr-result-heading')?.textContent).toContain('fixture concept');
+      const submit = target.querySelector<HTMLButtonElement>('.cr-type-table > .cr-btn-primary')!;
+      expect(submit.textContent).toContain('创建机制笔记'); submit.click(); submit.click(); ui.flushSync();
+      expect(confirm).toHaveBeenCalledOnce(); expect(confirm.mock.calls[0][0]).toMatchObject({type: 'mechanism'});
+      expect(submit.disabled).toBe(true);
+      release({ok: true, value: 'workflow'}); await Promise.resolve(); await Promise.resolve(); ui.flushSync();
+      expect(target.querySelector('.cr-type-table')).toBeNull();
+    } finally { release?.({ok: true, value: 'workflow'}); await ui.unmount(instance); target.remove(); }
   });
 
   it("waits for Chinese IME composition to finish before submitting Define", async () => {
@@ -412,8 +451,9 @@ describe("task parameter progressive disclosure", () => {
     try {
       ui.flushSync();
       expect(target.querySelector<HTMLSelectElement>("#tmc-cards-provider")!.value).toBe("");
-      expect(target.querySelector<HTMLInputElement>("#tmc-cards-model")!.value).toBe("");
-      expect(target.querySelector<HTMLInputElement>("#tmc-cards-model")!.placeholder).toContain("inherited-model");
+      expect(target.querySelector<HTMLInputElement>("#tmc-cards-model")).toBeNull();
+      expect(target.querySelector<HTMLSelectElement>("#tmc-cards-model-mode")!.value).toBe("inherit");
+      expect(target.textContent).toContain("inherited-model");
       expect(target.textContent).toContain("继承服务默认模型：inherited-model");
       expect(onUpdate).not.toHaveBeenCalled();
     } finally { await ui.unmount(instance); target.remove(); }

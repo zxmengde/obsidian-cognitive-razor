@@ -378,6 +378,9 @@
                 {/if}
             </div>
 
+            <details class="cr-provider-disclosure cr-provider-shared-defaults" open={mode === 'add' || Boolean(errors.chatModel || errors.embedModel || errors.embeddingDimension || errors.reasoning || errors.maxTokens)}>
+                <summary>{t('settings.product.sharedDefaults')}</summary>
+                <p class="cr-provider-field__desc">{t('settings.product.sharedHint')}</p>
             {#if formApiFormat !== 'disabled'}
             <!-- 默认聊天模型 -->
             <div class="cr-provider-field">
@@ -462,7 +465,7 @@
 
             {#if formApiFormat !== 'disabled'}
             <details class="cr-provider-disclosure" open={Boolean(errors.reasoning || errors.maxTokens)}>
-                <summary>{t('settings.redesign.providerAdvanced')}</summary>
+                <summary>{t('settings.product.modelDefaults')}</summary>
                 <p class="cr-provider-field__desc">{t('settings.redesign.providerAdvancedDesc')}</p>
             <div class="cr-provider-field cr-provider-field--row">
                 <div>
@@ -552,6 +555,8 @@
 
             </details>
             {/if}
+
+            </details>
 
             <!-- 启用开关（Toggle 是 div[role=switch]，用 aria-labelledby 关联） -->
             <div class="cr-provider-field cr-provider-field--row">

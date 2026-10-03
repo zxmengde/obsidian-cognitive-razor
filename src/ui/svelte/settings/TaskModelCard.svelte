@@ -50,6 +50,24 @@
     let pendingSetKeys = $state<TaskParameterKey[]>([]);
     let draftValues = $state<Partial<Record<TaskParameterKey, string>>>({});
     let parameterErrors = $state<Partial<Record<TaskParameterKey, string>>>({});
+    let pendingModel = $state(false);
+    let modelDraft = $state<string | undefined>();
+    let modelError = $state('');
+    let modelMode = $derived(pendingModel || config.model.trim() ? 'specified' : 'inherit');
+    function handleModelMode(value: string) {
+        modelDraft = undefined; modelError = ''; pendingModel = false;
+        if (value === 'inherit') onUpdate(taskType, { model: '' });
+        else if (!config.model.trim()) {
+            if (inheritedModel?.trim()) onUpdate(taskType, { model: inheritedModel.trim() });
+            else { pendingModel = true; modelDraft = ''; }
+        }
+    }
+    function handleModelChange(value: string) {
+        modelDraft = value;
+        if (!value.trim()) { pendingModel = true; modelError = i18n.t('settings.product.modelRequired'); return; }
+        modelError = ''; pendingModel = false; modelDraft = undefined;
+        onUpdate(taskType, { model: value.trim() });
+    }
     let parameterKeys = $derived.by((): TaskParameterKey[] => {
         if (isEmbeddingTask) return ['embeddingDimension'];
         const keys: TaskParameterKey[] = ['temperature', 'topP'];
@@ -175,6 +193,7 @@
         pendingSetKeys = [];
         draftValues = {};
         parameterErrors = {};
+        pendingModel = false; modelDraft = undefined; modelError = '';
         onReset(taskType);
     }
 </script>
@@ -202,10 +221,14 @@
         <p class="cr-task-model-card__description">{config.providerId ? text('fromTask') : text('defaultProviderHint')}</p>
     </div>
     <div class="cr-task-model-card__basic cr-task-model-card__field">
-        <label for={`tmc-${taskType}-model`}>{text('model')}</label>
-        <TextInput id={`tmc-${taskType}-model`} value={config.model}
-            placeholder={inheritedModel || text('modelMissing')}
-            onchange={(value) => onUpdate(taskType, { model: value })} />
+        <label for={`tmc-${taskType}-model-mode`}>{text('model')}</label>
+        <Select id={`tmc-${taskType}-model-mode`} value={modelMode} ariaLabel={i18n.t('settings.product.modelMode')}
+            options={[{value:'inherit',label:i18n.t('settings.product.inheritModel')},{value:'specified',label:i18n.t('settings.product.specifiedModel')}]} onchange={handleModelMode} />
+        {#if modelMode === 'specified'}
+            <TextInput id={`tmc-${taskType}-model`} ariaLabel={text('model')} value={modelDraft ?? config.model} placeholder={inheritedModel || text('modelMissing')}
+                invalid={Boolean(modelError)} onchange={handleModelChange} />
+            {#if modelError}<p role="alert" class="cr-task-model-card__error">{modelError}</p>{/if}
+        {/if}
         <p class="cr-task-model-card__description">{config.model.trim() ? text('modelSpecified') : `${text('modelInherited')}${inheritedModel || text('modelMissing')}`}</p>
     </div>
 

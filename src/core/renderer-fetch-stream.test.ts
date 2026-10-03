@@ -27,13 +27,72 @@ it("body read failure rejects safe after-response error without returning partia
 });
 it.each([false,true])("idle timeout handles headers received=%s",async(headers)=>{
  vi.useFakeTimers();const f=vi.fn(()=>headers?Promise.resolve(response(new ReadableStream())):new Promise<Response>(()=>{}));
- const p=createRendererStreamRequester(f)(input);const check=expect(p).rejects.toMatchObject({timeoutKind:"idle",phase:headers?"after-response":"before-response"});await vi.advanceTimersByTimeAsync(1001);await check;expect(f).toHaveBeenCalledOnce();
+ const p=createRendererStreamRequester(f,{totalTimeoutMs:2000})(input);const check=expect(p).rejects.toMatchObject({timeoutKind:"idle",phase:headers?"after-response":"before-response"});await vi.advanceTimersByTimeAsync(1001);await check;expect(f).toHaveBeenCalledOnce();
 });
 it("nonempty heartbeat extends idle but total deadline still wins",async()=>{
  vi.useFakeTimers();let c!:ReadableStreamDefaultController<Uint8Array>;
  const f=vi.fn(async()=>response(new ReadableStream({start(controller){c=controller;}})));
  const p=createRendererStreamRequester(f,{totalTimeoutMs:2500})(input);const check=expect(p).rejects.toMatchObject({timeoutKind:"total",phase:"after-response"});
  await vi.advanceTimersByTimeAsync(0);for(let n=0;n<3;n++){await vi.advanceTimersByTimeAsync(700);c.enqueue(encode(': heartbeat\n\n'));await vi.advanceTimersByTimeAsync(0);}await vi.advanceTimersByTimeAsync(401);await check;expect(f).toHaveBeenCalledOnce();
+});
+it("honors a 3600-second request limit beyond the former 600-second deadline", async () => {
+  vi.useFakeTimers();
+  let stream!: ReadableStreamDefaultController<Uint8Array>;
+  const fetcher = vi.fn(async () => response(new ReadableStream({ start(controller) { stream = controller; } })));
+  let failure: unknown;
+  const pending = createRendererStreamRequester(fetcher)({ ...input, timeoutMs: 3_600_000 });
+  void pending.catch(error => { failure = error; });
+
+  await vi.advanceTimersByTimeAsync(600_001);
+  expect(failure).toBeUndefined();
+  stream.enqueue(encode('data: {"type":"response.completed","response":{"status":"completed","output_text":"complete"}}\n\n'));
+  stream.close();
+
+  const result = await pending;
+  expect(aggregateProviderStream("openai-responses", result.body)).toMatchObject({ ok: true, value: { output_text: "complete" } });
+  expect(fetcher).toHaveBeenCalledOnce();
+  expect(vi.getTimerCount()).toBe(0);
+});
+it.each([60_000, 3_600_000])("uses the configured total deadline of %i ms even with heartbeats", async (timeoutMs) => {
+  vi.useFakeTimers();
+  let stream!: ReadableStreamDefaultController<Uint8Array>;
+  const fetcher = vi.fn(async () => response(new ReadableStream({ start(controller) { stream = controller; } })));
+  const pending = createRendererStreamRequester(fetcher)({ ...input, timeoutMs });
+  const check = expect(pending).rejects.toMatchObject({ timeoutKind: "total", timeoutMs, phase: "after-response" });
+
+  await vi.advanceTimersByTimeAsync(timeoutMs - 1);
+  stream.enqueue(encode(": heartbeat\n\n"));
+  await vi.advanceTimersByTimeAsync(1);
+
+  await check;
+  expect(fetcher).toHaveBeenCalledOnce();
+  expect(vi.getTimerCount()).toBe(0);
+});
+it("rejects late terminal bytes after the configured total deadline even when the reader ignores cancellation", async () => {
+  vi.useFakeTimers();
+  let finishRead!: (part: ReadableStreamReadResult<Uint8Array>) => void;
+  const reader = {
+    read: vi.fn(() => new Promise<ReadableStreamReadResult<Uint8Array>>(resolve => { finishRead = resolve; })),
+    cancel: vi.fn(async () => undefined),
+    releaseLock: vi.fn(),
+  };
+  const body = { getReader: () => reader } as unknown as ReadableStream<Uint8Array>;
+  const fetcher = vi.fn(async () => response(body));
+  const succeeded = vi.fn();
+  const pending = createRendererStreamRequester(fetcher)({ ...input, timeoutMs: 3_600_000 });
+  void pending.then(succeeded, () => undefined);
+  const check = expect(pending).rejects.toMatchObject({ timeoutKind: "total", timeoutMs: 3_600_000, phase: "after-response" });
+
+  await vi.advanceTimersByTimeAsync(3_600_000);
+  await check;
+  expect(reader.cancel).toHaveBeenCalledOnce();
+  finishRead({ done: false, value: encode('data: {"type":"response.completed","response":{"status":"completed","output_text":"late"}}\n\n') });
+  await vi.advanceTimersByTimeAsync(0);
+
+  expect(succeeded).not.toHaveBeenCalled();
+  expect(fetcher).toHaveBeenCalledOnce();
+  expect(reader.releaseLock).toHaveBeenCalledOnce();
+  expect(vi.getTimerCount()).toBe(0);
 });
 it("empty chunks do not extend idle",async()=>{
  vi.useFakeTimers();let c!:ReadableStreamDefaultController<Uint8Array>;const f=vi.fn(async()=>response(new ReadableStream({start(x){c=x;}})));
@@ -71,7 +130,7 @@ it("times out when upstream heartbeats are buffered and no bytes reach the reade
   vi.useFakeTimers(); let upstreamWrites = 0;
   const upstream = setInterval(() => upstreamWrites++, 200);
   const f = vi.fn(async () => response(new ReadableStream()));
-  const pending = createRendererStreamRequester(f)(input);
+  const pending = createRendererStreamRequester(f, { totalTimeoutMs: 2000 })(input);
   const check = expect(pending).rejects.toMatchObject({ timeoutKind:"idle",phase:"after-response" });
   await vi.advanceTimersByTimeAsync(1001); await check; clearInterval(upstream);
   expect(upstreamWrites).toBe(5); expect(f).toHaveBeenCalledOnce();

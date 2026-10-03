@@ -70,6 +70,7 @@ describe("queue user actions with synthetic application responses", () => {
       expect(rows[0].textContent).toContain('Known failure');
       expect(rows[1].textContent).toContain('Uncertain request');
       expect(rows).toHaveLength(2);
+      expect(target.querySelectorAll('.cr-task-select')).toHaveLength(0);
       const history = target.querySelector<HTMLDetailsElement>('.cr-queue-history')!;
       expect(history.open).toBe(false);
 
@@ -77,7 +78,7 @@ describe("queue user actions with synthetic application responses", () => {
       const details = rows[1].querySelector<HTMLDetailsElement>('details')!;
       expect(details.open).toBe(false);
       expect(target.querySelectorAll('.cr-queue-uncertain-notice')).toHaveLength(1);
-      expect(target.querySelector('.cr-queue-uncertain-notice')?.textContent).toContain('重试可能重复处理或计费');
+      expect(target.querySelector('.cr-queue-uncertain-notice')?.textContent).toContain('需要处理');
       expect(rows[1].querySelector('.cr-task-warning')).toBeNull();
       expect(rows[1].querySelector('.cr-task-state')?.closest('details')).toBeNull();
       details.querySelector('summary')!.click(); ui.flushSync();
@@ -98,7 +99,7 @@ describe("queue user actions with synthetic application responses", () => {
     try {
       ui.flushSync();
       expect(target.querySelectorAll('.cr-queue-uncertain-notice')).toHaveLength(1);
-      expect(target.querySelector('.cr-queue-uncertain-notice')?.textContent).toContain('2 项请求结果未知');
+      expect(target.querySelector('.cr-queue-uncertain-notice')?.textContent).toContain('需要处理 · 3 项');
       expect(target.querySelectorAll('.cr-task-feedback')).toHaveLength(3);
       const row = target.querySelectorAll('.cr-task-item')[2];
       row.querySelector<HTMLButtonElement>(`button[aria-label="${f.labels.retry}"]`)!.click(); ui.flushSync();
@@ -106,6 +107,7 @@ describe("queue user actions with synthetic application responses", () => {
       target.querySelector<HTMLButtonElement>('[role="dialog"] .cr-btn-secondary')!.click(); ui.flushSync();
       expect(target.querySelector('[role="dialog"]')).toBeNull();
       expect(f.queue.retryUncertain).not.toHaveBeenCalled();
+      target.querySelector<HTMLDetailsElement>('.cr-queue-management')!.querySelector('summary')!.click(); ui.flushSync();
       for (const input of Array.from(target.querySelectorAll<HTMLInputElement>('.cr-task-select'))) input.click();
       ui.flushSync();
       const batch = Array.from(target.querySelectorAll('button')).find(button => button.textContent?.includes(f.labels.retrySelected))!;
@@ -212,11 +214,10 @@ describe("queue user actions with synthetic application responses", () => {
     const list = readFileSync('src/ui/svelte/workbench/QueueTaskList.svelte', 'utf8');
     const section = readFileSync('src/ui/svelte/workbench/QueueSection.svelte', 'utf8');
     for (const source of [list, section]) expect(source).toContain('@container cr-workbench (max-width: 620px)');
-    expect(list).toContain('.cr-task-meta { grid-column: 2 / -1; grid-row: 2; }');
+    expect(list).toContain('grid-template-columns: minmax(0,1fr) auto;');
     expect(list).toContain('flex-wrap: wrap;');
+    expect(list).toContain('white-space: normal; overflow-wrap: anywhere;');
     expect(section).toContain('height: auto; min-height: 32px; box-shadow: none;');
-    expect(list).toContain('grid-row: 1; white-space: normal; overflow-wrap: anywhere;');
-    expect(section).toContain('.cr-queue-stats { flex-basis: 100%; order: 1; min-width: 0; white-space: normal;');
     expect(section).not.toContain('text-overflow: ellipsis');
   });
 
@@ -248,6 +249,7 @@ describe("queue user actions with synthetic application responses", () => {
     const instance = ui.mount(ui.QueueHost, { target, props: f });
     try {
       ui.flushSync();
+      target.querySelector<HTMLDetailsElement>('.cr-queue-management')!.querySelector('summary')!.click(); ui.flushSync();
       for (const checkbox of Array.from(target.querySelectorAll<HTMLInputElement>('.cr-task-select'))) checkbox.click();
       ui.flushSync();
       const retrySelected = Array.from(target.querySelectorAll('button')).find(button => button.textContent?.includes(f.labels.retrySelected))!;

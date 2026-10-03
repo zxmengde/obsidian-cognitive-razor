@@ -53,6 +53,17 @@ function settingsWithProvider(id = "A"): PluginSettings {
 }
 
 describe("SettingsStore defaults and persistence", () => {
+  it('keeps legacy dispersed exact locations custom on load and import without rewriting or guessing a root', async () => {
+    const legacy = { ...structuredClone(DEFAULT_SETTINGS), directoryScheme: { domain: '1-领域', issue: 'Old/Issues', theory: '3-理论', entity: 'Elsewhere/Entities', mechanism: '5-机制' }, cardsSourceRoot: 'Existing/Knowledge', cardsTargetRoot: 'Existing/Decks' };
+    const plugin = createPlugin(legacy); const store = new SettingsStore(plugin);
+    expect((await store.loadSettings()).ok).toBe(true);
+    expect(store.getSettings().directoryScheme).toEqual(legacy.directoryScheme);
+    expect(store.getSettings().cardsSourceRoot).toBe(legacy.cardsSourceRoot);
+    expect(plugin.saved).toHaveLength(0);
+    expect((await store.importSettings(JSON.stringify(legacy))).ok).toBe(true);
+    expect(store.getSettings()).toEqual(legacy);
+    expect(plugin.saved).toHaveLength(1);
+  });
   it("loads pre-cards settings with empty independent model and configurable roots", async () => {
     const legacy = JSON.parse(JSON.stringify(settingsWithProvider()));
     delete legacy.taskModels.cards;

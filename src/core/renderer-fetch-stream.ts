@@ -43,7 +43,9 @@ export function createRendererStreamRequester(
         const forbidden = /^(?:accept-charset|accept-encoding|access-control-request-.*|connection|content-length|cookie2?|date|dnt|expect|host|keep-alive|origin|permissions-policy|referer|set-cookie|te|trailer|transfer-encoding|upgrade|via|proxy-.*|sec-.*)$/i;
         if (Object.keys(input.headers).some(key => forbidden.test(key))) throw Error();
         resetIdle();
-        const totalMs = limits.totalTimeoutMs ?? 600000;
+        // Production requests use the configured network limit. An explicit
+        // override is reserved for bounded probes and adapter tests.
+        const totalMs = limits.totalTimeoutMs ?? input.timeoutMs;
         total = setTimeout(() => fail(new RendererStreamTimeoutError(totalMs, phase, "total")), totalMs);
         const response = await fetcher(input.url, {
           method: "POST", headers: { ...input.headers, Accept: "text/event-stream" }, body: input.body,

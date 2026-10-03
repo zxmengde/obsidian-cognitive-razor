@@ -23,6 +23,12 @@ export interface ProviderCapabilities {
     chatError?: { code: string; message: string };
     embedding: boolean;
     embeddingError?: { code: string; message: string };
+    /** Public target and returned shape of the actual embedding probe. */
+    embeddingProbe?: {
+        model: string;
+        requestedDimensions?: number;
+        actualDimensions?: number;
+    };
 }
 
 // ============================================================================

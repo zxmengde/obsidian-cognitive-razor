@@ -46,6 +46,7 @@ import { InMemoryExternalCallLedger } from "./external-call-ledger";
 import { readProviderTokenUsage, deriveResponseCacheUsage, applyProviderTokenUsage } from "./provider-token-usage";
 import type { ModelGateway } from "./model-gateway";
 import type { ProviderProbeRequest } from "./model-gateway";
+import { resolveTaskModelSnapshot } from "./task-model-resolver";
 import type {
   ProviderStreamProtocol,
   ProviderStreamTransport,
@@ -388,7 +389,16 @@ export class ProviderManager implements ModelGateway {
       return err("E310_INVALID_STATE", "连接测试已取消", signal.reason);
     }
 
-    const configResult = request.configOverride
+    const indexSnapshot = request.taskType === "index"
+      ? request.taskConfig ?? resolveTaskModelSnapshot(this.settingsStore.getSettings(), "index")
+      : undefined;
+    if (indexSnapshot && indexSnapshot.providerId !== request.providerId) {
+      return err("E101_INVALID_INPUT", "Index 测试服务与实际任务配置不一致，请重新读取配置后测试");
+    }
+    const configResult = indexSnapshot
+      ? resolveAvailableProvider({ providers: indexSnapshot.providerSnapshot
+        ? { [request.providerId]: indexSnapshot.providerSnapshot } : {} }, request.providerId)
+      : request.configOverride
       ? ok(request.configOverride)
       : resolveAvailableProvider(this.settingsStore.getSettings(), request.providerId);
     if (!configResult.ok) {
@@ -401,8 +411,9 @@ export class ProviderManager implements ModelGateway {
       providerId: request.providerId,
     });
 
-    const chatEnabled = providerConfig.apiFormat !== "disabled";
-    const embeddingEnabled = providerConfig.embeddingApiFormat === "openai-embeddings";
+    const chatEnabled = !indexSnapshot && providerConfig.apiFormat !== "disabled";
+    const embeddingEnabled = (request.taskType === undefined || request.taskType === "index")
+      && providerConfig.embeddingApiFormat === "openai-embeddings";
     if (!chatEnabled && !embeddingEnabled) {
       return err("E401_PROVIDER_NOT_CONFIGURED", "Provider 未启用聊天或嵌入能力");
     }
@@ -411,6 +422,7 @@ export class ProviderManager implements ModelGateway {
     let chatError: ProviderCapabilities["chatError"];
     let embedding = false;
     let embeddingError: ProviderCapabilities["embeddingError"];
+    let embeddingProbe: ProviderCapabilities["embeddingProbe"];
     let firstFailure: { code: string; message: string; details?: unknown } | undefined;
 
     if (chatEnabled) {
@@ -434,7 +446,12 @@ export class ProviderManager implements ModelGateway {
     }
 
     if (embeddingEnabled) {
-      const embedResult = await this.probeEmbedding(providerConfig, signal, request.providerId, request.attemptReason);
+      embeddingProbe = {
+        model: indexSnapshot?.model ?? providerConfig.defaultEmbedModel.trim(),
+        requestedDimensions: indexSnapshot
+          ? indexSnapshot.embeddingDimension : providerConfig.parameters?.embeddingDimension,
+      };
+      const embedResult = await this.probeEmbedding(providerConfig, signal, request.providerId, request.attemptReason, indexSnapshot);
       if (this.disposed) {
         return err("E310_INVALID_STATE", "Provider 服务已停止");
       }
@@ -442,6 +459,7 @@ export class ProviderManager implements ModelGateway {
         return err("E310_INVALID_STATE", "连接测试已取消", signal.reason);
       }
       embedding = embedResult.ok;
+      if (embedResult.ok) embeddingProbe.actualDimensions = embedResult.value.embedding.length;
       if (!embedResult.ok) {
         embeddingError = { code: embedResult.error.code, message: embedResult.error.message };
         firstFailure ??= embedResult.error;
@@ -457,6 +475,7 @@ export class ProviderManager implements ModelGateway {
       chatError,
       embedding,
       embeddingError,
+      ...(embeddingProbe ? { embeddingProbe } : {}),
     };
     this.logger.info("ProviderManager", "Provider 连接测试成功", {
       event: "CONNECTION_TEST_SUCCESS",
@@ -521,22 +540,31 @@ export class ProviderManager implements ModelGateway {
     signal?: AbortSignal,
     providerId = "unknown",
     attemptReason: ProviderProbeRequest["attemptReason"] = "initial",
+    taskConfig?: import("../types").ResolvedTaskConfig,
   ): Promise<Result<EmbedResponse>> {
-    const model = config.defaultEmbedModel.trim();
+    const model = (taskConfig?.model ?? config.defaultEmbedModel).trim();
+    const dimensions = taskConfig ? taskConfig.embeddingDimension : config.parameters?.embeddingDimension;
     if (!model) {
-      return err("E101_INVALID_INPUT", "Provider 未设置默认嵌入模型");
+      return err("E101_INVALID_INPUT", taskConfig ? "Index 任务没有配置嵌入模型" : "Provider 未设置默认嵌入模型");
     }
-    return this.executeEmbedRequest(
+    if (dimensions !== undefined && (!Number.isSafeInteger(dimensions) || dimensions <= 0)) {
+      return err("E101_INVALID_INPUT", "嵌入测试维度必须是正整数");
+    }
+    const result = await this.executeEmbedRequest(
       buildProviderApiUrl(
         config.baseUrl || DEFAULT_ENDPOINTS["openai-chat-completions"],
         "openai-embeddings",
         "embeddings",
       ),
-      { model, input: "connection test" },
+      { model, input: "connection test", ...(dimensions !== undefined ? { dimensions } : {}) },
       config.apiKey,
       signal,
       this.callContext("provider-probe", providerId, model, "openai-embeddings", "provider-probe:embedding", attemptReason),
     );
+    if (result.ok && dimensions !== undefined && result.value.embedding.length !== dimensions) {
+      return err("E211_MODEL_SCHEMA_VIOLATION", `嵌入测试返回维度 ${result.value.embedding.length}，与请求维度 ${dimensions} 不一致`);
+    }
+    return result;
   }
 
   private executeWithProviderRetry<T>(

@@ -126,7 +126,7 @@
         {#if activeTab === 'providers' && selectedTask === undefined}
             <ProvidersTab onConfigureTask={configureTask} {overridesOpen} onToggleOverrides={() => overridesOpen = !overridesOpen} />
         {:else if activeTab === 'workflow'}
-            <WorkflowTab onConfigureTask={configureTask} />
+            <WorkflowTab />
         {:else if activeTab === 'backup'}
             <MaintenanceTab />
         {/if}
