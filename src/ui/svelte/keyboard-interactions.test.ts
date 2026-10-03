@@ -66,7 +66,6 @@ describe("keyboard interaction safety", () => {
     } } });
     try {
       ui.flushSync(); await Promise.resolve(); ui.flushSync();
-      target.querySelector<HTMLButtonElement>('#cr-intent-note')!.click(); ui.flushSync();
       const actions = target.querySelectorAll<HTMLButtonElement>('.cr-note-action');
       expect(actions).toHaveLength(3);
       expect(Array.from(actions, button => button.textContent?.trim())).toEqual([i18n.messages.workbench.product.expandTitle, i18n.messages.workbench.buttons.verify, i18n.messages.cards.generate]);
@@ -101,13 +100,16 @@ describe("keyboard interaction safety", () => {
     }
   });
 
-  it('separates the two intentions and preserves the concept draft across note changes', async () => {
-    const define = vi.fn(); const verify = vi.fn(); const cards = vi.fn();
+  it('keeps one input and action row, follows note changes without automatic requests, and preserves the draft', async () => {
+    const define = vi.fn(async () => ({ ok: false, error: { code: 'E101_INVALID_INPUT' } }));
+    const verify = vi.fn(async () => ({ ok: false, error: { code: 'E101_INVALID_INPUT' } }));
+    const cards = vi.fn(async () => ({ ok: true, value: 'Second-decks.md' }));
+    const prepare = vi.fn(async () => ({ ok: false, error: { code: 'E101_INVALID_INPUT' } }));
     const target = document.body.appendChild(document.createElement('div'));
     const i18n = new I18n();
     const instance = ui.mount(ui.CreateHost, { target, props: { activeFile: { path: 'Synthetic.md', basename: 'Synthetic', extension: 'md' }, context: {
       i18n, app: { vault: { on: () => ({}), offref() {}, cachedRead: async () => generateMarkdownContent(generateFrontmatter({ cruid: 'synthetic', type: 'entity', name: 'Synthetic' }), '') } },
-      application: { create: { define }, verify: { start: verify }, cards: { start: cards }, queue: { subscribe: () => () => {}, getSnapshot: () => ({ tasks: [] }) } },
+      application: { create: { define }, expand: { prepare }, verify: { start: verify }, cards: { start: cards }, queue: { subscribe: () => () => {}, getSnapshot: () => ({ tasks: [] }) } },
       settingsApplication: { getSettings: () => ({}), subscribeSettings: () => () => undefined },
     } } });
     try {
@@ -120,26 +122,65 @@ describe("keyboard interaction safety", () => {
       expect(submit.disabled).toBe(false);
       const clearButton = target.querySelector<HTMLButtonElement>(`button[aria-label="${i18n.messages.workbench.createConcept.clear}"]`)!;
       expect(getComputedStyle(clearButton).position).toBe('absolute');
-      const createTab = target.querySelector<HTMLButtonElement>('#cr-intent-create')!;
-      const noteTab = target.querySelector<HTMLButtonElement>('#cr-intent-note')!;
-      expect(target.querySelector<HTMLElement>('#cr-intent-note-panel')!.hidden).toBe(true);
-      noteTab.click(); ui.flushSync();
-      expect(target.querySelector<HTMLElement>('#cr-intent-create-panel')!.hidden).toBe(true);
-      expect(noteTab.getAttribute('aria-selected')).toBe('true');
+      expect(target.querySelector('[role="tablist"], [role="tab"], [role="tabpanel"]')).toBeNull();
+      expect(target.querySelector('.cr-create-heading, .cr-create-intro, .cr-current-note, .cr-create-help')).toBeNull();
+      expect(target.textContent).not.toContain(i18n.messages.workbench.product.prompt);
+      expect(target.textContent).not.toContain(i18n.messages.workbench.product.intro);
+      expect(target.textContent).not.toContain(i18n.messages.workbench.product.afterIdentify);
       const actions = target.querySelector<HTMLElement>('.cr-note-actions')!;
       expect(actions.querySelectorAll('button')).toHaveLength(3);
-      expect(verify).not.toHaveBeenCalled(); expect(cards).not.toHaveBeenCalled(); expect(define).not.toHaveBeenCalled();
+      expect(verify).not.toHaveBeenCalled(); expect(cards).not.toHaveBeenCalled(); expect(define).not.toHaveBeenCalled(); expect(prepare).not.toHaveBeenCalled();
       (instance as { setActiveFile(file: unknown): void }).setActiveFile({ path: 'Second.md', basename: 'Second', extension: 'md' }); ui.flushSync();
-      expect(target.querySelector('.cr-current-note')?.textContent).toContain('Second');
-      expect(input.value).toBe('保留的概念');
+      await Promise.resolve(); ui.flushSync();
+      expect(verify).not.toHaveBeenCalled(); expect(cards).not.toHaveBeenCalled(); expect(prepare).not.toHaveBeenCalled();
+      const buttons = actions.querySelectorAll<HTMLButtonElement>('button');
+      buttons[1].click();
+      await vi.waitFor(() => { ui.flushSync(); expect(buttons[1].disabled).toBe(false); });
+      expect(verify).toHaveBeenCalledExactlyOnceWith('Second.md');
+      buttons[2].click();
+      await vi.waitFor(() => { ui.flushSync(); expect(buttons[2].disabled).toBe(false); });
+      expect(cards).toHaveBeenCalledExactlyOnceWith('Second.md');
+      buttons[0].click(); ui.flushSync();
+      expect(prepare).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ path: 'Second.md' }));
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })); ui.flushSync();
+      expect(buttons[0].getAttribute('aria-expanded')).toBe('false');
+      expect(target.querySelector('.cr-inline-panel--expanded')).toBeNull();
+      expect(define).not.toHaveBeenCalled();
+      input.value = ' 保留的概念 '; input.dispatchEvent(new Event('input')); ui.flushSync();
+      submit.click();
+      await vi.waitFor(() => { ui.flushSync(); expect(input.disabled).toBe(false); });
+      expect(define).toHaveBeenCalledExactlyOnceWith('保留的概念', expect.any(AbortSignal));
+      expect(input.value).toBe(' 保留的概念 ');
       (instance as { setActiveFile(file: unknown): void }).setActiveFile(null); ui.flushSync();
       expect(target.querySelectorAll('.cr-note-actions button')).toHaveLength(3);
       expect(Array.from(target.querySelectorAll<HTMLButtonElement>('.cr-note-actions button')).every(button => button.disabled)).toBe(true);
-      expect(input.value).toBe('保留的概念');
-      createTab.click(); ui.flushSync();
-      expect(input.value).toBe('保留的概念');
+      expect(input.value).toBe(' 保留的概念 ');
+      (instance as { setActiveFile(file: unknown): void }).setActiveFile({ path: 'Image.png', extension: 'png' }); ui.flushSync();
+      expect(Array.from(target.querySelectorAll<HTMLButtonElement>('.cr-note-actions button')).every(button => button.disabled)).toBe(true);
+      expect(prepare).toHaveBeenCalledOnce(); expect(verify).toHaveBeenCalledOnce(); expect(cards).toHaveBeenCalledOnce(); expect(define).toHaveBeenCalledOnce();
       target.querySelector<HTMLButtonElement>(`button[aria-label="${i18n.messages.workbench.createConcept.clear}"]`)!.click(); ui.flushSync();
       expect(input.value).toBe(''); expect(submit.disabled).toBe(true);
+    } finally { await ui.unmount(instance); target.remove(); }
+  });
+
+  it('keeps the missing-provider warning and blocks both Define click and Enter after removing guidance', async () => {
+    const target = document.body.appendChild(document.createElement('div'));
+    const define = vi.fn();
+    const i18n = new I18n();
+    const instance = ui.mount(ui.CreateHost, { target, props: { context: {
+      i18n, app: { vault: { on: () => ({}), offref() {} } },
+      application: { queue: { subscribe: () => () => undefined }, create: { define } },
+      settingsApplication: { getSettings: () => structuredClone(DEFAULT_SETTINGS), subscribeSettings: () => () => undefined },
+    } } });
+    try {
+      ui.flushSync();
+      const input = target.querySelector<HTMLInputElement>('.cr-search-input')!;
+      input.value = '概念'; input.dispatchEvent(new Event('input')); ui.flushSync();
+      expect(target.querySelector('[role="status"]')?.textContent).toBe(i18n.messages.workbench.product.notConfigured);
+      const submit = target.querySelector<HTMLButtonElement>('.cr-search-row > .cr-btn-primary')!;
+      expect(submit.disabled).toBe(true); submit.click();
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      expect(define).not.toHaveBeenCalled();
     } finally { await ui.unmount(instance); target.remove(); }
   });
 
@@ -159,7 +200,6 @@ describe("keyboard interaction safety", () => {
     } } });
     try {
       ui.flushSync();
-      target.querySelector<HTMLButtonElement>('#cr-intent-note')!.click(); ui.flushSync();
       const verify = target.querySelector<HTMLButtonElement>(`button[aria-label="${i18n.messages.workbench.buttons.verify}"]`)!;
       verify.click();
       await vi.waitFor(() => { ui.flushSync(); expect(target.textContent).toContain(i18n.messages.workbench.notifications.verifyStarted); });
@@ -314,7 +354,7 @@ describe("keyboard interaction safety", () => {
     } finally { await ui.unmount(instance); target.remove(); }
   });
 
-  it('preserves selected candidate across intentions and admits a creation only once', async () => {
+  it('preserves selected candidate across note changes and admits a creation only once', async () => {
     const target = document.body.appendChild(document.createElement('div'));
     let release!: (value: unknown) => void;
     const confirm = vi.fn((_concept: unknown) => new Promise(resolve => { release = resolve; }));
@@ -332,8 +372,8 @@ describe("keyboard interaction safety", () => {
       target.querySelector<HTMLButtonElement>('.cr-type-table__other')!.click(); ui.flushSync();
       const candidate = target.querySelector<HTMLInputElement>('input[type="radio"][value="mechanism"]')!;
       candidate.click(); ui.flushSync();
-      target.querySelector<HTMLButtonElement>('#cr-intent-note')!.click(); ui.flushSync();
-      target.querySelector<HTMLButtonElement>('#cr-intent-create')!.click(); ui.flushSync();
+      (instance as { setActiveFile(file: unknown): void }).setActiveFile({ path: 'Second.md', extension: 'md' }); ui.flushSync();
+      (instance as { setActiveFile(file: unknown): void }).setActiveFile(null); ui.flushSync();
       expect(candidate.checked).toBe(true); expect(define).toHaveBeenCalledOnce();
       expect(target.querySelector('.cr-result-heading')?.textContent).toContain('fixture concept');
       const submit = target.querySelector<HTMLButtonElement>('.cr-type-table > .cr-btn-primary')!;
@@ -397,7 +437,7 @@ describe("card generation entry", () => {
     } finally { await ui.unmount(instance); target.remove(); }
   });
 
-  it.each([false, true])("always shows one card action across both tabs while preserving CR eligibility (%s)", async (isNode) => {
+  it.each([false, true])("always shows one card action without modes while preserving CR eligibility (%s)", async (isNode) => {
     const target = document.body.appendChild(document.createElement("div"));
     const start = vi.fn(async () => ({ ok: true, value: "D-习题库/测试-decks.md" }));
     const content = isNode ? generateMarkdownContent(generateFrontmatter({ cruid: "node", type: "entity", name: "测试" }), "正文") : "普通笔记";
@@ -413,10 +453,7 @@ describe("card generation entry", () => {
       const cardButton = cardButtons[0];
       expect(cardButton.closest('[hidden]')).toBeNull();
       expect(cardButton.disabled).toBe(!isNode);
-      target.querySelector<HTMLButtonElement>('#cr-intent-note')!.click(); ui.flushSync();
-      expect(cardButton.closest('[hidden]')).toBeNull();
-      target.querySelector<HTMLButtonElement>('#cr-intent-create')!.click(); ui.flushSync();
-      expect(cardButton.closest('[hidden]')).toBeNull();
+      expect(target.querySelector('[role="tablist"]')).toBeNull();
       expect(target.textContent).not.toContain("重建当前笔记向量");
       if (isNode) {
         cardButton.click();
