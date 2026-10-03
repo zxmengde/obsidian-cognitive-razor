@@ -295,7 +295,8 @@
     .cr-result-heading h2 { min-width: 0; }
     .cr-text-action { flex-shrink: 0; height: auto; padding: 0; border: 0; box-shadow: none; background: none; color: var(--cr-interactive-accent); font-size: var(--cr-font-xs); }
     .cr-current-note p { margin-bottom: 15px; }
-    .cr-note-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-    .cr-note-action { width: auto; max-width: 100%; min-height: 32px; padding: 6px 10px; border-radius: var(--cr-field-radius); font-size: var(--cr-font-sm); font-weight: 600; overflow-wrap: anywhere; }
+    .cr-note-actions { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); align-items: center; gap: 8px; }
+    .cr-note-action { width: 100%; min-width: 0; min-height: 32px; padding: 6px; box-sizing: border-box; border-radius: var(--cr-field-radius); font-size: var(--cr-font-sm); font-weight: 600; overflow-wrap: anywhere; }
+    .cr-note-ineligible { grid-column: 1 / -1; }
     .cr-note-empty, .cr-note-ineligible { color: var(--cr-text-muted); font-size: var(--cr-font-xs); line-height: 1.7; margin: 14px 0; }
 </style>

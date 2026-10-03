@@ -365,18 +365,16 @@
     .cr-queue-management[open] > div { margin-top: 12px; }
     .cr-queue-uncertain-notice { margin: 0 0 16px; color: var(--cr-status-warning); font-size: var(--cr-font-sm); }
     .cr-queue-overall { color: var(--cr-text-muted); font-size: var(--cr-font-xs); }
-    .cr-queue-toolbar, .cr-queue-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+    .cr-queue-toolbar { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); align-items: center; gap: 8px; min-width: 0; }
+    .cr-queue-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
     .cr-queue-history-tools { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 8px; min-width: 0; }
     .cr-queue-history-tools :global(button) { height: auto; min-height: 32px; box-shadow: none; }
-    .cr-queue-select-label { display: inline-flex; align-items: center; gap: 4px; color: var(--cr-text-muted); font-size: var(--cr-font-xs); }
-    .cr-queue-select-label select { min-height: 28px; max-width: 150px; }
+    .cr-queue-select-label { display: grid; grid-template-columns: auto minmax(0,1fr); align-items: center; gap: 4px; min-width: 0; color: var(--cr-text-muted); font-size: var(--cr-font-xs); }
+    .cr-queue-select-label select { width: 100%; min-width: 0; min-height: 28px; max-width: 100%; box-sizing: border-box; }
     .cr-queue-select-all { display: inline-flex; align-items: center; gap: 4px; min-width: 0; color: var(--cr-text-muted); font-size: var(--cr-font-xs); }
     .cr-queue-select-all input { flex-shrink: 0; }
     .cr-queue-history { margin-top: 20px; border-top: 1px solid var(--cr-border); }
     .cr-queue-history > summary { display: flex; justify-content: space-between; gap: 12px; padding-top: 16px; font-size: var(--cr-font-xs); color: var(--cr-text-muted); cursor: pointer; list-style: none; }
     .cr-queue-empty p { margin: 0; color: var(--cr-text-muted); font-size: var(--cr-font-sm); line-height: 1.7; }
     .cr-queue-empty p + p { margin-top: 12px; font-size: var(--cr-font-xs); color: var(--cr-text-faint); }
-    @container cr-workbench (max-width: 620px) {
-        .cr-queue-toolbar { align-items: flex-start; }
-    }
 </style>

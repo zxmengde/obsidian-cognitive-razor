@@ -244,11 +244,19 @@ describe("queue user actions with synthetic application responses", () => {
     } finally { await ui.unmount(instance); target.remove(); }
   });
 
-  it("keeps narrow task metadata flexible and selection/history tools in one shrink-safe row", () => {
+  it("keeps filters, equal-width note actions and selection/history tools in shrink-safe rows", () => {
     // Source-level responsive contract; geometry still requires real host QA.
     const list = readFileSync('src/ui/svelte/workbench/QueueTaskList.svelte', 'utf8');
     const section = readFileSync('src/ui/svelte/workbench/QueueSection.svelte', 'utf8');
-    for (const source of [list, section]) expect(source).toContain('@container cr-workbench (max-width: 620px)');
+    const create = readFileSync('src/ui/svelte/workbench/CreateSection.svelte', 'utf8');
+    expect(list).toContain('@container cr-workbench (max-width: 620px)');
+    expect(section).toContain('.cr-queue-toolbar { display: grid; grid-template-columns: repeat(2, minmax(0,1fr));');
+    expect(section).toContain('grid-template-columns: auto minmax(0,1fr);');
+    expect(section).toContain('width: 100%; min-width: 0; min-height: 28px; max-width: 100%;');
+    expect(create).toContain('.cr-note-actions { display: grid; grid-template-columns: repeat(3, minmax(0,1fr));');
+    expect(create).toContain('.cr-note-action { width: 100%; min-width: 0; min-height: 32px;');
+    expect(create).toContain('.cr-note-ineligible { grid-column: 1 / -1; }');
+    expect(create).not.toContain('cr-note-action-description');
     expect(list).toContain('grid-template-columns: minmax(0,1fr) auto;');
     expect(list).toContain('flex-wrap: wrap;');
     expect(list).toContain('white-space: normal; overflow-wrap: anywhere;');
