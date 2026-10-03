@@ -1,3 +1,4 @@
+import { PROMPT_VERSION } from "./task-execution-support";
 import { describe, expect, it, vi } from "vitest";
 import { err, ok } from "../types";
 import type { ChatRequest, TaskExecutionContext, TaskRecord } from "../types";
@@ -60,7 +61,7 @@ describe("WriteTaskExecutor continuation fallback", () => {
           model: "model",
           apiFormat: "openai-responses",
           endpoint: "openai-responses|https://relay.test/v1",
-          promptVersion: "v3",
+          promptVersion: PROMPT_VERSION,
           responseContinuationEnabled: true,
           promptCachingEnabled: false,
         },
@@ -84,7 +85,6 @@ describe("WriteTaskExecutor continuation fallback", () => {
           temperature: false,
           topP: false,
           reasoning: false,
-          structuredOutput: "json_schema",
           nativeWebSearch: false,
           promptCaching: false,
           responseContinuation: true,

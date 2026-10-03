@@ -501,7 +501,7 @@
       "maxTokens": "最大输出 token 数",
       "temperatureError": "请输入 0–2 之间的数值",
       "topPError": "请输入 0–1 之间的数值",
-      "capabilities": "搜索、缓存与输出格式",
+      "capabilities": "搜索与缓存",
       "capabilitiesHint": "查看此任务的能力覆盖；实际使用还取决于协议及具体任务",
       "pluginDefault": "插件默认声明",
       "emptySpecifiedHint": "选择「指定」但没有真实值时，只展开空输入框。输入有效值后才保存，不预填占位数字。",
@@ -805,13 +805,6 @@
       "promptCacheImplicit": "服务端默认缓存策略",
       "promptCacheExplicit": "显式缓存断点（需上游支持）",
       "responseContinuation": "Responses 续传",
-      "structuredOutput": "结构化输出",
-      "structuredOutputDesc": "Provider 默认结构化输出方式；任务可继承或覆盖。提示词约束始终保留本地 Schema 校验。",
-      "structuredOutputOptions": {
-        "prompt": "提示词约束",
-        "json_object": "JSON Object",
-        "json_schema": "JSON Schema"
-      },
       "promptCachingDesc": "控制本插件发送的缓存参数，不代表关闭服务端自动缓存。实际命中以提供商返回的缓存 token 为准；中转是否支持及如何计费需另行确认。",
       "promptCachingDisabled": "未启用插件缓存优化"
     },

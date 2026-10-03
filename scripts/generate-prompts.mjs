@@ -24,7 +24,7 @@ import {
     injectPromptBaseComponents,
     renderPromptTemplate,
     splitPromptIntoMessages,
-    addPromptSchemaConstraint,
+    buildJsonSchemaResponseFormat,
     OPENAI_CHAT_COMPLETIONS_ADAPTER,
     OPENAI_RESPONSES_ADAPTER,
     GEMINI_GENERATIVE_LANGUAGE_ADAPTER,
@@ -91,12 +91,10 @@ function buildApiPayloads(prompt, model = "configured-model", schema, schemaName
     const request = {
         providerId: "prompt-export",
         model,
-        messages: schema
-            ? addPromptSchemaConstraint(baseMessages, schema, "prompt")
-            : baseMessages,
-        response_format: undefined,
+        messages: baseMessages,
+        response_format: schema ? buildJsonSchemaResponseFormat(schemaName, schema) : undefined,
         capabilities: { temperature: false, topP: false, reasoning: false,
-            structuredOutput: "prompt", nativeWebSearch: false,
+            nativeWebSearch: false,
             promptCaching: false, responseContinuation: false },
     };
     return {

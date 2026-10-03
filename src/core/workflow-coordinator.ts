@@ -23,7 +23,7 @@ import { generateFrontmatter, generateMarkdownContent, extractFrontmatter } from
 import { formatStandardName, generateFilePath } from "./naming-utils";
 import { generateUUID } from "../data/validator";
 import { getWriteStageIds, isWriteStage } from "./stage-catalog";
-import { buildPromptCacheKey } from "./task-execution-support";
+import { PROMPT_VERSION, canReplayConversation, buildPromptCacheKey } from "./task-execution-support";
 import { formatCRTimestamp } from "../utils/date-utils";
 import { makeVerificationReportBlock } from "./verification-report";
 import { cloneJson } from "../utils/clone";
@@ -439,13 +439,14 @@ export class WorkflowCoordinator {
     if ((isWriteStage(stage) || stage === "verify") && stageResult.conversationInvalidated !== true
       && (typeof stageResult.responseId === "string" || typeof stageResult.promptUser === "string")) {
       const modelSnapshot = context.modelSnapshot;
+      const prior = canReplayConversation(buildConversationSnapshot(artifact), modelSnapshot) ? artifact.conversation : undefined;
       patch.conversation = {
         providerId: modelSnapshot.providerId,
         model: modelSnapshot.model,
         apiFormat: modelSnapshot.providerSnapshot?.apiFormat,
         endpoint: `${modelSnapshot.providerSnapshot?.apiFormat ?? ""}|${(modelSnapshot.providerSnapshot?.baseUrl ?? "").replace(/\/+$/, "")}`,
-        promptVersion: "v3",
-        promptCacheKey: artifact.conversation?.promptCacheKey || buildPromptCacheKey(
+        promptVersion: PROMPT_VERSION,
+        promptCacheKey: prior?.promptCacheKey || buildPromptCacheKey(
           modelSnapshot.providerId,
           modelSnapshot.model,
           modelSnapshot.providerSnapshot?.apiFormat,
@@ -456,10 +457,10 @@ export class WorkflowCoordinator {
         promptCachingEnabled: modelSnapshot.capabilities?.promptCaching === true,
         systemPrompt: typeof stageResult.systemPrompt === "string"
           ? stageResult.systemPrompt
-          : artifact.conversation?.systemPrompt,
+          : prior?.systemPrompt,
         ...(typeof stageResult.responseId === "string" ? { responseId: stageResult.responseId } : {}),
         history: [
-          ...(artifact.conversation?.history ?? []),
+          ...(prior?.history ?? []),
           ...(typeof stageResult.promptUser === "string" ? [{ role: "user" as const, content: stageResult.promptUser }] : []),
           ...(typeof stageResult.responseContent === "string" ? [{ role: "assistant" as const, content: stageResult.responseContent }] : []),
         ],

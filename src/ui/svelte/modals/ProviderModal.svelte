@@ -55,7 +55,6 @@
     let formPromptCaching = $state(untrack(() => currentConfig?.capabilities?.promptCaching ?? false));
     let formPromptCacheMode = $state<'implicit' | 'explicit'>(untrack(() => currentConfig?.capabilities?.promptCacheMode ?? 'implicit'));
     let formResponseContinuation = $state(untrack(() => currentConfig?.capabilities?.responseContinuation ?? false));
-    let formStructuredOutput = $state<NonNullable<ProviderConfig['capabilities']>['structuredOutput']>(untrack(() => currentConfig?.capabilities?.structuredOutput ?? 'prompt'));
     let formTemperature = $state(untrack(() => currentConfig?.parameters?.temperature ?? 0.7));
     let formTopP = $state(untrack(() => currentConfig?.parameters?.topP ?? 1));
     let formReasoningEffort = $state(untrack(() => currentConfig?.parameters?.reasoning_effort ?? ''));
@@ -184,7 +183,6 @@
                 ...(formPromptCaching ? { promptCacheMode: formPromptCacheMode } : {}),
                 ...(formPromptCaching && formPromptCacheMode === 'explicit' ? { promptCacheTtl: '30m' as const } : {}),
                 responseContinuation: formResponseContinuation,
-                structuredOutput: formStructuredOutput,
             },
             parameters: {
                 ...(formTemperatureSupported ? { temperature: formTemperature } : {}),
@@ -515,26 +513,6 @@
             <div class="cr-provider-field cr-provider-field--row">
                 <span class="cr-provider-field__label">{t('taskModels.fields.responseContinuation')}</span>
                 <Toggle checked={formResponseContinuation} disabled={saving} ariaLabel={t('taskModels.fields.responseContinuation')} onchange={(v) => { formResponseContinuation = v; }} />
-            </div>
-
-            <div class="cr-provider-field">
-                <label class="cr-provider-field__label" for="pm-structured-output">
-                    {t('taskModels.fields.structuredOutput')}
-                </label>
-                <p class="cr-provider-field__desc">
-                    {t('taskModels.fields.structuredOutputDesc')}
-                </p>
-                <Select
-                    id="pm-structured-output"
-                    value={formStructuredOutput}
-                    options={[
-                        { value: 'prompt', label: t('taskModels.fields.structuredOutputOptions.prompt') },
-                        { value: 'json_object', label: t('taskModels.fields.structuredOutputOptions.json_object') },
-                        { value: 'json_schema', label: t('taskModels.fields.structuredOutputOptions.json_schema') },
-                    ]}
-                    disabled={saving}
-                    onchange={(value) => { formStructuredOutput = value as NonNullable<ProviderConfig['capabilities']>['structuredOutput']; }}
-                />
             </div>
 
             <div class="cr-provider-field">

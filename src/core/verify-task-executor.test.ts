@@ -1,3 +1,4 @@
+import { PROMPT_VERSION } from "./task-execution-support";
 import { describe, expect, it, vi } from "vitest";
 import { readFile } from "node:fs/promises";
 import { ok } from "../types";
@@ -29,7 +30,7 @@ describe("VerifyTaskExecutor", () => {
     const task: TaskRecord<"verify"> = {
       id: "verify-after-write", nodeId: "note", stageId: "verify", state: "running", createdAt: 0, updatedAt: 0, attempt: 1,
       payload: { filePath: "note.md", currentContent: "已有正文", noteType: "entity", conversation: {
-        providerId: "provider", model: "model", apiFormat: "openai-responses", endpoint: "openai-responses|https://relay.test/v1", promptVersion: "v3",
+        providerId: "provider", model: "model", apiFormat: "openai-responses", endpoint: "openai-responses|https://relay.test/v1", promptVersion: PROMPT_VERSION,
         previousResponseId: "resp_write", responseContinuationEnabled: true, promptCachingEnabled: promptCaching, promptCacheMode,
         systemPrompt: "写作规则：只输出一个符合 Schema 的 JSON 对象。", history,
       } },
@@ -38,7 +39,7 @@ describe("VerifyTaskExecutor", () => {
       attemptReason: "initial", modelSnapshot: {
         providerId: "provider", model: "model",
         providerSnapshot: { apiKey: "", apiFormat: "openai-responses", baseUrl: "https://relay.test/v1", embeddingApiFormat: "disabled", defaultChatModel: "model", defaultEmbedModel: "", enabled: true },
-        capabilities: { temperature: false, topP: false, reasoning: false, structuredOutput: "json_schema", nativeWebSearch: true, promptCaching, promptCacheMode, responseContinuation: true },
+        capabilities: { temperature: false, topP: false, reasoning: false, nativeWebSearch: true, promptCaching, promptCacheMode, responseContinuation: true },
       },
     });
 
@@ -48,7 +49,8 @@ describe("VerifyTaskExecutor", () => {
     expect(request.messages[0].role).toBe("system");
     expect(request.messages[0].content).toContain("只输出以下 Markdown 结构");
     expect(request.messages[0].content).not.toContain("只输出一个符合 Schema 的 JSON 对象");
-    expect(request.messages.slice(1, 3)).toEqual(history);
+    if (promptCaching) expect(request.messages.slice(1, 3)).toEqual(history);
+    else expect(request.messages).toHaveLength(2);
     expect(request.response_format).toBeUndefined();
     expect(request.previousResponseId).toBe(promptCaching ? undefined : "resp_write");
     if (promptCaching) expect(request.promptCacheKey).toBeTruthy();
@@ -56,7 +58,7 @@ describe("VerifyTaskExecutor", () => {
     expect(request.webSearch).toEqual({ purpose: "verify" });
     const body = OPENAI_RESPONSES_ADAPTER.buildRequestBody(request, request.webSearch);
     const effectiveInstructions = promptCacheMode === "explicit"
-      ? (body.input as Array<{ role: string; content: string }>).find((message) => message.role === "developer")?.content
+      ? (body.input as Array<{ role: string; content: Array<{ text: string }> }>).find((message) => message.role === "developer")?.content[0]?.text
       : body.instructions;
     expect(effectiveInstructions).toContain("只输出以下 Markdown 结构");
     expect(effectiveInstructions).not.toContain("只输出一个符合 Schema 的 JSON 对象");
@@ -73,7 +75,7 @@ describe("VerifyTaskExecutor", () => {
     const executor = new VerifyTaskExecutor({ providerManager: { chat } as unknown as ModelGateway, promptManager, responsePipeline: new ResponsePipeline(new Validator()), logger });
     const currentContent = '---\nname: Actual name\ncruid: synthetic\ntype: mechanism\n---\n# Different fixture heading\nBody unchanged.';
     const task: TaskRecord<'verify'> = { id: 'verify-custom', nodeId: 'synthetic', stageId: 'verify', state: 'running', createdAt: 0, updatedAt: 0, attempt: 1, payload: { filePath: 'Fixture.md', noteType: 'mechanism', currentContent } };
-    const result = await executor.execute(task, new AbortController().signal, { attemptReason: 'initial', modelSnapshot: { providerId: 'provider', model: 'model', capabilities: { temperature: false, topP: false, reasoning: false, structuredOutput: 'prompt', nativeWebSearch: false, promptCaching: false, responseContinuation: false } } });
+    const result = await executor.execute(task, new AbortController().signal, { attemptReason: 'initial', modelSnapshot: { providerId: 'provider', model: 'model', capabilities: { temperature: false, topP: false, reasoning: false, nativeWebSearch: false, promptCaching: false, responseContinuation: false } } });
     expect(result).toMatchObject({ ok: true, value: { reportText: '## 我的自定义报告\n正文' } });
     const request = chat.mock.calls[0][0];
     expect(request.messages[0].content).toContain('CUSTOM_VERIFY_POLICY');
@@ -102,7 +104,7 @@ describe("VerifyTaskExecutor", () => {
     };
     expect(await executor.execute(task, new AbortController().signal, {
       attemptReason: "initial", modelSnapshot: { providerId: "provider", model: "model", capabilities: {
-        temperature: false, topP: false, reasoning: false, structuredOutput: "prompt",
+        temperature: false, topP: false, reasoning: false,
         nativeWebSearch: false, promptCaching: false, responseContinuation: false,
       } },
     })).toMatchObject({ ok: true, value: { reportText: "结论成立 [来源](https://example.test/source)。后续说明。" } });

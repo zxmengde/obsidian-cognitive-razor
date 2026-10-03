@@ -25,7 +25,6 @@ import {
 import {
   resolveWebSearchOptions,
   validateChatParameters,
-  buildJsonSchemaResponseFormat,
 } from "./provider-request-builders";
 import {
   aggregateProviderStream,
@@ -47,6 +46,7 @@ import { readProviderTokenUsage, deriveResponseCacheUsage, applyProviderTokenUsa
 import type { ModelGateway } from "./model-gateway";
 import type { ProviderProbeRequest } from "./model-gateway";
 import { resolveTaskModelSnapshot } from "./task-model-resolver";
+import { buildTaskChatRequest } from "./task-execution-support";
 import type {
   ProviderStreamProtocol,
   ProviderStreamTransport,
@@ -501,24 +501,23 @@ export class ProviderManager implements ModelGateway {
     if (format === "disabled") {
       return err("E401_PROVIDER_NOT_CONFIGURED", "Provider 未启用聊天 API");
     }
-    const messages = [{ role: "user" as const, content: "Reply with OK." }];
-    const probeRequest: ChatRequest = {
-      providerId,
-      providerSnapshot: config,
-      model,
-      messages,
-      capabilities: taskConfig?.capabilities,
-      temperature: taskConfig?.temperature,
-      topP: taskConfig?.topP,
-      maxTokens: taskConfig?.maxTokens,
-      reasoning_effort: taskConfig?.reasoningEffort,
-      thinkingLevel: taskConfig?.thinkingLevel,
-      thinkingBudget: taskConfig?.thinkingBudget,
-      response_format: taskConfig?.capabilities.structuredOutput === "json_schema"
-        ? buildJsonSchemaResponseFormat("probe_output", { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"], additionalProperties: false })
-        : taskConfig?.capabilities.structuredOutput === "json_object" ? { type: "json_object" } : undefined,
-      webSearch: taskConfig?.capabilities.nativeWebSearch ? { purpose: "write" } : undefined,
-    };
+    // Service-only probes must use the edited Provider defaults, not unrelated
+    // persisted task overrides or a hard-coded parameter-free request.
+    const settings = this.settingsStore.getSettings();
+    const effective = taskConfig ?? resolveTaskModelSnapshot({
+      ...settings,
+      providers: { [providerId]: config },
+      taskModels: { ...settings.taskModels, define: { providerId, model: "" } },
+    }, "define");
+    const probeRequest = buildTaskChatRequest("define",
+      "<system_instructions>Return only the requested short JSON object.</system_instructions>\nReturn {\"ok\":true}.",
+      effective, { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"], additionalProperties: false },
+      "provider-probe", attemptReason);
+    probeRequest.model = model;
+    // A configured native-search task tests that declared capability as before.
+    if (effective.capabilities.nativeWebSearch) probeRequest.webSearch = { purpose: "write" };
+    const capabilityResult = validateChatCapabilities(probeRequest, format);
+    if (!capabilityResult.ok) return capabilityResult as Result<ChatResponse>;
     const parameterResult = validateChatParameters(probeRequest, format);
     if (!parameterResult.ok) return parameterResult as Result<ChatResponse>;
     return this.dispatchChat(probeRequest, config, {
@@ -1080,6 +1079,11 @@ export class ProviderManager implements ModelGateway {
 
     // 服务端已经明确拒绝的请求不会因原样重发而恢复。
     if (status >= 400 && status < 500) {
+      const schemaUnsupported = /json[_ -]?schema|response[_ -]?schema|response[_ -]?format|text\.format/i.test(`${providerParam ?? ""} ${rawDetail}`)
+        && /not supported|unsupported|does not support|not available|不支持/i.test(rawDetail);
+      if (schemaUnsupported) {
+        return err("E205_PROVIDER_REQUEST_INVALID", "所选模型或接口不支持 JSON Schema，请更换支持该格式的模型或接口；未自动降级或重试", { status, rawResponse: rawDetail, providerMessage: rawDetail });
+      }
       return err("E205_PROVIDER_REQUEST_INVALID", `API 请求无效 (${status})，请检查协议、模型和参数`, {
         status,
         rawResponse: rawDetail,

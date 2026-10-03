@@ -16,7 +16,7 @@ async function setup(content: string, finishReason = "stop") {
   const task: TaskRecord<"cards"> = { id: "cards", nodeId: "node", stageId: "cards", state: "running", createdAt: 0, updatedAt: 0, attempt: 1,
     payload: { filePath: "a.md", targetPath: "b.md", body: "知识".repeat(7000), noteType: "entity", promptVersion: CARDS_PROMPT_VERSION } };
   const context: TaskExecutionContext = { attemptReason: "initial", modelSnapshot: { providerId: "cards-provider", model: "cards-model", maxTokens: 2048,
-    capabilities: { nativeWebSearch: true, responseContinuation: true, structuredOutput: "json_schema", promptCaching: false, temperature: false, topP: false, reasoning: false } } };
+    capabilities: { nativeWebSearch: true, responseContinuation: true, promptCaching: false, temperature: false, topP: false, reasoning: false } } };
   return { executor, task, context, chat };
 }
 

@@ -110,7 +110,7 @@ describe("OpenAI Responses adapter", () => {
     expect(body.input).toEqual([
       {
         role: "developer",
-        content: "Stable policy",
+        content: [{ type: "input_text", text: "Stable policy", prompt_cache_breakpoint: { mode: "explicit" } }],
       },
       {
         role: "user",
@@ -160,5 +160,26 @@ describe("OpenAI Responses adapter", () => {
     expect(body).toMatchObject({ reasoning: { effort: "high" } });
     expect(body).not.toHaveProperty("temperature");
     expect(body).not.toHaveProperty("top_p");
+  });
+});
+
+
+describe("explicit cache history boundaries", () => {
+  it("retains a previous user endpoint when adding the next phase, bounded to four writes", () => {
+    const history = [{ role: "system" as const, content: "policy" }, { role: "user" as const, content: "first task" }];
+    const first = OPENAI_RESPONSES_ADAPTER.buildRequestBody({ providerId: "p", model: "m", messages: history, promptCacheMode: "explicit" });
+    const second = OPENAI_RESPONSES_ADAPTER.buildRequestBody({ providerId: "p", model: "m", messages: [...history, { role: "assistant", content: "first answer" }, { role: "user", content: "second task" }], promptCacheMode: "explicit" });
+    const boundaryPrefixes = (body: Record<string, unknown>): string[] => {
+      let prefix = ""; const result: string[] = [];
+      for (const message of body.input as Array<{ role: string; content: string | Array<{ text: string; prompt_cache_breakpoint?: unknown }> }>) {
+        prefix += `[${message.role}]`;
+        if (typeof message.content === "string") prefix += message.content;
+        else for (const part of message.content) { prefix += part.text; if (part.prompt_cache_breakpoint) result.push(prefix); }
+      }
+      return result;
+    };
+    expect(boundaryPrefixes(second)).toContain(boundaryPrefixes(first).at(-1));
+    const many = OPENAI_RESPONSES_ADAPTER.buildRequestBody({ providerId: "p", model: "m", messages: [history[0], ...Array.from({ length: 12 }, (_, i) => ({ role: "user" as const, content: `turn ${i}` }))], promptCacheMode: "explicit" });
+    expect(boundaryPrefixes(many)).toHaveLength(4);
   });
 });

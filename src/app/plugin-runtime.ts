@@ -130,9 +130,9 @@ export class PluginRuntime {
       cancelSemanticIndexRebuild: () => {
         this.semanticIndexRebuilder?.cancel();
       },
-      scanSemanticIndex: () => guard(() => this.semanticIndexRebuilder.scanStatus()),
-      embedMissingSemanticIndex: () => guard(() => this.semanticIndexRebuilder.embedMissing()),
-      embedOneSemanticIndex: (cruid) => guard(() => this.semanticIndexRebuilder.embedOne(cruid)),
+      scanSemanticIndex: () => afterVectorReconfigure(() => this.semanticIndexRebuilder.scanStatus()),
+      embedMissingSemanticIndex: () => afterVectorReconfigure(() => this.semanticIndexRebuilder.embedMissing()),
+      embedOneSemanticIndex: (cruid) => afterVectorReconfigure(() => this.semanticIndexRebuilder.embedOne(cruid)),
       inspectVectorFiles: () => guard(() => this.semanticIndexRebuilder.inspectVectorFiles()),
       cleanupOrphanedVectorFiles: (expected) => guard(() => this.semanticIndexRebuilder.cleanupOrphanedVectorFiles(expected)),
     };
@@ -142,7 +142,7 @@ export class PluginRuntime {
     if (!this.isReady) return err("E310_INVALID_STATE", "插件运行时尚未就绪");
     const cruid = this.cruidCache.getCruidByPath(filePath);
     if (!cruid) return err("E311_NOT_FOUND", "当前笔记不是 Cognitive Razor 笔记");
-    return this.semanticIndexRebuilder.embedOne(cruid);
+    return this.getSemanticIndexPort().embedOneSemanticIndex(cruid);
   }
 
   async start(): Promise<void> {
@@ -447,9 +447,9 @@ export class PluginRuntime {
   private scheduleVectorReconfigure(): void {
     const next = this.requestedVectorConfig;
     if (!next) return;
-    if (vectorIndexConfigsEqual(this.appliedVectorConfig, next)) {
-      return;
-    }
+    // Always enqueue a reconciliation: an in-flight B may still replace A,
+    // even when a newer request has already changed the desired config to A.
+    // The queued equality check coalesces unrelated/repeated saves safely.
     this.vectorReconfigure = this.vectorReconfigure
       .then(async () => {
         if (!this.isReady) {

@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import type { CRType } from "../types";
 
 const MAX_SEMANTIC_INDEX_TEXT_CHARS = 12_000;
@@ -51,4 +52,9 @@ export function buildSemanticIndexText(input: SemanticIndexTextInput): string {
   if (body) parts.push(body);
   parts.push(...suffix);
   return parts.join("\n").slice(0, MAX_SEMANTIC_INDEX_TEXT_CHARS);
+}
+
+/** Freshness tracks only text actually sent for embedding, not report/timestamp noise. */
+export function semanticIndexTextHash(input: string): string {
+  return createHash("sha256").update(input).digest("hex");
 }

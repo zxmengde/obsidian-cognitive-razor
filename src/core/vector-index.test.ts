@@ -803,3 +803,13 @@ describe("effective endpoint configuration transitions", () => {
     expect(storage.mocks.writeVectorIndexMeta.mock.calls.length).toBe(writesAfterCorrection);
   });
 });
+
+describe("offline note deletion", () => {
+  it('search must exclude a note deleted while the plugin was stopped', async () => {
+    const h=createStorage(createMeta({deleted:{type:'domain'},live:{type:'domain'}}), [createVector('deleted','domain',[1,0,0]),createVector('live','domain',[0.8,0.6,0])]);
+    const cache={waitUntilReady:async()=>{},has:(id:string)=>id==='live',getName:(id:string)=>id==='live'?'Live':null,getPath:(id:string)=>id==='live'?'notes/live.md':null} as unknown as CruidCache;
+    const index=createIndex(h,'embed',3,'embed',cache); await index.load();
+    const result=await index.search('domain',[1,0,0],1);
+    expect(result).toMatchObject({ok:true,value:[{uid:'live',path:'notes/live.md'}]});
+  });
+});

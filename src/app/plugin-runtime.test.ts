@@ -327,6 +327,62 @@ describe("PluginRuntime lifecycle", () => {
     expect(services.vectorDispose).toHaveBeenCalledTimes(1);
   });
 
+  it("applies a rapid embedding A-to-B-to-A change after B is already in flight", async () => {
+    stubSuccessfulServices();
+    let current = structuredClone(DEFAULT_SETTINGS);
+    const listeners = new Set<(settings: typeof DEFAULT_SETTINGS) => void>();
+    const settingsStore = {
+      getSettings: () => structuredClone(current),
+      subscribe: (listener: (settings: typeof DEFAULT_SETTINGS) => void) => { listeners.add(listener); return () => listeners.delete(listener); },
+    } as unknown as SettingsStore;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const reconfigure = vi.spyOn(VectorIndex.prototype, "reconfigure")
+      .mockImplementationOnce(async () => { await gate; return ok(undefined); })
+      .mockResolvedValue(ok(undefined));
+    const runtime = createRuntime(settingsStore);
+    await runtime.start();
+    try {
+      current.taskModels.index.model = "embed-B";
+      for (const listener of listeners) listener(structuredClone(current));
+      await vi.waitFor(() => expect(reconfigure).toHaveBeenCalledTimes(1));
+      current = structuredClone(DEFAULT_SETTINGS);
+      for (const listener of listeners) listener(structuredClone(current));
+      release();
+      await vi.waitFor(() => expect(reconfigure).toHaveBeenCalledTimes(2));
+      const expected = resolveVectorIndexConfig(current);
+      expect(reconfigure).toHaveBeenLastCalledWith(expected.model, expected.dimension, expected.profile);
+    } finally { release(); await runtime.dispose(); }
+  });
+
+  it.each(["scanStatus", "embedMissing", "embedOne"] as const)("waits for current embedding configuration before %s maintenance", async method => {
+    stubSuccessfulServices();
+    const current = structuredClone(DEFAULT_SETTINGS);
+    const listeners = new Set<(settings: typeof DEFAULT_SETTINGS) => void>();
+    const settingsStore = {
+      getSettings: () => structuredClone(current),
+      subscribe: (listener: (settings: typeof DEFAULT_SETTINGS) => void) => { listeners.add(listener); return () => listeners.delete(listener); },
+    } as unknown as SettingsStore;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    vi.spyOn(VectorIndex.prototype, "reconfigure").mockImplementation(async () => { await gate; return ok(undefined); });
+    const scan = vi.spyOn(SemanticIndexRebuilder.prototype, "scanStatus").mockResolvedValue(ok({ eligible: 0, indexed: 0, missing: 0, missingNotes: [] }));
+    const missing = vi.spyOn(SemanticIndexRebuilder.prototype, "embedMissing").mockResolvedValue(ok({ eligible: 0, indexed: 0, skipped: 0, failed: 0 }));
+    const one = vi.spyOn(SemanticIndexRebuilder.prototype, "embedOne").mockResolvedValue(ok({ indexed: 0, failed: 0 }));
+    const runtime = createRuntime(settingsStore);
+    await runtime.start();
+    try {
+      current.taskModels.index.model = "embed-B";
+      for (const listener of listeners) listener(structuredClone(current));
+      const port = runtime.getSemanticIndexPort();
+      const pending = method === "scanStatus" ? port.scanSemanticIndex() : method === "embedMissing" ? port.embedMissingSemanticIndex() : port.embedOneSemanticIndex("node");
+      await Promise.resolve();
+      expect(scan).not.toHaveBeenCalled(); expect(missing).not.toHaveBeenCalled(); expect(one).not.toHaveBeenCalled();
+      release(); await pending;
+      expect(method === "scanStatus" ? scan : method === "embedMissing" ? missing : one).toHaveBeenCalledOnce();
+    } finally { release(); await runtime.dispose(); }
+  });
+
   it("waits for delete cleanup before disposing the vector index", async () => {
     const services = stubSuccessfulServices();
     let releaseDelete!: (result: ReturnType<typeof ok<void>>) => void;

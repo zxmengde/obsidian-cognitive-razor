@@ -6,7 +6,7 @@ import type { CruidCache, CruidCacheEntry } from "./cruid-cache";
 import type { DuplicateManager } from "./duplicate-manager";
 import { extractFrontmatter } from "./frontmatter-utils";
 import type { ModelGateway } from "./model-gateway";
-import { buildSemanticIndexText } from "./semantic-index-text";
+import { buildSemanticIndexText, semanticIndexTextHash } from "./semantic-index-text";
 import { resolveTaskModelSnapshot } from "./task-model-resolver";
 import type {
   VectorCleanupSummary,
@@ -45,6 +45,7 @@ interface RebuildCandidate {
   entry: CruidCacheEntry;
   content: string;
   input: string;
+  sourceHash: string;
   type: CRType;
   status: "draft" | "evergreen";
 }
@@ -89,14 +90,16 @@ export class SemanticIndexRebuilder {
     const snapshot = await this.deps.cruidCache.snapshotEntries();
     const candidates = await this.collectCandidates(snapshot, new AbortController().signal);
     if (!candidates.ok) return candidates as Result<SemanticIndexStatus>;
-    const missingNotes = candidates.value
-      .filter((candidate) => !this.deps.vectorIndex.has(candidate.entry.cruid))
+    const missing = await this.findMissingCandidates(candidates.value);
+    if (!missing.ok) return missing as Result<SemanticIndexStatus>;
+    if (this.disposed) return err("E310_INVALID_STATE", "语义索引服务已停止");
+    const missingNotes = missing.value
       .map((candidate) => ({ cruid: candidate.entry.cruid, name: candidate.entry.file.basename, path: candidate.entry.path, type: candidate.type, status: candidate.status }));
     return ok({ eligible: candidates.value.length, indexed: candidates.value.length - missingNotes.length, missing: missingNotes.length, missingNotes });
   }
 
   async embedMissing(): Promise<Result<{ eligible: number; indexed: number; skipped: number; failed: number }>> {
-    return this.runTargeted(() => this.embedMissingInternal());
+    return this.runTargeted(signal => this.embedMissingInternal(signal), true);
   }
 
   async inspectVectorFiles(): Promise<Result<VectorIndexMaintenanceReport>> {
@@ -109,24 +112,29 @@ export class SemanticIndexRebuilder {
     return this.runTargeted(() => this.deps.vectorIndex.cleanupOrphanFiles(expected));
   }
 
-  private async embedMissingInternal(): Promise<Result<{ eligible: number; indexed: number; skipped: number; failed: number }>> {
+  private async embedMissingInternal(signal: AbortSignal): Promise<Result<{ eligible: number; indexed: number; skipped: number; failed: number }>> {
     if (this.disposed) return err("E310_INVALID_STATE", "语义索引服务已停止");
     const settings = this.deps.settingsStore.getSettings();
     const prerequisite = this.validatePrerequisites(settings);
     if (!prerequisite.ok) return prerequisite as Result<{ eligible: number; indexed: number; skipped: number; failed: number }>;
-    const candidates = await this.collectCandidates(await this.deps.cruidCache.snapshotEntries(), new AbortController().signal);
+    const candidates = await this.collectCandidates(await this.deps.cruidCache.snapshotEntries(), signal);
     if (!candidates.ok) return candidates as Result<{ eligible: number; indexed: number; skipped: number; failed: number }>;
-    const missing = candidates.value.filter((candidate) => !this.deps.vectorIndex.has(candidate.entry.cruid));
+    const missingResult = await this.findMissingCandidates(candidates.value);
+    if (!missingResult.ok) return missingResult as Result<{ eligible: number; indexed: number; skipped: number; failed: number }>;
+    const missing = missingResult.value;
     let indexed = 0; let failed = 0;
     const config = resolveVectorIndexConfig(settings);
     const model = resolveTaskModelSnapshot(settings, "index");
     for (const candidate of missing) {
+      if (this.isStopped(signal)) return this.targetedStopped(signal);
       if (!this.currentConfigMatches(config)) {
         return err("E320_TASK_CONFLICT", "嵌入配置在补齐缺失向量期间发生变化，已中止");
       }
-      const embedded = await this.deps.providerManager.embed(this.buildEmbedRequest(model, config, candidate.input));
+      const embedded = await this.deps.providerManager.embed(this.buildEmbedRequest(model, config, candidate.input), signal);
+      if (this.isStopped(signal)) return this.targetedStopped(signal);
       if (!embedded.ok) { failed++; this.deps.logger.warn("SemanticIndexRebuilder", "缺失向量生成失败", { path: candidate.entry.path, errorCode: embedded.error.code }); continue; }
-      const stable = await this.notesAreStable([candidate], new AbortController().signal);
+      const stable = await this.notesAreStable([candidate], signal);
+      if (this.isStopped(signal)) return this.targetedStopped(signal);
       if (!stable.ok) {
         failed++;
         this.deps.logger.warn("SemanticIndexRebuilder", "笔记在补齐缺失向量期间发生变化，已跳过", { path: candidate.entry.path });
@@ -135,22 +143,17 @@ export class SemanticIndexRebuilder {
       if (!this.currentConfigMatches(config)) {
         return err("E320_TASK_CONFLICT", "嵌入配置在补齐缺失向量期间发生变化，已中止");
       }
-      const written = await this.deps.vectorIndex.upsert({ uid: candidate.entry.cruid, type: candidate.type, embedding: embedded.value.embedding });
+      const written = await this.deps.vectorIndex.upsert({ uid: candidate.entry.cruid, type: candidate.type, embedding: embedded.value.embedding, sourceHash: candidate.sourceHash });
       if (!written.ok) { failed++; this.deps.logger.warn("SemanticIndexRebuilder", "缺失向量写入失败", { path: candidate.entry.path, errorCode: written.error.code }); continue; }
       indexed++;
       if (settings.enableDuplicateDetection) {
         // The duplicate store is derived from the index, so a vector written
         // here must refresh that node's pairs exactly like embedOne does.
-        const refreshed = await this.deps.duplicateManager.refreshNode(
-          candidate.entry.cruid,
-          candidate.type,
-          embedded.value.embedding,
-        );
-        if (!refreshed.ok) {
-          this.deps.logger.warn("SemanticIndexRebuilder", "缺失向量已写入，但重复关系刷新失败", {
-            path: candidate.entry.path,
-            errorCode: refreshed.error.code,
-          });
+        try {
+          const refreshed = await this.deps.duplicateManager.refreshNode(candidate.entry.cruid, candidate.type, embedded.value.embedding);
+          if (!refreshed.ok) this.deps.logger.warn("SemanticIndexRebuilder", "缺失向量已写入，但重复关系刷新失败", { path: candidate.entry.path, errorCode: refreshed.error.code });
+        } catch (cause) {
+          this.deps.logger.warn("SemanticIndexRebuilder", "缺失向量已写入，但重复关系刷新异常", { path: candidate.entry.path, error: cause });
         }
       }
     }
@@ -158,10 +161,10 @@ export class SemanticIndexRebuilder {
   }
 
   async embedOne(cruid: string): Promise<Result<{ indexed: number; failed: number }>> {
-    return this.runTargeted(() => this.embedOneInternal(cruid));
+    return this.runTargeted(signal => this.embedOneInternal(cruid, signal), true);
   }
 
-  private async embedOneInternal(cruid: string): Promise<Result<{ indexed: number; failed: number }>> {
+  private async embedOneInternal(cruid: string, signal: AbortSignal): Promise<Result<{ indexed: number; failed: number }>> {
     if (this.disposed) return err("E310_INVALID_STATE", "语义索引服务已停止");
     const settings = this.deps.settingsStore.getSettings();
     const prerequisite = this.validatePrerequisites(settings);
@@ -174,18 +177,21 @@ export class SemanticIndexRebuilder {
     } catch {
       return err("E311_NOT_FOUND", "笔记不存在或不符合向量化条件");
     }
+    if (this.isStopped(signal)) return this.targetedStopped(signal);
     const candidate = this.buildCandidate({ cruid, path: file.path, file }, content);
     if (!candidate) return err("E311_NOT_FOUND", "笔记不存在或不符合向量化条件");
     const config = resolveVectorIndexConfig(settings);
     const model = resolveTaskModelSnapshot(settings, "index");
-    const embedded = await this.deps.providerManager.embed(this.buildEmbedRequest(model, config, candidate.input));
+    const embedded = await this.deps.providerManager.embed(this.buildEmbedRequest(model, config, candidate.input), signal);
+    if (this.isStopped(signal)) return this.targetedStopped(signal);
     if (!embedded.ok) return ok({ indexed: 0, failed: 1 });
-    const stable = await this.notesAreStable([candidate], new AbortController().signal);
+    const stable = await this.notesAreStable([candidate], signal);
+    if (this.isStopped(signal)) return this.targetedStopped(signal);
     if (!stable.ok) return stable as Result<{ indexed: number; failed: number }>;
     if (!this.currentConfigMatches(config)) {
       return err("E320_TASK_CONFLICT", "嵌入配置在单篇生成期间发生变化，向量未写入");
     }
-    const written = await this.deps.vectorIndex.upsert({ uid: candidate.entry.cruid, type: candidate.type, embedding: embedded.value.embedding });
+    const written = await this.deps.vectorIndex.upsert({ uid: candidate.entry.cruid, type: candidate.type, embedding: embedded.value.embedding, sourceHash: candidate.sourceHash });
     if (!written.ok) return ok({ indexed: 0, failed: 1 });
     if (settings.enableDuplicateDetection) {
       try {
@@ -250,23 +256,27 @@ export class SemanticIndexRebuilder {
     return this.disposePromise;
   }
 
-  private runTargeted<T>(operation: () => Promise<Result<T>>): Promise<Result<T>> {
-    if (this.disposed) {
-      return Promise.resolve(err("E310_INVALID_STATE", "语义索引服务已停止"));
-    }
-    if (this.activeOperation) {
-      return Promise.resolve(err("E320_TASK_CONFLICT", "语义索引维护操作正在进行"));
-    }
-    const pending = operation();
+  private runTargeted<T>(operation: (signal: AbortSignal) => Promise<Result<T>>, watchSettings = false): Promise<Result<T>> {
+    if (this.disposed) return Promise.resolve(err("E310_INVALID_STATE", "语义索引服务已停止"));
+    if (this.activeOperation) return Promise.resolve(err("E320_TASK_CONFLICT", "语义索引维护操作正在进行"));
+    const controller = new AbortController();
+    this.activeController = controller;
+    const initial = this.deps.settingsStore.getSettings();
+    const config = resolveVectorIndexConfig(initial);
+    const unsubscribe = watchSettings ? this.deps.settingsStore.subscribe(settings => {
+      if (!settings.enableSemanticIndexing || settings.enableDuplicateDetection !== initial.enableDuplicateDetection ||
+        !vectorIndexConfigsEqual(config, resolveVectorIndexConfig(settings)) ||
+        resolveTaskModelSnapshot(settings, "index").providerSnapshot?.enabled !== true) controller.abort(new Error("embedding settings changed"));
+    }) : () => {};
+    const pending = (async () => {
+      try { return await operation(controller.signal); }
+      catch (cause) { return this.isStopped(controller.signal) ? this.targetedStopped(controller.signal) : toErr(cause, "E500_INTERNAL_ERROR", "语义索引维护失败"); }
+      finally { unsubscribe(); }
+    })();
     this.activeOperation = pending;
-    void pending.then(
-      () => {
-        if (this.activeOperation === pending) this.activeOperation = undefined;
-      },
-      () => {
-        if (this.activeOperation === pending) this.activeOperation = undefined;
-      },
-    );
+    void pending.then(() => {
+      if (this.activeOperation === pending) { this.activeOperation = undefined; this.activeController = undefined; }
+    });
     return pending;
   }
 
@@ -282,11 +292,13 @@ export class SemanticIndexRebuilder {
     const unsubscribe = this.deps.settingsStore.subscribe((settings) => {
       if (!settings.enableSemanticIndexing ||
         settings.enableDuplicateDetection !== initialSettings.enableDuplicateDetection ||
-        !vectorIndexConfigsEqual(vectorConfig, resolveVectorIndexConfig(settings))) {
+        !vectorIndexConfigsEqual(vectorConfig, resolveVectorIndexConfig(settings)) ||
+        resolveTaskModelSnapshot(settings, "index").providerSnapshot?.enabled !== true) {
         controller.abort(new Error("embedding settings changed"));
       }
     });
 
+    let committed = false;
     try {
       const snapshot = await this.deps.cruidCache.snapshotEntries();
       if (this.isStopped(controller.signal)) return this.cancelled();
@@ -317,6 +329,7 @@ export class SemanticIndexRebuilder {
             uid: candidate.entry.cruid,
             type: candidate.type,
             embedding: embedResult.value.embedding,
+            sourceHash: candidate.sourceHash,
           });
         } else {
           failed += 1;
@@ -348,8 +361,10 @@ export class SemanticIndexRebuilder {
         total: vectors.length,
         failed,
       });
+      if (this.isStopped(controller.signal) || !this.currentConfigMatches(vectorConfig)) return this.cancelled();
       const replaceResult = await this.deps.vectorIndex.replaceAll(vectors);
       if (!replaceResult.ok) return replaceResult as Result<SemanticIndexRebuildSummary>;
+      committed = true;
       this.emit(onProgress, {
         phase: "committing",
         completed: vectors.length,
@@ -389,6 +404,7 @@ export class SemanticIndexRebuilder {
       this.deps.logger.info("SemanticIndexRebuilder", "语义索引重建完成", { ...summary });
       return ok(summary);
     } catch (error) {
+      if (committed) return toErr(error, "E500_INTERNAL_ERROR", "语义索引已提交，但后续重复项刷新未完成");
       if (this.isStopped(controller.signal)) return this.cancelled();
       return toErr(error, "E500_INTERNAL_ERROR", "重建语义索引失败");
     } finally {
@@ -415,6 +431,23 @@ export class SemanticIndexRebuilder {
       return err("E310_INVALID_STATE", "向量配置尚未应用，请稍后重试");
     }
     return ok(undefined);
+  }
+
+  private async findMissingCandidates(candidates: RebuildCandidate[]): Promise<Result<RebuildCandidate[]>> {
+    // Routine note edits deliberately keep their existing embedding. Only
+    // missing/unusable physical vectors enter the default repair operation.
+    // Read storage, not recent caches: registration alone is not sufficient.
+    const inspected = await this.deps.vectorIndex.inspectStorage();
+    if (!inspected.ok) return inspected as Result<RebuildCandidate[]>;
+    const unavailable = new Set([...inspected.value.missingEntries, ...inspected.value.invalidEntries, ...inspected.value.staleEntries].map(entry => entry.uid));
+    return ok(candidates.filter(candidate => unavailable.has(candidate.entry.cruid) ||
+      !this.deps.vectorIndex.has(candidate.entry.cruid)));
+  }
+
+  private targetedStopped(signal: AbortSignal): Result<never> {
+    return signal.reason instanceof Error && signal.reason.message === "embedding settings changed"
+      ? err("E320_TASK_CONFLICT", "索引设置已改变，维护操作已停止，尚未提交结果不会写入")
+      : err("E310_INVALID_STATE", "语义索引维护已停止，尚未提交结果不会写入");
   }
 
   private async collectCandidates(
@@ -466,19 +499,8 @@ export class SemanticIndexRebuilder {
       // seed notes are intentionally not eligible for semantic indexing.
       return null;
     }
-    return {
-      entry,
-      content,
-      input: buildSemanticIndexText({
-        name: parsed.frontmatter.name,
-        type: parsed.frontmatter.type,
-        aliases: parsed.frontmatter.aliases,
-        tags: parsed.frontmatter.tags,
-        body: parsed.body,
-      }),
-      type: parsed.frontmatter.type,
-      status: parsed.frontmatter.status,
-    };
+    const input = buildSemanticIndexText({ name: parsed.frontmatter.name, type: parsed.frontmatter.type, aliases: parsed.frontmatter.aliases, tags: parsed.frontmatter.tags, body: parsed.body });
+    return { entry, content, input, sourceHash: semanticIndexTextHash(input), type: parsed.frontmatter.type, status: parsed.frontmatter.status };
   }
 
   /** Single source for the embed request shape shared by rebuild, embedMissing

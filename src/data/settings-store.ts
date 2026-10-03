@@ -716,10 +716,8 @@ function normalizeCapabilities(raw: unknown, field: string, partial = false): Re
       result[key] = raw[key] as boolean;
     }
   }
-  if (raw.structuredOutput !== undefined) {
-    if (!new Set(["prompt", "json_object", "json_schema"]).has(raw.structuredOutput as string)) return err("E101_INVALID_INPUT", `${field}.structuredOutput 无效`);
-    result.structuredOutput = raw.structuredOutput as ModelCapabilities["structuredOutput"];
-  }
+  // Retired output-mode fields are intentionally omitted on load/import/save.
+  // All structured tasks now use JSON Schema; preserve the other settings.
   if (raw.promptCacheMode !== undefined) {
     if (raw.promptCacheMode !== "implicit" && raw.promptCacheMode !== "explicit") {
       return err("E101_INVALID_INPUT", `${field}.promptCacheMode 无效`);

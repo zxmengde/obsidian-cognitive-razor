@@ -11,7 +11,7 @@ describe("OpenAI Chat Completions adapter", () => {
       topP: 0.8,
       maxTokens: 200,
       reasoning_effort: "none",
-      response_format: { type: "json_object" },
+      response_format: { type: "json_schema", json_schema: { name: "test", schema: { type: "object" }, strict: true } },
     });
 
     expect(OPENAI_CHAT_COMPLETIONS_ADAPTER).toMatchObject({
@@ -27,7 +27,7 @@ describe("OpenAI Chat Completions adapter", () => {
       top_p: 0.8,
       max_tokens: 200,
       reasoning_effort: "none",
-      response_format: { type: "json_object" },
+      response_format: { type: "json_schema", json_schema: { name: "test", schema: { type: "object" }, strict: true } },
     });
   });
 

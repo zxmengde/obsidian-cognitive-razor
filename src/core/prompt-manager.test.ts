@@ -3,7 +3,6 @@ import { ok } from "../types";
 import type { ILogger } from "../types";
 import type { FileStorage } from "../data/file-storage";
 import { insertContextBeforeTask, PromptManager, splitPromptIntoMessages } from "./prompt-manager";
-import { addPromptSchemaConstraint } from "./prompt-message-builder";
 
 function createLogger(): ILogger {
   return {
@@ -35,16 +34,13 @@ const VALID_PHASE_TEMPLATE = `<system_instructions>
 </task_instruction>`;
 
 describe("PromptManager prompt structure", () => {
-  it("shares strict message splitting and prompt-schema constraints with request construction", () => {
+  it("shares strict message splitting with request construction", () => {
     const messages = splitPromptIntoMessages(VALID_PHASE_TEMPLATE);
     expect(messages).toEqual([
       expect.objectContaining({ role: "system" }),
       expect.objectContaining({ role: "user" }),
     ]);
-    const constrained = addPromptSchemaConstraint(messages, { type: "object" }, "prompt");
-    expect(constrained).toHaveLength(2);
-    expect(constrained[0]).toEqual(messages[0]);
-    expect(constrained[1]).toMatchObject({ role: "user", content: expect.stringContaining("JSON Schema") });
+
   });
 
   it("inserts dynamic context before the final task and preserves system separation", () => {

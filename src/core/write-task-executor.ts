@@ -21,6 +21,7 @@ import {
   formatSourcePackage,
   isInvalidResponseContinuationError,
   canUseContinuation,
+  canReplayConversation,
 } from "./task-execution-support";
 
 interface WritePhaseExecution {
@@ -120,6 +121,7 @@ export class WriteTaskExecutor {
       : "";
     const continuation = args.task.payload.conversation;
     const canContinue = canUseContinuation(continuation, args.context.modelSnapshot);
+    const canReplay = canReplayConversation(continuation, args.context.modelSnapshot);
 
     const templateResult = await this.deps.promptManager.loadPhaseTemplate(
       args.concept.type,
@@ -132,7 +134,7 @@ export class WriteTaskExecutor {
     const sourcePackage = formatSourcePackage(continuation?.sources);
     const prompt = this.deps.promptManager.buildPhasedWrite({
       CTX_META: args.metaContext,
-      CTX_PREVIOUS: [previousContext, sourcePackage].filter(Boolean).join("\n\n"),
+      CTX_PREVIOUS: [canContinue ? "" : previousContext, sourcePackage].filter(Boolean).join("\n\n"),
       CONCEPT_TYPE: args.concept.type,
     }, templateResult.value);
     const request = buildTaskChatRequest(
@@ -142,7 +144,7 @@ export class WriteTaskExecutor {
       phaseSchema,
       args.phase.id,
       args.context.attemptReason,
-      canContinue ? continuation : { promptCacheKey: continuation?.promptCacheKey },
+      canReplay ? continuation : { promptCacheKey: continuation?.promptCacheKey },
     );
     let chatResult = await this.deps.providerManager.chat(request, args.signal);
     let activeRequest = request;

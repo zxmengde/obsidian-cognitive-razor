@@ -54,6 +54,16 @@ function createSettingsStore(overrides: {
 }
 
 describe("ProviderManager", () => {
+  it("reports unsupported JSON Schema and dispatches once without changing the requested format", async () => {
+    vi.mocked(requestUrl).mockResolvedValue({ status: 400, text: JSON.stringify({ error: { message: "response_format json_schema is not supported with this model", param: "response_format", code: "unsupported_value" } }), json: {} } as never);
+    const manager = new ProviderManager(createSettingsStore(), createLogger());
+    try {
+      const result = await manager.chat({ providerId: "provider-1", model: "unsupported-model", messages: [{ role: "user", content: "fixture" }], response_format: { type: "json_schema", json_schema: { name: "fixture", strict: true, schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"], additionalProperties: false } } } });
+      expect(result).toMatchObject({ ok: false, error: { code: "E205_PROVIDER_REQUEST_INVALID", message: expect.stringContaining("不支持 JSON Schema") } });
+      expect(requestUrl).toHaveBeenCalledOnce();
+      expect(JSON.parse((vi.mocked(requestUrl).mock.calls[0][0] as RequestUrlParam).body as string).response_format).toMatchObject({ type: "json_schema", json_schema: { strict: true } });
+    } finally { manager.dispose(); }
+  });
   beforeEach(() => {
     vi.mocked(requestUrl).mockReset();
   });
@@ -1506,7 +1516,7 @@ describe("ProviderManager", () => {
 
   it("rejects an Index probe for a different Provider instead of silently forcing the route", async () => {
     const manager = new ProviderManager(createSettingsStore(), createLogger());
-    const snapshot: ResolvedTaskConfig = { providerId: "other-provider", model: "embed", capabilities: { temperature: false, topP: false, reasoning: false, structuredOutput: "prompt", nativeWebSearch: false, promptCaching: false, responseContinuation: false } };
+    const snapshot: ResolvedTaskConfig = { providerId: "other-provider", model: "embed", capabilities: { temperature: false, topP: false, reasoning: false, nativeWebSearch: false, promptCaching: false, responseContinuation: false } };
     const result = await manager.probe({ providerId: "provider-1", taskType: "index", taskConfig: snapshot });
     expect(result).toMatchObject({ ok: false, error: { code: "E101_INVALID_INPUT" } });
     expect(requestUrl).not.toHaveBeenCalled();
@@ -1607,7 +1617,6 @@ describe("ProviderManager", () => {
         temperature: true,
         topP: true,
         reasoning: true,
-        structuredOutput: "json_object",
         nativeWebSearch: false,
         promptCaching: false,
         responseContinuation: false,
@@ -1622,7 +1631,7 @@ describe("ProviderManager", () => {
       model: taskConfig.model,
       reasoning_effort: "custom-effort",
       max_tokens: 321,
-      response_format: { type: "json_object" },
+      response_format: { type: "json_schema", json_schema: { strict: true } },
     });
   });
 
@@ -1637,7 +1646,6 @@ describe("ProviderManager", () => {
         temperature: false,
         topP: false,
         reasoning: false,
-        structuredOutput: "prompt" as const,
         nativeWebSearch: true,
         promptCaching: false,
         responseContinuation: false,
@@ -1670,7 +1678,8 @@ describe("ProviderManager", () => {
 
     expect(result.ok).toBe(true);
     const body = JSON.parse((vi.mocked(requestUrl).mock.calls[0][0] as RequestUrlParam).body as string) as Record<string, unknown>;
-    expect(body).not.toHaveProperty("generationConfig");
+    expect(body.generationConfig).toMatchObject({ responseMimeType: "application/json", responseSchema: { type: "object" } });
+    expect(body.generationConfig).not.toHaveProperty("maxOutputTokens");
   });
 
   it("limits provider raw error detail length and redacts secrets", async () => {

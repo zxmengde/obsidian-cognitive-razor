@@ -14,7 +14,7 @@ describe("Gemini Generative Language adapter", () => {
       topP: 0.8,
       maxTokens: 200,
       thinkingLevel: "HIGH",
-      response_format: { type: "json_object" as const },
+      response_format: { type: "json_schema" as const, json_schema: { name: "test", schema: { type: "object" }, strict: true } },
     };
     const plan = GEMINI_GENERATIVE_LANGUAGE_ADAPTER.buildRequestPlan(request, { purpose: "verify" });
 
@@ -32,6 +32,7 @@ describe("Gemini Generative Language adapter", () => {
       systemInstruction: { parts: [{ text: expect.stringContaining("system rule") }] },
       generationConfig: {
         responseMimeType: "application/json",
+        responseSchema: { type: "object" },
         thinkingConfig: { thinkingLevel: "HIGH" },
       },
       tools: [{ google_search: {} }],

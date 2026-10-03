@@ -86,7 +86,8 @@ function parseVectorIndexMeta(raw: unknown): VectorIndexMeta | null {
     if (!isSafeConceptId(id) || !isRecord(candidate) || !CR_TYPE_SET.has(String(candidate.type))) {
       return null;
     }
-    concepts[id] = { type: candidate.type as CRType };
+    if (candidate.sourceHash !== undefined && (typeof candidate.sourceHash !== "string" || !/^[a-f0-9]{64}$/.test(candidate.sourceHash))) return null;
+    concepts[id] = { type: candidate.type as CRType, ...(candidate.sourceHash ? { sourceHash: candidate.sourceHash } : {}) };
   }
   if ((raw.dimensions as number) === 0 && Object.keys(concepts).length > 0) return null;
   return {
@@ -106,7 +107,9 @@ function parseVectorMetadata(raw: unknown, embeddingLength: number): ConceptVect
     !Number.isInteger(raw.dimensions) || raw.dimensions !== embeddingLength) {
     return null;
   }
+  if (raw.sourceHash !== undefined && (typeof raw.sourceHash !== "string" || !/^[a-f0-9]{64}$/.test(raw.sourceHash))) return null;
   return {
+    ...(raw.sourceHash ? { sourceHash: raw.sourceHash } : {}),
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt,
     embeddingModel: raw.embeddingModel.trim(),

@@ -3,7 +3,6 @@ export interface ModelCapabilities {
   temperature: boolean;
   topP: boolean;
   reasoning: boolean;
-  structuredOutput: "prompt" | "json_object" | "json_schema";
   nativeWebSearch: boolean;
   promptCaching: boolean;
   /** OpenAI Responses cache policy. Earlier providers/models should use implicit. */
@@ -43,7 +42,7 @@ export type ModelParameterOverrides = { [K in keyof ModelParameters]?: ModelPara
 
 export const DEFAULT_MODEL_CAPABILITIES: Readonly<ModelCapabilities> = Object.freeze({
   temperature: false, topP: false, reasoning: false,
-  structuredOutput: "prompt", nativeWebSearch: false,
+  nativeWebSearch: false,
   promptCaching: false, responseContinuation: false,
   promptCacheMode: "implicit",
 });

@@ -255,6 +255,7 @@ export class VectorIndex {
         }
         const vector = await this.fileStorage.readVectorFile(concept.type, uid);
         if (!vector.ok) {
+          if (!DISCARDABLE_VECTOR_CODES.has(vector.error.code)) return vector as Result<VectorIndexMaintenanceReport>;
           invalidEntries.push({
             uid,
             type: concept.type,
@@ -262,7 +263,7 @@ export class VectorIndex {
           });
           continue;
         }
-        if (!this.isVectorCompatible(vector.value)) {
+        if (!this.isVectorCompatible(vector.value) || concept.sourceHash !== vector.value.metadata.sourceHash) {
           invalidEntries.push({
             uid,
             type: concept.type,
@@ -417,6 +418,7 @@ export class VectorIndex {
         updatedAt: now,
         embeddingModel: this.model,
         dimensions: this.dimension!,
+        ...(entry.sourceHash ? { sourceHash: entry.sourceHash } : {}),
       },
     };
 
@@ -430,7 +432,7 @@ export class VectorIndex {
       dimensions: this.dimension!,
       concepts: {
         ...currentMeta.concepts,
-        [entry.uid]: { type: entry.type },
+        [entry.uid]: { type: entry.type, ...(entry.sourceHash ? { sourceHash: entry.sourceHash } : {}) },
       },
     };
     const metaWrite = await this.fileStorage.writeVectorIndexMeta(nextMeta);
@@ -491,6 +493,7 @@ export class VectorIndex {
           updatedAt: now,
           embeddingModel: this.model,
           dimensions: this.dimension!,
+        ...(entry.sourceHash ? { sourceHash: entry.sourceHash } : {}),
         },
       };
     });
@@ -505,7 +508,7 @@ export class VectorIndex {
     }
 
     const concepts = Object.fromEntries(
-      vectors.map((vector) => [vector.id, { type: vector.type }]),
+      vectors.map((vector) => [vector.id, { type: vector.type, ...(vector.metadata.sourceHash ? { sourceHash: vector.metadata.sourceHash } : {}) }]),
     ) as VectorIndexMeta["concepts"];
     const nextMeta: VectorIndexMeta = { ...currentMeta, dimensions: this.dimension ?? 0, concepts };
     const metaWrite = await this.fileStorage.writeVectorIndexMeta(nextMeta);
@@ -597,6 +600,7 @@ export class VectorIndex {
     const query = normalizeVector(embedding);
     const matches: Array<{ vector: ConceptVector; similarity: number }> = [];
     for (const vector of bucketResult.value.vectors) {
+      if (this.cruidCache && !this.cruidCache.has(vector.id)) continue;
       const similarity = dotProduct(query, vector.embedding);
       let low = 0;
       let high = matches.length;
@@ -690,7 +694,7 @@ export class VectorIndex {
     }
 
     const entries = Object.entries(meta.concepts)
-      .filter(([, concept]) => concept.type === type);
+      .filter(([uid, concept]) => concept.type === type && (!this.cruidCache || this.cruidCache.has(uid)));
     const vectors: ConceptVector[] = [];
     const invalidIds: string[] = [];
     const failures: Array<{ id: string; reason: string }> = [];

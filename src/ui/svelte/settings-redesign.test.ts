@@ -1,3 +1,7 @@
+import * as obsidian from "obsidian";
+import { ProviderManager } from "../../core/provider-manager";
+import { buildTaskChatRequest } from "../../core/task-execution-support";
+import { resolveTaskModelSnapshot } from "../../core/task-model-resolver";
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { build } from 'esbuild';
 import sveltePlugin from 'esbuild-svelte';
@@ -87,6 +91,49 @@ async function harness(failSave = false, saveDelay?: () => Promise<void>, expand
 }
 
 describe('approved settings information architecture', () => {
+    it('has no provider output-mode choice or per-task output override', async () => {
+        const h = await harness();
+        try {
+            for (const taskType of ['define', 'tag', 'write', 'verify']) {
+                const task = await h.openTask(taskType);
+                expect(task.querySelector(`#tmc-${taskType}-structured`)).toBeNull();
+                expect(task.textContent).not.toContain('结构化输出');
+                await h.back();
+            }
+            const modalSource = readFileSync('src/ui/svelte/modals/ProviderModal.svelte', 'utf8');
+            expect(modalSource).not.toContain('pm-structured-output');
+            expect(modalSource).not.toContain('formStructuredOutput');
+            expect(h.save).not.toHaveBeenCalled(); expect(h.probe).not.toHaveBeenCalled();
+        } finally { await h.cleanup(); }
+    });
+    it('propagates real UI edits through persisted settings and reload into the actual request payload', async () => {
+        const h = await harness();
+        const request = vi.spyOn(obsidian, 'requestUrl').mockResolvedValue({ status: 200, text: '', json: { choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] } } as never);
+        try {
+            const task = await h.openTask('write');
+            const change = async (selector: string, value: string) => {
+                const input = task.querySelector<HTMLInputElement | HTMLSelectElement>(selector)!;
+                input.value = value; input.dispatchEvent(new Event('change', { bubbles: true })); await h.settle();
+            };
+            await change('#tmc-write-provider', 'daily');
+            await change('#tmc-write-model', 'ui-selected-model');
+            task.querySelector<HTMLDetailsElement>('.cr-task-model-card__advanced')!.querySelector('summary')!.click(); ui.flushSync();
+            await change('#tmc-write-temp-mode', 'set'); await change('#tmc-write-temp', '0.25');
+            await change('#tmc-write-max-tokens-mode', 'set'); await change('#tmc-write-max-tokens', '512');
+            const saved = (h.save.mock.calls.at(-1) as unknown as [typeof DEFAULT_SETTINGS])[0];
+            const reloaded = new SettingsStore({ loadData: async () => structuredClone(saved), saveData: vi.fn() } as never);
+            expect((await reloaded.loadSettings()).ok).toBe(true);
+            expect(reloaded.getSettings()).toEqual(h.store.getSettings());
+            const manager = new ProviderManager(reloaded, { debug() {}, info() {}, warn() {}, error() {} });
+            try {
+                expect((await manager.chat(buildTaskChatRequest('write', '<system_instructions>policy</system_instructions>synthetic input', resolveTaskModelSnapshot(reloaded.getSettings(), 'write')))).ok).toBe(true);
+                const body = JSON.parse((request.mock.calls[0][0] as { body: string }).body);
+                expect(body).toMatchObject({ model: 'ui-selected-model', temperature: 0.25, max_tokens: 512 });
+            } finally { manager.dispose(); }
+            expect(h.probe).not.toHaveBeenCalled();
+        } finally { request.mockRestore(); await h.cleanup(); }
+    });
+
     it('keeps connection actions folded and preserves temporary forced-provider probes without editing tasks', async () => {
         const h = await harness();
         try {

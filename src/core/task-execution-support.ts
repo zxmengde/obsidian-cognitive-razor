@@ -13,10 +13,10 @@ import type {
 } from "../types";
 import { buildJsonSchemaResponseFormat } from "./provider-request-builders";
 import { buildStrictJsonSchema } from "./schema-registry";
-import { addPromptSchemaConstraint, splitPromptIntoMessages } from "./prompt-message-builder";
+import { splitPromptIntoMessages } from "./prompt-message-builder";
 import { normalizeExternalHttpUrl } from "./url-utils";
 
-export const PROMPT_VERSION = "v3";
+export const PROMPT_VERSION = "v5";
 export function buildPromptCacheKey(
   providerId: string,
   model: string,
@@ -50,11 +50,11 @@ export function modelEndpoint(snapshot: TaskModelSnapshot): string {
   return `${provider?.apiFormat ?? ""}|${(provider?.baseUrl ?? "").replace(/\/+$/, "")}`;
 }
 
-export function canUseContinuation(
+export function canReplayConversation(
   continuation: ConversationContinuation | undefined,
   snapshot: TaskModelSnapshot,
 ): boolean {
-  return !!continuation?.previousResponseId
+  return !!continuation
     && continuation.providerId === snapshot.providerId
     && continuation.model === snapshot.model
     && continuation.promptVersion === PROMPT_VERSION
@@ -63,6 +63,13 @@ export function canUseContinuation(
     && continuation.responseContinuationEnabled === (snapshot.capabilities?.responseContinuation === true)
     && continuation.promptCachingEnabled === (snapshot.capabilities?.promptCaching === true)
     && (continuation.promptCacheMode ?? "implicit") === (snapshot.capabilities?.promptCacheMode ?? "implicit");
+}
+
+/** A server continuation and locally replayable history are distinct paths. */
+export function canUseContinuation(continuation: ConversationContinuation | undefined, snapshot: TaskModelSnapshot): boolean {
+  return canReplayConversation(continuation, snapshot) && !!continuation?.previousResponseId &&
+    snapshot.providerSnapshot?.apiFormat === "openai-responses" && snapshot.capabilities?.responseContinuation === true &&
+    snapshot.capabilities.promptCaching !== true;
 }
 
 export function buildSourcePackage(citations?: UrlCitation[]): SourcePackage | undefined {
@@ -91,6 +98,8 @@ export function buildTaskMetaContext(payload: QueueTaskPayload): string {
     standard_name_cn: concept?.name.chinese ?? "",
     type: concept?.type ?? payloadType ?? "",
     standard_name_en: concept?.name.english ?? "",
+    core_definition: concept?.coreDefinition ?? "",
+    parents: concept?.parents ?? [],
   }, null, 2);
 }
 
@@ -103,6 +112,8 @@ export function buildTaskChatRequest(
   attemptReason?: ProviderAttemptReason,
   conversation?: ConversationContinuation,
 ): ChatRequest {
+  const serverContinuation = modelSnapshot.capabilities?.responseContinuation === true &&
+    modelSnapshot.capabilities.promptCaching !== true && !!conversation?.previousResponseId;
   const request: ChatRequest = {
     providerId: modelSnapshot.providerId,
     providerSnapshot: modelSnapshot.providerSnapshot,
@@ -116,15 +127,15 @@ export function buildTaskChatRequest(
       const user = current.find((message) => message.role === "user");
       // Verify changes roles and output format: its audit rules must replace
       // Write's JSON system instructions. Keep the conversation as context.
-      const stableSystem = taskType !== "verify" && conversation?.systemPrompt
+      const stableSystem = !serverContinuation && taskType !== "verify" && conversation?.systemPrompt
         ? { role: "system" as const, content: conversation.systemPrompt }
         : system;
-      const phaseInstruction = conversation?.history?.length && system && stableSystem && system.content !== stableSystem.content
+      const phaseInstruction = !serverContinuation && conversation?.history?.length && system && stableSystem && system.content !== stableSystem.content
         ? `\n\n<phase_instructions>\n${system.content}\n</phase_instructions>`
         : "";
       return [
         ...(stableSystem ? [stableSystem] : []),
-        ...(conversation?.history ?? []),
+        ...(!serverContinuation ? conversation?.history ?? [] : []),
         ...(user ? [{ ...user, content: `${user.content}${phaseInstruction}` }] : []),
       ];
     })(),
@@ -137,9 +148,7 @@ export function buildTaskChatRequest(
     // Responses continuation hides prior stages from this request's prompt.
     // With explicit prompt caching that prevents the accumulated stage context
     // from becoming part of the growing cacheable prefix.
-    previousResponseId: modelSnapshot.capabilities?.responseContinuation
-      && modelSnapshot.capabilities.promptCaching !== true
-      ? conversation?.previousResponseId : undefined,
+    previousResponseId: serverContinuation ? conversation?.previousResponseId : undefined,
     promptCacheKey: modelSnapshot.capabilities?.promptCaching
       ? buildPromptCacheKey(modelSnapshot.providerId, modelSnapshot.model, modelSnapshot.providerSnapshot?.apiFormat, modelSnapshot.providerSnapshot?.baseUrl)
       : undefined,
@@ -147,14 +156,9 @@ export function buildTaskChatRequest(
     promptCacheTtl: modelSnapshot.capabilities?.promptCaching ? modelSnapshot.capabilities.promptCacheTtl : undefined,
   };
 
-  if (structuredSchema && taskType !== "verify") {
+  if (structuredSchema && taskType !== "verify" && taskType !== "cards") {
     const schema = buildStrictJsonSchema(structuredSchema);
-    const mode = modelSnapshot.capabilities?.structuredOutput ?? "prompt";
-    if (mode === "json_schema") request.response_format = buildJsonSchemaResponseFormat(`${taskType}_output`, schema);
-    else {
-      if (mode === "json_object") request.response_format = { type: "json_object" };
-      request.messages = addPromptSchemaConstraint(request.messages, schema, mode);
-    }
+    request.response_format = buildJsonSchemaResponseFormat(`${taskType}_output`, schema);
   }
   if (modelSnapshot.capabilities?.nativeWebSearch && (taskType === "write" || taskType === "verify")) {
     request.webSearch = { purpose: taskType === "verify" ? "verify" : "write" };

@@ -53,6 +53,22 @@ function settingsWithProvider(id = "A"): PluginSettings {
 }
 
 describe("SettingsStore defaults and persistence", () => {
+  it.each(["prompt", "json_object", "json_schema"])("retires legacy %s output fields without losing configuration or writing on load", async mode => {
+    const legacy = structuredClone(settingsWithProvider());
+    legacy.providers.A.capabilities = { temperature: true, structuredOutput: mode } as never;
+    legacy.taskModels.write.capabilities = { nativeWebSearch: false, structuredOutput: mode } as never;
+    const plugin = createPlugin(legacy); const store = new SettingsStore(plugin);
+    expect((await store.loadSettings()).ok).toBe(true);
+    const migrated = store.getSettings();
+    expect(migrated.providers.A).toMatchObject({ apiKey: "key-a", defaultChatModel: "chat-a", capabilities: { temperature: true } });
+    expect(migrated.providers.A.capabilities).not.toHaveProperty("structuredOutput");
+    expect(migrated.taskModels.write.capabilities).toEqual({ nativeWebSearch: false });
+    expect(plugin.saved).toHaveLength(0);
+    expect((await store.importSettings(JSON.stringify(legacy))).ok).toBe(true);
+    expect(store.getSettings()).toEqual(migrated);
+    expect(store.exportSettings()).not.toContain("structuredOutput");
+    expect(plugin.saved).toHaveLength(1);
+  });
   it('keeps legacy dispersed exact locations custom on load and import without rewriting or guessing a root', async () => {
     const legacy = { ...structuredClone(DEFAULT_SETTINGS), directoryScheme: { domain: '1-领域', issue: 'Old/Issues', theory: '3-理论', entity: 'Elsewhere/Entities', mechanism: '5-机制' }, cardsSourceRoot: 'Existing/Knowledge', cardsTargetRoot: 'Existing/Decks' };
     const plugin = createPlugin(legacy); const store = new SettingsStore(plugin);

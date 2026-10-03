@@ -10,6 +10,7 @@ import type {
   ILogger,
   PluginSettings,
   Result,
+  VectorEntry,
 } from "../types";
 import type { CruidCache } from "./cruid-cache";
 import type { DuplicateManager } from "./duplicate-manager";
@@ -98,7 +99,8 @@ function createHarness(contents: Record<string, string>) {
   const clearAll = vi.fn(async (): Promise<Result<number>> => ok(0));
   const refreshNode = vi.fn(async (): Promise<Result<number>> => ok(0));
   const indexed = new Set<string>();
-  const upsert = vi.fn(async (entry: { uid: string }) => { indexed.add(entry.uid); return ok(undefined); });
+  const currentEntries = new Map<string, VectorEntry>();
+  const upsert = vi.fn(async (entry: VectorEntry) => { indexed.add(entry.uid); currentEntries.set(entry.uid, entry); return ok(undefined); });
   const logger: ILogger = {
     debug: vi.fn(),
     info: vi.fn(),
@@ -114,6 +116,7 @@ function createHarness(contents: Record<string, string>) {
       getEmbeddingModel: () => config.model,
       getEmbeddingDimension: () => config.dimension,
       replaceAll,
+      inspectStorage: async () => ok({ indexedEntries: currentEntries.size, physicalFiles: currentEntries.size, missingEntries: [], staleEntries: [], invalidEntries: [], orphanFiles: [] }),
       has: (uid: string) => indexed.has(uid),
       upsert,
     } as unknown as VectorIndex,
@@ -205,7 +208,7 @@ describe("SemanticIndexRebuilder", () => {
 
     expect(result).toMatchObject({ ok: true, value: { indexed: 1, skipped: 1 } });
     expect(harness.replaceAll).toHaveBeenCalledWith([
-      { uid: "a", type: "domain", embedding: [1, 0, 0] },
+      { uid: "a", type: "domain", embedding: [1, 0, 0], sourceHash: expect.stringMatching(/^[a-f0-9]{64}$/) },
     ]);
   });
 
@@ -340,7 +343,7 @@ describe("SemanticIndexRebuilder", () => {
       "notes/draft.md": noteWithStatus("draft", "draft"),
       "notes/evergreen.md": noteWithStatus("evergreen", "evergreen"),
     });
-    harness.indexed.add("evergreen");
+    await harness.service.embedOne("evergreen");
     await expect(harness.service.scanStatus()).resolves.toEqual(ok({
       eligible: 2,
       indexed: 1,
@@ -354,7 +357,7 @@ describe("SemanticIndexRebuilder", () => {
 
     await expect(harness.service.embedOne("a")).resolves.toEqual(ok({ indexed: 1, failed: 0 }));
     expect(harness.embed).toHaveBeenCalledOnce();
-    expect(harness.upsert).toHaveBeenCalledWith({ uid: "a", type: "domain", embedding: [1, 0, 0] });
+    expect(harness.upsert).toHaveBeenCalledWith({ uid: "a", type: "domain", embedding: [1, 0, 0], sourceHash: expect.stringMatching(/^[a-f0-9]{64}$/) });
     expect(harness.refreshNode).toHaveBeenCalledWith("a", "domain", [1, 0, 0]);
     expect(harness.rebuildFromIndex).not.toHaveBeenCalled();
   });
@@ -437,7 +440,7 @@ describe("SemanticIndexRebuilder", () => {
     expect(harness.upsert).not.toHaveBeenCalledWith(
       expect.objectContaining({ uid: "a" }),
     );
-    expect(harness.upsert).toHaveBeenCalledWith({ uid: "b", type: "domain", embedding: [1, 0, 0] });
+    expect(harness.upsert).toHaveBeenCalledWith({ uid: "b", type: "domain", embedding: [1, 0, 0], sourceHash: expect.stringMatching(/^[a-f0-9]{64}$/) });
   });
 
   it("单篇向量化只读取目标笔记文件而不扫描全库", async () => {
@@ -453,7 +456,7 @@ describe("SemanticIndexRebuilder", () => {
     expect(harness.cachedRead).toHaveBeenCalledWith(
       expect.objectContaining({ path: "notes/b.md" }),
     );
-    expect(harness.upsert).toHaveBeenCalledWith({ uid: "b", type: "domain", embedding: [1, 0, 0] });
+    expect(harness.upsert).toHaveBeenCalledWith({ uid: "b", type: "domain", embedding: [1, 0, 0], sourceHash: expect.stringMatching(/^[a-f0-9]{64}$/) });
   });
 });
 
@@ -468,5 +471,68 @@ describe("single-note vector success is independent of duplicate refresh", () =>
     expect(harness.embed).toHaveBeenCalledOnce();
     expect(harness.upsert).toHaveBeenCalledOnce();
     expect(harness.indexed.has("a")).toBe(true);
+  });
+});
+
+describe('audit semantic index lifecycle', () => {
+  it('cancel must prevent a late targeted embedOne response from committing', async () => {
+    const h = createHarness({'notes/a.md':note('a')});
+    let resolve!: (value: Result<EmbedResponse>) => void;
+    h.embed.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+    const pending = h.service.embedOne('a');
+    await vi.waitFor(() => expect(h.embed).toHaveBeenCalledOnce());
+    h.service.cancel();
+    expect(h.embed.mock.calls[0][1]?.aborted).toBe(true);
+    resolve(ok({embedding:[1,0,0]}));
+    const result = await pending;
+    expect(h.upsert).not.toHaveBeenCalled();
+    expect(result.ok).toBe(false);
+  });
+  it('turning semantic indexing off during embedMissing must stop later calls and writes', async () => {
+    const h = createHarness({'notes/a.md':note('a'), 'notes/b.md':note('b')});
+    h.embed.mockImplementationOnce(async () => {
+      const changed = h.getSettings(); changed.enableSemanticIndexing = false; h.setSettings(changed);
+      return ok({embedding:[1,0,0]});
+    });
+    await h.service.embedMissing();
+    expect(h.embed).toHaveBeenCalledTimes(1);
+    expect(h.upsert).not.toHaveBeenCalled();
+  });
+  it('disabling the active embedding provider prevents a late write and later calls', async () => {
+    const h = createHarness({ 'notes/a.md': note('a'), 'notes/b.md': note('b') });
+    h.embed.mockImplementationOnce(async () => {
+      const changed = h.getSettings(); changed.providers.embedding.enabled = false; h.setSettings(changed);
+      return ok({ embedding: [1, 0, 0] });
+    });
+    expect(await h.service.embedMissing()).toMatchObject({ ok: false, error: { code: 'E320_TASK_CONFLICT' } });
+    expect(h.embed).toHaveBeenCalledOnce(); expect(h.upsert).not.toHaveBeenCalled();
+  });
+  it('routine note edits retain the vector until an explicit single-note update', async () => {
+    const h = createHarness({'notes/a.md':note('a')});
+    await h.service.embedOne('a');
+    const firstHash = h.upsert.mock.calls[0][0].sourceHash;
+    h.contents['notes/a.md'] += '\nSmall reading edit';
+    const scanned = await h.service.scanStatus();
+    expect(scanned).toMatchObject({ok:true,value:{missing:0,indexed:1}});
+    await h.service.embedMissing();
+    expect(h.embed).toHaveBeenCalledTimes(1);
+    await h.service.embedOne('a');
+    expect(h.embed).toHaveBeenCalledTimes(2);
+    expect(h.upsert.mock.calls[1][0].sourceHash).not.toBe(firstHash);
+  });
+  it('duplicate refresh exception in embedMissing must not abort remaining notes after a durable vector', async () => {
+    const h = createHarness({'notes/a.md':note('a'), 'notes/b.md':note('b')});
+    h.refreshNode.mockRejectedValueOnce(new Error('duplicate storage unavailable'));
+    await expect(h.service.embedMissing()).resolves.toMatchObject({ok:true,value:{indexed:2}});
+    expect(h.upsert).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('audit rebuild commit boundary',()=>{
+  it('cancellation from committing progress must be checked before replacing old vectors', async()=>{
+    const h=createHarness({'notes/a.md':note('a')});
+    const result=await h.service.rebuild(p=>{if(p.phase==='committing'&&p.completed===0)h.service.cancel();});
+    expect(h.replaceAll).not.toHaveBeenCalled();
+    expect(result.ok).toBe(false);
   });
 });

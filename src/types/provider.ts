@@ -36,9 +36,7 @@ export interface ProviderCapabilities {
 // ============================================================================
 
 /** 聊天请求 */
-export type ChatResponseFormat =
-    | { type: "json_object" }
-    | {
+export type ChatResponseFormat = {
         type: "json_schema";
         json_schema: {
             name: string;

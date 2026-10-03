@@ -33,6 +33,8 @@ export interface VectorEntry {
     uid: string;
     type: CRType;
     embedding: number[];
+    /** SHA-256 of the actual bounded semantic input; absent on legacy entries. */
+    sourceHash?: string;
 }
 
 /** 相似度搜索结果 */
@@ -46,6 +48,7 @@ export interface SearchResult {
 /** 概念元数据 */
 interface ConceptMeta {
     type: CRType;
+    sourceHash?: string;
 }
 
 /** 向量索引元数据 */
@@ -69,6 +72,7 @@ export interface ConceptVector {
         updatedAt: number;
         embeddingModel: string;
         dimensions: number;
+        sourceHash?: string;
     };
 }
 

@@ -20,6 +20,7 @@ import {
   insertPositionedCitationLinks,
   isInvalidResponseContinuationError,
   canUseContinuation,
+  canReplayConversation,
 } from "./task-execution-support";
 
 export interface VerifyTaskExecutorDependencies {
@@ -78,8 +79,9 @@ export class VerifyTaskExecutor {
   ): Promise<Result<{ reportText: string; responseId?: string; promptUser?: string; responseContent?: string; systemPrompt?: string; sourcePackage?: SourcePackage }>> {
     const continuation = task.payload.conversation;
     const canContinue = canUseContinuation(continuation, context.modelSnapshot);
+    const canReplay = canReplayConversation(continuation, context.modelSnapshot);
     const request = buildTaskChatRequest("verify", prompt, context.modelSnapshot, undefined, "verify:report", context.attemptReason,
-      canContinue ? continuation : { promptCacheKey: continuation?.promptCacheKey });
+      canReplay ? continuation : { promptCacheKey: continuation?.promptCacheKey });
     let chatResult = await this.deps.providerManager.chat(request, signal);
     let activeRequest = request;
     if (!chatResult.ok && canContinue && isInvalidResponseContinuationError(chatResult.error)) {

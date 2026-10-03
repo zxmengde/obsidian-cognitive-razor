@@ -97,7 +97,6 @@ export function buildResponsesTextConfig(
   responseFormat?: ChatRequest["response_format"],
 ): Record<string, unknown> | undefined {
   if (!responseFormat) return undefined;
-  if (responseFormat.type === "json_object") return { type: "json_object" };
   return {
     type: "json_schema",
     name: responseFormat.json_schema.name,
@@ -125,40 +124,20 @@ export function buildResponsesInput(messages: ChatRequest["messages"]): {
   return { instructions: instructions || undefined, input };
 }
 
-/**
- * GPT-5.6+ explicit caching cannot place a breakpoint in top-level
- * `instructions`. The breakpoint belongs at the end of the whole input: that
- * lets the provider reuse the longest common prefix, including accumulated
- * workflow output, while each phase's task remains the changing suffix.
- */
+/** Preserve a stable developer boundary and recent user endpoints. Merely
+ * keeping prefix text is insufficient for explicit-only cache lookup. */
 export function buildResponsesExplicitCacheInput(messages: ChatRequest["messages"]): {
   input: Array<Record<string, unknown>>;
 } {
-  const system = messages
-    .filter((message) => message.role === "system")
-    .map((message) => message.content.trim())
-    .filter(Boolean)
-    .join("\n\n");
-  const input: Array<Record<string, unknown>> = [];
-  if (system) {
-    input.push({
-      role: "developer",
-      content: system,
-    });
-  }
-  const nonSystem = messages.filter((item) => item.role !== "system");
-  for (const [index, message] of nonSystem.entries()) {
-    const last = index === nonSystem.length - 1;
-    input.push({
-      role: message.role,
-      content: last ? [{
-        type: "input_text",
-        text: message.content,
-        prompt_cache_breakpoint: { mode: "explicit" },
-      }] : message.content,
-    });
-  }
-  return { input };
+  const system = messages.filter(message => message.role === "system").map(message => message.content.trim()).filter(Boolean).join("\n\n");
+  const nonSystem = messages.filter(message => message.role !== "system");
+  const userIndices = nonSystem.flatMap((message, index) => message.role === "user" ? [index] : []);
+  const boundaries = new Set(userIndices.slice(-(system ? 3 : 4)));
+  const block = (text: string) => [{ type: "input_text", text, prompt_cache_breakpoint: { mode: "explicit" } }];
+  return { input: [
+    ...(system ? [{ role: "developer", content: block(system) }] : []),
+    ...nonSystem.map((message, index) => ({ role: message.role, content: boundaries.has(index) ? block(message.content) : message.content })),
+  ] };
 }
 
 export function buildGeminiContents(messages: ChatRequest["messages"]): {
@@ -184,9 +163,7 @@ export function buildGeminiGenerationConfig(request: ChatRequest): Record<string
   if (request.temperature !== undefined) generationConfig.temperature = request.temperature;
   if (request.topP !== undefined) generationConfig.topP = request.topP;
   if (request.maxTokens !== undefined) generationConfig.maxOutputTokens = request.maxTokens;
-  if (request.response_format?.type === "json_object") {
-    generationConfig.responseMimeType = "application/json";
-  } else if (request.response_format?.type === "json_schema") {
+  if (request.response_format) {
     generationConfig.responseMimeType = "application/json";
     generationConfig.responseSchema = request.response_format.json_schema.schema;
   }

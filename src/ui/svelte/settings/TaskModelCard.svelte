@@ -186,9 +186,6 @@
     function handleCapabilityChange(key: BooleanCapability, value: string) {
         onUpdate(taskType, { capabilities: { [key]: value === '' ? undefined : value === 'true' } });
     }
-    function handleStructuredOutputChange(value: string) {
-        onUpdate(taskType, { capabilities: { structuredOutput: value ? value as 'prompt' | 'json_object' | 'json_schema' : undefined } });
-    }
     function handleReset() {
         pendingSetKeys = [];
         draftValues = {};
@@ -313,19 +310,6 @@
                         </div>
                     </div>
                 {/each}
-                {#if taskType !== 'cards'}
-                    <div class="cr-task-model-card__parameter cr-task-model-card__field">
-                        <label for={`tmc-${taskType}-structured`}>{i18n.t('taskModels.fields.structuredOutput')}</label>
-                        <div class="cr-task-model-card__parameter-controls">
-                            <Select id={`tmc-${taskType}-structured`} value={config.capabilities?.structuredOutput ?? ''}
-                                options={[{ value: '', label: text('inherit') }, ...(['prompt', 'json_object', 'json_schema'] as const).map((value) => ({ value, label: i18n.t(`taskModels.fields.structuredOutputOptions.${value}`) }))]}
-                                onchange={handleStructuredOutputChange} />
-                        </div>
-                        <div class="cr-task-model-card__parameter-result cr-task-model-card__description">
-                            <span>{i18n.t(`taskModels.fields.structuredOutputOptions.${resolved.capabilities.structuredOutput}`)} · {capabilitySource('structuredOutput')}</span>
-                        </div>
-                    </div>
-                {/if}
             </details>
         {/if}
         <p class="cr-task-model-card__description cr-task-model-card__footnote">{text('emptySpecifiedHint')}</p>
