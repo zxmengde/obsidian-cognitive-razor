@@ -50,6 +50,7 @@ function fixture() {
     retry: vi.fn(async (_id: string) => ok(true)), retryUncertain: vi.fn(async (_id: string) => ok(true)),
     cancelAllActive: vi.fn(async () => ok(1)), retryFailed: vi.fn(async () => ok(1)), cancel: vi.fn(async (_id: string) => ok(true)),
     remove: vi.fn(async (_id: string) => ok(true)), pause: vi.fn(async () => ok(true)), resume: vi.fn(async () => ok(true)),
+    removeTerminal: vi.fn(async () => ok(2)),
   };
   const status: QueueStatus = { paused: false, total: 2, pending: 0, running: 0, failed: 1, interrupted: 1, completed: 0, cancelled: 0 };
   const i18n = new I18n();
@@ -58,6 +59,40 @@ function fixture() {
 }
 
 describe("queue user actions with synthetic application responses", () => {
+  it("keeps filtered selection beside history clearing without bypassing confirmation", async () => {
+    const f = fixture();
+    const target = document.body.appendChild(document.createElement('div'));
+    const instance = ui.mount(ui.QueueHost, { target, props: f });
+    try {
+      ui.flushSync();
+      target.querySelector<HTMLDetailsElement>('.cr-queue-management')!.querySelector('summary')!.click(); ui.flushSync();
+      expect(target.querySelector('.cr-queue-summary')).toBeNull();
+      const filters = target.querySelectorAll<HTMLSelectElement>('.cr-queue-select-label select');
+      filters[0].value = 'failed'; filters[0].dispatchEvent(new Event('change', { bubbles: true }));
+      filters[1].value = 'core'; filters[1].dispatchEvent(new Event('change', { bubbles: true })); ui.flushSync();
+      expect(target.querySelectorAll('.cr-task-item')).toHaveLength(1);
+      const tools = target.querySelector('.cr-queue-history-tools')!;
+      const selectAll = tools.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+      const clear = tools.querySelector<HTMLButtonElement>('button')!;
+      expect(clear.textContent).toContain(f.labels.clearHistory);
+      expect(target.querySelector('.cr-queue-actions')?.contains(clear)).toBe(false);
+      selectAll.click(); ui.flushSync();
+      expect(selectAll.checked).toBe(true);
+      expect(target.querySelector<HTMLInputElement>('.cr-task-select')!.checked).toBe(true);
+      selectAll.click(); ui.flushSync();
+      expect(target.querySelector<HTMLInputElement>('.cr-task-select')!.checked).toBe(false);
+      clear.click(); ui.flushSync();
+      expect(target.querySelector('[role="dialog"]')?.textContent).toContain(f.labels.clearHistoryConfirmTitle);
+      expect(f.queue.removeTerminal).not.toHaveBeenCalled();
+      target.querySelector<HTMLButtonElement>('[role="dialog"] .cr-btn-secondary')!.click(); ui.flushSync();
+      expect(target.querySelector('[role="dialog"]')).toBeNull();
+      expect(f.queue.removeTerminal).not.toHaveBeenCalled();
+      clear.click(); ui.flushSync();
+      target.querySelector<HTMLButtonElement>('[role="dialog"] .cr-btn-danger')!.click();
+      await vi.waitFor(() => expect(f.queue.removeTerminal).toHaveBeenCalledOnce());
+    } finally { await ui.unmount(instance); target.remove(); }
+  });
+
   it("keeps unresolved tasks above folded history and reveals safe details only on demand", async () => {
     const f = fixture();
     f.tasks.unshift({ ...f.tasks[0], id: 'done', noteTitle: 'Completed history', state: 'completed', error: undefined });
@@ -209,7 +244,7 @@ describe("queue user actions with synthetic application responses", () => {
     } finally { await ui.unmount(instance); target.remove(); }
   });
 
-  it("allows narrow task metadata and the queue summary to wrap without fixed host button height", () => {
+  it("keeps narrow task metadata flexible and selection/history tools in one shrink-safe row", () => {
     // Source-level responsive contract; geometry still requires real host QA.
     const list = readFileSync('src/ui/svelte/workbench/QueueTaskList.svelte', 'utf8');
     const section = readFileSync('src/ui/svelte/workbench/QueueSection.svelte', 'utf8');
@@ -218,6 +253,8 @@ describe("queue user actions with synthetic application responses", () => {
     expect(list).toContain('flex-wrap: wrap;');
     expect(list).toContain('white-space: normal; overflow-wrap: anywhere;');
     expect(section).toContain('height: auto; min-height: 32px; box-shadow: none;');
+    expect(section).toContain('.cr-queue-history-tools { display: grid; grid-template-columns: minmax(0,1fr) auto;');
+    expect(section).not.toContain('cr-queue-summary');
     expect(section).not.toContain('text-overflow: ellipsis');
   });
 

@@ -264,9 +264,10 @@
         {#if isMarkdown}
             <div class="cr-current-note"><h2>{activeFile?.basename ?? activeFile?.path.split('/').pop()?.replace(/\.md$/, '')}</h2><p>{activeFile?.path.includes('/') ? activeFile.path.slice(0, activeFile.path.lastIndexOf('/')) : product.rootFolder}</p></div>
             <div class="cr-note-actions">
-                <button class="cr-note-action" type="button" aria-expanded={activePanel === 'expand'} onclick={() => togglePanel('expand')}><span><strong>{product.expandTitle}</strong><small>{product.expandDesc}</small></span><Icon name="chevron-right" size={16} /></button>
-                <button class="cr-note-action" type="button" disabled={verifying} onclick={() => void handleVerify()} aria-label={t.workbench.buttons.verify}><span><strong>{t.workbench.buttons.verify}</strong><small>{product.verifyDesc}</small></span>{#if verifying}<span class="cr-loading-spinner"></span>{:else}<Icon name="chevron-right" size={16} />{/if}</button>
-                {#if isCRNode}<button class="cr-note-action" type="button" disabled={generatingCards} onclick={() => void handleCards()} aria-label={t.cards.generate}><span><strong>{t.cards.generate}</strong><small>{product.cardsDesc}</small></span>{#if generatingCards}<span class="cr-loading-spinner"></span>{:else}<Icon name="chevron-right" size={16} />{/if}</button>
+                <button class="cr-btn-secondary cr-note-action" type="button" aria-expanded={activePanel === 'expand'} title={product.expandDesc} onclick={() => togglePanel('expand')}>{product.expandTitle}</button>
+                <button class="cr-btn-secondary cr-note-action" type="button" disabled={verifying} aria-busy={verifying ? 'true' : undefined} onclick={() => void handleVerify()} aria-label={t.workbench.buttons.verify} title={product.verifyDesc}>{#if verifying}<span class="cr-loading-spinner" aria-hidden="true"></span>{/if}{t.workbench.buttons.verify}</button>
+                {#if isCRNode}
+                    <button class="cr-btn-secondary cr-note-action" type="button" disabled={generatingCards} aria-busy={generatingCards ? 'true' : undefined} onclick={() => void handleCards()} aria-label={t.cards.generate} title={product.cardsDesc}>{#if generatingCards}<span class="cr-loading-spinner" aria-hidden="true"></span>{/if}{t.cards.generate}</button>
                 {:else}<p class="cr-note-ineligible">{product.nonConcept}</p>{/if}
             </div>
         {:else}<p class="cr-note-empty">{product.noNote}</p>{/if}
@@ -294,11 +295,7 @@
     .cr-result-heading h2 { min-width: 0; }
     .cr-text-action { flex-shrink: 0; height: auto; padding: 0; border: 0; box-shadow: none; background: none; color: var(--cr-interactive-accent); font-size: var(--cr-font-xs); }
     .cr-current-note p { margin-bottom: 15px; }
-    .cr-note-actions { display: flex; flex-direction: column; }
-    .cr-note-action { display: flex; justify-content: space-between; align-items: center; width: 100%; text-align: left; height: auto; min-height: 73px; padding: 14px 0; border: 0; border-bottom: 1px solid var(--cr-border); border-radius: 0; background: transparent; box-shadow: none; color: var(--cr-text-muted); }
-    .cr-note-action span { min-width: 0; }
-    .cr-note-action strong, .cr-note-action small { display: block; }
-    .cr-note-action strong { color: var(--cr-text-normal); font-size: var(--cr-font-base); font-weight: 600; }
-    .cr-note-action small { font-size: var(--cr-font-xs); margin-top: 8px; }
+    .cr-note-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+    .cr-note-action { width: auto; max-width: 100%; min-height: 32px; padding: 6px 10px; border-radius: var(--cr-field-radius); font-size: var(--cr-font-sm); font-weight: 600; overflow-wrap: anywhere; }
     .cr-note-empty, .cr-note-ineligible { color: var(--cr-text-muted); font-size: var(--cr-font-xs); line-height: 1.7; margin: 14px 0; }
 </style>

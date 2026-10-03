@@ -209,21 +209,6 @@
                 <details class="cr-queue-management" bind:open={managing}>
                     <summary aria-label={t.workbench.queueStatus.manageQueue}>{managing ? t.workbench.product.doneManage : t.workbench.product.manage}</summary>
                 <p class="cr-queue-overall">{ctx.i18n.format('workbench.product.needsHandling', {count: status.failed + status.interrupted})}</p>
-                <div class="cr-queue-summary" role="toolbar" aria-label={t.workbench.queueStatus.summary}>
-                    <button type="button" class:active={stateFilter === 'active'} onclick={() => stateFilter = 'active'}>
-                        <span>{t.workbench.queueStatus.active}</span><strong>{status.pending + status.running}</strong>
-                    </button>
-                    <button type="button" class:active={stateFilter === 'failed'} onclick={() => stateFilter = 'failed'}>
-                        <span>{t.workbench.queueStatus.failed}</span><strong>{status.failed}</strong>
-                    </button>
-                    <button type="button" class:active={stateFilter === 'completed'} onclick={() => stateFilter = 'completed'}>
-                        <span>{t.workbench.queueStatus.completed}</span><strong>{status.completed}</strong>
-                    </button>
-                    <button type="button" class:active={stateFilter === 'cancelled'} onclick={() => stateFilter = 'cancelled'}>
-                        <span>{t.workbench.queueStatus.cancelled}</span><strong>{status.cancelled}</strong>
-                    </button>
-                </div>
-
                 <div class="cr-queue-toolbar">
                     <label class="cr-queue-select-label">
                         <span>{t.workbench.queueStatus.filterState}</span>
@@ -247,10 +232,19 @@
                             {/each}
                         </select>
                     </label>
+                </div>
+
+                <div class="cr-queue-history-tools">
                     <label class="cr-queue-select-all">
                         <input type="checkbox" checked={allFilteredSelected} onchange={toggleSelectAll} />
                         <span>{t.workbench.queueStatus.selectAll}</span>
                     </label>
+                    {#if status.completed > 0 || status.failed > 0 || status.cancelled > 0 || status.interrupted > 0}
+                        <Button variant="ghost" size="sm" disabled={actionRunning} onclick={() => pendingConfirmation = 'clear-history'}>
+                            <Icon name="trash-2" size={16} />
+                            {t.workbench.queueStatus.clearHistory}
+                        </Button>
+                    {/if}
                 </div>
 
                 <div class="cr-queue-actions" role="toolbar" aria-label={t.workbench.queueStatus.batchActions}>
@@ -282,12 +276,6 @@
                         <Button variant="ghost" size="sm" disabled={actionRunning} onclick={() => pendingConfirmation = 'cancel-active'}>
                             <Icon name="x-circle" size={16} />
                             {t.workbench.queueStatus.cancelAllActive}
-                        </Button>
-                    {/if}
-                    {#if status.completed > 0 || status.failed > 0 || status.cancelled > 0 || status.interrupted > 0}
-                        <Button variant="ghost" size="sm" disabled={actionRunning} onclick={() => pendingConfirmation = 'clear-history'}>
-                            <Icon name="trash-2" size={16} />
-                            {t.workbench.queueStatus.clearHistory}
                         </Button>
                     {/if}
                 </div>
@@ -377,13 +365,13 @@
     .cr-queue-management[open] > div { margin-top: 12px; }
     .cr-queue-uncertain-notice { margin: 0 0 16px; color: var(--cr-status-warning); font-size: var(--cr-font-sm); }
     .cr-queue-overall { color: var(--cr-text-muted); font-size: var(--cr-font-xs); }
-    .cr-queue-summary { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
-    .cr-queue-summary button { display: flex; justify-content: space-between; gap: 8px; padding: 8px; border: 1px solid var(--cr-border); background: transparent; color: var(--cr-text-muted); height: auto; min-height: 32px; box-shadow: none; }
-    .cr-queue-summary button.active { background: var(--cr-bg-selected); color: var(--cr-text-normal); }
     .cr-queue-toolbar, .cr-queue-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+    .cr-queue-history-tools { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 8px; min-width: 0; }
+    .cr-queue-history-tools :global(button) { height: auto; min-height: 32px; box-shadow: none; }
     .cr-queue-select-label { display: inline-flex; align-items: center; gap: 4px; color: var(--cr-text-muted); font-size: var(--cr-font-xs); }
     .cr-queue-select-label select { min-height: 28px; max-width: 150px; }
-    .cr-queue-select-all { display: inline-flex; align-items: center; gap: 4px; color: var(--cr-text-muted); font-size: var(--cr-font-xs); }
+    .cr-queue-select-all { display: inline-flex; align-items: center; gap: 4px; min-width: 0; color: var(--cr-text-muted); font-size: var(--cr-font-xs); }
+    .cr-queue-select-all input { flex-shrink: 0; }
     .cr-queue-history { margin-top: 20px; border-top: 1px solid var(--cr-border); }
     .cr-queue-history > summary { display: flex; justify-content: space-between; gap: 12px; padding-top: 16px; font-size: var(--cr-font-xs); color: var(--cr-text-muted); cursor: pointer; list-style: none; }
     .cr-queue-empty p { margin: 0; color: var(--cr-text-muted); font-size: var(--cr-font-sm); line-height: 1.7; }

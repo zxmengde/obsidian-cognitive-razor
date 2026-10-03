@@ -51,6 +51,56 @@ function openTaskParameters(target: HTMLElement): HTMLDetailsElement {
 }
 
 describe("keyboard interaction safety", () => {
+  it('presents note actions as labelled buttons and preserves expansion, focus and busy locks', async () => {
+    let releaseVerify!: (value: unknown) => void;
+    let releaseCards!: (value: unknown) => void;
+    const verify = vi.fn(() => new Promise(resolve => { releaseVerify = resolve; }));
+    const cards = vi.fn(() => new Promise(resolve => { releaseCards = resolve; }));
+    const prepare = vi.fn(async () => ({ ok: false, error: { code: 'E101_INVALID_INPUT' } }));
+    const target = document.body.appendChild(document.createElement('div'));
+    const i18n = new I18n();
+    const instance = ui.mount(ui.CreateHost, { target, props: { activeFile: { path: 'Synthetic.md', basename: 'Synthetic', extension: 'md' }, context: {
+      i18n, app: { vault: { on: () => ({}), offref() {}, cachedRead: async () => generateMarkdownContent(generateFrontmatter({ cruid: 'synthetic', type: 'entity', name: 'Synthetic' }), '') } },
+      application: { expand: { prepare }, verify: { start: verify }, cards: { start: cards }, queue: { subscribe: () => () => {}, getSnapshot: () => ({ tasks: [] }) } },
+      settingsApplication: { getSettings: () => ({}), subscribeSettings: () => () => undefined },
+    } } });
+    try {
+      ui.flushSync(); await Promise.resolve(); ui.flushSync();
+      target.querySelector<HTMLButtonElement>('#cr-intent-note')!.click(); ui.flushSync();
+      const actions = target.querySelectorAll<HTMLButtonElement>('.cr-note-action');
+      expect(actions).toHaveLength(3);
+      expect(Array.from(actions, button => button.textContent?.trim())).toEqual([i18n.messages.workbench.product.expandTitle, i18n.messages.workbench.buttons.verify, i18n.messages.cards.generate]);
+      expect(target.querySelector('.cr-note-action-description')).toBeNull();
+      expect(Array.from(actions, button => button.title)).toEqual([i18n.messages.workbench.product.expandDesc, i18n.messages.workbench.product.verifyDesc, i18n.messages.workbench.product.cardsDesc]);
+      for (const button of Array.from(actions)) {
+        expect(button.tagName).toBe('BUTTON'); expect(button.type).toBe('button');
+        expect(button.classList.contains('cr-btn-secondary')).toBe(true);
+        expect(button.closest('details, summary')).toBeNull(); expect(button.querySelector('svg')).toBeNull();
+        expect(button.hasAttribute('aria-describedby')).toBe(false);
+        button.focus(); expect(document.activeElement).toBe(button);
+      }
+      actions[0].click(); ui.flushSync();
+      expect(actions[0].getAttribute('aria-expanded')).toBe('true'); expect(prepare).toHaveBeenCalledOnce();
+      actions[0].click(); ui.flushSync(); expect(actions[0].getAttribute('aria-expanded')).toBe('false');
+      expect(target.querySelector('.cr-inline-panel--expanded')).toBeNull();
+      actions[1].click(); actions[1].click(); ui.flushSync();
+      expect(verify).toHaveBeenCalledExactlyOnceWith('Synthetic.md');
+      expect(actions[1].disabled).toBe(true); expect(actions[1].getAttribute('aria-busy')).toBe('true');
+      releaseVerify({ ok: true, value: 'verify-workflow' });
+      await vi.waitFor(() => { ui.flushSync(); expect(actions[1].disabled).toBe(false); });
+      actions[2].click(); actions[2].click(); ui.flushSync();
+      expect(cards).toHaveBeenCalledExactlyOnceWith('Synthetic.md');
+      expect(actions[2].disabled).toBe(true); expect(actions[2].getAttribute('aria-busy')).toBe('true');
+      releaseCards({ ok: true, value: 'Synthetic-decks.md' });
+      await vi.waitFor(() => { ui.flushSync(); expect(actions[2].disabled).toBe(false); });
+      expect(actions[1].hasAttribute('aria-expanded')).toBe(false); expect(actions[2].hasAttribute('aria-expanded')).toBe(false);
+    } finally {
+      releaseVerify?.({ ok: false, error: { code: 'E101_INVALID_INPUT' } });
+      releaseCards?.({ ok: false, error: { code: 'E101_INVALID_INPUT' } });
+      await ui.unmount(instance); target.remove();
+    }
+  });
+
   it('separates the two intentions and preserves the concept draft across note changes', async () => {
     const define = vi.fn(); const verify = vi.fn(); const cards = vi.fn();
     const target = document.body.appendChild(document.createElement('div'));
