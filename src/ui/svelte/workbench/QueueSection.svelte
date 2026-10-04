@@ -67,9 +67,9 @@
     const selectableTasks = $derived([...primaryTasks, ...(historyOpen ? historyTasks : [])]);
     const selectedTasks = $derived(tasks.filter((task) => selectedIds.has(task.id)));
     const selectedActive = $derived(selectedTasks.filter((task) => task.state === 'pending' || task.state === 'running'));
-    const selectedFailed = $derived(selectedTasks.filter((task) => task.stageId !== 'cards' && task.state === 'failed' && !isUncertainTask(task)));
-    const selectedRemovable = $derived(selectedTasks.filter((task) => task.state !== 'running'));
-    const retryableFailedCount = $derived(tasks.filter((task) => task.stageId !== 'cards' && task.state === 'failed' && !isUncertainTask(task)).length);
+    const selectedFailed = $derived(selectedTasks.filter((task) => (task.localSavePending || task.stageId !== 'cards') && task.state === 'failed' && !isUncertainTask(task)));
+    const selectedRemovable = $derived(selectedTasks.filter((task) => task.state !== 'running' && !task.localSavePending));
+    const retryableFailedCount = $derived(tasks.filter((task) => (task.localSavePending || task.stageId !== 'cards') && task.state === 'failed' && !isUncertainTask(task)).length);
     const allFilteredSelected = $derived(selectableTasks.length > 0 && selectableTasks.every((task) => selectedIds.has(task.id)));
     const hasMore = $derived(displayedTasks.length < primaryTasks.length);
 

@@ -126,6 +126,8 @@
       "elapsedRun": "本次运行约 {seconds} 秒（不是超时设置值）",
       "uncertainNextStep": "先检查服务端请求或账单记录，确认是否已处理；重试可能重复处理或计费，必须由你单独确认。卡片请确认后从源笔记重新生成。",
       "failureNextStep": "请先检查服务配置和笔记状态，处理问题后再操作；不要连续重复提交。",
+      "retrySave": "重试保存",
+      "localSavePending": "待保存",
       "title": "任务队列",
       "active": "活动",
       "hasFailures": "有失败任务",
@@ -323,7 +325,8 @@
       "saving": "保存中…",
       "saved": "已保存",
       "failed": "保存失败，此次更改尚未写入磁盘",
-      "retry": "重试"
+      "retry": "重试",
+      "reapply": "其他设置已更新；原操作仍未完成，请重新执行原操作。"
     },
     "similarityThreshold": {
       "name": "相似度阈值",

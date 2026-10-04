@@ -10,6 +10,8 @@ import { ContentRenderer } from "./content-renderer";
 import type { TaskRunner } from "./task-runner";
 import { err, ok, type ConfirmedConcept, type ILogger, type Result, type TaskRecord, type TaskExecutionContext } from "../types";
 import { formatCRTimestamp } from "../utils/date-utils";
+import { extractFrontmatter } from "./frontmatter-utils";
+import { getWriteStageIds } from "./stage-catalog";
 import { backupAndClearPluginData, recoverInterruptedReset } from "../data/runtime-data-maintenance";
 
 const concept: ConfirmedConcept = { type: "entity", name: { chinese: "验收概念", english: "Acceptance" }, coreDefinition: "测试定义", parents: [], source: "define" };
@@ -114,9 +116,95 @@ it("retains unknown queued stages without restarting their active workflow", asy
   expect(JSON.parse(reloaded.files.get(path)!).tasks[0].stageId).toBe("retired-stage");
 });
 
-async function completed(f: Awaited<ReturnType<typeof fixture>>) {
-  await vi.waitFor(() => expect(f.queue.getSnapshot().status).toMatchObject({ completed: 4, pending: 0, running: 0, failed: 0 }));
+async function completed(f: Awaited<ReturnType<typeof fixture>>, count = 4) {
+  await vi.waitFor(() => expect(f.queue.getSnapshot().status).toMatchObject({ completed: count, pending: 0, running: 0, failed: 0 }));
 }
+
+describe("Create maturity checkpoints", () => {
+  const maturity = (f: Awaited<ReturnType<typeof fixture>>) => extractFrontmatter(f.files.get("Acceptance.md")!)?.frontmatter.status;
+
+  it.each(["domain", "issue", "theory", "entity", "mechanism"] as const)("marks %s draft only in the final committed Write", async (type) => {
+    const observed: Array<{ stage: string; status: string | undefined }> = [];
+    const f = await fixture(undefined, (point, context) => {
+      if (point === "vault-commit-confirmed") observed.push({ stage: context.stageId, status: maturity(f) });
+    });
+    expect((await f.coordinator.startCreate({ ...concept, type }, { targetPathOverride: "Acceptance.md" })).ok).toBe(true);
+    expect(maturity(f)).toBe("seed");
+    f.start(); const writes = getWriteStageIds(type); await completed(f, writes.length + 2);
+    expect(observed).toEqual([
+      { stage: "tag", status: "seed" },
+      ...writes.map((stage, index) => ({ stage, status: index === writes.length - 1 ? "draft" : "seed" })),
+      { stage: "verify", status: "draft" },
+    ]);
+    expect(f.run.mock.calls.filter(([task]) => task.stageId === "verify")).toHaveLength(1);
+  });
+
+  async function pausedAfterCore() {
+    const f = await fixture(undefined, async (point, context) => {
+      if (point === "applied-checkpoint" && context.stageId === "core") await f.queue.pauseDurably();
+    });
+    await create(f); f.start();
+    await vi.waitFor(() => expect(f.queue.getSnapshot().status).toMatchObject({ paused: true, completed: 2, pending: 1, running: 0 }));
+    return f;
+  }
+
+  it("keeps an incomplete Write seed while paused and reloaded, then runs one Verify after the final Write", async () => {
+    const f = await pausedAfterCore(); expect(maturity(f)).toBe("seed");
+    const reload = await fixture(new Map(f.files)); reload.start();
+    expect(maturity(reload)).toBe("seed"); expect(reload.queue.getSnapshot().status.paused).toBe(true);
+    expect(reload.run).not.toHaveBeenCalled();
+    await reload.queue.resumeDurably(); await completed(reload);
+    expect(maturity(reload)).toBe("draft");
+    expect(reload.run.mock.calls.map(([task]) => task.stageId)).toEqual(["synthesis", "verify"]);
+  });
+
+  it.each(["failed", "cancelled"] as const)("never upgrades a %s incomplete Write or schedules Verify on reload", async (stop) => {
+    const f = await pausedAfterCore(); const next = f.queue.getSnapshot().tasks.find(task => task.state === "pending")!;
+    if (stop === "cancelled") expect((await f.queue.cancelDurably(next.id)).ok).toBe(true);
+    else {
+      f.run.mockImplementation(async () => err("E211_MODEL_SCHEMA_VIOLATION", "synthetic failure"));
+      await f.queue.resumeDurably(); await vi.waitFor(() => expect(f.queue.getSnapshot().status.failed).toBe(1));
+    }
+    expect(maturity(f)).toBe("seed");
+    const reload = await fixture(new Map(f.files)); reload.start(); await reload.queue.resumeDurably();
+    expect(maturity(reload)).toBe("seed"); expect(reload.run).not.toHaveBeenCalled();
+    expect(reload.queue.getSnapshot().tasks.some(task => task.stageId === "verify")).toBe(false);
+  });
+
+  it("keeps seed if the last Write result is valid but its Vault commit fails", async () => {
+    const f = await pausedAfterCore();
+    vi.spyOn(f.repository, "replaceIfUnchanged").mockRejectedValueOnce(new Error("synthetic disk failure"));
+    await f.queue.resumeDurably(); await vi.waitFor(() => expect(f.queue.getSnapshot().status.failed).toBe(1));
+    expect(maturity(f)).toBe("seed");
+    expect(f.store.list()[0]?.pendingStageResult?.stageId).toBe("synthesis");
+    expect(f.queue.getSnapshot().tasks.some(task => task.stageId === "verify")).toBe(false);
+  });
+
+  it("retains draft after all Writes are committed even if Verify fails", async () => {
+    const f = await fixture(); const normal = f.run.getMockImplementation()!;
+    f.run.mockImplementation(async (task, context) => task.stageId === "verify" ? err("E401_PROVIDER_NOT_CONFIGURED", "synthetic missing audit provider") : normal(task, context));
+    await create(f); f.start(); await vi.waitFor(() => expect(f.queue.getSnapshot().status).toMatchObject({ completed: 3, failed: 1, running: 0 }));
+    expect(maturity(f)).toBe("draft"); expect(f.files.get("Acceptance.md")).not.toContain("事实核查报告");
+  });
+
+  it("replays a saved intermediate Write as seed before finishing later Writes", async () => {
+    let saved: Map<string, string> | undefined;
+    const f = await fixture(undefined, (point, context) => {
+      if (point === "vault-commit-confirmed" && context.stageId === "core") {
+        saved = new Map(f.files); throw new Error("synthetic crash after intermediate Vault commit");
+      }
+    });
+    await create(f); f.start(); await vi.waitFor(() => expect(saved).toBeDefined());
+    expect(maturity(f)).toBe("seed");
+    const replayStatuses: Array<{ stage: string; status: string | undefined }> = [];
+    const reload = await fixture(saved, (point, context) => {
+      if (point === "vault-commit-confirmed") replayStatuses.push({ stage: context.stageId, status: maturity(reload) });
+    });
+    reload.start(); await completed(reload);
+    expect(replayStatuses).toEqual([{ stage: "core", status: "seed" }, { stage: "synthesis", status: "draft" }, { stage: "verify", status: "draft" }]);
+    expect(reload.run.mock.calls.map(([task]) => task.stageId)).toEqual(["synthesis", "verify"]);
+  });
+});
 
 describe("workflow user scenarios", () => {
   it("preserves edits made immediately after the Tag write is confirmed", async () => {

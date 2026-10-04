@@ -13,12 +13,12 @@
     import { SvelteSet } from 'svelte/reactivity';
     import { getWorkbenchContext } from '../../bridge/context';
     import Button from '../../components/Button.svelte';
-    import InlineAlert from '../../components/InlineAlert.svelte';
     import type { ExpandPlan, HierarchicalCandidate, HierarchicalPlan, AbstractCandidate, AbstractPlan, AbstractExpandPreview } from '../../../core/expand-orchestrator';
     import type { CRType } from '../../../types';
     import { confirmDefinePreview } from '../../../domain/concept';
     import TypeTable from './TypeTable.svelte';
     import { toSafeErrorFeedback, type UiFeedback } from '../../error-feedback';
+    import { showActionFeedback } from '../../feedback';
 
     let {
         activeFile,
@@ -32,19 +32,20 @@
     const ctx = getWorkbenchContext();
     const t = ctx.i18n.messages;
     const expand = ctx.application.expand;
-    const detailsToggleLabels = {
-        expand: t.common.details.expand,
-        collapse: t.common.details.collapse,
-    };
 
     // 组件状态
     let loading = $state(true);
-    let feedback = $state<UiFeedback | null>(null);
+    let loadFailed = $state(false);
     let plan = $state<ExpandPlan | null>(null);
     let abstractPreview = $state<AbstractExpandPreview | null>(null);
     const selected = new SvelteSet<number>();
     let submitting = $state(false);
     let loadGeneration = 0;
+    let mounted = true;
+    $effect(() => () => { mounted = false; });
+    function report(feedback: UiFeedback, sourcePath?: string): void {
+        if (mounted) showActionFeedback(feedback, sourcePath);
+    }
 
     function getCreatableIndices(value: ExpandPlan | null): number[] {
         if (!value) return [];
@@ -89,7 +90,8 @@
     async function loadCandidates(file: TFile | null, generation: number): Promise<void> {
         if (!file) {
             if (generation !== loadGeneration) return;
-            feedback = { level: 'error', message: t.expand.notInitialized };
+            loadFailed = true;
+            report({ level: 'error', message: t.expand.notInitialized });
             plan = null;
             abstractPreview = null;
             selected.clear();
@@ -98,7 +100,8 @@
         }
 
         loading = true;
-        feedback = null;
+        loadFailed = false;
+        submitting = false;
         plan = null;
         abstractPreview = null;
         selected.clear();
@@ -109,11 +112,13 @@
             if (result.ok) {
                 plan = result.value;
             } else {
-                feedback = toSafeErrorFeedback(result.error, t.workbench.notifications.unknownFailure);
+                loadFailed = true;
+                report(toSafeErrorFeedback(result.error, t.workbench.notifications.unknownFailure), file.path);
             }
         } catch (_error) {
             if (generation !== loadGeneration) return;
-            feedback = toSafeErrorFeedback(_error, t.workbench.notifications.unknownFailure);
+            loadFailed = true;
+            report(toSafeErrorFeedback(_error, t.workbench.notifications.unknownFailure), file.path);
         } finally {
             if (generation === loadGeneration) {
                 loading = false;
@@ -159,7 +164,6 @@
         const submittedPlan = plan;
         const submissionGeneration = loadGeneration;
         submitting = true;
-        feedback = null;
         try {
             if (submittedPlan.mode === 'hierarchical') {
                 const selectedCandidates = [...selected].map(i => submittedPlan.candidates[i] as HierarchicalCandidate);
@@ -167,24 +171,24 @@
                 if (result.ok) {
                     const { started, failed } = result.value;
                     if (failed.length > 0) {
-                        feedback = {
+                        report({
                             level: 'warning',
                             message: t.expand.startedWithFailures
                                 .replace('{started}', String(started))
                                 .replace('{failed}', String(failed.length)),
-                        };
+                        }, submittedPlan.currentPath);
                     } else {
-                        feedback = {
+                        report({
                             level: 'success',
                             message: t.expand.started.replace('{count}', String(started)),
-                        };
+                        }, submittedPlan.currentPath);
                     }
                     if (submissionGeneration === loadGeneration) {
                         selected.clear();
                         plan = null;
                     }
                 } else {
-                    feedback = toSafeErrorFeedback(result.error, t.workbench.notifications.unknownFailure);
+                    report(toSafeErrorFeedback(result.error, t.workbench.notifications.unknownFailure), submittedPlan.currentPath);
                 }
             } else {
                 // Abstract mode stops at a preview. A separate click confirms it.
@@ -193,13 +197,13 @@
                 if (result.ok) {
                     if (submissionGeneration === loadGeneration) abstractPreview = result.value;
                 } else {
-                    feedback = toSafeErrorFeedback(result.error, t.workbench.notifications.unknownFailure);
+                    report(toSafeErrorFeedback(result.error, t.workbench.notifications.unknownFailure), submittedPlan.currentPath);
                 }
             }
         } catch (_error) {
-            feedback = toSafeErrorFeedback(_error, t.workbench.notifications.unknownFailure);
+            report(toSafeErrorFeedback(_error, t.workbench.notifications.unknownFailure), submittedPlan.currentPath);
         } finally {
-            submitting = false;
+            if (submissionGeneration === loadGeneration) submitting = false;
         }
     }
 
@@ -211,29 +215,29 @@
             parents: pending.parents,
         });
         if (!confirmed.ok) {
-            feedback = toSafeErrorFeedback(confirmed.error, t.workbench.notifications.unknownFailure);
+            report(toSafeErrorFeedback(confirmed.error, t.workbench.notifications.unknownFailure), plan?.currentPath);
             return;
         }
 
         const confirmationGeneration = loadGeneration;
+        const sourcePath = plan?.currentPath;
         submitting = true;
-        feedback = null;
         try {
             const result = await expand.confirmAbstract(pending, confirmed.value);
             if (result.ok) {
-                feedback = { level: 'success', message: t.expand.started.replace('{count}', '1') };
+                report({ level: 'success', message: t.expand.started.replace('{count}', '1') }, sourcePath);
                 if (confirmationGeneration === loadGeneration) {
                     abstractPreview = null;
                     selected.clear();
                     plan = null;
                 }
             } else {
-                feedback = toSafeErrorFeedback(result.error, t.workbench.notifications.unknownFailure);
+                report(toSafeErrorFeedback(result.error, t.workbench.notifications.unknownFailure), sourcePath);
             }
         } catch (_error) {
-            feedback = toSafeErrorFeedback(_error, t.workbench.notifications.unknownFailure);
+            report(toSafeErrorFeedback(_error, t.workbench.notifications.unknownFailure), sourcePath);
         } finally {
-            submitting = false;
+            if (confirmationGeneration === loadGeneration) submitting = false;
         }
     }
 
@@ -249,18 +253,14 @@
         <span class="cr-loading-spinner" aria-hidden="true"></span>
         <span>{t.workbench.buttons.expand}...</span>
     </div>
-{:else if feedback && !plan}
+{:else if loadFailed && !plan}
     <div class="cr-expand-feedback">
-        <InlineAlert level={feedback?.level ?? 'error'} message={feedback?.message ?? t.workbench.notifications.unknownFailure} details={feedback?.details} {detailsToggleLabels} />
         <Button variant="ghost" size="sm" onclick={() => onclose?.()}>
             {t.common.cancel}
         </Button>
     </div>
 {:else if plan}
     <div class="cr-expand-panel">
-        {#if feedback}
-            <InlineAlert level={feedback.level} message={feedback.message} details={feedback.details} {detailsToggleLabels} />
-        {/if}
         <!-- 统计信息 -->
         {#if stats}
             <div class="cr-expand-stats">

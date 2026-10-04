@@ -102,13 +102,13 @@
                         {i18n.t('settings.save.saved')}
                     {:else}
                         <span>{i18n.t('settings.save.failed')}{saveState.error?.message ? `：${saveState.error.message}` : ''}</span>
-                        <Button
+                        {#if saveState.retryable !== false}<Button
                             variant="ghost"
                             size="sm"
                             onclick={() => void settingsApplication.retryLastSave()}
                         >
                             {i18n.t('settings.save.retry')}
-                        </Button>
+                        </Button>{:else}<span>{i18n.t('settings.save.reapply')}</span>{/if}
                     {/if}
                 </div>
             {/if}

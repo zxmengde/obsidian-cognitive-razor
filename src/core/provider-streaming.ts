@@ -13,6 +13,8 @@ export type ProviderStreamProtocol =
 export type ProviderStreamTransport = "node-http" | "renderer-fetch";
 
 export interface ProviderStreamRequest {
+  /** Lets the transport honor authoritative Responses terminal events. */
+  protocol?: ProviderStreamProtocol;
   transport?: ProviderStreamTransport;
   url: string;
   headers: Record<string, string>;
@@ -157,6 +159,8 @@ export const requestProviderStream: ProviderStreamRequester = (input) =>
     let abortHandler: (() => void) | undefined;
     const chunks: Uint8Array[] = [];
     let totalBytes = 0;
+    const terminal = createResponsesStreamCompletionTracker(input.protocol);
+    const streamDecoder = new TextDecoder();
 
     const cleanup = (): void => {
       if (timeoutHandle !== undefined) {
@@ -233,12 +237,20 @@ export const requestProviderStream: ProviderStreamRequester = (input) =>
       armTimeout();
 
       incoming.on("data", (chunk: Buffer | string) => {
+        if (settled) return;
         armTimeout();
         const bytes = typeof chunk === "string"
           ? new TextEncoder().encode(chunk)
           : Uint8Array.from(chunk);
         chunks.push(bytes);
         totalBytes += bytes.byteLength;
+        const end = terminal?.(streamDecoder.decode(bytes, { stream: true }));
+        if (end !== undefined && (incoming.statusCode ?? 0) >= 200 && (incoming.statusCode ?? 0) < 300) {
+          responseEnded = true;
+          settleResolve({ status: incoming.statusCode ?? 0, headers: toHeaders(incoming), body: decodeBody().slice(0, end) });
+          incoming.destroy();
+          request?.destroy();
+        }
       });
       incoming.once("end", () => {
         responseEnded = true;
@@ -427,6 +439,33 @@ function parseSseEvents(body: string, onEvent?: (event: StreamEvent) => void): R
   const result = flush();
   if (!result.ok) return result;
   return events.length > 0 ? ok(events) : streamUnsupported("Provider 没有返回流式事件");
+}
+
+/** Detect a fully framed terminal event without waiting for proxy EOF.
+ * Only transport completion changes; aggregation still decides success/error.
+ * Return the decoded-text boundary so a partial trailer cannot corrupt it. */
+export function createResponsesStreamCompletionTracker(protocol?: ProviderStreamProtocol): ((chunk: string) => number | undefined) | undefined {
+  if (protocol !== "openai-responses") return undefined;
+  let line = "", lines: string[] = [], offset = 0, skipLf = false;
+  return (chunk) => {
+    for (let index = 0; index < chunk.length; index++) {
+      const char = chunk[index];
+      offset++;
+      if (skipLf && char === "\n") { skipLf = false; continue; }
+      skipLf = false;
+      if (char !== "\r" && char !== "\n") { line += char; continue; }
+      skipLf = char === "\r";
+      if (line) { lines.push(line); line = ""; continue; }
+      const parsed = parseSseEvents(`${lines.join("\n")}\n\n`.replace(/^\uFEFF/, ""));
+      lines = [];
+      if (parsed.ok && parsed.value.some(event => {
+        const data = asRecord(event.data);
+        const type = typeof data?.type === "string" ? data.type : event.name;
+        return type === "response.completed" || type === "response.done" || type === "response.incomplete" || type === "response.failed" || type === "error";
+      })) return offset;
+    }
+    return undefined;
+  };
 }
 
 function textFromDelta(value: unknown, depth = 0): string {

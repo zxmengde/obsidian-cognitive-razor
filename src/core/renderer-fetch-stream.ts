@@ -1,5 +1,5 @@
 /** Explicit renderer transport; never selected by runtime failure or provider guessing. */
-import { ProviderStreamAbortError, ProviderStreamNetworkError, ProviderStreamTimeoutError } from "./provider-streaming";
+import { createResponsesStreamCompletionTracker, ProviderStreamAbortError, ProviderStreamNetworkError, ProviderStreamTimeoutError } from "./provider-streaming";
 import type { ProviderStreamPhase, ProviderStreamRequester, ProviderStreamResponse } from "./provider-streaming";
 
 export class RendererStreamTimeoutError extends ProviderStreamTimeoutError {
@@ -57,7 +57,8 @@ export function createRendererStreamRequester(
         if (response.type === "opaque" || response.type === "opaqueredirect" || response.status === 0 || !response.body) throw Error();
         reader = response.body.getReader();
         const decoder = new TextDecoder();
-        let body = ""; let bytes = 0;
+        const terminal = createResponsesStreamCompletionTracker(input.protocol);
+        let body = ""; let bytes = 0; let terminalReached = false;
         while (!settled) {
           const part = await reader.read();
           if (settled) return;
@@ -68,13 +69,26 @@ export function createRendererStreamRequester(
           firstChunkMs ??= chunkMs; lastChunkMs = chunkMs; chunkCount++;
           bytes += part.value.byteLength;
           if (bytes > (limits.maxBytes ?? 8 * 1024 * 1024)) { fail(new ProviderStreamNetworkError(phase, "STREAM_SIZE_LIMIT")); return; }
-          resetIdle(); body += decoder.decode(part.value, { stream: true });
+          resetIdle();
+          const text = decoder.decode(part.value, { stream: true });
+          body += text;
+          const end = terminal?.(text);
+          if (end !== undefined && response.status >= 200 && response.status < 300) {
+            terminalReached = true;
+            body = body.slice(0, end);
+            void reader.cancel().catch(() => undefined);
+            break;
+          }
         }
         if (settled) return;
-        body += decoder.decode();
+        // A terminal boundary already ends in a complete UTF-8 frame.
+        // Otherwise preserve the ordinary EOF decoder flush.
+        if (!terminalReached) body += decoder.decode();
         const headers: Record<string, string> = {};
         response.headers.forEach((value, key) => { headers[key] = value; });
-        settled = true; cleanup(); resolve({ status: response.status, headers, body, diagnostics: { chunkCount, byteCount: bytes, firstResponseMs, firstChunkMs, chunkSpanMs: firstChunkMs === null ? 0 : lastChunkMs - firstChunkMs, maxChunkGapMs } });
+        settled = true; cleanup();
+        if (terminalReached) controller.abort();
+        resolve({ status: response.status, headers, body, diagnostics: { chunkCount, byteCount: bytes, firstResponseMs, firstChunkMs, chunkSpanMs: firstChunkMs === null ? 0 : lastChunkMs - firstChunkMs, maxChunkGapMs } });
       } catch {
         fail(new ProviderStreamNetworkError(phase, phase === "before-response" ? "FETCH_REJECTED" : "READ_FAILED"));
       } finally {

@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createRendererStreamRequester, RendererStreamTimeoutError } from "./renderer-fetch-stream";
 import { aggregateProviderStream, ProviderStreamAbortError, ProviderStreamNetworkError } from "./provider-streaming";
 import { ObsidianProviderTransport } from "./provider-transport";
-const input = { url: "https://example.test/v1/responses", headers: { Authorization: "Bearer synthetic", "Content-Type": "application/json" }, body: '{"stream":true}', timeoutMs: 1000 };
+const input = { protocol: "openai-responses" as const, url: "https://example.test/v1/responses", headers: { Authorization: "Bearer synthetic", "Content-Type": "application/json" }, body: '{"stream":true}', timeoutMs: 1000 };
 const encode = (s: string) => new TextEncoder().encode(s);
 function response(body: ReadableStream<Uint8Array>, status=200) { return { status, type:"cors", headers:new Headers({"content-type":"text/event-stream"}), body } as Response; }
 afterEach(()=>vi.useRealTimers());
@@ -136,7 +136,9 @@ it("times out when upstream heartbeats are buffered and no bytes reach the reade
   expect(upstreamWrites).toBe(5); expect(f).toHaveBeenCalledOnce();
 });
 
-it("does not accept a terminal SSE event when the connection subsequently fails before EOF", async () => {
-  const f = vi.fn(async () => response(new ReadableStream({ start(c) { c.enqueue(encode('data: {"type":"response.completed","response":{"status":"completed","output_text":"must not commit"}}\n\n')); }, pull(c) { c.error(Error("synthetic proxy disconnect")); } })));
-  await expect(createRendererStreamRequester(f)(input)).rejects.toMatchObject({ phase:"after-response",message:"READ_FAILED" }); expect(f).toHaveBeenCalledOnce();
+it("accepts authoritative Responses completion before a later proxy disconnect", async () => {
+  const f = vi.fn(async () => response(new ReadableStream({ start(c) { c.enqueue(encode('data: {"type":"response.completed","response":{"status":"completed","output_text":"already complete"}}\n\n')); }, pull(c) { c.error(Error("synthetic proxy disconnect")); } })));
+  const result = await createRendererStreamRequester(f)(input);
+  expect(aggregateProviderStream("openai-responses", result.body)).toMatchObject({ ok: true, value: { output_text: "already complete", status: "completed" } });
+  expect(f).toHaveBeenCalledOnce();
 });

@@ -816,6 +816,7 @@ export class ProviderManager implements ModelGateway {
 
       attempt.markSent();
       const response = await this.transport.requestStream({
+        protocol,
         transport: streamTransport,
         url: streamUrl,
         headers: {

@@ -716,16 +716,21 @@ export class WorkflowCoordinator {
 
   private renderCreateNote(artifact: WorkflowArtifact, updatedAt?: string): string {
     if (!artifact.concept) throw new Error("工作流缺少概念快照");
+    // The current validated Write is still pending its atomic Vault commit.
+    // Only that final commit may advance the note beyond seed.
+    const pendingStage = artifact.pendingStageResult?.stageId;
+    const status = getWriteStageIds(artifact.type).every(stage => artifact.appliedStageIds.includes(stage) || stage === pendingStage)
+      ? "draft" as const : "seed" as const;
     const body = this.deps.contentRenderer.renderNoteMarkdown({ title: artifact.noteTitle, type: artifact.type, content: artifact.accumulated, language: "zh", directoryScheme: artifact.directoryScheme });
     const snapshotFrontmatter = artifact.contentSnapshot ? extractFrontmatter(artifact.contentSnapshot)?.frontmatter : undefined;
     const baseFrontmatter = snapshotFrontmatter
       ? {
         ...snapshotFrontmatter,
-        status: "draft" as const,
+        status,
         aliases: artifact.tagResult?.aliases ?? snapshotFrontmatter.aliases,
         tags: artifact.tagResult?.tags ?? snapshotFrontmatter.tags,
       }
-      : generateFrontmatter({ cruid: artifact.nodeId, type: artifact.type, name: artifact.noteTitle, parents: artifact.parents, status: "draft", aliases: artifact.tagResult?.aliases, tags: artifact.tagResult?.tags });
+      : generateFrontmatter({ cruid: artifact.nodeId, type: artifact.type, name: artifact.noteTitle, parents: artifact.parents, status, aliases: artifact.tagResult?.aliases, tags: artifact.tagResult?.tags });
     const frontmatter = updatedAt ? { ...baseFrontmatter, updated: updatedAt } : baseFrontmatter;
     return generateMarkdownContent(frontmatter, body, artifact.contentSnapshot);
   }

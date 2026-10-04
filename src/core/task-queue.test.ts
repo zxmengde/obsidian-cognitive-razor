@@ -294,24 +294,26 @@ describe("TaskQueue runtime model", () => {
     expect(queue.getSnapshot().tasks).toHaveLength(205);
     await queue.dispose();
   });
-  it("keeps execution ownership when terminal state persistence fails", async () => {
-    const atomicWrite = vi.fn()
-      .mockResolvedValueOnce(ok(undefined))
-      .mockResolvedValueOnce(err("E303_DISK_FULL", "disk full"));
+  it("exposes a terminal save failure and retries only the local write with execution ownership intact", async () => {
+    let fail = true;
+    const atomicWrite = vi.fn(async (_path: string, text: string) => {
+      if (fail && JSON.parse(text).tasks.some((task: TaskRecord) => task.state === "failed")) return err("E303_DISK_FULL", "disk full");
+      return ok(undefined);
+    });
     const fileStorage = { atomicWrite } as never;
     const queue = new TaskQueue(createLogger(), createSettingsStore(), { fileStorage });
-    queue.setTaskRunner(createRunner(async () => err("E204_PROVIDER_ERROR", "upstream failed"), vi.fn()));
+    const run = vi.fn(async () => err("E204_PROVIDER_ERROR", "upstream failed"));
+    queue.setTaskRunner(createRunner(run));
     const id = await enqueue(queue, createWriteTask("persist-failure"));
 
-    await vi.waitFor(() => expect(queue.getTask(id)?.state).toBe("running"));
-    expect(queue.getTask(id)?.error).toBeUndefined();
-
-    // Restore storage and cancel the still-owned execution. If the token had
-    // been released before the failed write, this cancellation would be
-    // ignored and the task would remain stuck in Running forever.
-    atomicWrite.mockResolvedValue(ok(undefined));
-    await expect(queue.cancelDurably(id)).resolves.toEqual(ok(true));
-    expect(queue.getTask(id)?.state).toBe("cancelled");
+    await vi.waitFor(() => expect(queue.getTask(id)?.localSavePending).toBe(true));
+    expect(queue.getTask(id)).toMatchObject({ state: "failed", error: { stage: "storage", code: "E303_DISK_FULL" } });
+    expect((await queue.cancelDurably(id)).ok).toBe(false);
+    fail = false;
+    await expect(queue.retryLocalSaveDurably(id)).resolves.toEqual(ok(true));
+    expect(queue.getTask(id)).toMatchObject({ state: "failed", error: { code: "E204_PROVIDER_ERROR" }, attempt: 1 });
+    expect(queue.getTask(id)?.localSavePending).toBeUndefined();
+    expect(run).toHaveBeenCalledOnce();
     await queue.dispose();
   });
 

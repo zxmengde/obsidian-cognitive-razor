@@ -98,6 +98,12 @@ export class TaskQueue {
   private readonly committingTasks = new Set<string>();
   private readonly pendingCancellations = new Map<string, Promise<void>>();
   private readonly resultContexts = new Map<string, TaskExecutionContext>();
+  /** A chosen outcome retains scheduling ownership, but never grants late provider results write access. */
+  private readonly terminalTokens = new Map<string, symbol>();
+  private readonly pendingLocalSaves = new Map<string, {
+    error: TaskError;
+    retry: () => Promise<Result<void>>;
+  }>();
   private readonly workflowMutations = new Set<Promise<unknown>>();
   private readonly listeners: QueueEventListener[] = [];
   private readonly executionService: TaskExecutionService;
@@ -251,7 +257,8 @@ export class TaskQueue {
   }
 
   async cancelDurably(taskId: string): Promise<Result<boolean>> {
-    if (this.committingTasks.has(taskId)) return err("E310_INVALID_STATE", "模型结果正在保存，请等待保存结束后再操作");
+    if (this.pendingLocalSaves.has(taskId)) return err("E310_INVALID_STATE", "任务请求已经结束，请重试保存已有结果");
+    if (this.committingTasks.has(taskId) || this.terminalTokens.has(taskId)) return err("E310_INVALID_STATE", "任务结果正在保存，请等待保存结束后再操作");
     const task = this.tasks.get(taskId);
     if (!task) return err("E311_NOT_FOUND", "任务不存在");
     if (task.state !== "pending" && task.state !== "running") return err("E310_INVALID_STATE", "只有等待中或运行中的任务可以取消");
@@ -270,11 +277,26 @@ export class TaskQueue {
   async cancelAllActiveDurably(): Promise<Result<number>> { return this.cancelMatching((task) => task.state === "pending" || task.state === "running"); }
 
   async retryDurably(taskId: string): Promise<Result<boolean>> {
+    if (this.pendingLocalSaves.has(taskId)) return this.retryLocalSaveDurably(taskId);
     return this.retryDurablyWithConfirmation(taskId, false);
+  }
+
+  /** Retry only the terminal queue write. The runner and workflow side effects are never replayed. */
+  async retryLocalSaveDurably(taskId: string): Promise<Result<boolean>> {
+    if (this.disposed) return err("E310_INVALID_STATE", "任务队列已停止");
+    const pending = this.pendingLocalSaves.get(taskId);
+    if (!pending) return err("E310_INVALID_STATE", "任务没有待重试的本地保存");
+    if (this.committingTasks.has(taskId)) return err("E310_INVALID_STATE", "任务结果正在保存");
+    this.committingTasks.add(taskId);
+    try {
+      const result = await pending.retry();
+      return result.ok ? ok(true) : result;
+    } finally { this.committingTasks.delete(taskId); }
   }
 
   /** Call only after a user explicitly accepts duplicate-request risk. */
   async retryUncertainDurably(taskId: string): Promise<Result<boolean>> {
+    if (this.pendingLocalSaves.has(taskId)) return this.retryLocalSaveDurably(taskId);
     return this.retryDurablyWithConfirmation(taskId, true);
   }
 
@@ -299,7 +321,14 @@ export class TaskQueue {
   }
 
   async retryFailedDurably(): Promise<Result<number>> {
-    const candidates = [...this.tasks.values()].filter((task) => this.canRetryInBulk(task) && !this.findActiveConflict(task, task.id));
+    let saved = 0;
+    const localTaskIds = new Set(this.pendingLocalSaves.keys());
+    for (const taskId of localTaskIds) {
+      const result = await this.retryLocalSaveDurably(taskId);
+      if (!result.ok) return result;
+      if (result.value) saved++;
+    }
+    const candidates = [...this.tasks.values()].filter((task) => !localTaskIds.has(task.id) && this.canRetryInBulk(task) && !this.findActiveConflict(task, task.id));
     for (const task of candidates) {
       try { await this.runWorkflowMutation(() => this.workflowPort?.beforeRetry?.(clone(task))); } catch (cause) { return err("E500_INTERNAL_ERROR", "更新工作流重试状态失败", cause); }
     }
@@ -312,7 +341,7 @@ export class TaskQueue {
         retried.push(current.id);
       }
       if (retried.length) this.invalidateSnapshot();
-      return ok({ value: retried.length, events: retried.length ? [{ type: "tasks-retried", taskIds: retried }] : [] });
+      return ok({ value: saved + retried.length, events: retried.length ? [{ type: "tasks-retried", taskIds: retried }] : [] });
     }).then((result) => { if (result.ok && result.value > 0) this.requestSchedule(); return result; });
   }
 
@@ -389,7 +418,7 @@ export class TaskQueue {
   }
 
   getSnapshot(): QueueSnapshot { return clone(this.getOrCreateSnapshot()); }
-  getTask(taskId: string): TaskRecord | undefined { const task = this.tasks.get(taskId); return task ? clone(task) : undefined; }
+  getTask(taskId: string): TaskRecord | undefined { const task = this.tasks.get(taskId); return task ? this.displayTask(task) : undefined; }
 
   subscribe(listener: QueueEventListener): () => void {
     if (this.disposed) return () => undefined;
@@ -416,6 +445,8 @@ export class TaskQueue {
       this.executionService.clear();
       this.committingTasks.clear();
       this.resultContexts.clear();
+      this.pendingLocalSaves.clear();
+      this.terminalTokens.clear();
       this.tasks.clear();
       this.listeners.length = 0;
       this.snapshot = undefined;
@@ -427,7 +458,7 @@ export class TaskQueue {
 
   private async cancelMatching(predicate: (task: TaskRecord) => boolean): Promise<Result<number>> {
     const candidates = [...this.tasks.values()].filter(predicate);
-    if (candidates.some((task) => this.committingTasks.has(task.id))) return err("E310_INVALID_STATE", "部分模型结果正在保存，请等待保存结束后再取消");
+    if (candidates.some((task) => this.committingTasks.has(task.id) || this.terminalTokens.has(task.id))) return err("E310_INVALID_STATE", "部分任务结果正在保存或等待重试保存，请先完成本地保存");
     return this.cancelTasks(candidates, predicate, (outcomes) => {
       const cancelled = outcomes.filter((outcome) => !outcome.failure).map((outcome) => outcome.taskId);
       const failed = outcomes.filter((outcome) => outcome.failure).map((outcome) => outcome.taskId);
@@ -562,13 +593,13 @@ export class TaskQueue {
       const configured = this.settingsStore.getSettings().taskTimeoutMs;
       const timeoutMs = Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_TASK_TIMEOUT_MS;
       handle = setTimeout(() => {
-        if (!this.executionService.isCurrent(task, token)) return;
+        if (!this.executionService.isCurrent(task, token) || this.terminalTokens.get(task.id) === token) return;
         try { runner.abort(task.id); } catch (cause) { this.logger.warn("TaskQueue", "超时后中断任务失败", { taskId: task.id, cause: String(cause) }); }
         void this.finishFailure(task, { ...this.uncertainFailure("任务执行超时，Provider 是否完成请求未知；不会自动重试"), details: { timeoutMs: Math.max(1000, timeoutMs) } }, token);
       }, Math.max(1000, timeoutMs));
       this.executionService.setTimeout(task.id, token, handle);
       while (this.pendingCancellations.has(task.id)) await this.pendingCancellations.get(task.id);
-      if (!this.executionService.isCurrent(task, token)) return;
+      if (!this.executionService.isCurrent(task, token) || this.terminalTokens.get(task.id) === token) return;
       if (this.workflowPort?.canResumeWithoutRequest?.(task)) {
         this.committingTasks.add(task.id);
         this.executionService.clearTimeout(task.id, token);
@@ -584,14 +615,14 @@ export class TaskQueue {
       }
       const cachedResult = await this.workflowPort?.resolveCachedResult?.(clone(task))
         ?? (task.result ? ok(clone(task.result)) : undefined);
-      if (!this.executionService.isCurrent(task, token)) return;
+      if (!this.executionService.isCurrent(task, token) || this.terminalTokens.get(task.id) === token) return;
       const result = cachedResult
         ? cachedResult
         : await runner.run(clone(task), context);
       // Cancellation owns its durable state transition before a late result
       // may touch the note. If cancellation fails, the same result can proceed.
       while (this.pendingCancellations.has(task.id)) await this.pendingCancellations.get(task.id);
-      if (!this.executionService.isCurrent(task, token)) return;
+      if (!this.executionService.isCurrent(task, token) || this.terminalTokens.get(task.id) === token) return;
       if (!result.ok) { await this.finishFailure(task, result.error, token); return; }
       // Preserve a validated response across a local storage retry. This is
       // intentionally in memory only until the workflow checkpoint succeeds.
@@ -617,7 +648,10 @@ export class TaskQueue {
     }
   }
 
-  private async finishSuccess(task: TaskRecord, result: Record<string, unknown>, completion: TaskCompletionCommit, token: symbol): Promise<void> {
+  private async finishSuccess(task: TaskRecord, result: Record<string, unknown>, completion: TaskCompletionCommit, token: symbol, retryingLocalSave = false): Promise<Result<void>> {
+    if (!this.executionService.isCurrent(task, token) || (!retryingLocalSave && this.terminalTokens.get(task.id) === token)) return ok(undefined);
+    this.terminalTokens.set(task.id, token);
+    this.executionService.clearTimeout(task.id, token);
     const committed = await this.commitMutation(() => {
       if (!this.executionService.isCurrent(task, token)) return ok({ value: undefined, events: [] });
       const previousState = task.state;
@@ -640,17 +674,27 @@ export class TaskQueue {
       this.invalidateSnapshot();
       return ok({ value: undefined, events });
     });
-    if (!committed.ok) { this.logger.error("TaskQueue", "保存已完成任务失败", undefined, { taskId: task.id, error: committed.error }); return; }
+    if (!committed.ok) {
+      this.logger.error("TaskQueue", "保存已完成任务失败", undefined, { taskId: task.id, error: committed.error });
+      this.retainLocalSave(task, committed.error.code, () => this.finishSuccess(task, result, completion, token, true));
+      return committed;
+    }
+    this.pendingLocalSaves.delete(task.id);
+    this.invalidateSnapshot();
     this.executionService.release(task.id, token);
+    this.terminalTokens.delete(task.id);
     this.resultContexts.delete(task.id);
     try { await this.runWorkflowMutation(() => this.workflowPort?.afterComplete?.(clone(task))); }
     catch (cause) { this.logger.warn("TaskQueue", "任务已完成，恢复记录清理失败；下次重载继续清理", { taskId: task.id, cause: String(cause) }); }
     this.requestSchedule();
     void this.pruneHistory();
+    return ok(undefined);
   }
 
-  private async finishFailure(task: TaskRecord, failure: { code: string; message: string; details?: unknown; kind?: TaskFailureKind }, token: symbol): Promise<void> {
-    if (!this.executionService.isCurrent(task, token)) return;
+  private async finishFailure(task: TaskRecord, failure: { code: string; message: string; details?: unknown; kind?: TaskFailureKind }, token: symbol, checkpointed = false): Promise<Result<void>> {
+    if (!this.executionService.isCurrent(task, token) || (!checkpointed && this.terminalTokens.get(task.id) === token)) return ok(undefined);
+    this.terminalTokens.set(task.id, token);
+    this.executionService.clearTimeout(task.id, token);
     const providerAttempts = extractProviderAttempts(failure.details);
     const taskError: TaskError = {
       code: failure.code,
@@ -660,7 +704,9 @@ export class TaskQueue {
       stage: this.classifyFailure(failure.code),
       ...(providerAttempts === undefined ? {} : { providerAttempts }),
     };
-    try { await this.runWorkflowMutation(() => this.workflowPort?.beforeFail?.(clone(task), clone(taskError))); } catch (cause) { this.logger.error("TaskQueue", "保存失败工作流状态失败", cause as Error, { taskId: task.id }); }
+    if (!checkpointed) {
+      try { await this.runWorkflowMutation(() => this.workflowPort?.beforeFail?.(clone(task), clone(taskError))); } catch (cause) { this.logger.error("TaskQueue", "保存失败工作流状态失败", cause as Error, { taskId: task.id }); }
+    }
     const committed = await this.commitMutation(() => {
       if (!this.executionService.isCurrent(task, token)) return ok({ value: undefined, events: [] });
       const previousState = task.state;
@@ -672,10 +718,29 @@ export class TaskQueue {
       this.invalidateSnapshot();
       return ok({ value: undefined, events: [{ type: "task-failed", taskId: task.id }] });
     });
-    if (!committed.ok) { this.logger.error("TaskQueue", "保存失败任务状态失败", undefined, { taskId: task.id, error: committed.error }); return; }
+    if (!committed.ok) {
+      this.logger.error("TaskQueue", "保存失败任务状态失败", undefined, { taskId: task.id, error: committed.error });
+      this.retainLocalSave(task, committed.error.code, () => this.finishFailure(task, failure, token, true));
+      return committed;
+    }
+    this.pendingLocalSaves.delete(task.id);
+    this.invalidateSnapshot();
     this.executionService.release(task.id, token);
+    this.terminalTokens.delete(task.id);
     this.requestSchedule();
     void this.pruneHistory();
+    return ok(undefined);
+  }
+
+  private retainLocalSave(task: TaskRecord, code: string, retry: () => Promise<Result<void>>): void {
+    this.pendingLocalSaves.set(task.id, { retry, error: { code,
+      message: "任务请求已结束，但本地状态保存失败；重试保存不会再次请求模型", kind: "known", stage: "storage" } });
+    this.publishEvent({ type: "task-failed", taskId: task.id });
+  }
+
+  private displayTask(task: TaskRecord): TaskRecord {
+    const pending = this.pendingLocalSaves.get(task.id);
+    return pending && task.state === "running" ? { ...clone(task), state: "failed", localSavePending: true, error: clone(pending.error) } : clone(task);
   }
 
   private createRuntimeTask(intent: NewTaskRecord): TaskRecord {
@@ -842,7 +907,8 @@ export class TaskQueue {
   private getOrCreateSnapshot(): QueueSnapshot {
     if (this.snapshot) return this.snapshot;
     const status: QueueStatus = { paused: this.paused, total: this.tasks.size, pending: 0, running: 0, completed: 0, failed: 0, cancelled: 0, interrupted: 0 };
-    for (const task of this.tasks.values()) {
+    const tasks = [...this.tasks.values()].map(task => this.displayTask(task));
+    for (const task of tasks) {
       if (task.state === "pending") status.pending += 1;
       else if (task.state === "running") status.running += 1;
       else if (task.state === "completed") status.completed += 1;
@@ -850,7 +916,7 @@ export class TaskQueue {
       else if (task.state === "interrupted") status.interrupted += 1;
       else status.cancelled += 1;
     }
-    this.snapshot = { status, tasks: [...this.tasks.values()].sort((a, b) => (a.queueOrder ?? 0) - (b.queueOrder ?? 0) || a.createdAt - b.createdAt) };
+    this.snapshot = { status, tasks: tasks.sort((a, b) => (a.queueOrder ?? 0) - (b.queueOrder ?? 0) || a.createdAt - b.createdAt) };
     return this.snapshot;
   }
 

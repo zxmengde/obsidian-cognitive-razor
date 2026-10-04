@@ -63,11 +63,11 @@
             <span class="cr-task-name" title={task.stageId === 'cards' ? `${displayName} → ${task.payload.targetPath ?? ''}` : displayName}>{displayName}</span>
             <span class="cr-task-actions">
                 {#if task.state === 'pending' || task.state === 'running'}<Button variant="ghost" size="sm" disabled={disabled} onclick={() => oncancel(task.id)} ariaLabel={t.workbench.queueStatus.cancel}>{t.workbench.queueStatus.cancel}</Button>
-                {:else if selectable}<Button variant="ghost" size="icon" disabled={disabled} onclick={() => onremove(task.id)} ariaLabel={t.workbench.queueStatus.delete}><Icon name="trash-2" size={16} /></Button>{/if}
+                {:else if selectable && !task.localSavePending}<Button variant="ghost" size="icon" disabled={disabled} onclick={() => onremove(task.id)} ariaLabel={t.workbench.queueStatus.delete}><Icon name="trash-2" size={16} /></Button>{/if}
             </span>
             <div class="cr-task-meta">
                 <span class="cr-task-stage">{stageLabel(task.stageId, t)}</span>
-                <span class="cr-task-state cr-task-state--{task.state}">{failure?.uncertain ? t.workbench.product.unknown : getStateLabel(task.state)}</span>
+                <span class="cr-task-state cr-task-state--{task.state}">{task.localSavePending ? t.workbench.queueStatus.localSavePending : failure?.uncertain ? t.workbench.product.unknown : getStateLabel(task.state)}</span>
             </div>
             {#if failure}
                 <details class="cr-task-feedback">
@@ -81,12 +81,12 @@
                             {#if failure.elapsedSeconds !== undefined}<p>{ctx.i18n.format('workbench.queueStatus.elapsedRun', {seconds: failure.elapsedSeconds})}</p>{/if}
                             <p>{failure.uncertain ? t.workbench.queueStatus.uncertainNextStep : failure.details || t.workbench.queueStatus.failureNextStep}</p>
                         </details>
-                        {#if task.stageId !== 'cards' && (task.state === 'failed' || task.state === 'interrupted')}<Button variant="ghost" size="sm" disabled={disabled} onclick={() => onretry(task.id)} ariaLabel={t.workbench.queueStatus.retry}>{failure.uncertain ? t.workbench.product.resend : t.workbench.queueStatus.retry}</Button>{/if}
+                        {#if (task.localSavePending || task.stageId !== 'cards') && (task.state === 'failed' || task.state === 'interrupted')}<Button variant="ghost" size="sm" disabled={disabled} onclick={() => onretry(task.id)} ariaLabel={task.localSavePending ? t.workbench.queueStatus.retrySave : t.workbench.queueStatus.retry}>{task.localSavePending ? t.workbench.queueStatus.retrySave : failure.uncertain ? t.workbench.product.resend : t.workbench.queueStatus.retry}</Button>{/if}
                     </div>
                 </details>
             {/if}
             {#if task.stageId === 'cards' && task.state === 'completed'}<span class="cr-task-detail">{ctx.i18n.format('cards.completed', {path: task.payload.targetPath ?? task.filePath ?? ''})}</span>
-            {:else if task.stageId === 'cards' && (task.state === 'failed' || task.state === 'interrupted')}<span class="cr-task-detail">{t.cards.regenerateHint}</span>{/if}
+            {:else if task.stageId === 'cards' && !task.localSavePending && (task.state === 'failed' || task.state === 'interrupted')}<span class="cr-task-detail">{t.cards.regenerateHint}</span>{/if}
         </div>
     {/each}
 </div>

@@ -9,6 +9,7 @@
 
 import { Notice } from "obsidian";
 import { toSafeErrorFeedback } from "./error-feedback";
+import type { UiFeedback } from "./error-feedback";
 
 // ============================================================================
 // 类型定义
@@ -99,4 +100,12 @@ export function showError(error: unknown, fallback: string): void {
     if (shouldSuppress("error", message)) return;
     recordNotice("error", message);
     new Notice(message, DURATION.error);
+}
+
+/** Already-projected action feedback, with the submitted note identity retained across navigation. */
+export function showActionFeedback(feedback: UiFeedback, sourcePath?: string): void {
+    const message = `${sourcePath ? `${sourcePath}：` : ""}${feedback.message}${feedback.details ? `\n${feedback.details}` : ""}`;
+    if (feedback.level === "success") showSuccess(message);
+    else if (feedback.level === "error") showError(message, message);
+    else showWarning(message);
 }

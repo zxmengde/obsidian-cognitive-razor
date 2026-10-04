@@ -24,6 +24,34 @@ import type {
 } from "../core/vector-index";
 import type { VectorFileRef } from "../types";
 
+function mutationScopesOverlap(a: string, b: string): boolean {
+  return a === "*" || b === "*" || a === b || a.startsWith(b + "/") || b.startsWith(a + "/");
+}
+
+/** Settings UI drafts can be Svelte proxies; preserve explicit undefined overrides while detaching them. */
+function clonePatch<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(item => clonePatch(item)) as T;
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, clonePatch(item)])) as T;
+  return value;
+}
+
+function patchScopes(patch: object, prefix = ""): string[] {
+  return Object.entries(patch).flatMap(([key, value]) => {
+    const scope = prefix + encodeURIComponent(key);
+    return value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length
+      ? patchScopes(value, scope + "/") : [scope];
+  });
+}
+
+function selectPatch(patch: object, scopes: string[], prefix = ""): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(patch).flatMap(([key, value]) => {
+    const scope = prefix + encodeURIComponent(key);
+    if (scopes.includes(scope)) return [[key, value]];
+    if (!scopes.some(selected => selected.startsWith(scope + "/"))) return [];
+    return [[key, selectPatch(value, scopes, scope + "/")]];
+  }));
+}
+
 export interface SemanticIndexPort {
   rebuildSemanticIndex(
     onProgress?: (progress: SemanticIndexRebuildProgress) => void,
@@ -53,6 +81,7 @@ export interface SettingsSaveState {
   status: SettingsSaveStatus;
   operationId: number;
   error?: { code: string; message: string };
+  retryable?: boolean;
 }
 
 export type SemanticIndexRebuildStatus =
@@ -94,10 +123,16 @@ export class SettingsApplication {
   private pendingRebuildListenerErrors: Error[] = [];
   private unsubscribeSettings: (() => void) | undefined;
   private disposed = false;
-  private lastFailedMutation: {
+  private mutationTail: Promise<unknown> = Promise.resolve();
+  private pendingMutations = 0;
+  private readonly latestIntent = new Map<string, number>();
+  private failedMutations: {
     operationId: number;
-    operation: () => Promise<Result<void>>;
-  } | undefined;
+    scopes: string[];
+    retry: (scopes: string[]) => Promise<Result<void>>;
+    error: { code: string; message: string };
+    retryable: boolean;
+  }[] = [];
 
   constructor(private readonly deps: SettingsApplicationDeps) {
     this.logger = deps.logger;
@@ -149,27 +184,50 @@ export class SettingsApplication {
   }
 
   updateSettings(partial: SettingsUpdate): Promise<Result<void>> {
-    return this.runMutation(() => this.deps.settingsStore.updateSettings(partial));
+    const patch = clonePatch(partial);
+    const retry = (scopes: string[]) => this.deps.settingsStore.updateSettings(
+      selectPatch(patch, scopes) as SettingsUpdate,
+    );
+    return this.runMutation(() => this.deps.settingsStore.updateSettings(patch), patchScopes(patch), retry);
   }
 
   updateTaskModel(taskType: TaskType, updates: Partial<TaskModelConfig>): Promise<Result<void>> {
-    return this.runMutation(() => this.deps.settingsStore.updateTaskModel(taskType, updates));
+    const patch = clonePatch(updates);
+    const prefix = `taskModels/${taskType}/`;
+    const retry = (scopes: string[]) => this.deps.settingsStore.updateTaskModel(taskType,
+      selectPatch(patch, scopes, prefix),
+    );
+    return this.runMutation(() => this.deps.settingsStore.updateTaskModel(taskType, patch),
+      patchScopes(patch, prefix), retry);
   }
 
   resetTaskModel(taskType: TaskType): Promise<Result<void>> {
-    return this.runMutation(() => this.deps.settingsStore.resetTaskModel(taskType));
+    return this.runMutation(() => this.deps.settingsStore.resetTaskModel(taskType), [`taskModels/${taskType}`]);
   }
 
   addProvider(id: string, config: ProviderConfig): Promise<Result<void>> {
-    return this.runMutation(() => this.deps.settingsStore.addProvider(id, config));
+    const snapshot = clonePatch(config);
+    return this.runMutation(() => this.deps.settingsStore.addProvider(id, snapshot), [`providers/${encodeURIComponent(id)}`, "defaultProviderId"]);
   }
 
   updateProvider(id: string, updates: Partial<ProviderConfig>): Promise<Result<void>> {
-    return this.runMutation(() => this.deps.settingsStore.updateProvider(id, updates));
+    const patch = clonePatch(updates);
+    const prefix = `providers/${encodeURIComponent(id)}/`;
+    const retry = (scopes: string[]) => {
+      const selected = selectPatch(patch, scopes, prefix) as Partial<ProviderConfig>;
+      const current = this.deps.settingsStore.getSettings().providers[id];
+      // Provider updates replace these maps, whereas retry owns only the
+      // remaining leaves. Keep the newer independently saved defaults.
+      if (selected.parameters) selected.parameters = { ...current?.parameters, ...selected.parameters };
+      if (selected.capabilities) selected.capabilities = { ...current?.capabilities, ...selected.capabilities };
+      return this.deps.settingsStore.updateProvider(id, selected);
+    };
+    return this.runMutation(() => this.deps.settingsStore.updateProvider(id, patch),
+      patchScopes(patch, prefix), retry);
   }
 
   removeProvider(id: string): Promise<Result<void>> {
-    return this.runMutation(() => this.deps.settingsStore.removeProvider(id));
+    return this.runMutation(() => this.deps.settingsStore.removeProvider(id), [`providers/${encodeURIComponent(id)}`, "defaultProviderId"]);
   }
 
   importSettings(json: string): Promise<Result<void>> {
@@ -195,11 +253,12 @@ export class SettingsApplication {
   }
 
   retryLastSave(): Promise<Result<void>> {
-    const failed = this.lastFailedMutation;
-    if (!failed || this.saveState.status !== "save-failed" || failed.operationId !== this.saveState.operationId) {
+    const failed = this.failedMutations.at(-1);
+    if (!failed || this.pendingMutations > 0) {
       return Promise.resolve(err("E310_INVALID_STATE", "没有可重试的设置保存"));
     }
-    return this.runMutation(failed.operation);
+    if (!failed.retryable) return Promise.resolve(err("E310_INVALID_STATE", "其他设置已更新，请重新执行原操作"));
+    return this.runMutation(() => failed.retry(failed.scopes), failed.scopes, failed.retry);
   }
 
   rebuildDuplicatePairs(): Promise<Result<number>> {
@@ -415,31 +474,48 @@ export class SettingsApplication {
     }
   }
 
-  private async runMutation(operation: () => Promise<Result<void>>): Promise<Result<void>> {
-    if (this.disposed) return err("E310_INVALID_STATE", "设置应用已释放");
+  private runMutation(
+    operation: () => Promise<Result<void>>,
+    scopes: string[] = ["*"],
+    retry: (scopes: string[]) => Promise<Result<void>> = operation,
+  ): Promise<Result<void>> {
+    if (this.disposed) return Promise.resolve(err("E310_INVALID_STATE", "设置应用已释放"));
     const operationId = ++this.operationSequence;
-    this.lastFailedMutation = undefined;
+    for (const scope of scopes) this.latestIntent.set(scope, operationId);
+    this.failedMutations = this.failedMutations.flatMap(failed => {
+      const remaining = failed.scopes.filter(scope => scope === "*"
+        ? !scopes.includes("*") : !scopes.some(next => mutationScopesOverlap(scope, next)));
+      return remaining.length ? [{ ...failed, scopes: remaining,
+        retryable: failed.retryable && !(remaining.includes("*") && !scopes.includes("*")) }] : [];
+    });
+    this.pendingMutations++;
     this.setSaveState({ status: "saving", operationId });
-    let result: Result<void>;
-    try {
-      result = await operation();
-    } catch (error) {
-      result = toErr(error, "E500_INTERNAL_ERROR", "设置保存失败");
-    }
-    if (operationId === this.operationSequence) {
-      if (result.ok) {
-        this.lastFailedMutation = undefined;
-        this.setSaveState({ status: "saved", operationId });
-      } else {
-        this.lastFailedMutation = { operationId, operation };
-        this.setSaveState({
-          status: "save-failed",
-          operationId,
-          error: { code: result.error.code, message: result.error.message },
-        });
+    const execute = async (): Promise<Result<void>> => {
+      let result: Result<void>;
+      try {
+        result = this.disposed ? err("E310_INVALID_STATE", "设置应用已释放") : await operation();
+      } catch (error) {
+        result = toErr(error, "E500_INTERNAL_ERROR", "设置保存失败");
       }
-    }
-    return result;
+      this.pendingMutations--;
+      if (!result.ok) {
+        const newer = Array.from(this.latestIntent).filter(([, sequence]) => sequence > operationId);
+        const remaining = scopes.filter(scope => !newer.some(
+          ([next]) => scope === "*" ? next === "*" : mutationScopesOverlap(scope, next),
+        ));
+        if (remaining.length) this.failedMutations.push({ operationId, scopes: remaining, retry,
+          retryable: !remaining.includes("*") || newer.length === 0,
+          error: { code: result.error.code, message: result.error.message } });
+      }
+      const failed = this.failedMutations.at(-1);
+      if (failed && this.pendingMutations === 0) this.setSaveState({ status: "save-failed", operationId: failed.operationId, error: failed.error,
+        ...(!failed.retryable ? { retryable: false } : {}) });
+      else if (this.pendingMutations === 0) this.setSaveState({ status: "saved", operationId: this.operationSequence });
+      return result;
+    };
+    const pending = this.mutationTail.then(execute);
+    this.mutationTail = pending;
+    return pending;
   }
 
   private setSaveState(state: SettingsSaveState): void {

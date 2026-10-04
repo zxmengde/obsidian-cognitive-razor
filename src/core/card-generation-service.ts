@@ -24,6 +24,7 @@ export class CardGenerationService {
   private readonly starting = new Set<string>();
   private readonly submissions = new Set<Promise<Result<string>>>();
   private disposed = false;
+  private readonly completedReceipts = new Set<string>();
   constructor(private readonly deps: {
     storage: FileStorage; settings: SettingsStore; notes: NoteRepository; queue: TaskQueue;
   }) {}
@@ -38,7 +39,7 @@ export class CardGenerationService {
   private async startInternal(filePath: string): Promise<Result<string>> {
     if (this.disposed) return err("E310_INVALID_STATE", "卡片服务已停止");
     const key = filePath.toLocaleLowerCase();
-    if (this.starting.has(key) || this.deps.queue.getSnapshot().tasks.some((task) => task.stageId === "cards" && task.filePath?.toLocaleLowerCase() === key && (task.state === "pending" || task.state === "running"))) return err("E320_TASK_CONFLICT", "当前笔记已有卡片任务");
+    if (this.starting.has(key) || this.deps.queue.getSnapshot().tasks.some((task) => task.stageId === "cards" && task.filePath?.toLocaleLowerCase() === key && (task.state === "pending" || task.state === "running" || task.localSavePending))) return err("E320_TASK_CONFLICT", "当前笔记已有卡片任务");
     this.starting.add(key);
     try {
       const settings = this.deps.settings.getSettings();
@@ -66,7 +67,9 @@ export class CardGenerationService {
         const artifact = await this.read(task);
         return artifact.ok ? ok(artifact.value.input) : artifact;
       },
-      canResumeWithoutRequest: (task) => !cards(task) && workflow.canResumeWithoutRequest?.(task) === true,
+      canResumeWithoutRequest: (task) => cards(task)
+        ? !!task.workflowId && this.completedReceipts.has(task.workflowId)
+        : workflow.canResumeWithoutRequest?.(task) === true,
       resolveCachedResult: (task) => cards(task) ? Promise.resolve(undefined) : workflow.resolveCachedResult?.(task) ?? Promise.resolve(undefined),
       resolveAppliedCompletion: async (task) => {
         if (!cards(task)) return workflow.resolveAppliedCompletion?.(task) ?? ok(undefined);
@@ -106,6 +109,7 @@ export class CardGenerationService {
         if (task.workflowId) {
           const removed = await this.deps.storage.delete(this.path(task.workflowId));
           if (!removed.ok) throw new Error(removed.error.message);
+          this.completedReceipts.delete(task.workflowId);
         }
       },
     };
@@ -126,10 +130,14 @@ export class CardGenerationService {
   private async read(task: Pick<PersistedTaskRecord, "workflowId" | "nodeId"> | TaskRecord): Promise<Result<CardGenerationArtifact>> {
     try {
       if (!task.workflowId) return err("E310_INVALID_STATE", "缺少卡片任务标识");
+      this.completedReceipts.delete(task.workflowId);
       const raw = await this.deps.storage.read(this.path(task.workflowId));
       if (!raw.ok) return raw;
       const value = JSON.parse(raw.value) as CardGenerationArtifact;
       if (value.version !== 1 || value.id !== task.workflowId || value.nodeId !== task.nodeId || !value.input || typeof value.input.body !== "string" || !value.input.body.trim() || !isSafeCardPath(value.input.targetPath) || !value.input.targetPath.endsWith("-decks.md") || !isSafeCardPath(value.input.filePath) || value.input.filePath.toLocaleLowerCase() === value.input.targetPath.toLocaleLowerCase() || !CR_TYPES.includes(value.input.noteType) || typeof value.input.promptVersion !== "string" || !["active", "committing", "completed", "failed", "cancelled", "interrupted"].includes(value.state)) return err("E310_INVALID_STATE", "卡片任务记录损坏");
+      if (value.state === "completed" && (typeof value.markdown !== "string" || !value.markdown.trim())) return err("E310_INVALID_STATE", "卡片完成收据缺少有效结果");
+      if (value.state === "completed") this.completedReceipts.add(value.id);
+      else this.completedReceipts.delete(value.id);
       return ok(value);
     } catch (cause) { return toErr(cause, "E310_INVALID_STATE", "无法读取卡片任务记录"); }
   }

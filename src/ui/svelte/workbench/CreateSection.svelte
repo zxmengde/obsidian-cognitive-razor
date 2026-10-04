@@ -23,6 +23,7 @@
     import type { DefinePreview, CRType } from '../../../types';
     import { confirmDefinePreview } from '../../../domain/concept';
     import { toSafeErrorFeedback, type UiFeedback } from '../../error-feedback';
+    import { showActionFeedback } from '../../feedback';
 
     /** 当前展开的面板类型 */
     type ActivePanel = 'none' | 'expand';
@@ -54,55 +55,52 @@
     let defining = $state(false);
     let defineResult = $state<DefinePreview | null>(null);
     let feedback = $state<UiFeedback | null>(null);
-    let feedbackSourcePath = $state<string | undefined>();
-    $effect(() => {
-        if (feedbackSourcePath && feedbackSourcePath !== activeFile?.path) {
-            feedback = null;
-            feedbackSourcePath = undefined;
-        }
-    });
     let activePanel = $state<ActivePanel>('none');
     let verifying = $state(false);
-    let verifyWorkflowId: string | undefined;
-    function clearFinishedVerifyNotice(): void {
-        if (!verifyWorkflowId) return;
-        const active = application.queue.getSnapshot().tasks.some(task => task.workflowId === verifyWorkflowId && (task.state === 'pending' || task.state === 'running'));
-        if (active) return;
-        verifyWorkflowId = undefined;
-        if (feedback?.level === 'success' && feedback.message === t.workbench.notifications.verifyStarted) feedback = null;
-    }
     let generatingCards = $state(false);
     let isCRNode = $state(false);
+    let noteGeneration = 0;
+    let mounted = true;
+    $effect(() => () => { mounted = false; noteGeneration++; });
     let defineAbortController: AbortController | undefined;
     $effect(() => () => defineAbortController?.abort('create panel unmounted'));
     $effect(() => {
         const file = activeFile;
         let disposed = false;
+        let refreshSequence = 0;
+        noteGeneration++;
+        verifying = false;
+        generatingCards = false;
+        activePanel = 'none';
         isCRNode = false;
         const refresh = async () => {
+            const sequence = ++refreshSequence;
+            isCRNode = false;
             if (!file || file.extension !== 'md') return;
             try {
                 const content = await ctx.app.vault.cachedRead(file);
-                if (!disposed) isCRNode = !!extractFrontmatter(content);
-            } catch { if (!disposed) isCRNode = false; }
+                if (!disposed && sequence === refreshSequence) isCRNode = !!extractFrontmatter(content);
+            } catch { if (!disposed && sequence === refreshSequence) isCRNode = false; }
         };
         void refresh();
         const event = ctx.app.vault.on('modify', (changed) => { if (changed === file) void refresh(); });
         return () => { disposed = true; ctx.app.vault.offref(event); };
     });
     const unsubscribeQueue = application.queue.subscribe((event) => {
-        clearFinishedVerifyNotice();
-        if (event.type === 'task-completed' && event.task.stageId === 'cards') reportSuccess(ctx.i18n.format("cards.completed", { path: event.task.payload.targetPath }));
+        if (event.type === 'task-completed' && event.task.stageId === 'cards') showActionFeedback(
+            { level: 'success', message: ctx.i18n.format("cards.completed", { path: event.task.payload.targetPath }) }, event.task.payload.filePath,
+        );
     });
     $effect(() => () => unsubscribeQueue());
 
     // 派生状态
     let hasInput = $derived(inputValue.trim().length > 0);
     let isMarkdown = $derived(activeFile?.extension === 'md');
-    const cardsActionTitle = $derived(!isMarkdown ? product.noNote : !isCRNode ? product.nonConcept : product.cardsDesc);
+    const actionUnavailable = $derived(!isMarkdown ? product.noNote : !isCRNode ? product.nonConcept : undefined);
 
     /** 切换面板：再次点击同一按钮则收起 */
     function togglePanel(panel: ActivePanel): void {
+        if (!isCRNode) return;
         activePanel = activePanel === panel ? 'none' : panel;
     }
 
@@ -117,17 +115,10 @@
         defineResult = null;
         editingInput = false;
         feedback = null;
-        feedbackSourcePath = undefined;
     }
 
     function reportError(errorValue: unknown, fallback: string): void {
-        feedbackSourcePath = undefined;
         feedback = toSafeErrorFeedback(errorValue, fallback);
-    }
-
-    function reportSuccess(message: string): void {
-        feedbackSourcePath = undefined;
-        feedback = { level: 'success', message };
     }
 
     /** 触发 Define 流程 */
@@ -136,7 +127,6 @@
 
         defining = true;
         feedback = null;
-        feedbackSourcePath = undefined;
         defineResult = null;
         const controller = new AbortController();
         defineAbortController = controller;
@@ -171,25 +161,22 @@
 
     /** 触发 Verify 流程 */
     async function handleVerify(): Promise<void> {
-        if (!activeFile || verifying) return;
+        if (!activeFile || !isCRNode || verifying) return;
         const filePath = activeFile.path;
+        const generation = noteGeneration;
         verifying = true;
-        feedback = null;
-        feedbackSourcePath = undefined;
         try {
             const result = await application.verify.start(filePath);
+            if (!mounted) return;
             if (result.ok) {
-                verifyWorkflowId = result.value;
-                reportSuccess(t.workbench.notifications.verifyStarted);
-                // A fast task can finish before start() resolves.
-                clearFinishedVerifyNotice();
+                showActionFeedback({ level: 'success', message: t.workbench.notifications.verifyStarted }, filePath);
             } else {
-                reportError(result.error, t.workbench.notifications.unknownFailure);
+                showActionFeedback(toSafeErrorFeedback(result.error, t.workbench.notifications.unknownFailure), filePath);
             }
         } catch (e) {
-            reportError(e, t.workbench.notifications.unknownFailure);
+            if (mounted) showActionFeedback(toSafeErrorFeedback(e, t.workbench.notifications.unknownFailure), filePath);
         } finally {
-            verifying = false;
+            if (generation === noteGeneration) verifying = false;
         }
     }
 
@@ -213,19 +200,16 @@
     async function handleCards(): Promise<void> {
         if (!activeFile || !isCRNode || generatingCards) return;
         const path = activeFile.path;
+        const generation = noteGeneration;
         generatingCards = true;
-        feedback = null;
-        feedbackSourcePath = undefined;
         try {
             const result = await application.cards.start(path);
-            if (result.ok) reportSuccess(ctx.i18n.format("cards.queued", { path: result.value }));
-            else if (result.error.code === "E401_PROVIDER_NOT_CONFIGURED") feedback = { level: "error", message: t.cards.configureFirst };
-            else {
-                reportError(result.error, t.cards.failed);
-                if (result.error.code === "E103_CARDS_SOURCE_OUTSIDE_ROOT") feedbackSourcePath = path;
-            }
-        } catch (error) { reportError(error, t.cards.failed); }
-        finally { generatingCards = false; }
+            if (!mounted) return;
+            if (result.ok) showActionFeedback({ level: 'success', message: ctx.i18n.format("cards.queued", { path: result.value }) }, path);
+            else showActionFeedback(result.error.code === "E401_PROVIDER_NOT_CONFIGURED"
+                ? { level: 'error', message: t.cards.configureFirst } : toSafeErrorFeedback(result.error, t.cards.failed), path);
+        } catch (error) { if (mounted) showActionFeedback(toSafeErrorFeedback(error, t.cards.failed), path); }
+        finally { if (generation === noteGeneration) generatingCards = false; }
     }
 </script>
 
@@ -244,14 +228,14 @@
         <div class="cr-result-heading"><h2>{inputValue}</h2><button class="cr-text-action" type="button" disabled={creating} onclick={() => editingInput = true}>{product.editInput}</button></div>
         <TypeTable concept={defineResult} oncreate={handleCreateType} disabled={creating} />
     {/if}
+    {#if feedback}<InlineAlert level={feedback.level} message={feedback.message} details={feedback.details} {detailsToggleLabels} />{/if}
     <div class="cr-note-actions">
-        <button class="cr-btn-secondary cr-note-action" type="button" disabled={!isMarkdown} aria-expanded={activePanel === 'expand'} title={isMarkdown ? product.expandDesc : product.noNote} onclick={() => togglePanel('expand')}>{product.expandTitle}</button>
-        <button class="cr-btn-secondary cr-note-action" type="button" disabled={!isMarkdown || verifying} aria-busy={verifying ? 'true' : undefined} onclick={() => void handleVerify()} aria-label={t.workbench.buttons.verify} title={isMarkdown ? product.verifyDesc : product.noNote}>{#if verifying}<span class="cr-loading-spinner" aria-hidden="true"></span>{/if}{t.workbench.buttons.verify}</button>
-        <button class="cr-btn-secondary cr-note-action" type="button" disabled={!isMarkdown || !isCRNode || generatingCards} aria-busy={generatingCards ? 'true' : undefined} onclick={() => void handleCards()} aria-label={t.cards.generate} title={cardsActionTitle}>{#if generatingCards}<span class="cr-loading-spinner" aria-hidden="true"></span>{/if}{t.cards.generate}</button>
+        <button class="cr-btn-secondary cr-note-action" type="button" disabled={!isCRNode} aria-expanded={activePanel === 'expand'} title={actionUnavailable ?? product.expandDesc} onclick={() => togglePanel('expand')}>{product.expandTitle}</button>
+        <button class="cr-btn-secondary cr-note-action" type="button" disabled={!isCRNode || verifying} aria-busy={verifying ? 'true' : undefined} onclick={() => void handleVerify()} aria-label={t.workbench.buttons.verify} title={actionUnavailable ?? product.verifyDesc}>{#if verifying}<span class="cr-loading-spinner" aria-hidden="true"></span>{/if}{t.workbench.buttons.verify}</button>
+        <button class="cr-btn-secondary cr-note-action" type="button" disabled={!isCRNode || generatingCards} aria-busy={generatingCards ? 'true' : undefined} onclick={() => void handleCards()} aria-label={t.cards.generate} title={actionUnavailable ?? product.cardsDesc}>{#if generatingCards}<span class="cr-loading-spinner" aria-hidden="true"></span>{/if}{t.cards.generate}</button>
     </div>
 </div>
-{#if feedback}<InlineAlert level={feedback.level} message={feedback.message} details={feedback.details} {detailsToggleLabels} />{/if}
-{#if isMarkdown}<InlinePanel expanded={activePanel === 'expand'} onclose={closePanel}><ExpandPanel {activeFile} onclose={closePanel} /></InlinePanel>{/if}
+{#if isCRNode}<InlinePanel expanded={activePanel === 'expand'} onclose={closePanel}><ExpandPanel {activeFile} onclose={closePanel} /></InlinePanel>{/if}
 
 <style>
     .cr-create-section { min-width: 0; }

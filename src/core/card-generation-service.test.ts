@@ -60,10 +60,36 @@ async function fixture(files = new Map<string, string>([[sourcePath, sourceConte
   expect((await queue.initialize()).ok).toBe(true);
   const run = vi.fn(async (_task: TaskRecord): Promise<Result<Record<string, unknown>>> => ok({ markdown: "## 问题\n答案" }));
   const start = () => queue.setTaskRunner({ run, abort() {} } as unknown as TaskRunner);
-  return { files, service, queue, run, start, settings, folders, adapter };
+  return { files, service, queue, run, start, settings, folders, adapter, storage };
 }
 
 describe("card generation durable flow", () => {
+  it('restores a completed Cards receipt after queue-save failure without calling the model or appending twice', async () => {
+    const f = await fixture();
+    const write = f.storage.atomicWrite.bind(f.storage);
+    vi.spyOn(f.storage, 'atomicWrite').mockImplementation(async (path, text) => {
+      if (path.includes('queue-state') && JSON.parse(text).tasks.some((task: TaskRecord) => task.state === 'completed')) return err('E303_DISK_FULL', 'synthetic terminal save failure');
+      return write(path, text);
+    });
+    expect((await f.service.start(sourcePath)).ok).toBe(true); f.start();
+    await vi.waitFor(() => expect(f.queue.getSnapshot().tasks[0].localSavePending).toBe(true));
+    const task = f.queue.getSnapshot().tasks[0];
+    expect((await f.service.start(sourcePath)).ok).toBe(false);
+    const artifactPath = [...f.files.keys()].find(path => path.includes('/cards/') && path.endsWith('.json'))!;
+    expect(JSON.parse(f.files.get(artifactPath)!).state).toBe('completed');
+    const appended = f.files.get(targetPath);
+    const restored = await fixture(new Map(f.files)); restored.start();
+    await vi.waitFor(() => expect(restored.queue.getTask(task.id)?.state).toBe('completed'));
+    expect(restored.run).not.toHaveBeenCalled();
+    expect(restored.files.get(targetPath)).toBe(appended);
+    // An append intent without its completion receipt cannot prove whether the effect ran.
+    const uncertainFiles = new Map(f.files);
+    uncertainFiles.set(artifactPath, JSON.stringify({ ...JSON.parse(f.files.get(artifactPath)!), state: 'committing' }));
+    const uncertain = await fixture(uncertainFiles); uncertain.start();
+    expect(uncertain.queue.getTask(task.id)?.state).toBe('interrupted');
+    expect(uncertain.run).not.toHaveBeenCalled();
+    expect(uncertain.files.get(targetPath)).toBe(appended);
+  });
   it("does not append a streamed partial batch when Responses explicitly finishes incomplete without a reason", async () => {
     const f = await fixture();
     f.settings.enableStreamingKeepalive = true;

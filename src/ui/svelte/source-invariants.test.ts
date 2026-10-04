@@ -77,7 +77,7 @@ describe("current UI architecture", () => {
     }
   });
 
-  it("keeps Workbench feedback local and free of technical error details", () => {
+  it("keeps Workbench feedback projected and sends note actions through one Notice service", () => {
     const files = [
       "src/ui/svelte/workbench/CreateSection.svelte",
       "src/ui/svelte/workbench/DuplicatesSection.svelte",
@@ -92,6 +92,9 @@ describe("current UI architecture", () => {
       expect(source).not.toContain("[${");
     }
     expect(read("src/ui/svelte/workbench/CreateSection.svelte")).not.toContain("cr-search-btn");
+    expect(read("src/ui/svelte/workbench/CreateSection.svelte")).toContain("showActionFeedback");
+    expect(read("src/ui/svelte/workbench/ExpandPanel.svelte")).toContain("showActionFeedback");
+    expect(read("src/ui/svelte/workbench/ExpandPanel.svelte")).not.toContain("InlineAlert");
     expect(read("src/ui/svelte/workbench/ExpandPanel.svelte")).not.toContain("cr-link-btn");
     expect(read("src/ui/svelte/workbench/QueueTaskList.svelte")).not.toContain("toSafeErrorFeedback");
   });
@@ -551,8 +554,8 @@ describe("current UI architecture", () => {
     const duplicates = read("src/ui/svelte/workbench/DuplicatesSection.svelte");
     const duplicateItem = read("src/ui/svelte/workbench/DuplicateItem.svelte");
 
-    expect(create).toContain("if (!activeFile || verifying) return");
-    expect(create).toContain("disabled={!isMarkdown || verifying}");
+    expect(create).toContain("if (!activeFile || !isCRNode || verifying) return");
+    expect(create).toContain("disabled={!isCRNode || verifying}");
     expect(create).toContain("{#if verifying}");
     expect(create).toContain("defineAbortController?.abort('create panel unmounted')");
     expect(create).toContain("application.create.define(inputValue.trim(), controller.signal)");

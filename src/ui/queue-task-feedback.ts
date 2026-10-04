@@ -8,6 +8,12 @@ export function queueTaskFeedback(task: TaskRecord, fallback: string) {
     if (task.state !== 'failed' && task.state !== 'interrupted') return undefined;
     const uncertain = isUncertainTask(task);
     const feedback = toSafeErrorFeedback({ code: uncertain ? 'E206_PROVIDER_REQUEST_UNCERTAIN' : task.error?.code }, fallback);
+    if (task.localSavePending) return {
+        ...feedback, uncertain: false,
+        message: '任务请求已结束，但本地状态保存失败',
+        details: '检查磁盘权限和可用空间后重试保存；会保存已有结果，不会再次请求模型',
+        elapsedSeconds: undefined, upstreamStatus: undefined, requestTimeoutMs: undefined,
+    };
     const { startedAt, finishedAt } = task;
     const elapsed = typeof startedAt === 'number' && typeof finishedAt === 'number'
         && Number.isFinite(startedAt) && Number.isFinite(finishedAt) && startedAt >= 0 && finishedAt >= startedAt

@@ -20,8 +20,9 @@ export class Plugin {
     registerDomEvent(_el: unknown, _type: string, _callback: unknown): void {}
 }
 
+export const noticeMessages: Array<{ message: string; timeout?: number }> = [];
 export class Notice {
-    constructor(_message: string, _timeout?: number) {}
+    constructor(message: string, timeout?: number) { noticeMessages.push({ message, timeout }); }
 }
 
 export function setIcon(_element: HTMLElement, _icon: string): void {}

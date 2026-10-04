@@ -167,6 +167,8 @@ interface TaskRecordBase {
     error?: TaskError;
     /** 仅在当前进程内传递给完成事件；不会序列化到 queue-state.json。 */
     result?: Record<string, unknown>;
+    /** Display-only local commit failure; retries save the existing outcome without a model request. */
+    localSavePending?: boolean;
 }
 
 type StageIdsFor<T extends TaskStageId | QueueTaskType> = T extends "write" ? WriteTaskStageId : T;

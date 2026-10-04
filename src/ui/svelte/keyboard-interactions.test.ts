@@ -19,11 +19,12 @@ let ui: {
   CreateHost: unknown;
   TaskModelCard: unknown;
   TaskModelHost: unknown;
+  noticeMessages: Array<{ message: string; timeout?: number }>;
 };
 beforeAll(async () => {
   Object.defineProperty(HTMLElement.prototype, "empty", { configurable: true, value() { this.replaceChildren(); } });
   const result = await build({
-    stdin: { contents: 'export { mount, unmount, flushSync } from "svelte"; export { default as ConfirmModal } from "./src/ui/components/ConfirmModal.svelte"; export { default as TaskModelCard } from "./src/ui/svelte/settings/TaskModelCard.svelte"; export { default as CreateHost } from "test-host"; export { default as TaskModelHost } from "task-model-host";', resolveDir: process.cwd() },
+    stdin: { contents: 'export { mount, unmount, flushSync } from "svelte"; export { noticeMessages } from "obsidian"; export { default as ConfirmModal } from "./src/ui/components/ConfirmModal.svelte"; export { default as TaskModelCard } from "./src/ui/svelte/settings/TaskModelCard.svelte"; export { default as CreateHost } from "test-host"; export { default as TaskModelHost } from "task-model-host";', resolveDir: process.cwd() },
     bundle: true, write: false, format: "iife", globalName: "KeyboardTestUI",
     conditions: ["svelte", "browser"], mainFields: ["svelte", "browser", "module", "main"],
     alias: { obsidian: "./__mocks__/obsidian.ts", "@": "./src" },
@@ -184,33 +185,25 @@ describe("keyboard interaction safety", () => {
     } finally { await ui.unmount(instance); target.remove(); }
   });
 
-  it.each(['completed', 'failed', 'interrupted', 'cancelled'] as const)('clears the Verify started notice after its workflow becomes %s', async (terminal) => {
-    let state: string = 'running';
-    let notify = () => {};
-    const unsubscribe = vi.fn();
-    const start = vi.fn(async () => ({ ok: true, value: 'verify-workflow' }));
-    const i18n = new I18n();
+  it('uses one native Notice for a Verify admission and leaves no inline action feedback', async () => {
     const target = document.body.appendChild(document.createElement('div'));
-    const instance = ui.mount(ui.CreateHost, { target, props: { activeFile: { path: 'Synthetic.md', extension: 'md' }, context: {
-      i18n, app: { vault: { on: () => ({}), offref() {}, cachedRead: async () => '' } },
-      application: { verify: { start }, queue: {
-        subscribe: (listener: (event: { type: string }) => void) => { notify = () => listener({ type: 'queue-paused' }); return unsubscribe; },
-        getSnapshot: () => ({ tasks: [{ workflowId: 'verify-workflow', state }] }),
-      } }, settingsApplication: { getSettings: () => ({}), subscribeSettings: () => () => undefined },
+    const i18n = new I18n();
+    const start = vi.fn(async () => ({ ok: true, value: 'verify-workflow' }));
+    const unsubscribe = vi.fn();
+    ui.noticeMessages.length = 0;
+    const instance = ui.mount(ui.CreateHost, { target, props: { activeFile: { path: 'Notice-admission.md', extension: 'md' }, context: {
+      i18n, app: { vault: { on: () => ({}), offref() {}, cachedRead: async () => generateMarkdownContent(generateFrontmatter({ cruid: 'notice', type: 'entity', name: 'Notice' }), '') } },
+      application: { verify: { start }, queue: { subscribe: () => unsubscribe } },
+      settingsApplication: { getSettings: () => ({}), subscribeSettings: () => () => undefined },
     } } });
     try {
-      ui.flushSync();
+      ui.flushSync(); await Promise.resolve(); ui.flushSync();
       const verify = target.querySelector<HTMLButtonElement>(`button[aria-label="${i18n.messages.workbench.buttons.verify}"]`)!;
-      verify.click();
-      await vi.waitFor(() => { ui.flushSync(); expect(target.textContent).toContain(i18n.messages.workbench.notifications.verifyStarted); });
-      notify(); ui.flushSync();
-      expect(target.textContent).toContain(i18n.messages.workbench.notifications.verifyStarted);
-      state = terminal; notify(); ui.flushSync();
-      expect(target.textContent).not.toContain(i18n.messages.workbench.notifications.verifyStarted);
-      // A workflow which terminates before start() resolves cannot leave a stale notice either.
-      verify.click();
-      await vi.waitFor(() => expect(start).toHaveBeenCalledTimes(2));
-      await Promise.resolve(); ui.flushSync();
+      verify.click(); verify.click();
+      await vi.waitFor(() => { ui.flushSync(); expect(verify.disabled).toBe(false); });
+      expect(start).toHaveBeenCalledOnce();
+      expect(ui.noticeMessages).toEqual([{ message: `Notice-admission.md：${i18n.messages.workbench.notifications.verifyStarted}`, timeout: 3000 }]);
+      expect(target.querySelector('[role="alert"]')).toBeNull();
       expect(target.textContent).not.toContain(i18n.messages.workbench.notifications.verifyStarted);
     } finally { await ui.unmount(instance); target.remove(); }
     expect(unsubscribe).toHaveBeenCalledOnce();
@@ -408,7 +401,92 @@ describe("keyboard interaction safety", () => {
 
 
 describe("card generation entry", () => {
-  it('clears a source-root error on note switch, including a late result for the old note', async () => {
+  it('uses the newest same-file read for all three action qualifications', async () => {
+    const reads: Array<(text: string) => void> = [];
+    let modified!: (file: object) => void;
+    const file = { path: 'Read-order.md', extension: 'md' };
+    const target = document.body.appendChild(document.createElement('div'));
+    const actions = { verify: { start: vi.fn() }, cards: { start: vi.fn() }, expand: { prepare: vi.fn() } };
+    const instance = ui.mount(ui.CreateHost, { target, props: { activeFile: file, context: {
+      i18n: new I18n(), app: { vault: { cachedRead: () => new Promise<string>(resolve => reads.push(resolve)),
+        on: (_event: string, callback: (file: object) => void) => { modified = callback; return {}; }, offref() {} } },
+      application: { ...actions, queue: { subscribe: () => () => undefined } },
+      settingsApplication: { getSettings: () => ({}), subscribeSettings: () => () => undefined },
+    } } });
+    const disabled = () => Array.from(target.querySelectorAll<HTMLButtonElement>('.cr-note-action')).every(button => button.disabled);
+    try {
+      ui.flushSync();
+      expect(disabled()).toBe(true);
+      modified(file); ui.flushSync();
+      reads[1]('ordinary note'); await Promise.resolve(); ui.flushSync();
+      reads[0](generateMarkdownContent(generateFrontmatter({ cruid: 'old', type: 'entity', name: 'Old' }), ''));
+      await Promise.resolve(); ui.flushSync();
+      expect(disabled()).toBe(true);
+      for (const button of Array.from(target.querySelectorAll<HTMLButtonElement>('.cr-note-action'))) {
+        expect(button.title).toContain('不是概念笔记'); button.click();
+      }
+      expect(actions.verify.start).not.toHaveBeenCalled();
+      expect(actions.cards.start).not.toHaveBeenCalled();
+      expect(actions.expand.prepare).not.toHaveBeenCalled();
+      modified(file); ui.flushSync();
+      expect(disabled()).toBe(true);
+      reads[2](generateMarkdownContent(generateFrontmatter({ cruid: 'latest', type: 'entity', name: 'Latest' }), ''));
+      await Promise.resolve(); ui.flushSync();
+      expect(Array.from(target.querySelectorAll<HTMLButtonElement>('.cr-note-action')).every(button => !button.disabled)).toBe(true);
+    } finally { await ui.unmount(instance); target.remove(); }
+  });
+
+  it.each(['verify', 'cards'] as const)('keeps B busy when A %s returns late and attributes the Notice to A', async action => {
+    const requests: Array<{ resolve(value: unknown): void }> = [];
+    const start = vi.fn(() => new Promise(resolve => requests.push({ resolve })));
+    const target = document.body.appendChild(document.createElement('div'));
+    ui.noticeMessages.length = 0;
+    const instance = ui.mount(ui.CreateHost, { target, props: { activeFile: { path: `${action}-A.md`, extension: 'md' }, context: {
+      i18n: new I18n(), app: { vault: { cachedRead: async () => generateMarkdownContent(generateFrontmatter({ cruid: 'race', type: 'entity', name: 'Race' }), ''), on: () => ({}), offref() {} } },
+      application: { [action]: { start }, queue: { subscribe: () => () => undefined } },
+      settingsApplication: { getSettings: () => ({}), subscribeSettings: () => () => undefined },
+    } } });
+    const index = action === 'verify' ? 1 : 2;
+    try {
+      ui.flushSync(); await Promise.resolve(); ui.flushSync();
+      target.querySelectorAll<HTMLButtonElement>('.cr-note-action')[index].click(); ui.flushSync();
+      (instance as { setActiveFile(file: object): void }).setActiveFile({ path: `${action}-B.md`, extension: 'md' });
+      ui.flushSync(); await Promise.resolve(); ui.flushSync();
+      const b = target.querySelectorAll<HTMLButtonElement>('.cr-note-action')[index];
+      b.click(); ui.flushSync();
+      requests[0].resolve({ ok: false, error: { code: 'E101_INVALID_INPUT', message: 'private raw payload' } });
+      await Promise.resolve(); ui.flushSync();
+      expect(b.disabled).toBe(true); expect(b.getAttribute('aria-busy')).toBe('true');
+      expect(ui.noticeMessages).toHaveLength(1);
+      expect(ui.noticeMessages[0].message).toContain(`${action}-A.md：`);
+      expect(ui.noticeMessages[0].message).not.toContain('private raw payload');
+      expect(target.querySelector('[role="alert"]')).toBeNull();
+      requests[1].resolve({ ok: true, value: 'B-accepted' });
+      await Promise.resolve(); ui.flushSync();
+      expect(b.disabled).toBe(false);
+      expect(ui.noticeMessages).toHaveLength(2);
+      expect(ui.noticeMessages[1].message).toContain(`${action}-B.md：`);
+      expect(start).toHaveBeenCalledTimes(2);
+    } finally { await ui.unmount(instance); target.remove(); }
+  });
+
+  it.each(['verify', 'cards'] as const)('ignores an unmounted %s completion', async action => {
+    let release!: (value: unknown) => void;
+    const target = document.body.appendChild(document.createElement('div'));
+    const instance = ui.mount(ui.CreateHost, { target, props: { activeFile: { path: `unmounted-${action}.md`, extension: 'md' }, context: {
+      i18n: new I18n(), app: { vault: { cachedRead: async () => generateMarkdownContent(generateFrontmatter({ cruid: 'unmount', type: 'entity', name: 'Unmount' }), ''), on: () => ({}), offref() {} } },
+      application: { [action]: { start: () => new Promise(resolve => { release = resolve; }) }, queue: { subscribe: () => () => undefined } },
+      settingsApplication: { getSettings: () => ({}), subscribeSettings: () => () => undefined },
+    } } });
+    ui.flushSync(); await Promise.resolve(); ui.flushSync();
+    target.querySelectorAll<HTMLButtonElement>('.cr-note-action')[action === 'verify' ? 1 : 2].click();
+    await ui.unmount(instance); target.remove();
+    ui.noticeMessages.length = 0;
+    release({ ok: true, value: 'late' }); await Promise.resolve(); ui.flushSync();
+    expect(ui.noticeMessages).toHaveLength(0);
+  });
+
+  it('reports a source-root error through Notice with the submitted note identity', async () => {
     let release!: (value: unknown) => void;
     const start = vi.fn(() => new Promise(resolve => { release = resolve; }));
     const target = document.body.appendChild(document.createElement('div'));
@@ -420,11 +498,15 @@ describe("card generation entry", () => {
     } } });
     const switchNote = (path: string) => { (instance as { setActiveFile: (file: object) => void }).setActiveFile({ path, extension: 'md' }); ui.flushSync(); };
     const error = { ok: false, error: { code: 'E103_CARDS_SOURCE_OUTSIDE_ROOT', message: 'private path' } };
+    ui.noticeMessages.length = 0;
     try {
       ui.flushSync(); await Promise.resolve(); ui.flushSync();
       const button = Array.from(target.querySelectorAll('button')).find(button => button.textContent?.includes('生成记忆卡片'))!;
       button.click(); release(error);
-      await vi.waitFor(() => { ui.flushSync(); expect(target.querySelector('[role="alert"]')).not.toBeNull(); });
+      await vi.waitFor(() => { ui.flushSync(); expect(ui.noticeMessages).toHaveLength(1); });
+      expect(ui.noticeMessages[0].message).toContain('Outside.md：');
+      expect(ui.noticeMessages[0].message).not.toContain('private path');
+      expect(target.querySelector('[role="alert"]')).toBeNull();
       switchNote('C-知识库/Valid.md');
       expect(target.querySelector('[role="alert"]')).toBeNull();
       switchNote('Outside.md'); await Promise.resolve(); ui.flushSync();
@@ -458,7 +540,8 @@ describe("card generation entry", () => {
       if (isNode) {
         cardButton.click();
         expect(start).toHaveBeenCalledWith("C-知识库/测试.md");
-        await vi.waitFor(() => expect(target.textContent).toContain("D-习题库/测试-decks.md"));
+        await vi.waitFor(() => expect(ui.noticeMessages.some(notice => notice.message.includes("D-习题库/测试-decks.md"))).toBe(true));
+        expect(target.querySelector('[role="alert"]')).toBeNull();
       } else { cardButton.click(); expect(start).not.toHaveBeenCalled(); expect(cardButton.title).toContain('不是概念笔记'); }
     } finally { await ui.unmount(instance); target.remove(); }
   });
