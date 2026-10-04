@@ -37,14 +37,18 @@ export interface LinkRepairPlan {
   skipped: string[];
 }
 
-export interface DuplicateMergePreview {
+/** Confirmed immutable inputs for one queued merge-draft request. */
+export interface DuplicateMergeInput {
   pairId: string;
   type: CRType;
   similarity: number;
   canonical: DuplicateMergeNoteSnapshot;
   redundant: DuplicateMergeNoteSnapshot;
-  draft: DuplicateMergeDraft;
   linkRepairPlan: LinkRepairPlan;
+}
+
+export interface DuplicateMergePreview extends DuplicateMergeInput {
+  draft: DuplicateMergeDraft;
 }
 
 export type DuplicateMergePhase =

@@ -54,6 +54,7 @@ export type {
 } from "./storage";
 export type {
   DuplicateMergeNoteSnapshot,
+  DuplicateMergeInput,
   DuplicateMergeDraft,
   LinkRepairEntry,
   LinkRepairPlan,

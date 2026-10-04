@@ -109,3 +109,7 @@ export function showActionFeedback(feedback: UiFeedback, sourcePath?: string): v
     else if (feedback.level === "error") showError(message, message);
     else showWarning(message);
 }
+
+export function showActionError(error: unknown, fallback: string, sourcePath?: string): void {
+    showActionFeedback(toSafeErrorFeedback(error, fallback), sourcePath);
+}

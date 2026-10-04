@@ -1,5 +1,6 @@
 import { showWarning } from "../ui/feedback";
 import { CardGenerationService } from "../core/card-generation-service";
+import { MergeDraftGenerationService } from "../core/merge-draft-generation-service";
 import type { App } from "obsidian";
 import { err } from "../types";
 import type { PluginSettings, Result } from "../types";
@@ -54,6 +55,7 @@ export class PluginRuntime {
   duplicateManager!: DuplicateManager;
   private taskRunner!: TaskRunner;
   private cardGeneration!: CardGenerationService;
+  private mergeDraftGeneration!: MergeDraftGenerationService;
   private workflowStore!: WorkflowStore;
   private workflowCoordinator!: WorkflowCoordinator;
   taskQueue!: TaskQueue;
@@ -317,10 +319,12 @@ export class PluginRuntime {
       },
     });
     this.cardGeneration = new CardGenerationService({ storage: this.fileStorage, settings: this.settingsStore, notes: noteRepository, queue: this.taskQueue });
-    this.requireSuccess(this.taskQueue.attachWorkflowPort(this.cardGeneration.wrapPort(this.workflowCoordinator.queuePort)), "连接任务队列工作流端口失败");
+    this.mergeDraftGeneration = new MergeDraftGenerationService({ storage: this.fileStorage, settings: this.settingsStore, queue: this.taskQueue, merge: this.duplicateMergeService });
+    this.requireSuccess(this.taskQueue.attachWorkflowPort(this.mergeDraftGeneration.wrapPort(this.cardGeneration.wrapPort(this.workflowCoordinator.queuePort))), "连接任务队列工作流端口失败");
     this.requireSuccess(await this.taskQueue.initialize(), "加载任务队列失败");
 
     this.taskRunner = new TaskRunner({
+      duplicateMergeService: this.duplicateMergeService,
       providerManager: this.providerManager,
       promptManager: this.promptManager,
       validator: this.validator,
@@ -378,12 +382,14 @@ export class PluginRuntime {
       rebuildSemanticNote: (filePath) => this.rebuildSemanticNote(filePath),
       workflowCoordinator: this.workflowCoordinator,
       duplicateMergeService: this.duplicateMergeService,
+      mergeDraftGeneration: this.mergeDraftGeneration,
     });
   }
 
   async dispose(): Promise<void> {
     this.disposed = true;
     void this.cardGeneration?.dispose();
+    void this.mergeDraftGeneration?.dispose();
     this.lifecycleGeneration++;
     if (this.disposePromise) {
       return this.disposePromise;
@@ -519,6 +525,7 @@ export class PluginRuntime {
 
   private async releaseResources(): Promise<void> {
     await this.releaseSafely("CardGenerationService", () => this.cardGeneration?.dispose());
+    await this.releaseSafely("MergeDraftGenerationService", () => this.mergeDraftGeneration?.dispose());
     // Merge commits also own vault writes and must settle before reset can
     // clear their journal or the index/cache dependencies are released.
     await this.releaseSafely("DuplicateMergeService", () => this.duplicateMergeService?.dispose());

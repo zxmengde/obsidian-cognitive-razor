@@ -2,7 +2,7 @@ import type { App, TFile } from "obsidian";
 import { err, ok, toErr } from "../types";
 import type { CRFrontmatter, Result } from "../types";
 import type {
-  DuplicateMergeDraft, DuplicateMergeNoteSnapshot, DuplicateMergeOperation,
+  DuplicateMergeDraft, DuplicateMergeInput, DuplicateMergeNoteSnapshot, DuplicateMergeOperation,
   DuplicateMergeOperationsStore, DuplicateMergePreview, LinkRepairPlan,
 } from "../types";
 import type { FileStorage } from "../data/file-storage";
@@ -18,6 +18,7 @@ import { resolveTaskModelSnapshot } from "./task-model-resolver";
 import { formatCRTimestamp } from "../utils/date-utils";
 import { resolveAvailableProvider } from "./provider-config";
 import { validateChatFinishReason } from "./provider-response-parsers";
+import type { TaskModelSnapshot } from "../types/task";
 
 const STORE_PATH = "data/duplicate-merge-operations.json";
 const MERGE_SCHEMA = {
@@ -249,7 +250,7 @@ export class DuplicateMergeService {
     return this.store.operations.filter((operation) => operation.phase !== "completed").map((operation) => ({ ...operation }));
   }
 
-  async prepareMerge(pairId: string, canonicalNodeId: string, signal?: AbortSignal): Promise<Result<DuplicateMergePreview>> {
+  async captureMergeInput(pairId: string, canonicalNodeId: string): Promise<Result<DuplicateMergeInput>> {
     if (this.disposed) return err("E310_INVALID_STATE", "合并服务已停止");
     const pair = this.deps.duplicateManager.getPair(pairId);
     if (!pair || pair.status !== "pending") return err("E311_NOT_FOUND", "重复对不存在或已处理");
@@ -258,22 +259,35 @@ export class DuplicateMergeService {
     const canonical = await this.readSnapshot(canonicalNodeId);
     const redundant = await this.readSnapshot(redundantNodeId);
     if (!canonical.ok) return canonical; if (!redundant.ok) return redundant;
-    if (signal?.aborted) return err("E310_INVALID_STATE", "合并已取消");
     const snapshots = new Map<string, string>();
     for (const file of this.deps.app.vault.getMarkdownFiles()) snapshots.set(file.path, await this.deps.app.vault.cachedRead(file));
+    const redundantFile = this.deps.cruidCache.getFile(redundantNodeId);
+    const canonicalFile = this.deps.cruidCache.getFile(canonicalNodeId);
+    if (!redundantFile || !canonicalFile || this.disposed) return err("E311_NOT_FOUND", "重复对涉及的笔记已不存在或服务已停止");
+    return ok({ pairId, type: pair.type, similarity: pair.similarity, canonical: canonical.value, redundant: redundant.value, linkRepairPlan: buildLinkPlan(this.deps.app, redundantFile, canonicalFile, snapshots) });
+  }
+
+  /** Direct core helper retained for callers/tests; the workbench submits only through the durable queue. */
+  async prepareMerge(pairId: string, canonicalNodeId: string, signal?: AbortSignal): Promise<Result<DuplicateMergePreview>> {
+    const captured = await this.captureMergeInput(pairId, canonicalNodeId);
+    if (!captured.ok) return captured;
     const settings = this.deps.settingsStore.getSettings();
     const model = resolveTaskModelSnapshot(settings, "merge");
-    if (!model.providerId || !model.model) return err("E401_PROVIDER_NOT_CONFIGURED", "请先配置合并任务模型");
-    // Merge is not a queued attempt, so it must obey the same provider
-    // availability rule as every other entry point before spending a request.
     const provider = resolveAvailableProvider(settings, model.providerId);
     if (!provider.ok) return provider;
-    const input = JSON.stringify({ canonical: canonical.value, redundant: redundant.value });
+    return this.prepareCapturedMerge(captured.value, model, signal);
+  }
+
+  /** Queue attempts use the selected notes and the attempt's model snapshot, never the currently open note. */
+  async prepareCapturedMerge(input: DuplicateMergeInput, model: TaskModelSnapshot, signal?: AbortSignal): Promise<Result<DuplicateMergePreview>> {
+    if (this.disposed || signal?.aborted) return err("E310_INVALID_STATE", "合并稿生成已停止");
+    if (!model.providerId || !model.model || !model.providerSnapshot || model.providerSnapshot.enabled === false) return err("E401_PROVIDER_NOT_CONFIGURED", "请先配置合并任务模型");
+    const current = JSON.stringify({ canonical: input.canonical, redundant: input.redundant });
     let prompt: string;
-    try { prompt = this.deps.promptManager.build("merge", { CTX_CURRENT: input }); }
+    try { prompt = this.deps.promptManager.build("merge", { CTX_CURRENT: current }); }
     catch (error) { return toErr(error, "E405_TEMPLATE_INVALID", "合并提示词不可用"); }
     const response = await this.deps.providerManager.chat(buildTaskChatRequest("merge", prompt, model, MERGE_SCHEMA, "duplicate-merge"), signal);
-    if (this.disposed) return err("E310_INVALID_STATE", "合并服务已停止");
+    if (this.disposed || signal?.aborted) return err("E310_INVALID_STATE", "合并稿生成已停止");
     if (!response.ok) return response;
     const finish = validateChatFinishReason(response.value.finishReason);
     if (!finish.ok) return finish;
@@ -284,15 +298,12 @@ export class DuplicateMergeService {
     // The model may omit ancestry. Preserve it in the editable preview only;
     // confirmation remains authoritative so deleted/edited parents stay that way.
     const draft: DuplicateMergeDraft = {
-      pairId, canonicalNodeId, redundantNodeId,
-      canonicalContentHash: canonical.value.contentHash, redundantContentHash: redundant.value.contentHash,
+      pairId: input.pairId, canonicalNodeId: input.canonical.nodeId, redundantNodeId: input.redundant.nodeId,
+      canonicalContentHash: input.canonical.contentHash, redundantContentHash: input.redundant.contentHash,
       body: raw.body as string, name: raw.name as string,
-      aliases: uniqueStrings(raw.aliases), tags: uniqueStrings(raw.tags), parents: normalizeParents([...canonical.value.frontmatter.parents, ...redundant.value.frontmatter.parents, ...uniqueStrings(raw.parents)]), sourceUids: uniqueStrings(raw.sourceUids), conflicts: uniqueStrings(raw.conflicts),
+      aliases: uniqueStrings(raw.aliases), tags: uniqueStrings(raw.tags), parents: normalizeParents([...input.canonical.frontmatter.parents, ...input.redundant.frontmatter.parents, ...uniqueStrings(raw.parents)]), sourceUids: uniqueStrings(raw.sourceUids), conflicts: uniqueStrings(raw.conflicts),
     };
-    const redundantFile = this.deps.cruidCache.getFile(redundantNodeId);
-    const canonicalFile = this.deps.cruidCache.getFile(canonicalNodeId);
-    if (!redundantFile || !canonicalFile) return err("E311_NOT_FOUND", "重复对涉及的笔记已不存在");
-    return ok({ pairId, type: pair.type, similarity: pair.similarity, canonical: canonical.value, redundant: redundant.value, draft, linkRepairPlan: buildLinkPlan(this.deps.app, redundantFile, canonicalFile, snapshots) });
+    return ok({ ...input, draft });
   }
 
   async confirmMerge(draft: DuplicateMergeDraft, linkRepairPlan: LinkRepairPlan): Promise<Result<DuplicateMergeOperation>> {

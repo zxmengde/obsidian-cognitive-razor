@@ -7,6 +7,7 @@
 import type { ConfirmedConcept, CRType } from "./domain";
 import type { SourcePackage } from "./workflow";
 import type { ResolvedTaskConfig } from "./model-config";
+import type { DuplicateMergeInput } from "./duplicate-merge";
 
 // ============================================================================
 // 任务基础类型
@@ -18,7 +19,7 @@ export type TaskType =
     | "index" | "verify" | "merge" | "cards";
 
 /** 由运行时队列调度的后台任务。 */
-export type QueueTaskType = Exclude<TaskType, "define" | "index" | "merge">;
+export type QueueTaskType = Exclude<TaskType, "define" | "index">;
 
 /** 可恢复工作流的类别。Define 与 Index 不进入后台队列。 */
 export type WorkflowKind = "create" | "verify";
@@ -27,9 +28,9 @@ export type WorkflowKind = "create" | "verify";
  * 队列中实际执行的阶段。Write 的每个 phase 都是独立任务，因此必须有
  * 稳定阶段 ID，不能再从 UI 文案或任务类型猜测。
  */
-export const TASK_STAGE_IDS = ["tag", "core", "narrative", "structure", "process", "synthesis", "verify", "cards"] as const;
+export const TASK_STAGE_IDS = ["tag", "core", "narrative", "structure", "process", "synthesis", "verify", "cards", "merge"] as const;
 export type TaskStageId = typeof TASK_STAGE_IDS[number];
-export type WriteTaskStageId = Exclude<TaskStageId, "tag" | "verify" | "cards">;
+export type WriteTaskStageId = Exclude<TaskStageId, "tag" | "verify" | "cards" | "merge">;
 
 /** One execution-attempt model and parameter snapshot; never persisted. */
 export type TaskModelSnapshot = ResolvedTaskConfig;
@@ -133,6 +134,7 @@ type QueueTaskPayloadMap = {
     synthesis: WritePayload;
     verify: VerifyPayload;
     cards: CardPayload;
+    merge: DuplicateMergeInput;
 };
 
 /** 所有排队任务 Payload 的联合。 */

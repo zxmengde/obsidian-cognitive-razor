@@ -10,7 +10,7 @@ export type StageLabelResolver = (key: string) => string;
 /** UI read model derived from the stage catalog and the task's confirmed input. */
 export interface StageDescriptor {
   id: TaskStageId;
-  role: "tag" | "write" | "verify" | "cards";
+  role: "tag" | "write" | "verify" | "cards" | "merge";
   order: number;
   label: string;
   shortLabel: string;
@@ -33,6 +33,7 @@ export function getStageDescriptor(
   const type = getTaskConceptType(task);
   const stageId = task.stageId;
   if (stageId === "cards") return { id: stageId, role: "cards", order: 0, label: translate("workbench.stages.cards"), shortLabel: translate("workbench.stages.cards"), commitPolicy: "cards" };
+  if (stageId === "merge") return { id: stageId, role: "merge", order: 0, label: translate("workbench.stages.merge"), shortLabel: translate("workbench.stages.merge"), commitPolicy: "draft" };
   const definition = getStageDefinition(type, stageId);
 
   if (!definition) {

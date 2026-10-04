@@ -1,11 +1,14 @@
 <script lang="ts">
+    import { onDestroy } from 'svelte';
     import { getWorkbenchContext } from '../../bridge/context';
     import Button from '../../components/Button.svelte';
     import Icon from '../../components/Icon.svelte';
-    import type { TaskRecord, TaskState } from '../../../types';
+    import type { TaskRecord, TaskState, DuplicateMergePreview } from '../../../types';
     import { formatStandardName } from '../../../core/naming-utils';
     import { queueTaskFeedback } from '../../queue-task-feedback';
     import { stageLabel } from '../../stage-labels';
+    import MergeModal from './MergeModal.svelte';
+    import { showActionFeedback, showActionError } from '../../feedback';
 
     let {
         tasks,
@@ -29,6 +32,21 @@
 
     const ctx = getWorkbenchContext();
     const t = ctx.i18n.messages;
+    let mergePreview = $state<DuplicateMergePreview | null>(null);
+    let openingDraftId = $state<string | null>(null);
+    let disposed = false;
+    onDestroy(() => { disposed = true; });
+    async function openDraft(task: TaskRecord): Promise<void> {
+        if (!task.workflowId || openingDraftId) return;
+        openingDraftId = task.id;
+        try {
+            const result = await ctx.application.duplicates.getMergeDraft(task.workflowId);
+            if (disposed) return;
+            if (result.ok) mergePreview = result.value;
+            else showActionError(result.error, t.workbench.notifications.mergeFailed, task.filePath);
+        } catch (error) { if (!disposed) showActionError(error, t.workbench.notifications.mergeFailed, task.filePath); }
+        finally { if (!disposed) openingDraftId = null; }
+    }
 
     function getTaskDisplayName(task: TaskRecord): string {
         if (task.noteTitle?.trim()) return task.noteTitle;
@@ -62,6 +80,7 @@
             {#if selectable}<input class="cr-task-select" type="checkbox" checked={selectedIds.has(task.id)} onchange={(event) => onselect(task.id, event.currentTarget.checked)} aria-label={`${t.workbench.queueStatus.selectTask} ${displayName}`} />{/if}
             <span class="cr-task-name" title={task.stageId === 'cards' ? `${displayName} → ${task.payload.targetPath ?? ''}` : displayName}>{displayName}</span>
             <span class="cr-task-actions">
+                {#if task.stageId === 'merge' && task.state === 'completed'}<Button variant="ghost" size="sm" disabled={disabled || !!openingDraftId} onclick={() => void openDraft(task)}>{t.workbench.duplicates.viewDraft}</Button>{/if}
                 {#if task.state === 'pending' || task.state === 'running'}<Button variant="ghost" size="sm" disabled={disabled} onclick={() => oncancel(task.id)} ariaLabel={t.workbench.queueStatus.cancel}>{t.workbench.queueStatus.cancel}</Button>
                 {:else if selectable && !task.localSavePending}<Button variant="ghost" size="icon" disabled={disabled} onclick={() => onremove(task.id)} ariaLabel={t.workbench.queueStatus.delete}><Icon name="trash-2" size={16} /></Button>{/if}
             </span>
@@ -90,6 +109,14 @@
         </div>
     {/each}
 </div>
+{#if mergePreview}
+    <MergeModal
+        pair={{ id: mergePreview.pairId, nodeIdA: mergePreview.canonical.nodeId, nodeIdB: mergePreview.redundant.nodeId, type: mergePreview.type, similarity: mergePreview.similarity, status: 'pending' }}
+        initialPreview={mergePreview}
+        onclose={() => mergePreview = null}
+        onsuccess={() => { showActionFeedback({ level: 'success', message: t.workbench.notifications.mergeSuccess }, mergePreview?.canonical.path); mergePreview = null; }}
+    />
+{/if}
 <style>
     .cr-task-list { display: flex; flex-direction: column; }
     .cr-task-item { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: baseline; gap: 10px 12px; padding: 14px 0 20px; border-bottom: 1px solid var(--cr-border); }
@@ -98,7 +125,7 @@
     .cr-task-item--selectable { grid-template-columns: 20px minmax(0,1fr) auto; }
     .cr-task-select { width: 16px; height: 16px; margin: 0; }
     .cr-task-name { color: var(--cr-text-normal); font-size: var(--cr-font-base); font-weight: 600; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
-    .cr-task-actions { justify-self: end; }
+    .cr-task-actions { justify-self: end; display: flex; gap: 12px; }
     .cr-task-actions :global(button) { min-height: 0; padding: 0; font-size: var(--cr-font-xs); }
     .cr-task-meta { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; color: var(--cr-text-muted); font-size: var(--cr-font-xs); min-width: 0; }
     .cr-task-item--selectable .cr-task-meta, .cr-task-item--selectable .cr-task-feedback { grid-column: 2 / -1; }

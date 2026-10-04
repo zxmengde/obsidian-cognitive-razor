@@ -60,6 +60,7 @@
     },
     "stages": {
       "cards": "记忆卡片",
+      "merge": "合并稿",
       "tag": "提取标签",
       "tagShort": "标签",
       "verify": "事实核查",
@@ -101,6 +102,9 @@
       "chooseCanonical": "选择要保留的主笔记，然后生成可编辑合并稿。",
       "openNote": "打开笔记",
       "generateDraft": "生成合并稿",
+      "regenerateDraft": "重新生成合并稿",
+      "viewDraft": "查看合并稿",
+      "queued": "合并稿生成已加入任务队列",
       "confirmMerge": "写入并移入回收站",
       "fieldName": "名称",
       "fieldAliases": "别名（逗号分隔）",

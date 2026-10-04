@@ -16,7 +16,7 @@ import { buildStrictJsonSchema } from "./schema-registry";
 import { splitPromptIntoMessages } from "./prompt-message-builder";
 import { normalizeExternalHttpUrl } from "./url-utils";
 
-export const PROMPT_VERSION = "v5";
+export const PROMPT_VERSION = "v6";
 export function buildPromptCacheKey(
   providerId: string,
   model: string,

@@ -7,7 +7,7 @@ import type { QueueTaskType, TaskStageId, WriteTaskStageId } from "../types/task
 export type StageRole = QueueTaskType;
 
 /** The durable side effect owned by a completed stage. */
-export type StageCommitPolicy = "frontmatter" | "content" | "report" | "cards";
+export type StageCommitPolicy = "frontmatter" | "content" | "report" | "cards" | "draft";
 
 /** The complete product contract for one concrete workflow stage. */
 export interface StageDefinition {
@@ -98,7 +98,7 @@ export const STAGE_CATALOG: readonly StageDefinition[] = [
 ] as const;
 
 const STAGE_ROLES: ReadonlyMap<TaskStageId, StageRole> = (() => {
-  const roles = new Map<TaskStageId, StageRole>([["cards", "cards"]]);
+  const roles = new Map<TaskStageId, StageRole>([["cards", "cards"], ["merge", "merge"]]);
   for (const stage of STAGE_CATALOG) {
     const existing = roles.get(stage.id);
     if (existing !== undefined && existing !== stage.role) {

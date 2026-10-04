@@ -54,7 +54,8 @@ describe("StageCatalog contract", () => {
 
   it("derives every stage role from the catalog", () => {
     expect(getStageRole("cards")).toBe("cards");
-    for (const stageId of TASK_STAGE_IDS.filter((id) => id !== "cards")) {
+    expect(getStageRole("merge")).toBe("merge");
+    for (const stageId of TASK_STAGE_IDS.filter((id) => id !== "cards" && id !== "merge")) {
       const roles = [...new Set(STAGE_CATALOG
         .filter((stage) => stage.id === stageId)
         .map((stage) => stage.role))];

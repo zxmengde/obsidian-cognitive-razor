@@ -11,18 +11,19 @@ let ui: {
   unmount: (instance: object) => Promise<void>;
   flushSync: () => void;
   MergeHost: unknown;
+  noticeMessages: Array<{ message: string }>;
 };
 beforeAll(async () => {
   Object.defineProperty(HTMLElement.prototype, "empty", { configurable: true, value() { this.replaceChildren(); } });
   const result = await build({
-    stdin: { contents: 'export { mount, unmount, flushSync } from "svelte"; export { default as MergeHost } from "merge-host";', resolveDir: process.cwd() },
+    stdin: { contents: 'export { mount, unmount, flushSync } from "svelte"; export { noticeMessages } from "obsidian"; export { default as MergeHost } from "merge-host";', resolveDir: process.cwd() },
     bundle: true, write: false, format: "iife", globalName: "MergeLinksTestUI",
     conditions: ["svelte", "browser"], mainFields: ["svelte", "browser", "module", "main"],
     alias: { obsidian: "./__mocks__/obsidian.ts", "@": "./src" },
     plugins: [{ name: "merge-host", setup(builder) {
       builder.onResolve({ filter: /^merge-host$/ }, () => ({ path: "merge-host", namespace: "test" }));
       builder.onLoad({ filter: /.*/, namespace: "test" }, () => ({ resolveDir: process.cwd(), contents: compile(
-        '<script>import Merge from "./src/ui/svelte/workbench/MergeModal.svelte"; import { setWorkbenchContext } from "./src/ui/bridge/context"; let { context, pair, onsuccess, onclose } = $props(); setWorkbenchContext(context);</script><Merge {pair} {onsuccess} {onclose} />',
+        '<script>import Merge from "./src/ui/svelte/workbench/MergeModal.svelte"; import { setWorkbenchContext } from "./src/ui/bridge/context"; let { context, pair, initialPreview, onsuccess, onclose } = $props(); setWorkbenchContext(context);</script><Merge {pair} {initialPreview} {onsuccess} {onclose} />',
         { filename: "MergeHost.svelte", css: "injected" },
       ).js.code }));
     } }, sveltePlugin({ preprocess: sveltePreprocess(), compilerOptions: { css: "injected" } })],
@@ -42,12 +43,33 @@ function fixture() {
   const openLinkText = vi.fn(async (_path: string, _source: string, _newLeaf: boolean) => undefined);
   const getConceptPath = vi.fn((id: string) => paths.get(id) ?? null);
   const prepareMerge = vi.fn(async () => ok({ draft, similarity: 0.9, linkRepairPlan: { entries: [], skipped: [], replacementCount: 0 } }));
+  const startMerge = vi.fn(async () => ok("merge-workflow"));
+  const preview = { pairId: pair.id, type: pair.type, canonical: { nodeId: "a", path: paths.get("a")! }, redundant: { nodeId: "b", path: paths.get("b")! }, draft, similarity: .9, linkRepairPlan: { entries: [], skipped: [], replacementCount: 0 } };
   const confirmMerge = vi.fn(async (_draft: DuplicateMergeDraft, _plan: unknown) => ok({}));
-  const context = { i18n: new I18n(), app: { workspace: { openLinkText } }, application: { duplicates: { getConceptName: () => "Same", getConceptPath, prepareMerge, confirmMerge } } };
-  return { pair, draft, paths, openLinkText, getConceptPath, prepareMerge, confirmMerge, context };
+  const context = { i18n: new I18n(), app: { workspace: { openLinkText } }, application: { duplicates: { getConceptName: () => "Same", getConceptPath, startMerge, prepareMerge, confirmMerge } } };
+  return { pair, draft, preview, paths, openLinkText, getConceptPath, startMerge, prepareMerge, confirmMerge, context };
 }
 
 describe("Merge dialog link fidelity", () => {
+  it("closes after durable queue acceptance without waiting for a model preview", async () => {
+    const f = fixture();
+    const startMerge = vi.fn(async () => ok("merge-workflow"));
+    Object.assign(f.context.application.duplicates, { startMerge });
+    const target = document.body.appendChild(document.createElement("div"));
+    const onclose = vi.fn();
+    const instance = ui.mount(ui.MergeHost, { target, props: { context: f.context, pair: f.pair, onclose, onsuccess: vi.fn() } });
+    try {
+      ui.flushSync();
+      document.body.querySelector<HTMLButtonElement>(".cr-modal-footer .cr-btn-primary")!.click();
+      document.body.querySelector<HTMLButtonElement>(".cr-modal-footer .cr-btn-primary")!.click();
+      await vi.waitFor(() => expect(onclose).toHaveBeenCalledOnce());
+      expect(startMerge).toHaveBeenCalledWith(f.pair.id, "a");
+      expect(startMerge).toHaveBeenCalledOnce();
+      expect(f.prepareMerge).not.toHaveBeenCalled();
+      expect(ui.noticeMessages.at(-1)?.message).toContain("Current/Same.md：合并稿生成已加入任务队列");
+    } finally { await ui.unmount(instance); target.remove(); }
+  });
+
   it("portals into the owning window, retains keyboard focus and removes the overlay on teardown", async () => {
     const f = fixture();
     const frame = document.body.appendChild(document.createElement('iframe'));
@@ -83,18 +105,18 @@ describe("Merge dialog link fidelity", () => {
     }
   });
 
-  it("ignores a preview arriving after the user closes the dialog", async () => {
+  it("does not reopen or cancel an accepted submission after the user closes the dialog", async () => {
     const f = fixture();
-    const result = await f.prepareMerge(); f.prepareMerge.mockClear();
+    const result = ok("merge-workflow");
     let release!: (value: typeof result) => void;
-    f.prepareMerge.mockImplementation(() => new Promise(resolve => { release = resolve; }));
+    f.startMerge.mockImplementation(() => new Promise(resolve => { release = resolve; }));
     const target = document.body.appendChild(document.createElement('div'));
     const onsuccess = vi.fn();
     const instance = ui.mount(ui.MergeHost, { target, props: { context: f.context, pair: f.pair, onclose: vi.fn(), onsuccess } });
     ui.flushSync();
     document.body.querySelector<HTMLButtonElement>('.cr-modal-footer .cr-btn-primary')!.click();
     ui.flushSync();
-    expect(f.prepareMerge).toHaveBeenCalledOnce();
+    expect(f.startMerge).toHaveBeenCalledOnce();
     await ui.unmount(instance);
     release(result); await Promise.resolve(); ui.flushSync();
     expect(document.body.querySelector('.cr-modal-overlay')).toBeNull();
@@ -108,12 +130,11 @@ describe("Merge dialog link fidelity", () => {
     f.confirmMerge.mockImplementation(() => new Promise((_resolve, reject) => { rejectCommit = reject; }));
     const target = document.body.appendChild(document.createElement("div"));
     const onsuccess = vi.fn();
-    const instance = ui.mount(ui.MergeHost, { target, props: { context: f.context, pair: f.pair, onclose: vi.fn(), onsuccess } });
+    const instance = ui.mount(ui.MergeHost, { target, props: { context: f.context, pair: f.pair, initialPreview: f.preview, onclose: vi.fn(), onsuccess } });
     const labels = f.context.i18n.messages.workbench.duplicates;
     const click = (text: string) => Array.from(document.body.querySelectorAll("button")).find(button => button.textContent?.trim() === text)!.click();
     try {
-      ui.flushSync(); click(labels.generateDraft);
-      await vi.waitFor(() => { ui.flushSync(); expect(document.body.querySelectorAll("textarea")).toHaveLength(2); });
+      ui.flushSync(); expect(document.body.querySelectorAll("textarea")).toHaveLength(2);
       const name = document.body.querySelector("input")!;
       name.value = "Human reviewed name";
       name.dispatchEvent(new Event("change", { bubbles: true }));
@@ -134,7 +155,7 @@ describe("Merge dialog link fidelity", () => {
     const f = fixture();
     const target = document.body.appendChild(document.createElement("div"));
     const onsuccess = vi.fn();
-    const instance = ui.mount(ui.MergeHost, { target, props: { context: f.context, pair: f.pair, onclose: vi.fn(), onsuccess } });
+    let instance = ui.mount(ui.MergeHost, { target, props: { context: f.context, pair: f.pair, onclose: vi.fn(), onsuccess } });
     try {
       ui.flushSync();
       const labels = f.context.i18n.messages.workbench.duplicates;
@@ -146,8 +167,9 @@ describe("Merge dialog link fidelity", () => {
       open[1].click();
       expect(f.openLinkText).toHaveBeenLastCalledWith("Moved/Same.md", "", true);
       expect(f.prepareMerge).not.toHaveBeenCalled();
-      Array.from(document.body.querySelectorAll("button")).find((button) => button.textContent?.trim() === labels.generateDraft)!.click();
-      await vi.waitFor(() => { ui.flushSync(); expect(document.body.querySelectorAll("textarea")).toHaveLength(2); });
+      await ui.unmount(instance);
+      instance = ui.mount(ui.MergeHost, { target, props: { context: f.context, pair: f.pair, initialPreview: f.preview, onclose: vi.fn(), onsuccess } });
+      ui.flushSync(); expect(document.body.querySelectorAll("textarea")).toHaveLength(2);
       const parents = document.body.querySelector<HTMLTextAreaElement>("textarea")!;
       expect(parents.value).toBe("[[Domain/A, B]]\n[[Domain/Remove]]");
       parents.value = "[[Domain/A, B]]\n[[Domain/User Replacement]]\n[[Domain/A, B]]";

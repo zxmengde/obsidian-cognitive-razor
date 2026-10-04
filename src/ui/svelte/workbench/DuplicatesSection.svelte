@@ -14,7 +14,7 @@
     import Button from '../../components/Button.svelte';
     import InlineAlert from '../../components/InlineAlert.svelte';
     import DuplicateItem from './DuplicateItem.svelte';
-    import type { DuplicatePair } from '../../../types';
+    import type { DuplicatePair, DuplicateMergePreview } from '../../../types';
     import { toSafeErrorFeedback, type UiFeedback } from '../../error-feedback';
     import MergeModal from './MergeModal.svelte';
 
@@ -40,6 +40,9 @@
     let feedback = $state<UiFeedback | null>(null);
     const dismissingIds = new SvelteSet<string>();
     let activeMergePair = $state<DuplicatePair | null>(null);
+    let readyMergePreview = $state<DuplicateMergePreview | undefined>(undefined);
+    let openingMerge = 0;
+    $effect(() => () => { openingMerge++; });
     let recovery = $state(duplicates.getRecoveryOperations());
     const recoveryIds = new SvelteSet<string>();
 
@@ -61,6 +64,16 @@
      */
     function refreshRecovery(): void {
         recovery = duplicates.getRecoveryOperations();
+    }
+    async function openMerge(pair: DuplicatePair): Promise<void> {
+        const generation = ++openingMerge;
+        try {
+            const ready = await duplicates.findReadyMergeDraft(pair.id);
+            if (generation !== openingMerge) return;
+            if (!ready.ok) { feedback = toSafeErrorFeedback(ready.error, t.workbench.notifications.mergeFailed); return; }
+            readyMergePreview = ready.value;
+            activeMergePair = pair;
+        } catch (error) { if (generation === openingMerge) feedback = toSafeErrorFeedback(error, t.workbench.notifications.mergeFailed); }
     }
 
     /** 点击忽略：标记为非重复 + Notice 反馈 */
@@ -150,7 +163,7 @@
                         nameB={resolveName(pair.nodeIdB)}
                         dismissing={dismissingIds.has(pair.id)}
                         ondismiss={(p) => void handleDismiss(p)}
-                        onmerge={(p) => { activeMergePair = p; }}
+                        onmerge={(p) => void openMerge(p)}
                     />
                 </div>
             {/each}
@@ -164,6 +177,7 @@
 {#if activeMergePair}
     <MergeModal
         pair={activeMergePair}
+        initialPreview={readyMergePreview}
         onclose={() => { activeMergePair = null; refreshRecovery(); }}
         onsuccess={() => {
             activeMergePair = null;

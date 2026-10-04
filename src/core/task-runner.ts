@@ -24,6 +24,7 @@ import { TagTaskExecutor } from "./tag-task-executor";
 import { WriteTaskExecutor } from "./write-task-executor";
 import { VerifyTaskExecutor } from "./verify-task-executor";
 import { getStageRole } from "./stage-catalog";
+import type { DuplicateMergeService } from "./duplicate-merge-service";
 import {
   getTaskAbortError,
 } from "./task-execution-support";
@@ -38,6 +39,7 @@ interface TaskRunnerDependencies {
   logger: ILogger;
   schemaRegistry: SchemaRegistry;
   settingsStore: SettingsStore;
+  duplicateMergeService?: DuplicateMergeService;
 }
 
 export class TaskRunner {
@@ -72,6 +74,11 @@ export class TaskRunner {
     const cardsExecutor = new CardsTaskExecutor(deps);
     this.executorRegistry = new TaskExecutorRegistry();
     this.executorRegistry.register("cards", (task, signal, context) => cardsExecutor.execute(task as TaskRecord<"cards">, signal, context));
+    this.executorRegistry.register("merge", async (task, signal, context) => {
+      if (task.stageId !== "merge" || !deps.duplicateMergeService) return err("E310_INVALID_STATE", "合并稿执行器尚未就绪");
+      const preview = await deps.duplicateMergeService.prepareCapturedMerge(task.payload, context.modelSnapshot, signal);
+      return preview.ok ? ok({ preview: preview.value }) : preview;
+    });
     this.executorRegistry.register("tag", (task, signal, attemptReason) =>
       tagExecutor.execute(task as TaskRecord<"tag">, signal, attemptReason));
     this.executorRegistry.register("write", (task, signal, attemptReason) =>

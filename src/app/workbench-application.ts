@@ -16,6 +16,7 @@ import type {
 import type { DuplicateManager } from "../core/duplicate-manager";
 import type { WorkflowCoordinator } from "../core/workflow-coordinator";
 import type { DuplicateMergeService } from "../core/duplicate-merge-service";
+import type { MergeDraftGenerationService } from "../core/merge-draft-generation-service";
 
 export interface QueueReadModel {
   status: QueueStatus;
@@ -57,7 +58,9 @@ export interface DuplicateApplication {
   dismiss(pairId: string): Promise<Result<void>>;
   getConceptName(cruid: string): string | null;
   getConceptPath(cruid: string): string | null;
-  prepareMerge(pairId: string, canonicalNodeId: string, signal?: AbortSignal): Promise<Result<DuplicateMergePreview>>;
+  startMerge(pairId: string, canonicalNodeId: string): Promise<Result<string>>;
+  getMergeDraft(workflowId: string): Promise<Result<DuplicateMergePreview>>;
+  findReadyMergeDraft(pairId: string): Promise<Result<DuplicateMergePreview | undefined>>;
   confirmMerge(draft: DuplicateMergeDraft, linkRepairPlan: LinkRepairPlan): Promise<Result<DuplicateMergeOperation>>;
   getRecoveryOperations(): DuplicateMergeOperation[];
   resumeMerge(operationId: string): Promise<Result<DuplicateMergeOperation>>;
@@ -84,6 +87,7 @@ interface WorkbenchApplicationDeps {
   generateCards?: (filePath: string) => Promise<Result<string>>;
   workflowCoordinator?: WorkflowCoordinator;
   duplicateMergeService?: DuplicateMergeService;
+  mergeDraftGeneration?: MergeDraftGenerationService;
 }
 
 /**
@@ -141,8 +145,14 @@ export class WorkbenchApplication {
       dismiss: (pairId) => this.deps.duplicateManager.markAsNonDuplicate(pairId),
       getConceptName: (cruid) => this.deps.getConceptName(cruid),
       getConceptPath: (cruid) => this.deps.getConceptPath(cruid),
-      prepareMerge: (pairId, canonicalNodeId, signal) => this.deps.duplicateMergeService
-        ? this.deps.duplicateMergeService.prepareMerge(pairId, canonicalNodeId, signal)
+      startMerge: (pairId, canonicalNodeId) => this.deps.mergeDraftGeneration
+        ? this.deps.mergeDraftGeneration.start(pairId, canonicalNodeId)
+        : Promise.resolve(err("E310_INVALID_STATE", "合并稿服务尚未就绪")),
+      getMergeDraft: (id) => this.deps.mergeDraftGeneration
+        ? this.deps.mergeDraftGeneration.getDraft(id)
+        : Promise.resolve(err("E310_INVALID_STATE", "合并稿服务尚未就绪")),
+      findReadyMergeDraft: (pairId) => this.deps.mergeDraftGeneration
+        ? this.deps.mergeDraftGeneration.findReadyDraft(pairId)
         : Promise.resolve(err("E310_INVALID_STATE", "合并服务尚未就绪")),
       confirmMerge: (draft, plan) => this.deps.duplicateMergeService
         ? this.deps.duplicateMergeService.confirmMerge(draft, plan)

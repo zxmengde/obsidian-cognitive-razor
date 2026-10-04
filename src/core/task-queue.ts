@@ -748,7 +748,7 @@ export class TaskQueue {
     const id = this.generateTaskId();
     const stageId = intent.stageId;
     const payload = clone(intent.payload);
-    const conceptType = "concept" in payload ? payload.concept?.type : "noteType" in payload ? payload.noteType : undefined;
+    const conceptType = "concept" in payload ? payload.concept?.type : "noteType" in payload ? payload.noteType : "type" in payload ? payload.type : undefined;
     return { id, workflowId: intent.workflowId, nodeId: intent.nodeId, stageId, state: "pending", queueOrder: this.nextQueueOrder++, noteTitle: intent.noteTitle, filePath: intent.filePath, conceptType, createdAt: now, updatedAt: now, attempt: 1, payload } as TaskRecord;
   }
 
