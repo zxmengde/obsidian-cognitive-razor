@@ -9,10 +9,15 @@ import {spawnSync} from 'node:child_process';
 const root=path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const cli=path.join(root,'scripts/update-write-defaults.mjs');
 const oldTask='生成当前概念的结构，字段含义见本次 Schema。充分覆盖主干；层级项只列直接下一层，各列表保持合理粒度。独立项须有实质差别；同义项合并，细节、情境和仅属交叉关系的内容写入相关项说明，不据相关性单列。不设数量目标，不宣称穷尽。不按知名度筛选；归属或地位有争议时说明依据。';
-async function fixture(){
+async function fixture(version="v7"){
  const temporary=await fs.mkdtemp(path.join(os.tmpdir(),'cr-write-migration-test-'));
  const plugin=path.join(temporary,'plugin'),rollback=path.join(temporary,'rollback');await fs.mkdir(rollback);await fs.cp(path.join(root,'prompts'),path.join(plugin,'prompts'),{recursive:true});
  for(const type of ['domain','issue','theory']){const p=path.join(plugin,'prompts/phases',type,'structure.md');const content=await fs.readFile(p,'utf8');await fs.writeFile(p,content.replace(/(<task_instruction>\n)[\s\S]*?(\n<\/task_instruction>)/,`$1${oldTask}$2`).replaceAll('\n','\r\n'));}
+ if(version==='v5'){
+  const historical=JSON.parse(await fs.readFile(path.join(root,'scripts/qa-tests/known-v5-write-defaults.json'),'utf8'));
+  for(const [relative,content] of Object.entries(historical.templates))await fs.writeFile(path.join(plugin,relative),content);
+  for(const relative of historical.absent)await fs.unlink(path.join(plugin,relative));
+ }
  return {temporary,plugin,rollback};
 }
 async function snapshot(dir){const files={};async function walk(d){for(const e of await fs.readdir(d,{withFileTypes:true})){const p=path.join(d,e.name);if(e.isDirectory())await walk(p);else if(e.isFile())files[path.relative(dir,p)]=(await fs.readFile(p)).toString('base64');}}await walk(dir);return files;}
@@ -44,3 +49,20 @@ test('existing backup symlinks and contradictory absence markers are rejected',(
  const backup=path.join(f.rollback,'v8-domain-structure.md'),target=path.join(f.plugin,'prompts/phases/domain/structure.md');const before=await snapshot(f.plugin);await fs.symlink(target,backup);let result=run(f,true);assert.notEqual(result.status,0);assert.deepEqual(await snapshot(f.plugin),before);
  await fs.unlink(backup);await fs.copyFile(target,backup);await fs.writeFile(backup+'.absent','absent');result=run(f,true);assert.notEqual(result.status,0);assert.deepEqual(await snapshot(f.plugin),before);
 }));
+
+
+test('exact v5 defaults migrate all 15 files and preserve the original bytes and missing-policy receipt',async()=>{
+ const f=await fixture('v5');try{
+  const before=await snapshot(f.plugin);let result=run(f);assert.equal(result.status,0,result.stderr);assert.deepEqual(await snapshot(f.plugin),before);assert.deepEqual(await snapshot(f.rollback),{});
+  result=run(f,true);assert.equal(result.status,0,result.stderr);assert.equal(JSON.parse(result.stdout).updated.length,15);
+  assert.equal(await fs.readFile(path.join(f.plugin,'prompts/base/write-policy.md'),'utf8'),await fs.readFile(path.join(root,'prompts/base/write-policy.md'),'utf8'));
+  assert.equal((await fs.lstat(path.join(f.rollback,'v8-write-policy.md.absent'))).isFile(),true);
+  for(const [relative,content] of Object.entries(before))if(relative.startsWith('prompts/phases/'))assert.equal((await fs.readFile(path.join(f.rollback,`v8-${path.basename(path.dirname(relative))}-${path.basename(relative)}`))).toString('base64'),content);
+ }finally{await fs.rm(f.temporary,{recursive:true,force:true});}
+});
+
+test('a customized v5 structure still refuses before the whole batch is written',async()=>{
+ const f=await fixture('v5');try{
+  const file=path.join(f.plugin,'prompts/phases/issue/structure.md');await fs.appendFile(file,'\nPersonal custom instruction');const before=await snapshot(f.plugin);const result=run(f,true);assert.notEqual(result.status,0);assert.deepEqual(await snapshot(f.plugin),before);assert.deepEqual(await snapshot(f.rollback),{});
+ }finally{await fs.rm(f.temporary,{recursive:true,force:true});}
+});

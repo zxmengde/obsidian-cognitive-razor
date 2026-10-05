@@ -37,8 +37,10 @@ node scripts/update-write-defaults.mjs --plugin-dir "/path/to/cognitive-razor"
 node scripts/update-write-defaults.mjs --plugin-dir "/path/to/cognitive-razor" --rollback-dir "/path/to/release-sync" --apply
 ```
 
-从已知 v6 默认需要 14 阶段文件及 write-policy，共 15 个；已知 v7 默认只更新三份 structure。四个旧 base 也参与预检。任一未知定制整批拒绝，不能覆盖个人规则；权限失败应停止，工具不会修改 ACL。新 runtime/PromptManager 才读取新磁盘模板，版本号不会自动刷新旧内存缓存。
+从已逐字节确认的历史 v5 或 v6 默认需要 14 阶段文件及 write-policy，共 15 个；已知 v7 默认只更新三份 structure。四个旧 base 也参与预检。任一未知定制整批拒绝，不能覆盖个人规则；权限失败应停止，工具不会修改 ACL。新 runtime/PromptManager 才读取新磁盘模板，版本号不会自动刷新旧内存缓存。
 
 全部 19 项会在预检后复查，暂存后还会复读目标和队列；仅接受普通、字节匹配的备份，拒绝符号链接与相互矛盾的缺失标记。普通 rename 不提供 compare-and-swap，多文件不是整体事务，中途 I/O 失败应使用已保留原字节恢复。
 
 源码检查：完整类型/Svelte、测试类型、lint、全部业务测试与构建；另有合成临时目录的 CLI 测试、独立采样矩阵及真实宿主 API0 参数摘要验证。真实宿主验证后的正式插件与原队列恢复须以收尾核对记录为准。
+
+历史兼容清单额外列入了 88ec8932 版本三份结构模板的精确 SHA256。云库 18 份原文件与该历史版本的原字节逐项匹配，write-policy 按该版确实缺失。未知旧版本、任何自定义字节仍拒绝，不能仅凭“版本较旧”放宽检查。
