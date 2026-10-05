@@ -4,6 +4,7 @@ import {
   buildResponsesExplicitCacheInput,
   buildResponsesTextConfig,
   buildWebSearchPolicy,
+  suppressChatSampling,
 } from "./provider-request-builders";
 import { parseOpenAIResponsesResponse } from "./provider-response-parsers";
 import type {
@@ -48,7 +49,7 @@ function buildRequestBody(
   if (request.reasoning_effort !== undefined) {
     body.reasoning = { effort: request.reasoning_effort };
   }
-  const reasoningActive = request.reasoning_effort !== undefined && request.reasoning_effort !== "none";
+  const reasoningActive = suppressChatSampling("openai-responses", request.model, request.reasoning_effort);
   if (!reasoningActive && request.temperature !== undefined) body.temperature = request.temperature;
   if (!reasoningActive && request.topP !== undefined) body.top_p = request.topP;
   if (request.maxTokens !== undefined) body.max_output_tokens = request.maxTokens;

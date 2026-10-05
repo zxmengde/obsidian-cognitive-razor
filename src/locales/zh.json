@@ -498,6 +498,7 @@
       "omitted": "请求不携带此参数",
       "notSent": "当前不发送",
       "unsupported": "当前能力声明未启用此参数",
+      "samplingSuppressed": "当前模型/推理设置不支持此采样参数，未发送",
       "retainedValue": "已配置的值 ",
       "retainedHint": "；保留，不会自动清除",
       "unset": "未配置，请求不携带此参数",
@@ -513,6 +514,7 @@
       "pluginDefault": "插件默认声明",
       "emptySpecifiedHint": "选择「指定」但没有真实值时，只展开空输入框。输入有效值后才保存，不预填占位数字。",
       "protocol": {
+        "unsupportedEffort": "gpt-6.1-sol 不支持 none/minimal，当前配置会在发送前拒绝请求。请选择 low、medium、high、xhigh、max，或「不发送」使用服务默认值。",
         "geminiOnly": "此值仅适用于 Gemini，当前协议会在发送前拒绝请求。已配置的值会保留，可选择「不发送」。",
         "effortNotGemini": "Gemini 不接受此推理参数，会在发送前拒绝请求。请使用 Thinking level / budget，或将此项改为「不发送」。",
         "thinkingConflict": "Thinking level 与 budget 不能同时发送；请选择其中一项，另一项设为「不发送」。"

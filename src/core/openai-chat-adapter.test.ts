@@ -54,3 +54,11 @@ describe("OpenAI Chat Completions adapter", () => {
     })).toEqual({ ok: true, value: { content: "ok", finishReason: "stop" } });
   });
 });
+
+
+it("omits unsupported sampling for exact 6.1 default reasoning without injecting an effort", () => {
+  const body = OPENAI_CHAT_COMPLETIONS_ADAPTER.buildRequestBody({ providerId: "p", model: "gpt-6.1-sol", messages: [{ role: "user", content: "x" }], temperature: 0.2, topP: 0.9 });
+  expect(body).not.toHaveProperty("temperature");
+  expect(body).not.toHaveProperty("top_p");
+  expect(body).not.toHaveProperty("reasoning_effort");
+});

@@ -61,17 +61,18 @@ describe("resolveTaskModelSnapshot", () => {
     expect(resolveTaskModelSnapshot(current, "define").model).toBe("custom-define");
   });
 
-  it("does not infer capabilities from the model name", () => {
+  it("applies explicit reasoning sampling suppression equally to unknown model names", () => {
     const first = settings();
     first.taskModels.define.model = "gpt-6-astra";
     first.taskModels.define.parameters = { temperature: 0, topP: 0, reasoning_effort: "custom" };
+    expect(resolveTaskModelSnapshot(first, "define").temperature).toBeUndefined();
     const second = structuredClone(first);
     second.taskModels.define.model = "my-alias";
     expect(resolveTaskModelSnapshot(first, "define")).toMatchObject({
-      model: "gpt-6-astra", temperature: 0, topP: 0, reasoningEffort: "custom",
+      model: "gpt-6-astra", configuredSampling: { temperature: 0, topP: 0 }, reasoningEffort: "custom",
     });
     expect(resolveTaskModelSnapshot(second, "define")).toMatchObject({
-      model: "my-alias", temperature: 0, topP: 0, reasoningEffort: "custom",
+      model: "my-alias", configuredSampling: { temperature: 0, topP: 0 }, reasoningEffort: "custom",
     });
   });
 
@@ -126,4 +127,21 @@ it("lets Cards inherit missing fields while keeping explicit overrides and snaps
   expect(inherited.providerId).toBe(original.defaultProviderId);
   current.taskModels.cards = { providerId: "missing-existing-override", model: "kept" };
   expect(resolveTaskModelSnapshot(current, "cards")).toMatchObject({ providerId: "missing-existing-override", model: "kept", providerSnapshot: undefined });
+});
+
+
+it.each(["openai-responses", "openai-chat-completions"] as const)("keeps saved sampling while resolving the wire values for %s", (apiFormat) => {
+  const current = settings();
+  current.providers.openai.apiFormat = apiFormat;
+  current.providers.openai.defaultChatModel = "gpt-6.1-sol";
+  current.taskModels.define.providerId = "openai";
+  const before = structuredClone(current);
+  const resolved = resolveTaskModelSnapshot(current, "define");
+  expect(resolved.temperature).toBeUndefined();
+  expect(resolved.topP).toBeUndefined();
+  expect(resolved.reasoningEffort).toBeUndefined();
+  expect(resolved).toMatchObject({ configuredSampling: { temperature: 0.2, topP: 0.8 } });
+  expect(current).toEqual(before);
+  current.taskModels.define.model = "custom-alias";
+  expect(resolveTaskModelSnapshot(current, "define")).toMatchObject({ temperature: 0.2, topP: 0.8 });
 });

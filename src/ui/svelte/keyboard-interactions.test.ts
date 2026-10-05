@@ -617,6 +617,32 @@ describe("task parameter progressive disclosure", () => {
     } finally { await ui.unmount(instance); target.remove(); }
   });
 
+  it("shows retained sampling as unsent for the exact default reasoning model", async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.defaultProviderId = "research";
+    settings.providers.research = {
+      apiKey: "", enabled: true, apiFormat: "openai-responses", embeddingApiFormat: "disabled",
+      defaultChatModel: "gpt-6.1-sol", defaultEmbedModel: "", capabilities: { temperature: true, topP: true, reasoning: true },
+      parameters: { temperature: 0.2, topP: 0.9 },
+    };
+    const onUpdate = vi.fn();
+    const target = document.body.appendChild(document.createElement("div"));
+    const instance = ui.mount(ui.TaskModelCard, { target, props: {
+      taskType: "write", config: settings.taskModels.write, providers: settings.providers, defaultProviderId: "research",
+      resolved: resolveTaskModelSnapshot(settings, "write"), isDefault: false, i18n: new I18n(), onUpdate, onReset() {},
+    } });
+    try {
+      ui.flushSync(); openTaskParameters(target);
+      for (const [key, value] of [["temperature", "0.2"], ["topP", "0.9"]]) {
+        const row = target.querySelector(`[data-parameter="${key}"]`)!;
+        expect(row.textContent).toContain("当前模型/推理设置不支持此采样参数，未发送");
+        expect(row.textContent).toContain(`已配置的值 ${value}`);
+        expect(row.querySelector(".cr-task-model-card__effective-value")).toBeNull();
+      }
+      expect(onUpdate).not.toHaveBeenCalled();
+    } finally { await ui.unmount(instance); target.remove(); }
+  });
+
   it("shows Cards inherited service and model without persisting placeholder values", async () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     settings.defaultProviderId = "research";

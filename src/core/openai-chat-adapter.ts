@@ -2,6 +2,7 @@ import type {
   ChatRequest,
 } from "../types";
 import { parseOpenAIChatResponse } from "./provider-response-parsers";
+import { suppressChatSampling } from "./provider-request-builders";
 import type { ChatProtocolAdapter } from "./chat-protocol-adapter";
 
 function buildRequestBody(request: ChatRequest): Record<string, unknown> {
@@ -9,7 +10,7 @@ function buildRequestBody(request: ChatRequest): Record<string, unknown> {
     model: request.model,
     messages: request.messages,
   };
-  const reasoningActive = request.reasoning_effort !== undefined && request.reasoning_effort !== "none";
+  const reasoningActive = suppressChatSampling("openai-chat-completions", request.model, request.reasoning_effort);
   if (!reasoningActive && request.temperature !== undefined) body.temperature = request.temperature;
   if (!reasoningActive && request.topP !== undefined) body.top_p = request.topP;
   if (request.maxTokens !== undefined) body.max_tokens = request.maxTokens;

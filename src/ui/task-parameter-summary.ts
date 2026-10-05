@@ -1,5 +1,6 @@
 import type { ModelCapabilities, ModelParameters, ProviderConfig, ResolvedTaskConfig, TaskModelConfig } from '../types';
 import type { TaskParameterInputs } from './task-model-parameters';
+import { suppressChatSampling, unsupportedOpenAIReasoningEffort } from '../core/provider-request-builders';
 
 export type TaskParameterKey = keyof ModelParameters;
 export type ParameterSource = 'task' | 'provider' | 'none';
@@ -17,7 +18,8 @@ export interface TaskParameterSummary {
     source: ParameterSource;
     omitted: boolean;
     unsupported: boolean;
-    protocolIssue?: 'geminiOnly' | 'effortNotGemini' | 'thinkingConflict';
+    samplingSuppressed: boolean;
+    protocolIssue?: 'geminiOnly' | 'effortNotGemini' | 'thinkingConflict' | 'unsupportedEffort';
 }
 
 export function taskParameterInputs(
@@ -48,14 +50,17 @@ export function describeTaskParameter(
         : key === 'reasoning_effort' || key === 'thinkingLevel' || key === 'thinkingBudget' ? 'reasoning' : undefined;
     const unsupported = capability !== undefined && !resolved.capabilities[capability];
     const format = resolved.providerSnapshot?.apiFormat;
+    const samplingSuppressed = (key === 'temperature' || key === 'topP') && configuredValue !== undefined && !omitted
+        && suppressChatSampling(format, resolved.model, resolved.reasoningEffort);
     let protocolIssue: TaskParameterSummary['protocolIssue'];
     if (value !== undefined && format) {
-        if ((key === 'thinkingLevel' || key === 'thinkingBudget') && format !== 'gemini-generative-language') protocolIssue = 'geminiOnly';
+        if (key === 'reasoning_effort' && unsupportedOpenAIReasoningEffort(format, resolved.model, resolved.reasoningEffort)) protocolIssue = 'unsupportedEffort';
+        else if ((key === 'thinkingLevel' || key === 'thinkingBudget') && format !== 'gemini-generative-language') protocolIssue = 'geminiOnly';
         else if (key === 'reasoning_effort' && format === 'gemini-generative-language') protocolIssue = 'effortNotGemini';
         else if ((key === 'thinkingLevel' || key === 'thinkingBudget') && resolved.thinkingLevel !== undefined && resolved.thinkingBudget !== undefined) protocolIssue = 'thinkingConflict';
     }
     return {
-        value, configuredValue, omitted, unsupported, protocolIssue,
+        value, configuredValue, omitted, unsupported, samplingSuppressed, protocolIssue,
         source: omitted || hasTaskValue ? 'task' : input.provider !== undefined ? 'provider' : 'none',
     };
 }

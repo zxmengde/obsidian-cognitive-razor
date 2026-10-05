@@ -54,6 +54,25 @@ function createSettingsStore(overrides: {
 }
 
 describe("ProviderManager", () => {
+  it.each(["none", "minimal"] as const)("rejects unsupported gpt-6.1-sol effort %s before dispatch", async (effort) => {
+    const manager = new ProviderManager(createSettingsStore({ provider: { apiFormat: "openai-responses" } }), createLogger());
+    const result = await manager.chat({ providerId: "provider-1", model: "gpt-6.1-sol", reasoning_effort: effort, messages: [{ role: "user", content: "synthetic" }] });
+    expect(result).toMatchObject({ ok: false, error: { code: "E101_INVALID_INPUT", message: expect.stringContaining("不支持") } });
+    expect(requestUrl).not.toHaveBeenCalled();
+    expect(manager.getExternalCallDiagnostics().attempts).toEqual([]); manager.dispose();
+  });
+  it.each([
+    ["gpt-6.1-sol", "low"],
+    ["gpt-6-sol", "none"],
+    ["gpt-6-luna", "none"],
+    ["custom-gateway-gpt-6.1-sol", "none"],
+  ] as const)("preserves configured effort for %s/%s", async (model, effort) => {
+    vi.mocked(requestUrl).mockResolvedValue({ status: 200, text: "", json: { status: "completed", output_text: "ok" } } as never);
+    const manager = new ProviderManager(createSettingsStore({ provider: { apiFormat: "openai-responses" } }), createLogger());
+    expect(await manager.chat({ providerId: "provider-1", model, reasoning_effort: effort, messages: [{ role: "user", content: "synthetic" }] })).toMatchObject({ ok: true });
+    expect(requestUrl).toHaveBeenCalledOnce();
+    expect(JSON.parse((vi.mocked(requestUrl).mock.calls[0][0] as RequestUrlParam).body as string).reasoning.effort).toBe(effort); manager.dispose();
+  });
   it("reports unsupported JSON Schema and dispatches once without changing the requested format", async () => {
     vi.mocked(requestUrl).mockResolvedValue({ status: 400, text: JSON.stringify({ error: { message: "response_format json_schema is not supported with this model", param: "response_format", code: "unsupported_value" } }), json: {} } as never);
     const manager = new ProviderManager(createSettingsStore(), createLogger());
@@ -1922,6 +1941,46 @@ describe("ProviderManager", () => {
 });
 
 describe("ProviderManager session usage diagnostics", () => {
+  it("distinguishes requested model/cache settings from response reports", async () => {
+    vi.mocked(requestUrl).mockReset();
+    vi.mocked(requestUrl).mockResolvedValue({ status: 200, text: "", json: {
+      model: "gpt-6-sol", status: "completed", output_text: "ok",
+      prompt_cache_options: { mode: "implicit", ttl: "30m" },
+      usage: { input_tokens: 1800, output_tokens: 2, total_tokens: 1802, input_tokens_details: { cached_tokens: 0 } },
+    } } as never);
+    const logger = createLogger(); logger.info = vi.fn();
+    const manager = new ProviderManager(createSettingsStore({ provider: { apiFormat: "openai-responses" } }), logger);
+    const result = await manager.chat({ providerId: "provider-1", model: "gpt-6-luna", promptCacheMode: "explicit", promptCacheTtl: "30m", messages: [{ role: "user", content: "synthetic" }] });
+    expect(result).toMatchObject({ ok: true, value: { reportedModel: "gpt-6-sol", reportedCacheMode: "implicit", reportedCacheTtl: "30m" } });
+    expect(vi.mocked(logger.info).mock.calls.find((call) => call[2]?.event === "API_RESPONSE")?.[2]).toMatchObject({
+      model: "gpt-6-luna", requestedModel: "gpt-6-luna", reportedModel: "gpt-6-sol",
+      requestedCacheMode: "explicit", requestedCacheTtl: "30m", reportedCacheMode: "implicit", reportedCacheTtl: "30m",
+      usageStatus: "partial", cacheReadTokensReported: true, cacheWriteTokensReported: false,
+    });
+    expect(requestUrl).toHaveBeenCalledOnce(); manager.dispose();
+  });
+
+  it("leaves absent response metadata and cache accounting unknown", async () => {
+    vi.mocked(requestUrl).mockReset();
+    vi.mocked(requestUrl).mockResolvedValue({ status: 200, text: "", json: { status: "completed", output_text: "ok" } } as never);
+    const logger = createLogger(); logger.info = vi.fn();
+    const manager = new ProviderManager(createSettingsStore({ provider: { apiFormat: "openai-responses" } }), logger);
+    const result = await manager.chat({ providerId: "provider-1", model: "gpt-6-luna", promptCacheMode: "explicit", messages: [{ role: "user", content: "synthetic" }] });
+    expect(result.ok).toBe(true);
+    const log = vi.mocked(logger.info).mock.calls.find((call) => call[2]?.event === "API_RESPONSE")?.[2];
+    expect(log).toMatchObject({ requestedModel: "gpt-6-luna", reportedModel: "unknown", requestedCacheMode: "explicit", requestedCacheTtl: "not-specified", reportedCacheMode: "unknown", reportedCacheTtl: "unknown", usageStatus: "unreported", cacheReadTokensReported: false, cacheWriteTokensReported: false });
+    expect(log).not.toHaveProperty("cacheReadTokens", 0);
+    expect(log).not.toHaveProperty("cacheWriteTokens", 0);
+    expect(requestUrl).toHaveBeenCalledOnce(); manager.dispose();
+  });
+
+  it("preserves reported model from Responses terminal stream envelopes", async () => {
+    const streamRequester = vi.fn().mockResolvedValue({ status: 200, headers: { "content-type": "text/event-stream" }, body: `data: ${JSON.stringify({ type: "response.completed", response: { model: "gpt-6-sol", status: "completed", output_text: "ok" } })}\n\n` });
+    const manager = new ProviderManager(createSettingsStore({ enableStreamingKeepalive: true, provider: { apiFormat: "openai-responses" } }), createLogger(), undefined, streamRequester);
+    expect(await manager.chat({ providerId: "provider-1", model: "gpt-6-luna", messages: [{ role: "user", content: "synthetic" }] })).toMatchObject({ ok: true, value: { reportedModel: "gpt-6-sol" } });
+    expect(streamRequester).toHaveBeenCalledOnce(); manager.dispose();
+  });
+
   it("records reported usage before rejecting an unsupported response", async () => {
     vi.mocked(requestUrl).mockReset();
     vi.mocked(requestUrl).mockResolvedValue({ status: 200, json: { choices: [], usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120, prompt_tokens_details: { cached_tokens: 0 } } }, text: "" } as never);
@@ -1937,9 +1996,11 @@ describe("ProviderManager session usage diagnostics", () => {
   it("keeps invalid accounting separate from a usable answer", async () => {
     vi.mocked(requestUrl).mockReset();
     vi.mocked(requestUrl).mockResolvedValue({ status: 200, json: { choices: [{ message: { content: "usable answer" }, finish_reason: "stop" }], usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120, prompt_tokens_details: { cached_tokens: -1 } } }, text: "" } as never);
-    const manager = new ProviderManager(createSettingsStore(), createLogger());
+    const logger = createLogger(); logger.info = vi.fn();
+    const manager = new ProviderManager(createSettingsStore(), logger);
     expect(await manager.chat({ providerId: "provider-1", model: "model", messages: [{ role: "user", content: "prompt" }] })).toMatchObject({ ok: true, value: { content: "usable answer" } });
     expect(manager.getExternalCallDiagnostics().attempts[0].usage).toMatchObject({ status: "invalid", invalidFields: ["cacheReadTokens"] });
+    expect(vi.mocked(logger.info).mock.calls.find((call) => call[2]?.event === "API_RESPONSE")?.[2]).toMatchObject({ usageStatus: "invalid", invalidTokenUsageFields: ["cacheReadTokens"], cacheReadTokensReported: false });
     expect(requestUrl).toHaveBeenCalledTimes(1);
   });
 
@@ -2057,4 +2118,22 @@ describe("explicit production renderer transport", () => {
     const node = vi.fn(); const manager = new ProviderManager(createSettingsStore({ enableStreamingKeepalive: true, streamingTransport: "renderer-fetch" }), createLogger(), undefined, node);
     const c = new AbortController(); const result = manager.chat(request, c.signal); c.abort(); expect(await result).toMatchObject({ ok: false, error: { code: "E206_PROVIDER_REQUEST_UNCERTAIN" } }); expect(fetcher).toHaveBeenCalledOnce(); expect(node).not.toHaveBeenCalled(); manager.dispose();
   });
+});
+
+
+it.each(["openai-responses", "openai-chat-completions"] as const)("logs configured sampling and the actual omitted wire fields for %s", async (apiFormat) => {
+  vi.mocked(requestUrl).mockReset();
+  vi.mocked(requestUrl).mockResolvedValue({ status: 200, text: "", json: apiFormat === "openai-responses"
+    ? { status: "completed", output_text: "ok" }
+    : { choices: [{ message: { content: "ok" }, finish_reason: "stop" }] } } as never);
+  const logger = createLogger(); logger.info = vi.fn();
+  const manager = new ProviderManager(createSettingsStore({ provider: { apiFormat } }), logger);
+  const result = await manager.chat({ providerId: "provider-1", model: "gpt-6.1-sol", temperature: 0.2, topP: 0.9, messages: [{ role: "user", content: "synthetic" }] });
+  expect(result.ok).toBe(true);
+  const params = vi.mocked(requestUrl).mock.calls[0][0];
+  if (typeof params === "string") throw new Error("Expected a structured request");
+  const body = JSON.parse(params.body as string);
+  expect(body).not.toHaveProperty("temperature"); expect(body).not.toHaveProperty("top_p");
+  expect(vi.mocked(logger.info).mock.calls.find((call) => call[2]?.event === "API_RESPONSE")?.[2]).toMatchObject({ configuredTemperature: 0.2, configuredTopP: 0.9, sentTemperature: "not-sent", sentTopP: "not-sent" });
+  expect(requestUrl).toHaveBeenCalledOnce(); manager.dispose();
 });

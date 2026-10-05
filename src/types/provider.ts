@@ -67,6 +67,8 @@ export interface ChatRequest {
     messages: ChatMessage[];
     temperature?: number;
     topP?: number;
+    /** Local-only configured values; adapters use the effective sampling fields. */
+    configuredSampling?: { temperature?: number; topP?: number };
     maxTokens?: number;
     reasoning_effort?: ReasoningEffort;
     thinkingLevel?: string;
@@ -98,6 +100,11 @@ export interface UrlCitation {
 
 export interface ChatResponse {
     content: string;
+    /** Provider-reported fields only. Missing is unknown; an echo is not proof
+     * of the actual upstream model, cache policy, or billed cache hit. */
+    reportedModel?: string;
+    reportedCacheMode?: "implicit" | "explicit";
+    reportedCacheTtl?: "30m";
     responseId?: string;
     tokensUsed?: number;
     /** 提供商报告的输入 token。 */

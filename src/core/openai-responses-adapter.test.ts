@@ -195,3 +195,11 @@ describe("explicit cache history boundaries", () => {
     expect(boundaryPrefixes(many)).toHaveLength(4);
   });
 });
+
+
+it("omits unsupported sampling for exact 6.1 default reasoning without injecting an effort", () => {
+  const body = OPENAI_RESPONSES_ADAPTER.buildRequestBody({ providerId: "p", model: "gpt-6.1-sol", messages: [{ role: "user", content: "x" }], temperature: 0.2, topP: 0.9 });
+  expect(body).not.toHaveProperty("temperature");
+  expect(body).not.toHaveProperty("top_p");
+  expect(body).not.toHaveProperty("reasoning");
+});

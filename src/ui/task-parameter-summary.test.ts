@@ -8,7 +8,7 @@ function fixture() {
     settings.providers.research = {
         apiKey: '', enabled: true, apiFormat: 'openai-responses', embeddingApiFormat: 'openai-embeddings',
         defaultChatModel: 'chat', defaultEmbedModel: 'embed', capabilities: { temperature: true, reasoning: true },
-        parameters: { temperature: 0.7, topP: 0.9, reasoning_effort: 'medium', maxTokens: 4096 },
+        parameters: { temperature: 0.7, topP: 0.9, maxTokens: 4096 },
     };
     settings.defaultProviderId = 'research';
     return settings;
@@ -86,4 +86,33 @@ describe('task parameter presentation', () => {
         expect(describeTaskParameter('temperature', settings.taskModels.write, resolveTaskModelSnapshot(settings, 'write')))
             .toMatchObject({ value: 0.3, source: 'task' });
     });
+});
+
+
+it.each([undefined, 'high'])("shows retained sampling and actual omission for exact 6.1 effort %s", (effort) => {
+  const settings = fixture();
+  settings.providers.research.defaultChatModel = 'gpt-6.1-sol';
+  settings.providers.research.capabilities!.topP = true;
+  settings.providers.research.parameters!.reasoning_effort = effort;
+  const before = structuredClone(settings);
+  const resolved = resolveTaskModelSnapshot(settings, 'write');
+  expect(describeTaskParameter('temperature', settings.taskModels.write, resolved))
+    .toMatchObject({ value: undefined, configuredValue: 0.7, source: 'provider', samplingSuppressed: true });
+  expect(describeTaskParameter('topP', settings.taskModels.write, resolved))
+    .toMatchObject({ value: undefined, configuredValue: 0.9, samplingSuppressed: true });
+  expect(settings).toEqual(before);
+  settings.providers.research.defaultChatModel = 'custom-alias';
+  delete settings.providers.research.parameters!.reasoning_effort;
+  expect(describeTaskParameter('temperature', settings.taskModels.write, resolveTaskModelSnapshot(settings, 'write')))
+    .toMatchObject({ value: 0.7, samplingSuppressed: false });
+});
+
+it.each(['none', 'minimal'])("shows the same pre-dispatch unsupported effort %s as the runtime", (effort) => {
+    const settings = fixture();
+    settings.providers.research.defaultChatModel = 'gpt-6.1-sol';
+    settings.providers.research.parameters!.reasoning_effort = effort;
+    expect(describeTaskParameter('reasoning_effort', settings.taskModels.write, resolveTaskModelSnapshot(settings, 'write')))
+        .toMatchObject({ value: effort, protocolIssue: 'unsupportedEffort', omitted: false });
+    settings.providers.research.defaultChatModel = 'custom-alias';
+    expect(describeTaskParameter('reasoning_effort', settings.taskModels.write, resolveTaskModelSnapshot(settings, 'write')).protocolIssue).toBeUndefined();
 });

@@ -23,6 +23,9 @@ describe("structure coverage contract", () => {
     const request = buildTaskChatRequest("write", prompt, { providerId: "test", model: "fixture", capabilities: DEFAULT_MODEL_CAPABILITIES }, schema, "structure");
     expect(request.messages[0].content).toContain("只写证据支持或可高置信确认");
     expect(request.messages.at(-1)?.content).toContain("充分覆盖主干");
+    expect(request.messages.at(-1)?.content).toContain("主划分依据");
+    expect(request.messages.at(-1)?.content).toContain("减少同层交叠");
+    expect(request.messages.at(-1)?.content).toContain("不因减少重叠遗漏重要范围");
     expect(request.messages.at(-1)?.content).toContain("直接下一层");
     expect(request.messages.at(-1)?.content).toContain("不设数量目标");
     expect(request.messages.at(-1)?.content).toContain("合成上下文");
@@ -35,7 +38,7 @@ describe("structure coverage contract", () => {
       expect(array.minItems).toBeUndefined(); expect(array.maxItems).toBeUndefined(); expect(array.uniqueItems).toBeUndefined();
     }
   });
-  it.each([["v5", false], ["v5", true], ["v6", false], ["v6", true]] as const)("excludes persisted %s system/history/response ID from the actual new request (cache=%s)", async (version, caching) => {
+  it.each([["v5", false], ["v5", true], ["v6", false], ["v6", true], ["v7", false], ["v7", true]] as const)("excludes persisted %s system/history/response ID from the actual new request (cache=%s)", async (version, caching) => {
     const manager = new PromptManager({ read: async (path: string) => ok(await readFile(path, "utf8")) } as FileStorage, logger);
     let sent: Parameters<ModelGateway["chat"]>[0] | undefined;
     const gateway = { chat: async (request: Parameters<ModelGateway["chat"]>[0]) => { sent = request; return ok({ content: JSON.stringify({ sub_domains: [], issues: [] }), finishReason: "stop" }); } } as unknown as ModelGateway;

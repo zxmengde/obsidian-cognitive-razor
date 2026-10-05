@@ -91,6 +91,18 @@ const GEMINI_FINISH_REASONS: ReadonlySet<string | undefined> = new Set([
   undefined, "stop", "length", "safety", "recitation", "blocked",
 ]);
 
+/** Small non-sensitive whitelist; never copy arbitrary response metadata. */
+function reportedMetadata(raw: unknown): Pick<ChatResponse, "reportedModel" | "reportedCacheMode" | "reportedCacheTtl"> {
+  const root = asRecord(raw);
+  const model = root?.model ?? root?.modelVersion;
+  const options = asRecord(root?.prompt_cache_options);
+  return {
+    ...(typeof model === "string" && /^[a-zA-Z0-9][a-zA-Z0-9_./:-]{0,127}$/.test(model) ? { reportedModel: model } : {}),
+    ...(options?.mode === "implicit" || options?.mode === "explicit" ? { reportedCacheMode: options.mode } : {}),
+    ...(options?.ttl === "30m" ? { reportedCacheTtl: options.ttl } : {}),
+  };
+}
+
 export function mayHaveEmptyContent(reason: string | undefined): boolean {
   return reason !== undefined && EMPTY_CONTENT_FINISH_REASONS.has(reason);
 }
@@ -136,6 +148,7 @@ export function parseOpenAIChatResponse(raw: unknown): Result<ChatResponse> {
   }
 
   return ok(withProviderTokenUsage({
+    ...reportedMetadata(raw),
     content: typeof content === "string" ? content : "",
     finishReason,
   }, "openai-chat-completions", raw));
@@ -162,6 +175,7 @@ export function parseGeminiGenerateResponse(raw: unknown): Result<ChatResponse> 
   }
 
   return ok(withProviderTokenUsage({
+    ...reportedMetadata(raw),
     content,
     citations: extractGeminiCitations(firstCandidate, content),
     webSearchUsed: firstCandidate?.groundingMetadata !== undefined,
@@ -222,6 +236,7 @@ export function parseOpenAIResponsesResponse(raw: unknown): Result<ChatResponse>
   }
 
   return ok(withProviderTokenUsage({
+    ...reportedMetadata(raw),
     content,
     ...(typeof data.id === "string" ? { responseId: data.id } : {}),
     citations: extractResponsesCitations(data, content),

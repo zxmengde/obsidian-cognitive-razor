@@ -18,6 +18,20 @@ export function buildJsonSchemaResponseFormat(name: string, schema: object): Cha
   };
 }
 
+/** One wire rule shared by resolution, presentation and both OpenAI adapters.
+ * An omitted effort remains omitted; only the documented exact ID has a known
+ * reasoning default. Unknown gateway aliases keep the existing explicit rule.
+ */
+export function suppressChatSampling(apiFormat: ProviderConfig["apiFormat"] | undefined, model: string, effort?: string): boolean {
+  if (apiFormat !== "openai-responses" && apiFormat !== "openai-chat-completions") return false;
+  return effort !== undefined ? effort !== "none" : model === "gpt-6.1-sol";
+}
+
+export function unsupportedOpenAIReasoningEffort(apiFormat: ProviderConfig["apiFormat"] | undefined, model: string, effort?: string): boolean {
+  return (apiFormat === "openai-responses" || apiFormat === "openai-chat-completions")
+    && model === "gpt-6.1-sol" && (effort === "none" || effort === "minimal");
+}
+
 const WEB_SEARCH_PURPOSE_INSTRUCTIONS: Record<WebSearchPurpose, string> = {
   write: "搜索具体事实、日期、公式、归属和适用边界；关键主张优先由两个独立可靠来源交叉验证。",
   verify: "对影响结论的事实、日期、公式、归属和适用边界进行取证；证据不足时明确保留不确定性。",
@@ -42,6 +56,11 @@ export function validateChatParameters(
   request: ChatRequest,
   apiFormat: ProviderConfig["apiFormat"],
 ): Result<void> {
+  // Exact documented model ID only; unknown gateway aliases keep their existing
+  // provider validation. Never replace an unsupported effort or resend it.
+  if (unsupportedOpenAIReasoningEffort(apiFormat, request.model, request.reasoning_effort)) {
+    return err("E101_INVALID_INPUT", `${request.model} 不支持推理强度 ${request.reasoning_effort}；请选择 low、medium、high、xhigh、max，或留空使用服务默认值`, { parameter: "reasoning_effort" });
+  }
   if (apiFormat !== "gemini-generative-language" && (request.thinkingLevel !== undefined || request.thinkingBudget !== undefined)) return err("E101_INVALID_INPUT", "thinkingLevel/thinkingBudget 仅适用于 Gemini");
   if (apiFormat === "gemini-generative-language" && request.reasoning_effort !== undefined) return err("E101_INVALID_INPUT", "Gemini 请配置 thinkingLevel 或 thinkingBudget");
   if (request.thinkingLevel !== undefined && request.thinkingBudget !== undefined) return err("E101_INVALID_INPUT", "Gemini level 和 budget 不能同时发送");

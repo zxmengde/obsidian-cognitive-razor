@@ -8,6 +8,24 @@ const fullUsage = { prompt_tokens: 1200, completion_tokens: 100, total_tokens: 1
 const sse = (data: unknown) => `data: ${JSON.stringify(data)}\n\n`;
 
 describe("provider token accounting", () => {
+  it("keeps whitelisted response reports without treating request settings as facts", () => {
+    expect(parseOpenAIChatResponse({ ...chat(), model: "gateway/gpt-6-sol" })).toMatchObject({ ok: true, value: { reportedModel: "gateway/gpt-6-sol" } });
+    expect(parseGeminiGenerateResponse({ candidates: [{ content: { parts: [{ text: "ok" }] } }], modelVersion: "gemini-3.6-flash" })).toMatchObject({ ok: true, value: { reportedModel: "gemini-3.6-flash" } });
+    const rejectedMetadata = parseOpenAIResponsesResponse({ status: "completed", output_text: "ok", model: "Bearer private credential", prompt_cache_options: { mode: "private unknown value", ttl: "private unknown value" } });
+    expect(rejectedMetadata.ok).toBe(true);
+    if (rejectedMetadata.ok) {
+      expect(rejectedMetadata.value).not.toHaveProperty("reportedModel");
+      expect(rejectedMetadata.value).not.toHaveProperty("reportedCacheMode");
+      expect(rejectedMetadata.value).not.toHaveProperty("reportedCacheTtl");
+    }
+  });
+
+  it("retains Chat stream reported model and excludes unsafe metadata", () => {
+    const aggregate = aggregateProviderStream("openai-chat-completions", sse({ model: "gpt-6-sol", choices: [{ delta: { content: "ok" }, finish_reason: "stop" }] }) + "data: [DONE]\n\n");
+    expect(aggregate.ok).toBe(true);
+    if (aggregate.ok) expect(parseOpenAIChatResponse(aggregate.value)).toMatchObject({ ok: true, value: { reportedModel: "gpt-6-sol" } });
+  });
+
   it("preserves complete Chat fallback accounting through Responses", () => {
     const parsed = parseOpenAIResponsesResponse(chat(fullUsage));
     expect(parsed).toMatchObject({ ok: true, value: { content: "usable answer", tokensUsed: 1300, inputTokens: 1200, outputTokens: 100, cacheReadTokens: 1024, cacheWriteTokens: 0 } });

@@ -264,6 +264,9 @@
                     {#if summary.omitted}
                         <span>{text('omitted')}</span>
                         <span class="cr-task-model-card__description">{text('fromTask')}</span>
+                    {:else if summary.samplingSuppressed}
+                        <span class="cr-task-model-card__warning">{text('samplingSuppressed')}</span>
+                        <span class="cr-task-model-card__description">{text('retainedValue')}{String(summary.configuredValue)} · {sourceText(summary.source)}{text('retainedHint')}</span>
                     {:else if summary.unsupported}
                         <span class="cr-task-model-card__warning">{text('notSent')}</span>
                         <span class="cr-task-model-card__warning">{text('unsupported')}</span>

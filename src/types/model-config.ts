@@ -31,6 +31,8 @@ export interface ResolvedTaskConfig {
   temperature?: number;
   topP?: number;
   reasoningEffort?: string;
+  /** Captured configured values for local diagnostics, never sent as wire fields. */
+  configuredSampling?: { temperature?: number; topP?: number };
   thinkingLevel?: string;
   thinkingBudget?: number;
   maxTokens?: number;

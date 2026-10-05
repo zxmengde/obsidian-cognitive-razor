@@ -115,6 +115,17 @@ export function deriveResponseCacheUsage(response: TokenUsageCounts): ReturnType
   return deriveCacheUsage(responseAccounting.get(response) ?? normalizeTokenUsage(response));
 }
 
+export function responseUsageEvidence(response: TokenUsageCounts) {
+  const usage = responseAccounting.get(response) ?? normalizeTokenUsage(response);
+  return {
+    usageStatus: usage.status,
+    invalidTokenUsageFields: usage.invalidFields ?? [],
+    // These flags mean valid observed counts, not raw JSON key presence.
+    cacheReadTokensReported: usage.cacheReadTokens !== undefined,
+    cacheWriteTokensReported: usage.cacheWriteTokens !== undefined,
+  };
+}
+
 /** Use the observed stream accounting even when text aggregation ignored an
  * invalid usage envelope. Content/finish/error behavior is unchanged.
  */

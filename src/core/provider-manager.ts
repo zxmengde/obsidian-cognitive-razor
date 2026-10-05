@@ -42,7 +42,7 @@ import type {
   ExternalCallDiagnostics,
 } from "./external-call-ledger";
 import { InMemoryExternalCallLedger } from "./external-call-ledger";
-import { readProviderTokenUsage, deriveResponseCacheUsage, applyProviderTokenUsage } from "./provider-token-usage";
+import { readProviderTokenUsage, deriveResponseCacheUsage, applyProviderTokenUsage, responseUsageEvidence } from "./provider-token-usage";
 import type { ModelGateway } from "./model-gateway";
 import type { ProviderProbeRequest } from "./model-gateway";
 import { resolveTaskModelSnapshot } from "./task-model-resolver";
@@ -97,6 +97,18 @@ function sanitizeSensitiveText(raw: string, apiKey?: string): string {
 }
 
 const MAX_PROVIDER_ERROR_DETAIL_LENGTH = 500;
+
+/** Fixed numeric whitelist, measured from the built body rather than config. */
+function samplingEvidence(request: ChatRequest, body: Record<string, unknown>): Record<string, number | string> {
+  const numberOrOmitted = (value: unknown): number | string => typeof value === "number" && Number.isFinite(value) ? value : "not-sent";
+  const generation = body.generationConfig as Record<string, unknown> | undefined;
+  return {
+    configuredTemperature: numberOrOmitted(request.configuredSampling?.temperature ?? request.temperature),
+    configuredTopP: numberOrOmitted(request.configuredSampling?.topP ?? request.topP),
+    sentTemperature: numberOrOmitted(body.temperature ?? generation?.temperature),
+    sentTopP: numberOrOmitted(body.top_p ?? generation?.topP),
+  };
+}
 
 function sanitizeProviderErrorDetail(raw: string, apiKey?: string): string {
   const sanitized = sanitizeSensitiveText(raw, apiKey).trim();
@@ -608,7 +620,8 @@ export class ProviderManager implements ModelGateway {
     request: ChatRequest,
     result: Result<ChatResponse>,
     startTime: number,
-    protocolLabel: string
+    protocolLabel: string,
+    body: Record<string, unknown>,
   ): Result<ChatResponse> {
     if (this.disposed) {
       return err("E310_INVALID_STATE", "Provider 服务已停止");
@@ -643,6 +656,14 @@ export class ProviderManager implements ModelGateway {
         event: "API_RESPONSE",
         providerId: request.providerId,
         model: request.model,
+        requestedModel: request.model,
+        ...samplingEvidence(request, body),
+        reportedModel: result.value.reportedModel ?? "unknown",
+        requestedCacheMode: request.promptCacheMode ?? "not-specified",
+        requestedCacheTtl: request.promptCacheTtl ?? "not-specified",
+        reportedCacheMode: result.value.reportedCacheMode ?? "unknown",
+        reportedCacheTtl: result.value.reportedCacheTtl ?? "unknown",
+        ...responseUsageEvidence(result.value),
         requestLabel: request.requestLabel,
         tokensUsed: result.value.tokensUsed,
         inputTokens: result.value.inputTokens,
@@ -958,6 +979,7 @@ export class ProviderManager implements ModelGateway {
         url: sanitizeUrl(url),
         apiKeyConfigured: providerConfig.apiKey.length > 0,
         messageCount: built.contentCount,
+        ...samplingEvidence(request, built.body),
         webSearchEnabled: !!webSearch,
         promptCacheMode: request.promptCacheMode,
         promptCacheKeyConfigured: !!request.promptCacheKey,
@@ -987,7 +1009,7 @@ export class ProviderManager implements ModelGateway {
       : await execute(options.attemptReason ?? "initial");
 
     return options.finalize
-      ? this.finalizeChatResult(request, result, options.startTime, entry.adapter.displayName)
+      ? this.finalizeChatResult(request, result, options.startTime, entry.adapter.displayName, built.body)
       : result;
   }
 

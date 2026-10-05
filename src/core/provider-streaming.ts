@@ -484,6 +484,8 @@ function textFromDelta(value: unknown, depth = 0): string {
 
 function aggregateOpenAIChat(events: StreamEvent[]): Result<unknown> {
   let content = "";
+  let model: unknown;
+  let cacheOptions: unknown;
   let finishReason: string | undefined;
   let usage: Record<string, unknown> | undefined;
   let sawDone = false;
@@ -500,6 +502,8 @@ function aggregateOpenAIChat(events: StreamEvent[]): Result<unknown> {
     }
     const eventUsage = asRecord(data.usage);
     if (eventUsage) usage = eventUsage;
+    if (data.model !== undefined) model = data.model;
+    if (data.prompt_cache_options !== undefined) cacheOptions = data.prompt_cache_options;
     const choices = Array.isArray(data.choices) ? data.choices : [];
     const choice = asRecord(choices[0]);
     const delta = asRecord(choice?.delta);
@@ -519,6 +523,8 @@ function aggregateOpenAIChat(events: StreamEvent[]): Result<unknown> {
     choices: [{ message: { content }, finish_reason: finishReason }],
   };
   if (usage) response.usage = usage;
+  if (model !== undefined) response.model = model;
+  if (cacheOptions !== undefined) response.prompt_cache_options = cacheOptions;
   return ok(response);
 }
 
