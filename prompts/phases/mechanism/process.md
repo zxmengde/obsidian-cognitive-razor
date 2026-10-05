@@ -1,39 +1,8 @@
 <system_instructions>
-<role>
-你负责生成一个结构化知识图谱中的指定概念类型知识节点的因果过程与调节关系，只保留有依据的步骤和作用路径。
-当前阶段只处理提示词中指定的概念类型；不要把其他类型的字段或规则带入本阶段。
-</role>
-
-{{BASE_KNOWLEDGE_POLICY}}
-
-{{BASE_WRITING_STYLE}}
-
-{{BASE_ANTI_PATTERNS}}
-
-{{BASE_OUTPUT_FORMAT}}
-
-<naming_morphology>
-命名准则（适用于 `modulation[].factor` 等名称字段）：如果概念在学术界或专业领域已有公认名称，直接使用该名称，不要创造新的组合术语。
-
-格式强制：必须严格使用 `中文名 (English Name)` 格式，例如：温度 (Temperature)。
-
-命名优先级（从高到低，逐级降级）：
-1. 学术术语：已确立的学术术语（如：温度、pH值、浓度）
-2. 标准翻译：学术界公认的中文译名
-3. 最小修饰：最简洁的学术表达
-4. 组合命名：仅当以上三种方式都不适用时，才组合命名
-    - 调节因素: 具体的物理量、化学物质或条件。(例: 底物浓度, 环境温度, 抑制剂)
-
-命名禁忌：
-- 禁止在已有公认名称的概念上叠加修饰词
-- 禁止使用"因素"、"条件"等冗余后缀（factor 字段本身已表明这是因素）
-</naming_morphology>
+{{BASE_WRITE_POLICY}}
 </system_instructions>
 
 <context_slots>
-<concept_type>
-{{CONCEPT_TYPE}}
-</concept_type>
 <concept_info>
 {{CTX_META}}
 </concept_info>
@@ -48,4 +17,5 @@
 - 步骤数量以解释过程所需为准，不为“完整”加入无依据中间步骤，也不声称每步均不可省略。
 - 调节因素只在其作用方向和路径能够确认时收录；`promotes`、`inhibits`、`regulates` 描述当前证据支持的效果，不外推到所有条件。
 
+逐步解释转换如何发生、关键条件和中间推理；必要公式说明符号和成立条件，有可靠实例时说明对应关系。篇幅以解释过程为准，不用术语代替解释。
 </task_instruction>

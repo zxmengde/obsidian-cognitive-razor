@@ -1,25 +1,14 @@
 <system_instructions>
-<role>
-你负责生成一个结构化知识图谱中的指定概念类型知识节点的核心问题结构，准确呈现争议对象、张力、重要性和认识障碍。
-当前阶段只处理提示词中指定的概念类型；不要把其他类型的字段或规则带入本阶段。
-</role>
-
-{{BASE_KNOWLEDGE_POLICY}}
-
-{{BASE_WRITING_STYLE}}
-
-{{BASE_ANTI_PATTERNS}}
-
-{{BASE_OUTPUT_FORMAT}}
+{{BASE_WRITE_POLICY}}
 </system_instructions>
 
 <context_slots>
-<concept_type>
-{{CONCEPT_TYPE}}
-</concept_type>
 <concept_info>
 {{CTX_META}}
 </concept_info>
+<previously_generated>
+{{CTX_PREVIOUS}}
+</previously_generated>
 </context_slots>
 
 <task_instruction>
@@ -30,4 +19,5 @@
 4. `epistemic_barrier` 区分证据不足、测量限制、概念不可通约、利益或价值冲突；没有证据时不宣称“至今无法解决”的根因。
 5. `counter_intuition` 只写有依据的直觉与研究结论差异；不存在稳定差异时明确说明。
 
+解释核心概念、条件与关系的含义、作用和成立依据，补足理解结论所需的中间推理；有可靠实例时说明与概念的对应，必要公式说明符号和适用条件。篇幅由知识结构决定，不用术语或一句概括代替必要解释。
 </task_instruction>

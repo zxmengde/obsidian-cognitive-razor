@@ -426,7 +426,7 @@ export class PromptManager {
 
   /** 预加载所有基础组件 */
   async preloadAllBaseComponents(): Promise<Result<void>> {
-    const componentNames = ["knowledge-policy", "writing-style", "anti-patterns", "output-format"];
+    const componentNames = Object.values(BASE_COMPONENT_MAP);
     const errors: string[] = [];
 
     const results = await Promise.all(componentNames.map((componentName) => this.preloadBaseComponent(componentName)));

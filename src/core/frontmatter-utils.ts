@@ -10,6 +10,7 @@ import { CR_TYPES } from "../types";
 import type { CRFrontmatter, CRType, NoteState } from "../types";
 import YAML from "yaml";
 import { formatCRTimestamp } from "../utils/date-utils";
+import { parseInternalNoteLink, renderParentNoteLink } from "../utils/note-links";
 
 const FRONTMATTER_DELIMITER = "---";
 const CR_TYPE_SET: ReadonlySet<string> = new Set(CR_TYPES);
@@ -42,33 +43,29 @@ function formatYamlString(value: string): string {
   return `"${escaped}"`;
 }
 
-const WIKILINK_REGEX = /^\[\[(.*?)\]\]$/;
-
 function normalizeParentLink(value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) {
     return null;
   }
 
-  const match = trimmed.match(WIKILINK_REGEX);
-  const inner = (match ? match[1] : trimmed).trim();
+  const link = parseInternalNoteLink(trimmed);
+  const inner = (link && !link.rest.trim() ? link.target : trimmed).trim();
   if (!inner) {
     return null;
   }
 
-  // parents 字段只存储 [[Title]]：去掉 alias（|...）与 heading（#...）
-  const withoutAlias = inner.split("|", 1)[0] ?? inner;
-  const withoutHeading = withoutAlias.split("#", 1)[0] ?? withoutAlias;
-  const withoutExt = withoutHeading.endsWith(".md")
-    ? withoutHeading.slice(0, -".md".length)
-    : withoutHeading;
+  // Keep one canonical internal link. Parsed Markdown paths have already
+  // removed headings before decoding, so a literal encoded # stays a filename.
+  const target = link ? inner : inner.split("|", 1)[0].split("#", 1)[0];
+  const withoutExt = target.replace(/\.md$/i, "");
 
   const title = withoutExt.trim();
   if (!title) {
     return null;
   }
 
-  return `[[${title}]]`;
+  return renderParentNoteLink(title);
 }
 
 export function normalizeParents(parents: string[]): string[] {

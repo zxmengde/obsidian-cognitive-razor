@@ -218,6 +218,14 @@ export const ERROR_CODE_INFO = {
     retryable: false,
     fixSuggestion: "请等待当前任务完成，或取消后再试。",
   },
+  E321_NOTE_SNAPSHOT_CHANGED: {
+    code: "E321_NOTE_SNAPSHOT_CHANGED",
+    name: "NOTE_SNAPSHOT_CHANGED",
+    description: "笔记在任务期间已修改，未覆盖当前内容",
+    category: "SYSTEM_IO",
+    retryable: false,
+    fixSuggestion: "生成结果已保留。当前正文与任务快照不同，等待不会消除差异；请先检查并保留你的编辑。重试仅尝试保存已有结果，不会再次请求模型。",
+  },
 
   // E4xx 配置（不可重试）
   E401_PROVIDER_NOT_CONFIGURED: {

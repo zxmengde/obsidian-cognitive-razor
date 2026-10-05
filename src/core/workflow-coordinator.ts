@@ -288,7 +288,7 @@ export class WorkflowCoordinator {
               await this.recordSnapshotConflict(artifact, "tag");
               await this.deps.workflowStore.update(artifact.workflowId, {
                 state: "failed",
-                error: { code: "E320_TASK_CONFLICT", message: "Draft 笔记已被修改，未覆盖用户内容" },
+                error: { code: "E321_NOTE_SNAPSHOT_CHANGED", message: "Draft 笔记已被修改，未覆盖用户内容" },
               });
               continue;
             }
@@ -514,7 +514,7 @@ export class WorkflowCoordinator {
       if (status === "invalid") return err("E101_INVALID_INPUT", "Draft 笔记缺少有效 frontmatter");
       if (status === "changed") {
         await this.recordSnapshotConflict(artifact, stage, task);
-        return err("E320_TASK_CONFLICT", "Draft 笔记已被修改，未覆盖用户内容");
+        return err("E321_NOTE_SNAPSHOT_CHANGED", "Draft 笔记已被修改，未覆盖用户内容");
       }
       await this.injectFailurePoint("vault-commit-confirmed", artifact.workflowId, stage);
       return this.markAppliedAndFollowUp(artifact, stage, { contentSnapshot: status.content });
@@ -529,7 +529,7 @@ export class WorkflowCoordinator {
       if (status === "missing") return err("E301_FILE_NOT_FOUND", `文件不存在: ${artifact.filePath}`);
       if (status === "changed") {
         await this.recordSnapshotConflict(artifact, stage, task);
-        return err("E320_TASK_CONFLICT", "Draft 笔记已被修改，未覆盖用户内容");
+        return err("E321_NOTE_SNAPSHOT_CHANGED", "Draft 笔记已被修改，未覆盖用户内容");
       }
       await this.injectFailurePoint("vault-commit-confirmed", artifact.workflowId, stage);
       return this.markAppliedAndFollowUp(artifact, stage, { noteCreated: true, contentSnapshot: content });
@@ -546,7 +546,7 @@ export class WorkflowCoordinator {
       if (applied === "missing") return err("E301_FILE_NOT_FOUND", `文件不存在: ${artifact.filePath}`);
       if (applied === "changed") {
         await this.recordSnapshotConflict(artifact, stage, task);
-        return err("E320_TASK_CONFLICT", "核查期间笔记已修改，未覆盖用户内容");
+        return err("E321_NOTE_SNAPSHOT_CHANGED", "核查期间笔记已修改，未覆盖用户内容");
       }
       await this.injectFailurePoint("vault-commit-confirmed", artifact.workflowId, stage);
       return this.markAppliedAndFollowUp(artifact, stage);
@@ -577,6 +577,14 @@ export class WorkflowCoordinator {
     // A completed receipt may outlive the queue commit. Replaying it must not
     // resend an already attempted (possibly billable) indexing request.
     if (artifact.state === "completed") return ok({});
+    // Retry admission is owned by the durable queue. Only an applied result
+    // can reactivate this artifact, so a failed queue write cannot resurrect
+    // a deleted failed task on startup.
+    if (artifact.state !== "active") {
+      const activated = await this.deps.workflowStore.update(artifact.workflowId, { state: "active", error: undefined });
+      if (!activated.ok) return activated as Result<TaskCompletionCommit>;
+      artifact = activated.value;
+    }
     const next = this.nextStage(artifact, false);
     if (next) {
       await this.injectFailurePoint("follow-up-intent", artifact.workflowId, stage);
@@ -686,10 +694,7 @@ export class WorkflowCoordinator {
 
   private async markRetry(task: TaskRecord): Promise<void> {
     if (this.disposed) return;
-    if (task.workflowId) {
-      const saved = await this.deps.workflowStore.update(task.workflowId, { state: "active", error: undefined });
-      if (!saved.ok) throw new Error(saved.error.message);
-    }
+    if (task.workflowId && !this.deps.workflowStore.get(task.workflowId)) throw new Error("工作流重试快照不存在");
   }
 
   private async removeAfterQueueDeletion(task: TaskRecord): Promise<void> {

@@ -225,7 +225,7 @@ describe("workflow user scenarios", () => {
     await vi.waitFor(() => expect(f.queue.getSnapshot().tasks.some((task) => task.stageId === "core" && (task.state === "failed" || task.state === "completed"))).toBe(true));
     expect(editedContent).toBeDefined();
     expect(f.files.get("Acceptance.md")).toBe(editedContent);
-    expect(f.queue.getSnapshot().tasks.find((task) => task.stageId === "core")?.error?.code).toBe("E320_TASK_CONFLICT");
+    expect(f.queue.getSnapshot().tasks.find((task) => task.stageId === "core")?.error?.code).toBe("E321_NOTE_SNAPSHOT_CHANGED");
   });
 
   it("runs Tag -> Core -> Synthesis -> automatic Verify and keeps terminal history after reload", async () => {
@@ -403,7 +403,7 @@ describe("workflow user scenarios", () => {
     await vi.waitFor(() => expect(f.queue.getSnapshot().status.failed).toBe(1));
     expect(f.files.get("Acceptance.md")).toContain("用户新内容");
     expect(f.store.list()[0]?.pendingStageResult?.stageId).toBe("verify");
-    expect(f.queue.getSnapshot().tasks.at(-1)?.error?.code).toBe("E320_TASK_CONFLICT");
+    expect(f.queue.getSnapshot().tasks.at(-1)?.error?.code).toBe("E321_NOTE_SNAPSHOT_CHANGED");
   });
 
   it("refuses to overwrite external edits committed after Verify starts", async () => {
@@ -425,7 +425,7 @@ describe("workflow user scenarios", () => {
     await vi.waitFor(() => expect(f.queue.getSnapshot().status.failed).toBe(1));
 
     expect(f.files.get("Acceptance.md")).toBe(externallyEdited);
-    expect(f.queue.getSnapshot().tasks.at(-1)?.error?.code).toBe("E320_TASK_CONFLICT");
+    expect(f.queue.getSnapshot().tasks.at(-1)?.error?.code).toBe("E321_NOTE_SNAPSHOT_CHANGED");
     expect(f.store.list()[0]?.pendingStageResult?.stageId).toBe("verify");
   });
 
@@ -618,7 +618,51 @@ it("retains a paid Verify result on edit conflict across restart and local retry
   const reload = await fixture(new Map(f.files)); reload.start();
   expect((await reload.queue.retryDurably(task.id)).ok).toBe(true);
   await vi.waitFor(() => expect(reload.queue.getTask(task.id)?.state).toBe("failed"));
-  expect(reload.queue.getTask(task.id)?.error?.code).toBe("E320_TASK_CONFLICT");
+  expect(reload.queue.getTask(task.id)?.error?.code).toBe("E321_NOTE_SNAPSHOT_CHANGED");
   expect(reload.run).not.toHaveBeenCalled(); expect(reload.files.get("Acceptance.md")).toBe(edited);
   expect(reload.store.list().some(a => a.pendingStageResult?.result.reportText === "已付费但待解决冲突")).toBe(true);
+});
+
+it.each(["single", "bulk", "confirmed-unknown"] as const)("rejects an old Verify %s retry while a different workflow owns the same note", async entry => {
+  const f = await fixture(); await create(f); f.start(); await completed(f); f.run.mockClear();
+  f.run.mockResolvedValueOnce(err(entry === "confirmed-unknown" ? "E206_PROVIDER_REQUEST_UNCERTAIN" : "E204_PROVIDER_ERROR", "synthetic failure"));
+  expect((await f.coordinator.startVerify("Acceptance.md")).ok).toBe(true);
+  await vi.waitFor(() => expect(f.queue.getSnapshot().tasks.some(t => t.state === (entry === "confirmed-unknown" ? "interrupted" : "failed"))).toBe(true));
+  const old = f.queue.getSnapshot().tasks.at(-1)!;
+  await f.queue.pauseDurably();
+  expect((await f.coordinator.startVerify("Acceptance.md")).ok).toBe(true);
+  const current = f.queue.getSnapshot().tasks.at(-1)!;
+  expect(current.workflowId).not.toBe(old.workflowId);
+  const reloaded = await fixture(new Map(f.files));
+  const result = entry === "bulk" ? await reloaded.queue.retryFailedDurably()
+    : entry === "confirmed-unknown" ? await reloaded.queue.retryUncertainDurably(old.id) : await reloaded.queue.retryDurably(old.id);
+  expect(result).toMatchObject(entry === "bulk" ? { ok: true, value: 0 } : { ok: false, error: { code: "E320_TASK_CONFLICT" } });
+  expect(reloaded.queue.getTask(old.id)?.attempt).toBe(1);
+  expect(reloaded.queue.getTask(current.id)?.state).toBe("pending");
+  expect(reloaded.queue.getSnapshot().tasks.filter(t => t.state === "pending")).toHaveLength(1);
+  expect(reloaded.run).not.toHaveBeenCalled();
+});
+
+it("keeps a failed retry checkpoint inactive and never revives it after deletion and reload", async () => {
+  const f = await fixture(); await create(f); f.start(); await completed(f); f.run.mockClear();
+  f.run.mockResolvedValueOnce(err("E204_PROVIDER_ERROR", "synthetic failure"));
+  await f.coordinator.startVerify("Acceptance.md");
+  await vi.waitFor(() => expect(f.queue.getSnapshot().status.failed).toBe(1));
+  const task = f.queue.getSnapshot().tasks.at(-1)!;
+  await f.queue.pauseDurably();
+  const write = f.storage.atomicWrite.bind(f.storage);
+  const failure = vi.spyOn(f.storage, "atomicWrite").mockImplementation(async (path, text) =>
+    path === "data/queue-state-v5.json" && JSON.parse(text).tasks.some((t: TaskRecord) => t.id === task.id && t.attempt === 2)
+      ? err("E303_DISK_FULL", "synthetic retry save failure") : write(path, text));
+  expect((await f.queue.retryDurably(task.id)).ok).toBe(false);
+  expect(f.queue.getTask(task.id)).toMatchObject({ state: "failed", attempt: 1 });
+  expect(f.store.get(task.workflowId!)?.state).toBe("failed");
+  expect(f.coordinator.isPathActive("Acceptance.md")).toBe(false);
+  failure.mockRestore();
+  expect((await f.queue.removeDurably(task.id)).ok).toBe(true);
+  expect(f.store.get(task.workflowId!)).toBeUndefined();
+  const reload = await fixture(new Map(f.files)); reload.start();
+  expect(reload.queue.getSnapshot().tasks.some(t => t.workflowId === task.workflowId)).toBe(false);
+  expect(reload.run).not.toHaveBeenCalled();
+  expect((await reload.coordinator.startVerify("Acceptance.md")).ok).toBe(true);
 });

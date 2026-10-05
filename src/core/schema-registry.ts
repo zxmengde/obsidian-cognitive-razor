@@ -138,25 +138,25 @@ const DOMAIN_SCHEMA: JSONSchema = {
     },
     sub_domains: {
       type: "array",
-      description: "以覆盖充分为优先，收录有依据的已确立子领域；允许相近、交叉或不同分类传统，并说明划分角度、范围及领域关系。不因低重叠目标遗漏，不预设固定条数，不编造，也不声称穷尽。",
+      description: "当前领域直接下一层、已确立的研究分支。",
       items: {
         type: "object",
         required: ["name", "description"],
         properties: {
           name: { type: "string", description: "已确立的子领域名称。" },
-          description: { type: "string", description: "说明该子领域的研究范围及其与整体领域的关系。" }
+          description: { type: "string", description: "该分支的研究范围、划分依据及其与当前领域的从属关系。" }
         }
       }
     },
     issues: {
       type: "array",
-      description: "充分覆盖与本领域直接相关的重要问题；不要求每项跨多个分支或影响整个领域。说明问题边界与领域联系，不把无关热门主题伪装成核心议题。",
+      description: "本领域具有独立问题内核的重要议题，区别于研究分支。",
       items: {
         type: "object",
         required: ["name", "description"],
         properties: {
-          name: { type: "string", description: "已确立的议题名称。" },
-          description: { type: "string", description: "说明该议题的核心问题、来源及其与领域整体的关系。" }
+          name: { type: "string", description: "通行议题名称或准确的问题标题。" },
+          description: { type: "string", description: "该议题的核心问题、边界及其与当前领域的研究联系。" }
         }
       }
     }
@@ -208,25 +208,25 @@ const ISSUE_SCHEMA: JSONSchema = {
     },
     sub_issues: {
       type: "array",
-      description: "以覆盖充分为优先，收录与核心问题直接相关的不同维度、条件及具体情境；允许有依据的相近或交叉候选，说明关系，不因低重叠目标遗漏，不预设固定条数或声称穷尽。",
+      description: "当前议题直接下一层、具有独立问题内核的子问题。",
       items: {
         type: "object",
         required: ["name", "description"],
         properties: {
-          name: { type: "string", description: "已确立的子议题名称。" },
+          name: { type: "string", description: "通行子议题名称或准确的问题标题。" },
           description: { type: "string", description: "说明该子议题处理的具体问题及其与总体议题的关系。" }
         }
       }
     },
     stakeholder_perspectives: {
       type: "array",
-      description: "有明确依据的利益相关方、学派或立场群体及其公开主张；不要从身份推断未表达的价值预设。",
+      description: "可公开确认存在的利益相关方、学派或立场群体及其有据的公开主张。",
       items: {
         type: "object",
         required: ["stakeholder", "perspective"],
         properties: {
           stakeholder: { type: "string", description: "有明确依据的具体学派、机构或立场群体。" },
-          perspective: { type: "string", description: "该立场有依据的核心主张、论据、前提和适用语境。" }
+          perspective: { type: "string", description: "该立场的公开主张、依据、前提和适用语境，不推测动机。" }
         }
       }
     },
@@ -237,7 +237,7 @@ const ISSUE_SCHEMA: JSONSchema = {
     },
     theories: {
       type: "array",
-      description: "充分覆盖已知存在且直接回应议题的理论；学术地位不清楚时使用 unclear，并在 brief 中说明依据不足，不因无法判断地位而遗漏真实理论。没有可确认存在且相关的理论时使用空数组。",
+      description: "真实存在并直接回应当前议题的理论。",
       items: {
         type: "object",
         required: ["name", "status", "brief"],
@@ -246,9 +246,9 @@ const ISSUE_SCHEMA: JSONSchema = {
           status: {
             type: "string",
             enum: ["mainstream", "marginal", "unclear", "contested", "falsified"],
-            description: "学术地位：有依据时使用 mainstream/marginal/contested/falsified；无法确认时使用 unclear，不猜测地位，也不因此删除已确认存在的理论。"
+            description: "有依据的学术地位：mainstream 主流、marginal 边缘、contested 有争议、falsified 已证伪；无法确认用 unclear，并在 brief 说明依据不足。"
           },
-          brief: { type: "string", description: "说明该理论如何回应核心张力、能够解释什么及其边界。" }
+          brief: { type: "string", description: "该理论如何回应议题、解释范围和边界；地位有争议时说明依据。" }
         }
       }
     },
@@ -295,13 +295,13 @@ const THEORY_SCHEMA: JSONSchema = {
     },
     sub_theories: {
       type: "array",
-      description: "以覆盖充分为优先，收录有依据的已确立子理论、分支或变体，说明包含、特例、推广等关系；允许合理交叉，不因低重叠目标遗漏，不预设固定条数，不编造或声称穷尽。",
+      description: "当前理论框架内直接下一层的子理论、特例或变体。",
       items: {
         type: "object",
         required: ["name", "description"],
         properties: {
           name: { type: "string", description: "已确立的子理论或变体名称。" },
-          description: { type: "string", description: "说明该子理论或变体的主张、范围及其与总体理论的关系。" }
+          description: { type: "string", description: "该子理论或变体的主张、范围及其与当前理论的特化或变体关系。" }
         }
       }
     },
@@ -311,7 +311,7 @@ const THEORY_SCHEMA: JSONSchema = {
     },
     entities: {
       type: "array",
-      description: "充分覆盖理论明确引用、引入或推理依赖的实体、变量及构件；说明其与理论结构的直接关系，保持对象类型边界，不编造，也不声称必要且充分。",
+      description: "当前理论明确引入或使用的实体、变量及构件。",
       items: {
         type: "object",
         required: ["name", "role", "attributes"],
@@ -324,7 +324,7 @@ const THEORY_SCHEMA: JSONSchema = {
     },
     mechanisms: {
       type: "array",
-      description: "充分覆盖理论明确提出的因果过程、转换规则或推理操作；区分对象与过程、经验因果与形式关系，纯形式理论不强造物理机制。",
+      description: "当前理论明确提出或使用的因果机制、转换规则或形式推理；区分因果关系与形式关系。",
       items: {
         type: "object",
         required: ["name", "process", "function"],

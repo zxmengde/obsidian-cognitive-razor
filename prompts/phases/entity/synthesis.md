@@ -1,22 +1,8 @@
 <system_instructions>
-<role>
-你负责生成一个结构化知识图谱中的指定概念类型知识节点的组成关系、实例边界和综合理解，避免把任意关联物当作组成部分或实例。
-当前阶段只处理提示词中指定的概念类型；不要把其他类型的字段或规则带入本阶段。
-</role>
-
-{{BASE_KNOWLEDGE_POLICY}}
-
-{{BASE_WRITING_STYLE}}
-
-{{BASE_ANTI_PATTERNS}}
-
-{{BASE_OUTPUT_FORMAT}}
+{{BASE_WRITE_POLICY}}
 </system_instructions>
 
 <context_slots>
-<concept_type>
-{{CONCEPT_TYPE}}
-</concept_type>
 <concept_info>
 {{CTX_META}}
 </concept_info>
@@ -31,4 +17,5 @@
 2. `examples` 只列能够确认属于该实体类型的具体实例；`counter_examples` 选择容易混淆但不满足定义的对象并说明差异。无法验证时留空，不发明出处。
 3. `holistic_understanding` 以三级标题讨论适用的本体论地位、识别方式、系统功能、实践用途和价值影响。无内在目的或无伦理关联时明确说明，不赋予目的或争议。
 
+综合理解应连贯解释核心内容的联系、依据和适用条件，补足关键推理，并在适用时用可靠实例说明；必要公式说明符号和条件。篇幅以解释完整性为准，不用术语堆叠代替解释。
 </task_instruction>

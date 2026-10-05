@@ -7,6 +7,8 @@ import { ContentRenderer } from "./content-renderer";
 import { confirmDefinePreview } from "../domain/concept";
 import type { DefinePreview, ILogger } from "../types";
 import type { CreateOrchestrator } from "./create-orchestrator";
+import { schemaRegistry, buildPhaseJsonSchema } from "./schema-registry";
+import { Validator } from "../data/validator";
 
 type ExpandOrchestratorDeps = ConstructorParameters<typeof ExpandOrchestrator>[0];
 
@@ -42,6 +44,21 @@ function createPreview(): DefinePreview {
 }
 
 describe("ExpandOrchestrator lifecycle", () => {
+  it('round-trips a valid bracketed name through Validator, Renderer and Expand without changing its display name', async () => {
+    const content = { sub_theories: [], entities: [{ name: '期望值 E[X]', role: '合成角色', attributes: '合成属性' }, { name: '随机变量', role: '合成角色', attributes: '合成属性' }], mechanisms: [] };
+    const schema = buildPhaseJsonSchema(schemaRegistry.getSchema('theory'), ['sub_theories', 'entities', 'mechanisms']);
+    expect((await new Validator().validate(JSON.stringify(content), schema)).valid).toBe(true);
+    const scheme = { domain: 'D', issue: 'I', theory: 'T', entity: 'E', mechanism: 'M' };
+    const body = new ContentRenderer().renderNoteMarkdown({ title: '合成理论', type: 'theory', content, language: 'zh', directoryScheme: scheme });
+    const source = generateMarkdownContent(generateFrontmatter({ cruid: 'bracket-fixture', type: 'theory', name: '合成理论', status: 'draft' }), body);
+    const orchestrator = new ExpandOrchestrator({ settingsStore: { getSettings: () => ({ directoryScheme: scheme }) } as ExpandOrchestratorDeps['settingsStore'], logger: createLogger(), app: { vault: { cachedRead: async () => source, getAbstractFileByPath: () => null } } as unknown as ExpandOrchestratorDeps['app'], vectorIndex: {} as ExpandOrchestratorDeps['vectorIndex'] }, { createOrchestrator: {} as CreateOrchestrator, fileStorage: {} as never });
+    const result = await orchestrator.prepare(createFile('T/合成理论.md'));
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.value.mode !== 'hierarchical') return;
+    expect(result.value.candidates.map(c => c.name)).toEqual(['期望值 E[X]', '随机变量']);
+    expect(result.value.candidates[0]).toMatchObject({ targetPath: 'E/期望值 E[X].md', status: 'creatable' });
+    expect(body).toContain('[期望值 E\\[X\\]](E/%E6%9C%9F%E6%9C%9B%E5%80%BC%20E%5BX%5D.md)');
+  });
   it("keeps abstract expansion at a preview until the user confirms it", async () => {
     const currentFile = createFile("current.md");
     const sourceFile = createFile("source.md");

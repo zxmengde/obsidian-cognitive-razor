@@ -1,41 +1,13 @@
 import type { UrlCitation } from '../types';
 import { normalizeExternalHttpUrl } from './url-utils';
-
-/** Mask fenced/inline code without changing Provider UTF-16 offsets. */
-function codeMask(text: string): Uint8Array {
-    const mask = new Uint8Array(text.length);
-    let offset = 0;
-    let fence: { marker: string; length: number } | undefined;
-    for (const line of text.split('\n')) {
-        const match = /^ {0,3}(`{3,}|~{3,})/.exec(line);
-        if (fence) {
-            mask.fill(1, offset, offset + line.length + 1);
-            if (match && match[1][0] === fence.marker && match[1].length >= fence.length && !line.slice(match[0].length).trim()) fence = undefined;
-        } else if (match) {
-            fence = { marker: match[1][0], length: match[1].length };
-            mask.fill(1, offset, offset + line.length + 1);
-        }
-        offset += line.length + 1;
-    }
-    for (let i = 0; i < text.length; i++) {
-        if (mask[i] || text[i] !== '`' || text[i - 1] === '\\') continue;
-        let length = 1;
-        while (text[i + length] === '`') length++;
-        const marker = '`'.repeat(length);
-        let end = text.indexOf(marker, i + length);
-        while (end >= 0 && (mask[end] || text[end - 1] === '`' || text[end + length] === '`')) end = text.indexOf(marker, end + length);
-        if (end >= 0) { mask.fill(1, i, end + length); i = end + length - 1; }
-        else i += length - 1;
-    }
-    return mask;
-}
+import { markdownCodeMask } from '../utils/markdown-literals';
 
 interface InlineLink { start: number; end: number; url: string }
 
 /** Conservative inline-link recognition; unrecognized Markdown is left alone. */
 function inlineLinks(text: string): InlineLink[] {
     const links: InlineLink[] = [];
-    const mask = codeMask(text);
+    const mask = markdownCodeMask(text);
     const opener = /(?<!!)(?<!\\)\[((?:\\.|[^\]\\\n])*)\]\(/g;
     for (const match of text.matchAll(opener)) {
         const start = match.index;

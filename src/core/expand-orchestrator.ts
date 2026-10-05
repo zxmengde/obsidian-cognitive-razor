@@ -14,6 +14,7 @@ import type {
 } from "../types";
 import { confirmConcept } from "../domain/concept";
 import { extractFrontmatter, hasUppercaseCognitiveRazorFields } from "./frontmatter-utils";
+import { parseInternalNoteLink, renderParentNoteLink } from "../utils/note-links";
 import { schemaRegistry } from "./schema-registry";
 import { generateFilePath, hasIllegalFileNameChars, sanitizeFileName } from "./naming-utils";
 import type { CreateOrchestrator } from "./create-orchestrator";
@@ -87,6 +88,7 @@ interface RawHierarchicalCandidate {
   name: string;
   description?: string;
   targetType: CRType;
+  explicitPath?: boolean;
 }
 
 const HIERARCHICAL_FIELD_MAP: Record<CRType, Array<{ field: string; target: CRType }>> = {
@@ -457,7 +459,7 @@ export class ExpandOrchestrator {
     item: RawHierarchicalCandidate,
     directoryScheme: DirectoryScheme,
   ): HierarchicalCandidate | undefined {
-    const target = this.normalizeLinkName(item.name);
+    const target = item.name.trim().replace(/\.md$/i, "");
     if (!target) return undefined;
 
     // Exact existing paths (including root/moved/merged notes) win over title
@@ -469,7 +471,7 @@ export class ExpandOrchestrator {
     const hasPath = target.includes("/");
     const safePath = target.split("/").every((part) => part && part !== "." && part !== ".." && !hasIllegalFileNameChars(part));
     const existing = safePath && this.deps.app.vault.getAbstractFileByPath(explicitPath);
-    const explicitLink = (hasPath && item.name.includes("|")) || /\.md$/i.test(item.name.split("|")[0].split("#")[0].trim());
+    const explicitLink = item.explicitPath;
     const qualified = safePath && (existing instanceof TFile || explicitLink || (hasPath && directory && target.startsWith(`${directory}/`)));
     const name = qualified ? target.split("/").at(-1)! : target;
     const targetPath = qualified ? explicitPath : generateFilePath(name, directoryScheme, item.targetType);
@@ -558,37 +560,33 @@ export class ExpandOrchestrator {
   private parseLineForField(
     field: string,
     line: string
-  ): { name: string; description?: string } | null {
-    // 名称 + 描述（适用于 sub_* 列表）
-    const basicMatch = line.match(/^\s*[-*]\s+\[\[([^\]]+)\]\]\s*[：:]\s*(.+)?$/);
+  ): { name: string; description?: string; explicitPath: boolean } | null {
+    const bullet = /^\s*[-*]\s+(.+)$/.exec(line);
+    const link = bullet && parseInternalNoteLink(bullet[1]);
+    if (!link) return null;
+    const basicMatch = /^\s*[：:]\s*(.*)$/.exec(link.rest);
     if (basicMatch && (field.startsWith("sub_") || field === "issues")) {
-      return { name: basicMatch[1].trim(), description: basicMatch[2]?.trim() };
+      return { name: link.target, explicitPath: link.explicitPath, description: basicMatch[1]?.trim() };
     }
 
     // theories 列表：- [[Name]] (Status)：Brief
-    const theoryMatch = line.match(/^\s*[-*]\s+\[\[([^\]]+)\]\]\s*(?:\(([^)]+)\))?\s*[：:]\s*(.+)?$/);
+    const theoryMatch = /^\s*(?:\(([^)]+)\))?\s*[：:]\s*(.*)$/.exec(link.rest);
     if (theoryMatch && field === "theories") {
-      const descParts = [theoryMatch[2], theoryMatch[3]].filter(Boolean).join(" / ");
-      return { name: theoryMatch[1].trim(), description: descParts || undefined };
+      const descParts = [theoryMatch[1], theoryMatch[2]].filter(Boolean).join(" / ");
+      return { name: link.target, explicitPath: link.explicitPath, description: descParts || undefined };
     }
 
     // entities/mechanisms：- [[Name]]
-    const entityMatch = line.match(/^\s*[-*]\s+\[\[([^\]]+)\]\]/);
-    if (entityMatch && (field === "entities" || field === "mechanisms")) {
-      return { name: entityMatch[1].trim() };
+    if (field === "entities" || field === "mechanisms") {
+      return { name: link.target, explicitPath: link.explicitPath };
     }
 
     return null;
   }
 
-  private normalizeLinkName(raw: string): string {
-    const name = raw.split("|")[0]?.split("#")[0]?.trim().replace(/\.md$/i, "") || "";
-    return name;
-  }
-
   private wrapAsWikilink(title: string): string {
     const trimmed = title.trim();
     if (/^\[\[.*\]\]$/.test(trimmed)) return trimmed;
-    return `[[${trimmed}]]`;
+    return renderParentNoteLink(trimmed);
   }
 }

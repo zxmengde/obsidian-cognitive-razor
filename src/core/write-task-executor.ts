@@ -6,6 +6,7 @@ import type {
   Result,
   TaskRecord,
   WriteTaskStageId,
+  ConversationContinuation,
 } from "../types";
 import { buildPhaseJsonSchema, type SchemaRegistry } from "./schema-registry";
 import { getWriteStageDefinition, type StageDefinition } from "./stage-catalog";
@@ -41,6 +42,28 @@ export interface WriteTaskExecutorDependencies {
   responsePipeline: ResponsePipeline;
   schemaRegistry: SchemaRegistry;
   logger: ILogger;
+}
+
+/** Keep the durable draft authoritative. Only omit a field when its exact
+ * current value is already in the compatible assistant history being sent. */
+function uncoveredDraftFields(
+  accumulated: Record<string, unknown>,
+  history: ConversationContinuation["history"],
+): Record<string, unknown> {
+  const latest = new Map<string, unknown>();
+  for (const message of history ?? []) {
+    if (message.role !== "assistant") continue;
+    try {
+      const value: unknown = JSON.parse(message.content);
+      if (!value || typeof value !== "object" || Array.isArray(value)) return accumulated;
+      for (const [field, content] of Object.entries(value)) latest.set(field, content);
+    } catch {
+      // A repaired/legacy response cannot prove exact field coverage.
+      return accumulated;
+    }
+  }
+  return Object.fromEntries(Object.entries(accumulated).filter(([field, value]) =>
+    !latest.has(field) || JSON.stringify(value) !== JSON.stringify(latest.get(field))));
 }
 
 export class WriteTaskExecutor {
@@ -122,6 +145,10 @@ export class WriteTaskExecutor {
     const continuation = args.task.payload.conversation;
     const canContinue = canUseContinuation(continuation, args.context.modelSnapshot);
     const canReplay = canReplayConversation(continuation, args.context.modelSnapshot);
+    const uncovered = canReplay
+      ? uncoveredDraftFields(args.accumulated, continuation?.history)
+      : args.accumulated;
+    const uncoveredContext = Object.keys(uncovered).length > 0 ? JSON.stringify(uncovered, null, 2) : "";
 
     const templateResult = await this.deps.promptManager.loadPhaseTemplate(
       args.concept.type,
@@ -134,7 +161,7 @@ export class WriteTaskExecutor {
     const sourcePackage = formatSourcePackage(continuation?.sources);
     const prompt = this.deps.promptManager.buildPhasedWrite({
       CTX_META: args.metaContext,
-      CTX_PREVIOUS: [canContinue ? "" : previousContext, sourcePackage].filter(Boolean).join("\n\n"),
+      CTX_PREVIOUS: [uncoveredContext, sourcePackage].filter(Boolean).join("\n\n"),
       CONCEPT_TYPE: args.concept.type,
     }, templateResult.value);
     const request = buildTaskChatRequest(

@@ -3,6 +3,7 @@ export const BASE_COMPONENT_MAP = Object.freeze({
   "{{BASE_WRITING_STYLE}}": "writing-style",
   "{{BASE_ANTI_PATTERNS}}": "anti-patterns",
   "{{BASE_OUTPUT_FORMAT}}": "output-format",
+  "{{BASE_WRITE_POLICY}}": "write-policy",
 } as const);
 
 export function injectPromptBaseComponents(

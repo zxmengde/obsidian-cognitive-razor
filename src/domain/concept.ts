@@ -1,5 +1,6 @@
 import { err, ok, type Result } from "../types";
 import { CR_TYPES, type ConfirmedConcept, type ConfirmedConceptSource, type ConceptName, type CRType, type DefinePreview } from "../types/domain";
+import { parseInternalNoteLink } from "../utils/note-links";
 
 export interface ConfirmConceptInput {
   type: CRType;
@@ -52,9 +53,10 @@ function normalizeParents(parents: unknown): Result<string[]> {
     if (typeof parent !== "string") return err("E101_INVALID_INPUT", "父概念链接无效");
     const value = parent.trim();
     if (!value) continue;
-    const inner = value.startsWith("[[") && value.endsWith("]]" ) ? value.slice(2, -2) : "";
-    if (!inner || inner.includes("[") || inner.includes("]")) {
-      return err("E101_INVALID_INPUT", "父概念必须是 Wiki 链接");
+    const link = parseInternalNoteLink(value);
+    if (!link?.target || link.rest.trim() || Array.from(link.target).some(character => character.charCodeAt(0) < 0x20 || character.charCodeAt(0) === 0x7f)
+      || link.target.startsWith("/") || /(^|\/)\.\.(\/|$)/.test(link.target) || /^[a-z][a-z\d+.-]*:/i.test(link.target)) {
+      return err("E101_INVALID_INPUT", "父概念必须是有效的内部笔记链接");
     }
     if (!normalized.includes(value)) normalized.push(value);
   }

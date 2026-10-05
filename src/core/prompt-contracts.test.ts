@@ -15,6 +15,7 @@ function renderedPrompt(path: string): string {
     "{{BASE_WRITING_STYLE}}": readPrompt("base/writing-style.md"),
     "{{BASE_ANTI_PATTERNS}}": readPrompt("base/anti-patterns.md"),
     "{{BASE_OUTPUT_FORMAT}}": readPrompt("base/output-format.md"),
+    "{{BASE_WRITE_POLICY}}": readPrompt("base/write-policy.md"),
   };
   return Object.entries(baseComponents).reduce(
     (prompt, [placeholder, component]) => prompt.split(placeholder).join(component),
@@ -104,7 +105,8 @@ describe("生产提示词契约", () => {
   it("Write 模板依赖 API Schema 作为唯一字段权威，而不再嵌入阶段 Schema", () => {
     for (const path of phasePaths) {
       const prompt = renderedPrompt(path);
-      expect(prompt).toContain("事实真实性约束与 API Schema 都是硬约束");
+      expect(prompt).toContain("只输出本次 API Schema 规定的一个 JSON 对象");
+      expect(prompt).toContain("必填不授权编造");
       expect(prompt).not.toContain("PHASE_SCHEMA");
       expect(prompt).not.toContain("<phase_schema>");
     }

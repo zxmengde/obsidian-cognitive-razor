@@ -19,6 +19,9 @@ import { formatCRTimestamp } from "../utils/date-utils";
 import { resolveAvailableProvider } from "./provider-config";
 import { validateChatFinishReason } from "./provider-response-parsers";
 import type { TaskModelSnapshot } from "../types/task";
+import { parseInternalNoteLink, rewriteInternalNoteLink, rewriteParentNoteLink } from "../utils/note-links";
+import YAML from "yaml";
+import { markdownLiteralMask } from "../utils/markdown-literals";
 
 const STORE_PATH = "data/duplicate-merge-operations.json";
 const MERGE_SCHEMA = {
@@ -105,10 +108,6 @@ function validMergeOperation(value: unknown): value is DuplicateMergeOperation {
   });
 }
 
-function linkTarget(inner: string): string {
-  return inner.split("|", 1)[0].split("#", 1)[0].trim().replace(/\.md$/i, "");
-}
-
 function buildLinkPlan(app: App, redundant: TFile, canonical: TFile, snapshots: Map<string, string>): LinkRepairPlan {
   const files = app.vault.getMarkdownFiles();
   const filePaths = new Set(files.map((file) => file.path.replace(/\.md$/i, "")));
@@ -126,14 +125,14 @@ function buildLinkPlan(app: App, redundant: TFile, canonical: TFile, snapshots: 
   const entries: LinkRepairPlan["entries"] = [];
   const skipped: string[] = [];
   const redundantPath = redundant.path.replace(/\.md$/i, "");
-  const canonicalPath = canonical.path.replace(/\.md$/i, "");
   const replaceLinks = (text: string, filePath: string, onSkip: (value: string) => void, bodyLinks?: Map<number, string>, startOffset = 0): { content: string; replacements: number } => {
     let replacements = 0;
-    const content = text.replace(/(!?\[\[([^\]]+)\]\])/g, (whole, _full: string, inner: string, offset: number) => {
+    const rewrite = (whole: string): string => {
       // Obsidian owns Markdown parsing. Never rewrite code, comments or other
       // literal text, and require cached positions to match this exact snapshot.
-      if (bodyLinks && bodyLinks.get(startOffset + offset) !== whole) return whole;
-      const target = linkTarget(inner);
+      const parsed = parseInternalNoteLink(whole.startsWith("!") ? whole.slice(1) : whole);
+      if (!parsed || parsed.rest) return whole;
+      const target = parsed.target.replace(/\.md$/i, "");
       const directPath = target === redundantPath;
       const uniqueFilename = target === redundant.basename && (basenames.get(redundant.basename) ?? []).length === 1;
       const aliasMatches = aliases.get(target) ?? [];
@@ -144,11 +143,26 @@ function buildLinkPlan(app: App, redundant: TFile, canonical: TFile, snapshots: 
           || (target === redundant.basename && (basenames.get(redundant.basename) ?? []).length > 1)) onSkip(`${filePath}: ${whole}`);
         return whole;
       }
+      const replacement = bodyLinks ? rewriteInternalNoteLink(whole, canonical.path) : rewriteParentNoteLink(whole, canonical.path);
+      if (!replacement || replacement === whole) return whole;
       replacements += 1;
-      const leadingWhitespace = inner.length - inner.trimStart().length;
-      const suffix = inner.slice(leadingWhitespace + target.length);
-      return `${whole.startsWith("!") ? "!" : ""}[[${inner.slice(0, leadingWhitespace)}${canonicalPath}${suffix}]]`;
-    });
+      return replacement;
+    };
+    let content = text;
+    if (bodyLinks) {
+      const literalMask = markdownLiteralMask(text);
+      for (const [offset, whole] of [...bodyLinks].sort(([left], [right]) => right - left)) {
+        const relative = offset - startOffset;
+        if (relative < 0 || relative + whole.length > text.length || text.slice(relative, relative + whole.length) !== whole) continue;
+        if (literalMask.subarray(relative, relative + whole.length).some(Boolean)) continue;
+        const replacement = rewrite(whole);
+        content = content.slice(0, relative) + replacement + content.slice(relative + whole.length);
+      }
+    } else {
+      const leading = text.length - text.trimStart().length;
+      const trailing = text.length - text.trimEnd().length;
+      content = text.slice(0, leading) + rewrite(text.trim()) + (trailing ? text.slice(-trailing) : "");
+    }
     return { content, replacements };
   };
   for (const file of files) {
@@ -166,11 +180,24 @@ function buildLinkPlan(app: App, redundant: TFile, canonical: TFile, snapshots: 
       const bodyResult = replaceLinks(original.slice(header.length), file.path, (value) => skipped.push(value), bodyLinks, header.length);
       replacements += bodyResult.replacements;
       let frontmatter = header;
-      const parentsBlock = /(^parents:[^\r\n]*(?:\r?\n[ \t]*-[^\r\n]*)*)/m.exec(frontmatter);
-      if (parentsBlock) {
-        const parentResult = replaceLinks(parentsBlock[0], file.path, (value) => skipped.push(value));
-        replacements += parentResult.replacements;
-        frontmatter = frontmatter.slice(0, parentsBlock.index) + parentResult.content + frontmatter.slice(parentsBlock.index + parentsBlock[0].length);
+      const headerParts = /^(---(?:\r\n|\n|\r))([\s\S]*?)((?:\r\n|\n|\r)[ \t]*---[ \t]*(?:(?:\r\n|\n|\r)|$))$/.exec(frontmatter);
+      if (headerParts) {
+        const document = YAML.parseDocument(headerParts[2]);
+        const parents = document.get("parents", true);
+        if (document.errors.length === 0 && YAML.isSeq(parents)) {
+          let yaml = headerParts[2];
+          // Edit only actual parent scalar spans. YAML decodes escaped links
+          // once; comments, aliases and all other property fields stay intact.
+          for (const parent of [...parents.items].reverse()) {
+            if (!YAML.isScalar(parent) || typeof parent.value !== "string" || !parent.range
+              || parent.type === "BLOCK_LITERAL" || parent.type === "BLOCK_FOLDED") continue;
+            const repaired = replaceLinks(parent.value, file.path, (value) => skipped.push(value));
+            if (!repaired.replacements) continue;
+            replacements += repaired.replacements;
+            yaml = yaml.slice(0, parent.range[0]) + JSON.stringify(repaired.content) + yaml.slice(parent.range[1]);
+          }
+          frontmatter = headerParts[1] + yaml + headerParts[3];
+        }
       }
       replacementContent = frontmatter + bodyResult.content;
     } else {

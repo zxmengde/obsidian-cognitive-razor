@@ -7,6 +7,22 @@ const task: TaskRecord = { id: 'synthetic', nodeId: 'synthetic', stageId: 'core'
     error: { code: 'E206_PROVIDER_REQUEST_UNCERTAIN', kind: 'uncertain', message: 'Authorization: Bearer synthetic-secret; private note content' } };
 
 describe('safe queue failure presentation', () => {
+    it('explains a changed note and retained result instead of suggesting waiting for a lock', () => {
+        const feedback = queueTaskFeedback({ ...task, state: 'failed', error: { code: 'E321_NOTE_SNAPSHOT_CHANGED', kind: 'known', message: 'private note' } }, 'fallback');
+        expect(feedback?.message).toContain('笔记');
+        expect(feedback?.message).toContain('修改');
+        expect(feedback?.details).toContain('结果已保留');
+        expect(feedback?.details).toContain('不会再次请求模型');
+        expect(feedback?.details).not.toContain('等待当前任务');
+        expect(JSON.stringify(feedback)).not.toContain('private note');
+    });
+    it('recognizes exact legacy snapshot messages without exposing arbitrary E320 text', () => {
+        const make = (message: string) => queueTaskFeedback({ ...task, state: 'failed', error: { code: 'E320_TASK_CONFLICT', kind: 'known', message } }, 'fallback');
+        expect(make('核查期间笔记已修改，未覆盖用户内容')?.details).toContain('结果已保留');
+        expect(make('Draft 笔记已被修改，未覆盖用户内容')?.details).toContain('不会再次请求模型');
+        expect(make('核查期间笔记已修改，未覆盖用户内容 secret')?.message).not.toContain('secret');
+        expect(make('other')?.details).toContain('等待当前任务');
+    });
     it('carries only allowlisted upstream status or local timeout, never headers or response bodies', () => {
         expect(taskFailureDiagnostics({ kind: 'upstream-http', status: 524, timeoutMs: 180000, headers: { Authorization: 'private' }, rawResponse: 'private' })).toEqual({ upstreamStatus: 524 });
         expect(taskFailureDiagnostics({ timeoutMs: 60000, rawError: 'private' })).toEqual({ requestTimeoutMs: 60000 });

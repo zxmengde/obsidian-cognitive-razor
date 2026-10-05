@@ -7,7 +7,13 @@ import { toSafeErrorFeedback } from './error-feedback';
 export function queueTaskFeedback(task: TaskRecord, fallback: string) {
     if (task.state !== 'failed' && task.state !== 'interrupted') return undefined;
     const uncertain = isUncertainTask(task);
-    const feedback = toSafeErrorFeedback({ code: uncertain ? 'E206_PROVIDER_REQUEST_UNCERTAIN' : task.error?.code }, fallback);
+    // Older queue records used the lock code for these exact local conflicts.
+    // Map only known local messages; never show arbitrary persisted error text.
+    const snapshotConflict = task.error?.code === 'E320_TASK_CONFLICT' && [
+        'Draft 笔记已被修改，未覆盖用户内容',
+        '核查期间笔记已修改，未覆盖用户内容',
+    ].includes(task.error.message);
+    const feedback = toSafeErrorFeedback({ code: uncertain ? 'E206_PROVIDER_REQUEST_UNCERTAIN' : snapshotConflict ? 'E321_NOTE_SNAPSHOT_CHANGED' : task.error?.code }, fallback);
     if (task.localSavePending) return {
         ...feedback, uncertain: false,
         message: '任务请求已结束，但本地状态保存失败',

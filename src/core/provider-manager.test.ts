@@ -459,7 +459,7 @@ describe("ProviderManager", () => {
     expect(result).toMatchObject({ ok: true });
     expect(requestUrl).toHaveBeenCalledTimes(1);
     const body = JSON.parse((vi.mocked(requestUrl).mock.calls[0][0] as RequestUrlParam).body as string) as Record<string, unknown>;
-    expect(body).toMatchObject({ tools: [{ type: "web_search" }], tool_choice: "required" });
+    expect(body).toMatchObject({ tools: [{ type: "web_search" }], tool_choice: "auto" });
   });
 
   it("accepts Gemini content without grounding metadata after a native search request", async () => {

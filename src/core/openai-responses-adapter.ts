@@ -57,10 +57,9 @@ function buildRequestBody(
   if (textConfig) body.text = { format: textConfig };
   if (webSearch) {
     body.tools = [{ type: "web_search" }];
-    // Verify/search requests require an actual search trace. Letting the
-    // model choose "auto" can silently produce an uncited answer, which the
-    // workflow must then reject after spending a provider call.
-    body.tool_choice = "required";
+    // Write can reuse the supplied evidence and search when a new claim needs
+    // it. Verify retains mandatory independent search; both keep the tool.
+    body.tool_choice = webSearch.purpose === "verify" ? "required" : "auto";
   }
   return body;
 }

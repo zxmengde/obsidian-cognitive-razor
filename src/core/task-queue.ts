@@ -97,6 +97,8 @@ export class TaskQueue {
   private readonly tasks = new Map<string, TaskRecord>();
   private readonly committingTasks = new Set<string>();
   private readonly pendingCancellations = new Map<string, Promise<void>>();
+  /** Reserve the source while an asynchronous retry checkpoint is saved. */
+  private readonly retryingTasks = new Set<string>();
   private readonly resultContexts = new Map<string, TaskExecutionContext>();
   /** A chosen outcome retains scheduling ownership, but never grants late provider results write access. */
   private readonly terminalTokens = new Map<string, symbol>();
@@ -308,16 +310,21 @@ export class TaskQueue {
     if (isUncertainTask(task) && !allowUncertain) {
       return err("E310_INVALID_STATE", "结果未知的请求只能由用户明确确认后手动重试");
     }
+    if (this.retryingTasks.has(taskId)) return err("E320_TASK_CONFLICT", "该任务正在提交重试，请勿重复操作");
     if (this.findActiveConflict(task, task.id)) return err("E320_TASK_CONFLICT", "该笔记已有任务在队列中");
-    try { await this.runWorkflowMutation(() => this.workflowPort?.beforeRetry?.(clone(task))); } catch (cause) { return err("E500_INTERNAL_ERROR", "更新工作流重试状态失败", cause); }
-    return this.commitMutation(() => {
-      const current = this.tasks.get(taskId);
-      if (!current || (current.state !== "failed" && current.state !== "interrupted")) return err("E310_INVALID_STATE", "任务状态已变化，无法重试");
-      this.prepareRetry(current);
-      this.prioritizeWorkflow(current.workflowId);
-      this.invalidateSnapshot();
-      return ok({ value: true, events: [{ type: "task-retried", taskId, task: clone(current) }] });
-    }).then((result) => { if (result.ok) this.requestSchedule(); return result; });
+    this.retryingTasks.add(taskId);
+    try {
+      try { await this.runWorkflowMutation(() => this.workflowPort?.beforeRetry?.(clone(task))); } catch (cause) { return err("E500_INTERNAL_ERROR", "更新工作流重试状态失败", cause); }
+      return await this.commitMutation(() => {
+        const current = this.tasks.get(taskId);
+        if (!current || (current.state !== "failed" && current.state !== "interrupted")) return err("E310_INVALID_STATE", "任务状态已变化，无法重试");
+        if (this.findActiveConflict(current, current.id)) return err("E320_TASK_CONFLICT", "该笔记已有任务在队列中");
+        this.prepareRetry(current);
+        this.prioritizeWorkflow(current.workflowId);
+        this.invalidateSnapshot();
+        return ok({ value: true, events: [{ type: "task-retried", taskId, task: clone(current) }] });
+      }).then((result) => { if (result.ok) this.requestSchedule(); return result; });
+    } finally { this.retryingTasks.delete(taskId); }
   }
 
   async retryFailedDurably(): Promise<Result<number>> {
@@ -328,21 +335,18 @@ export class TaskQueue {
       if (!result.ok) return result;
       if (result.value) saved++;
     }
-    const candidates = [...this.tasks.values()].filter((task) => !localTaskIds.has(task.id) && this.canRetryInBulk(task) && !this.findActiveConflict(task, task.id));
-    for (const task of candidates) {
-      try { await this.runWorkflowMutation(() => this.workflowPort?.beforeRetry?.(clone(task))); } catch (cause) { return err("E500_INTERNAL_ERROR", "更新工作流重试状态失败", cause); }
-    }
-    return this.commitMutation(() => {
-      const retried: string[] = [];
-      for (const candidate of candidates) {
-        const current = this.tasks.get(candidate.id);
-        if (!current || !this.canRetryInBulk(current) || this.findActiveConflict(current, current.id)) continue;
-        this.prepareRetry(current);
-        retried.push(current.id);
+    const candidates = [...this.tasks.values()].filter((task) => !localTaskIds.has(task.id) && this.canRetryInBulk(task));
+    for (const candidate of candidates) {
+      const current = this.tasks.get(candidate.id);
+      if (!current || !this.canRetryInBulk(current)) continue;
+      const result = await this.retryDurably(current.id);
+      if (!result.ok) {
+        if (result.error.code === "E320_TASK_CONFLICT") continue;
+        return result;
       }
-      if (retried.length) this.invalidateSnapshot();
-      return ok({ value: saved + retried.length, events: retried.length ? [{ type: "tasks-retried", taskIds: retried }] : [] });
-    }).then((result) => { if (result.ok && result.value > 0) this.requestSchedule(); return result; });
+      if (result.value) saved++;
+    }
+    return ok(saved);
   }
 
   async removeDurably(taskId: string): Promise<Result<boolean>> {
@@ -414,7 +418,7 @@ export class TaskQueue {
 
   isPathActive(filePath: string): boolean {
     const normalized = filePath.toLocaleLowerCase();
-    return [...this.tasks.values()].some((task) => (task.state === "pending" || task.state === "running") && task.filePath?.toLocaleLowerCase() === normalized);
+    return [...this.tasks.values()].some((task) => (task.state === "pending" || task.state === "running" || this.retryingTasks.has(task.id)) && task.filePath?.toLocaleLowerCase() === normalized);
   }
 
   getSnapshot(): QueueSnapshot { return clone(this.getOrCreateSnapshot()); }
@@ -896,12 +900,15 @@ export class TaskQueue {
   }
 
   private nextPendingTask(): TaskRecord | undefined { return [...this.tasks.values()].filter((task) => task.state === "pending").sort((a, b) => (a.queueOrder ?? 0) - (b.queueOrder ?? 0) || a.createdAt - b.createdAt)[0]; }
-  private findActiveConflict(candidate: Pick<TaskRecord, "workflowId" | "stageId" | "nodeId">, exceptTaskId?: string): TaskRecord | undefined {
+  private findActiveConflict(candidate: Pick<TaskRecord, "workflowId" | "stageId" | "nodeId" | "filePath">, exceptTaskId?: string): TaskRecord | undefined {
     const identity = queueTaskIdentity(candidate);
     return [...this.tasks.values()].find((task) => {
-      if (task.id === exceptTaskId || (task.state !== "pending" && task.state !== "running")) return false;
+      if (task.id === exceptTaskId || (task.state !== "pending" && task.state !== "running" && !this.retryingTasks.has(task.id))) return false;
       const taskIdentity = queueTaskIdentity(task);
-      return identity !== undefined && taskIdentity === identity;
+      const sameSource = (candidate.nodeId && candidate.nodeId === task.nodeId)
+        || (candidate.filePath && task.filePath?.toLocaleLowerCase() === candidate.filePath.toLocaleLowerCase());
+      return (identity !== undefined && taskIdentity === identity)
+        || (task.workflowId !== candidate.workflowId && !!sameSource);
     });
   }
   private getOrCreateSnapshot(): QueueSnapshot {

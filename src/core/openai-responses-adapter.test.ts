@@ -3,6 +3,18 @@ import { OPENAI_RESPONSES_ADAPTER } from "./openai-responses-adapter";
 import { validateChatFinishReason } from "./provider-response-parsers";
 
 describe("OpenAI Responses adapter", () => {
+  it("lets Write reuse evidence without a forced search and keeps Verify search mandatory", () => {
+    const request = { providerId: "fixture", model: "gpt-6.1-sol", messages: [{ role: "user" as const, content: "已有可靠证据" }] };
+    const write = OPENAI_RESPONSES_ADAPTER.buildRequestBody(request, { purpose: "write" });
+    const verify = OPENAI_RESPONSES_ADAPTER.buildRequestBody(request, { purpose: "verify" });
+    expect(write.tool_choice).toBe("auto");
+    expect(verify.tool_choice).toBe("required");
+    expect(write.tools).toEqual(verify.tools);
+    expect(write.tools).toEqual([{ type: "web_search" }]);
+    expect(write.instructions).toContain("已有证据不足时必须补充取证或明确保留不确定性");
+    expect(verify.instructions).toContain("内联 Markdown 链接");
+  });
+
   it.each([undefined, null, {}])("rejects an explicitly incomplete response without a reason (%j)", (incompleteDetails) => {
     expect(OPENAI_RESPONSES_ADAPTER.parseResponse({
       status: "incomplete",

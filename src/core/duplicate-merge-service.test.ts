@@ -6,6 +6,7 @@ import type { FileStorage } from "../data/file-storage";
 import { extractFrontmatter, generateFrontmatter, generateMarkdownContent } from "./frontmatter-utils";
 import { DuplicateMergeService } from "./duplicate-merge-service";
 import { formatCRTimestamp } from "../utils/date-utils";
+import { renderInternalNoteLink } from "../utils/note-links";
 
 const logger: ILogger = { debug: () => undefined, info: () => undefined, warn: () => undefined, error: () => undefined };
 
@@ -118,6 +119,83 @@ function fixture(options: FixtureOptions = {}) {
 }
 
 describe("DuplicateMergeService", () => {
+  it('repairs generated Markdown note links and parent scalars while preserving literals, images, external URLs and anchors', async () => {
+    const f = fixture();
+    const reference = renderInternalNoteLink(f.redundant.file.path, '期望值 E[X]');
+    const anchored = reference.replace(/\)$/, '#结论)');
+    const embedded = '!' + reference.replace(/\)$/, '#^block)');
+    const literal = '`' + reference + '`\n```md\n' + reference + '\n```\n';
+    const external = '[外链](https://example.invalid/archive/Redundant.md)\n![图片](archive/Redundant.png)';
+    f.incoming.frontmatter.parents = [reference];
+    f.incoming.content = generateMarkdownContent(f.incoming.frontmatter, literal + anchored + '\n' + embedded + '\n' + external);
+    const getCache = f.app.metadataCache.getFileCache.getMockImplementation()!;
+    f.app.metadataCache.getFileCache.mockImplementation(target => target.path !== f.incoming.file.path ? getCache(target) : {
+      frontmatter: f.incoming.frontmatter,
+      links: [anchored, embedded, '[外链](https://example.invalid/archive/Redundant.md)', '![图片](archive/Redundant.png)'].map(original => {
+        const offset = f.incoming.content.indexOf(original, f.incoming.content.indexOf(literal) + literal.length);
+        return { original, link: '', position: { start: { line: 0, col: 0, offset }, end: { line: 0, col: 0, offset: offset + original.length } } };
+      }),
+    } as CachedMetadata);
+    const result = await f.service.prepareMerge(f.pair.id, 'canonical');
+    expect(result.ok).toBe(true); if (!result.ok) return;
+    expect(result.value.linkRepairPlan.replacementCount).toBe(3);
+    const repaired = result.value.linkRepairPlan.entries[0].replacementContent;
+    expect(repaired).toContain('[期望值 E\\[X\\]](notes/Canonical.md#结论)');
+    expect(repaired).toContain('![期望值 E\\[X\\]](notes/Canonical.md#^block)');
+    expect(repaired).toContain(literal); expect(repaired).toContain(external);
+    expect(extractFrontmatter(repaired)?.frontmatter.parents[0]).not.toContain('archive/Redundant');
+    expect((await f.service.confirmMerge(result.value.draft, result.value.linkRepairPlan)).ok).toBe(true);
+    expect(f.incoming.content).toBe(repaired);
+  });
+  it('repairs only YAML parent scalar ranges, retaining comments, other fields and aliases', async () => {
+    const f = fixture();
+    const reference = '[旧名](archive/Redundant.md)';
+    const untouched = 'other: "' + reference + '" # keep unrelated field\n';
+    f.incoming.content = generateMarkdownContent(f.incoming.frontmatter, '正文')
+      .replace('parents: []\n', untouched + 'parents:\n  - "' + reference + '" # keep parent comment\n'
+        + '  - &literal "[[Elsewhere]]"\n  - *literal\n');
+    const result = await f.service.prepareMerge(f.pair.id, 'canonical');
+    expect(result.ok).toBe(true); if (!result.ok) return;
+    expect(result.value.linkRepairPlan.replacementCount).toBe(1);
+    const repaired = result.value.linkRepairPlan.entries[0].replacementContent;
+    expect(repaired).toContain(untouched);
+    expect(repaired).toContain('# keep parent comment\n');
+    expect(repaired).toContain('  - &literal "[[Elsewhere]]"\n  - *literal\n');
+    expect(extractFrontmatter(repaired)?.frontmatter.parents[0]).toContain('notes/Canonical');
+  });
+  it('skips cached link offsets that no longer match the captured note bytes', async () => {
+    const f = fixture();
+    const reference = '[旧名](archive/Redundant.md)';
+    f.incoming.content = 'edited\n' + reference;
+    const getCache = f.app.metadataCache.getFileCache.getMockImplementation()!;
+    f.app.metadataCache.getFileCache.mockImplementation(target => target.path !== f.incoming.file.path ? getCache(target) : {
+      links: [{ original: reference, link: 'archive/Redundant.md', position: {
+        start: { line: 0, col: 0, offset: 0 }, end: { line: 0, col: 0, offset: reference.length },
+      } }],
+    } as CachedMetadata);
+    const result = await f.service.prepareMerge(f.pair.id, 'canonical');
+    expect(result.ok).toBe(true); if (!result.ok) return;
+    expect(result.value.linkRepairPlan.entries).toEqual([]);
+    expect(result.value.linkRepairPlan.replacementCount).toBe(0);
+    expect(f.incoming.content).toBe('edited\n' + reference);
+  });
+  it.each([
+    ['```\n', '\n```'], ['<!--', '-->'], ['`', '`'], ['%%', '%%'],
+  ])('preserves newly literal context even when a stale cached link still has matching bytes', async (prefix, suffix) => {
+    const f = fixture();
+    const reference = '[旧名](archive/Redundant.md)';
+    f.incoming.content = prefix + reference + suffix;
+    const getCache = f.app.metadataCache.getFileCache.getMockImplementation()!;
+    f.app.metadataCache.getFileCache.mockImplementation(target => target.path !== f.incoming.file.path ? getCache(target) : {
+      links: [{ original: reference, link: 'archive/Redundant.md', position: {
+        start: { line: 0, col: 0, offset: prefix.length }, end: { line: 0, col: 0, offset: prefix.length + reference.length },
+      } }],
+    } as CachedMetadata);
+    const result = await f.service.prepareMerge(f.pair.id, 'canonical');
+    expect(result.ok).toBe(true); if (!result.ok) return;
+    expect(result.value.linkRepairPlan.entries).toEqual([]);
+    expect(result.value.linkRepairPlan.replacementCount).toBe(0);
+  });
   it("preserves both original parent sets in the preview, then respects explicit user edits", async () => {
     const f = fixture();
     f.canonical.frontmatter.parents = ["[[Domains/A, B]]", "[[Shared]]"];

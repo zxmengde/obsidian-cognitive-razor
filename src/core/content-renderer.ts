@@ -3,6 +3,7 @@ import { schemaRegistry } from "./schema-registry";
 import type { FieldDescription } from "./schema-registry";
 import { getMarkdownArrayProjection, STRUCTURAL_LINK_TARGET_TYPES, type MarkdownArrayProjection } from "./projection-catalog";
 import { generateFilePath } from "./naming-utils";
+import { renderInternalNoteLink } from "../utils/note-links";
 
 export class ContentRenderer {
   renderNoteMarkdown(options: {
@@ -88,12 +89,12 @@ export class ContentRenderer {
     const projection = getMarkdownArrayProjection(fieldName);
     const targetType = STRUCTURAL_LINK_TARGET_TYPES[fieldName];
     const link = (name: string): string => {
-      if (!directoryScheme || !targetType) return `[[${name}]]`;
+      if (!directoryScheme || !targetType) return renderInternalNoteLink(name);
       const filePath = generateFilePath(name, directoryScheme, targetType);
       // Root targets need an explicit extension to distinguish them from a
       // legacy bare title when the configured directory later changes.
       const path = filePath.includes("/") ? filePath.replace(/\.md$/i, "") : filePath;
-      return `[[${path}|${name}]]`;
+      return renderInternalNoteLink(/[[\]#^|%]/.test(`${path}${name}`) ? filePath : path, name);
     };
     return projection ? this.renderProjectedArray(items, projection, link) : this.renderGenericObjectArray(items);
   }
