@@ -33,7 +33,8 @@ function fixture(rejectContinuation = false) {
     requests.push(request);
     if (rejectContinuation && requests.length === 1) return err("E205_PROVIDER_REQUEST_INVALID", "stored response id rejected", { rawResponse: "previous_response_id invalid" });
     const content = request.requestLabel === "core" ? core : request.requestLabel === "narrative" ? narrative : { sub_domains: [], issues: [] };
-    return ok({ content: JSON.stringify(content), responseId: `response-${requests.length}`, finishReason: "stop", citations: [{ url: sources.items[0].url, title: "合成来源" }] });
+    const envelope = (request.response_format?.json_schema.schema as {properties?:Record<string,unknown>})?.properties?.result;
+    return ok({ content: JSON.stringify(envelope ? {result:{stage:request.requestLabel,...content}} : content), responseId: `response-${requests.length}`, finishReason: "stop", citations: [{ url: sources.items[0].url, title: "合成来源" }] });
   } } as unknown as ModelGateway;
   const executor = new WriteTaskExecutor({ providerManager: gateway, promptManager: manager, responsePipeline: new ResponsePipeline(new Validator()), schemaRegistry, logger });
   const task = (stageId: "core" | "narrative" | "structure", accumulated: Record<string, unknown>, conversation?: ConversationContinuation): TaskRecord<typeof stageId> => ({
@@ -41,6 +42,7 @@ function fixture(rejectContinuation = false) {
   });
   return { manager, requests, task, executor };
 }
+const historyContent=(fields:Record<string,unknown>,stage="core")=>JSON.stringify({result:{stage,...fields}});
 const latestUser = (request: ChatRequest) => [...request.messages].reverse().find(message => message.role === "user")!.content;
 
 describe("Write context keeps each authoritative field while avoiding duplicate input", () => {
@@ -55,14 +57,15 @@ describe("Write context keeps each authoritative field while avoiding duplicate 
       expect(result.ok).toBe(true); if (!result.ok) throw new Error(result.error.message);
       const request = f.requests.at(-1)!;
       for (const [field, value] of Object.entries(before)) {
-        const answers = request.messages.filter(message => message.role === "assistant").map(message => JSON.parse(message.content) as Record<string, unknown>);
+        const answers = request.messages.filter(message => message.role === "assistant").map(message => (JSON.parse(message.content).result as Record<string, unknown>));
         expect(answers.some(answer => JSON.stringify(answer[field]) === JSON.stringify(value))).toBe(true);
         if (typeof value === "string") expect(latestUser(request)).not.toContain(value);
       }
       if (conversation) expect(latestUser(request)).toContain(sources.items[0].url);
       const template = await f.manager.loadPhaseTemplate("domain", phase.id); if (!template.ok) throw new Error(template.error.message);
-      const baselinePrompt = f.manager.buildPhasedWrite({ CTX_META: buildTaskMetaContext(task.payload), CTX_PREVIOUS: [Object.keys(before).length ? JSON.stringify(before, null, 2) : "", formatSourcePackage(conversation?.sources)].filter(Boolean).join("\n\n"), CONCEPT_TYPE: "domain" }, template.value);
+      const baselinePrompt = f.manager.buildPhasedWrite({ CTX_META: buildTaskMetaContext(task.payload), CTX_PREVIOUS: [Object.keys(before).length ? JSON.stringify(before, null, 2) : "", formatSourcePackage(conversation?.sources)].filter(Boolean).join("\n\n"), CONCEPT_TYPE: "domain" }, template.value) + `\n<write_stage>${phase.id}</write_stage>\n`;
       const baseline = buildTaskChatRequest("write", baselinePrompt, snapshot, request.response_format!.json_schema.schema, phase.id, "initial", conversation);
+      if (!baseline.responsesInput) baseline.responsesInput = baseline.messages.filter(message => message.role !== "system").map(message => ({ role: message.role, content: message.content }));
       const body = OPENAI_RESPONSES_ADAPTER.buildRequestBody(request, { purpose: "write" });
       const baselineBody = OPENAI_RESPONSES_ADAPTER.buildRequestBody(baseline, { purpose: "write" });
       const afterSize = JSON.stringify(body.input).length, beforeSize = JSON.stringify(baselineBody.input).length;
@@ -81,7 +84,7 @@ describe("Write context keeps each authoritative field while avoiding duplicate 
 
   it("keeps missing early-stage fields when compatible history starts only in a later stage", async () => {
     const f = fixture();
-    await f.executor.execute(f.task("structure", { ...core, ...narrative }, continuation([{ role: "assistant", content: JSON.stringify(narrative) }])), new AbortController().signal, { modelSnapshot: model, attemptReason: "initial" });
+    await f.executor.execute(f.task("structure", { ...core, ...narrative }, continuation([{ role: "assistant", content: historyContent(narrative,"narrative") }])), new AbortController().signal, { modelSnapshot: model, attemptReason: "initial" });
     const user = latestUser(f.requests[0]);
     expect(user).toContain(core.definition); expect(user).toContain(core.methodology);
     expect(user).not.toContain(narrative.historical_genesis); expect(user).not.toContain(narrative.holistic_understanding);
@@ -90,9 +93,9 @@ describe("Write context keeps each authoritative field while avoiding duplicate 
 
   it.each(["missing", "empty", "user-only", "malformed", "old-version", "other-model", "other-provider", "other-endpoint"])("preserves full draft with %s history", async kind => {
     const f = fixture();
-    let previous: ConversationContinuation | undefined = continuation([{ role: "assistant", content: JSON.stringify(core) }]);
+    let previous: ConversationContinuation | undefined = continuation([{ role: "assistant", content: historyContent(core) }]);
     if (kind === "empty") previous!.history = [];
-    if (kind === "user-only") previous!.history = [{ role: "user", content: JSON.stringify(core) }];
+    if (kind === "user-only") previous!.history = [{ role: "user", content: historyContent(core) }];
     if (kind === "malformed") previous!.history = [{ role: "assistant", content: "not JSON" }];
     if (kind === "old-version") previous!.promptVersion = "v5";
     if (kind === "other-model") previous!.model = "different-model";
@@ -107,7 +110,7 @@ describe("Write context keeps each authoritative field while avoiding duplicate 
 
   it("retains the current value when the latest historical field differs from it", async () => {
     const f = fixture();
-    const previous = continuation([{ role: "assistant", content: JSON.stringify(core) }, { role: "assistant", content: JSON.stringify({ definition: "OLD_DIFFERENT_DEFINITION" }) }]);
+    const previous = continuation([{ role: "assistant", content: historyContent(core) }, { role: "assistant", content: historyContent({...core,definition:"OLD_DIFFERENT_DEFINITION"}) }]);
     await f.executor.execute(f.task("structure", core, previous), new AbortController().signal, { modelSnapshot: model, attemptReason: "initial" });
     expect(latestUser(f.requests[0])).toContain(core.definition);
     expect(latestUser(f.requests[0])).not.toContain(core.methodology);
@@ -116,7 +119,7 @@ describe("Write context keeps each authoritative field while avoiding duplicate 
   it("keeps an entire updated array instead of removing its historical subset", async () => {
     const f = fixture();
     const updated = { ...core, boundaries: [...core.boundaries, "ADDED_CURRENT_BOUNDARY"] };
-    await f.executor.execute(f.task("structure", updated, continuation([{ role: "assistant", content: JSON.stringify(core) }])), new AbortController().signal, { modelSnapshot: model, attemptReason: "initial" });
+    await f.executor.execute(f.task("structure", updated, continuation([{ role: "assistant", content: historyContent(core) }])), new AbortController().signal, { modelSnapshot: model, attemptReason: "initial" });
     expect(latestUser(f.requests[0])).toContain("UNIQUE_BOUNDARY");
     expect(latestUser(f.requests[0])).toContain("ADDED_CURRENT_BOUNDARY");
     expect(latestUser(f.requests[0])).not.toContain(core.methodology);

@@ -7,12 +7,14 @@ import type {
   TaskRecord,
   WriteTaskStageId,
   ConversationContinuation,
+  CRType,
 } from "../types";
 import { buildPhaseJsonSchema, type SchemaRegistry } from "./schema-registry";
 import { getWriteStageDefinition, type StageDefinition } from "./stage-catalog";
 import type { ModelGateway } from "./model-gateway";
 import type { PromptManager } from "./prompt-manager";
 import { ResponsePipeline } from "./response-pipeline";
+import { buildStableWriteSchema, decodeWriteEnvelope, usesStableWriteEnvelope } from "./write-output-codec";
 import {
   buildTaskChatRequest,
   buildTaskMetaContext,
@@ -46,15 +48,28 @@ export interface WriteTaskExecutorDependencies {
 
 /** Keep the durable draft authoritative. Only omit a field when its exact
  * current value is already in the compatible assistant history being sent. */
-function uncoveredDraftFields(
+async function uncoveredDraftFields(
   accumulated: Record<string, unknown>,
   history: ConversationContinuation["history"],
-): Record<string, unknown> {
+  envelope: { type: CRType; fullSchema: object; pipeline: ResponsePipeline; taskId: string } | undefined,
+): Promise<Record<string, unknown>> {
   const latest = new Map<string, unknown>();
   for (const message of history ?? []) {
     if (message.role !== "assistant") continue;
     try {
-      const value: unknown = JSON.parse(message.content);
+      let value: unknown = JSON.parse(message.content);
+      if (envelope) {
+        const decoded = decodeWriteEnvelope(message.content, envelope.type);
+        if (!decoded.ok) return accumulated;
+        const phase = getWriteStageDefinition(envelope.type, decoded.value.stageId)!;
+        const validated = await envelope.pipeline.validate<Record<string, unknown>>({
+          taskId: envelope.taskId,
+          rawOutput: JSON.stringify(decoded.value.fields),
+          schema: buildPhaseJsonSchema(envelope.fullSchema, phase.fields),
+        });
+        if (!validated.ok) return accumulated;
+        value = validated.value;
+      }
       if (!value || typeof value !== "object" || Array.isArray(value)) return accumulated;
       for (const [field, content] of Object.entries(value)) latest.set(field, content);
     } catch {
@@ -140,6 +155,8 @@ export class WriteTaskExecutor {
 
   private async executePhase(args: WritePhaseExecution): Promise<Result<Record<string, unknown>>> {
     const phaseSchema = buildPhaseJsonSchema(args.fullSchema, args.phase.fields);
+    const stableEnvelope = usesStableWriteEnvelope(args.context.modelSnapshot);
+    const wireSchema = stableEnvelope ? buildStableWriteSchema(args.concept.type, args.fullSchema) : phaseSchema;
     const previousContext = Object.keys(args.accumulated).length > 0
       ? JSON.stringify(args.accumulated, null, 2)
       : "";
@@ -147,7 +164,8 @@ export class WriteTaskExecutor {
     const canContinue = canUseContinuation(continuation, args.context.modelSnapshot);
     const canReplay = canReplayConversation(continuation, args.context.modelSnapshot);
     const uncovered = canReplay
-      ? uncoveredDraftFields(args.accumulated, continuation?.history)
+      ? await uncoveredDraftFields(args.accumulated, continuation?.history, stableEnvelope
+        ? { type: args.concept.type, fullSchema: args.fullSchema, pipeline: this.deps.responsePipeline, taskId: args.task.id } : undefined)
       : args.accumulated;
     const uncoveredContext = Object.keys(uncovered).length > 0 ? JSON.stringify(uncovered, null, 2) : "";
 
@@ -160,20 +178,30 @@ export class WriteTaskExecutor {
     }
 
     const sourcePackage = formatSourcePackage(continuation?.sources);
-    const prompt = this.deps.promptManager.buildPhasedWrite({
+    let prompt = this.deps.promptManager.buildPhasedWrite({
       CTX_META: args.metaContext,
       CTX_PREVIOUS: [uncoveredContext, sourcePackage].filter(Boolean).join("\n\n"),
       CONCEPT_TYPE: args.concept.type,
     }, templateResult.value);
+    if (stableEnvelope) prompt += `\n<write_stage>${args.phase.id}</write_stage>\n`;
     const request = buildTaskChatRequest(
       "write",
       prompt,
       args.context.modelSnapshot,
-      phaseSchema,
+      wireSchema,
       args.phase.id,
       args.context.attemptReason,
       canReplay ? continuation : { promptCacheKey: continuation?.promptCacheKey },
     );
+    // Use the same standard message representation from the first turn onward
+    // on the validated envelope path. Native replay already supplies its items.
+    if (stableEnvelope && !request.responsesInput) {
+      request.responsesInput = request.messages
+        .filter(message => message.role !== "system")
+        .map(message => ({ role: message.role, content: message.content }));
+    }
+    const cancelledBeforeRequest = getTaskAbortError<Record<string, unknown>>(args.task, args.signal);
+    if (cancelledBeforeRequest) return cancelledBeforeRequest;
     let chatResult = await this.deps.providerManager.chat(request, args.signal);
     let activeRequest = request;
     let conversationInvalidated = false;
@@ -185,7 +213,7 @@ export class WriteTaskExecutor {
         CONCEPT_TYPE: args.concept.type,
       }, templateResult.value);
       const fallbackRequest = buildTaskChatRequest(
-        "write", fallbackPrompt, args.context.modelSnapshot, phaseSchema, args.phase.id,
+        "write", fallbackPrompt, args.context.modelSnapshot, wireSchema, args.phase.id,
         args.context.attemptReason, { promptCacheKey: continuation?.promptCacheKey },
       );
       activeRequest = fallbackRequest;
@@ -198,9 +226,15 @@ export class WriteTaskExecutor {
     const finishError = this.deps.responsePipeline.checkFinishReason<Record<string, unknown>>(args.task.id, chatResult.value);
     if (finishError) return finishError;
 
+    let rawPhaseOutput = chatResult.value.content;
+    if (stableEnvelope) {
+      const decoded = decodeWriteEnvelope(rawPhaseOutput, args.concept.type, args.phase.id);
+      if (!decoded.ok) return createTaskError(args.task, decoded.error);
+      rawPhaseOutput = JSON.stringify(decoded.value.fields);
+    }
     const validated = await this.deps.responsePipeline.validate<Record<string, unknown>>({
       taskId: args.task.id,
-      rawOutput: chatResult.value.content,
+      rawOutput: rawPhaseOutput,
       schema: phaseSchema,
     });
     if (!validated.ok) return validated;

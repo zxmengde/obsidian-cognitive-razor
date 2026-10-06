@@ -75,7 +75,7 @@ describe('official Responses replay field variants',()=>{
 
 it.each(['gpt-6.1-sol','gpt-6-sol',undefined])('only forwards opaque Write state for the confirmed requested model, reported=%s',async model=>{
  const phase={definition:'合成定义',core_questions:'合成问题',methodology:'合成方法',boundaries:[]};
- const r=parseOpenAIResponsesResponse({...raw,model,output:output.map(i=>i.type==='message'?{...i,content:[{type:'output_text',text:JSON.stringify(phase),annotations:[]}]}:i)});if(!r.ok)throw Error('parse');
+ const r=parseOpenAIResponsesResponse({...raw,model,output:output.map(i=>i.type==='message'?{...i,content:[{type:'output_text',text:JSON.stringify({result:{stage:"core",...phase}}),annotations:[]}]}:i)});if(!r.ok)throw Error('parse');
  const executor=new WriteTaskExecutor({providerManager:{chat:async()=>r} as never,promptManager:{loadPhaseTemplate:async()=>ok('synthetic'),buildPhasedWrite:()=>'<system_instructions>Stable</system_instructions>\ncurrent'} as never,responsePipeline:new ResponsePipeline(new Validator()),schemaRegistry,logger});
  const task={id:'write',nodeId:'fixture',stageId:'core',state:'running',createdAt:1,updatedAt:1,attempt:1,payload:{concept:{type:'domain',name:{chinese:'合成领域',english:''},coreDefinition:'synthetic',parents:[],source:'define'},accumulated:{}}};
  const context={modelSnapshot:snapshot,attemptReason:'initial'};const result=await executor.execute(task as never,new AbortController().signal,context as never);expect(result.ok).toBe(true);if(!result.ok)throw Error('Write validation failed');expect(!!result.value.responsesOutput).toBe(model==='gpt-6.1-sol');
@@ -85,7 +85,7 @@ it.each(['gpt-6.1-sol','gpt-6-sol',undefined])('only forwards opaque Write state
  const body=OPENAI_RESPONSES_ADAPTER.buildRequestBody(next);expect(body).not.toHaveProperty('previous_response_id');
  expect(JSON.stringify(body).includes('SYNTHETIC_OPAQUE_STATE')).toBe(model==='gpt-6.1-sol');
  expect((body.input as unknown[]).length).toBe(model==='gpt-6.1-sol'?5:3);
- expect(conversation.history).toEqual([{role:'user',content:'current'},{role:'assistant',content:JSON.stringify(phase)}]);
+ expect(conversation.history).toEqual([{role:'user',content:'current\n<write_stage>core</write_stage>'},{role:'assistant',content:JSON.stringify({result:{stage:"core",...phase}})}]);
 });
 
 it('keeps server-id continuation incremental and does not replay the local native state twice',()=>{

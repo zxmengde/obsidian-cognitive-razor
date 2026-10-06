@@ -142,3 +142,52 @@ it("accepts authoritative Responses completion before a later proxy disconnect",
   expect(aggregateProviderStream("openai-responses", result.body)).toMatchObject({ ok: true, value: { output_text: "already complete", status: "completed" } });
   expect(f).toHaveBeenCalledOnce();
 });
+
+it("observes a pre-header timeout without exposing request credentials or inventing bytes", async () => {
+  vi.useFakeTimers(); const evidence: unknown[] = [];
+  const fetcher = vi.fn(() => new Promise<Response>(() => {}));
+  const pending = createRendererStreamRequester(fetcher, { onEvidence: value => evidence.push(value) })(input);
+  const check = expect(pending).rejects.toMatchObject({ timeoutKind: "idle", phase: "before-response" });
+  await vi.advanceTimersByTimeAsync(1001); await check;
+  expect(evidence.at(-1)).toMatchObject({ stage: "failed", phase: "before-response", httpStatus: null, timeoutKind: "idle", diagnostics: { chunkCount: 0, byteCount: 0, firstChunkMs: null } });
+  expect(JSON.stringify(evidence)).not.toContain("Bearer"); expect(JSON.stringify(evidence)).not.toContain(input.url);
+  expect(fetcher).toHaveBeenCalledOnce();
+});
+
+it("retains heartbeat timing and reported partial usage when the unchanged total deadline wins", async () => {
+  vi.useFakeTimers(); let controller!: ReadableStreamDefaultController<Uint8Array>; const evidence: unknown[] = [];
+  const fetcher = vi.fn(async () => response(new ReadableStream({ start(c) { controller = c; } })));
+  const pending = createRendererStreamRequester(fetcher, { totalTimeoutMs: 2500, onEvidence: value => evidence.push(value) })(input);
+  const check = expect(pending).rejects.toMatchObject({ timeoutKind: "total", phase: "after-response" });
+  await vi.advanceTimersByTimeAsync(0);
+  controller.enqueue(encode('data: {"type":"response.in_progress","response":{"usage":{"input_tokens":1200,"output_tokens":50,"total_tokens":1250,"input_tokens_details":{"cached_tokens":512}}}}\n\n'));
+  for (let i = 0; i < 3; i++) { await vi.advanceTimersByTimeAsync(700); controller.enqueue(encode(': heartbeat\n\n')); await vi.advanceTimersByTimeAsync(0); }
+  await vi.advanceTimersByTimeAsync(400); await check;
+  expect(evidence.at(-1)).toMatchObject({ stage: "failed", phase: "after-response", httpStatus: 200, timeoutKind: "total", diagnostics: { chunkCount: 4, maxChunkGapMs: 700 }, observedUsage: { inputTokens: 1200, outputTokens: 50, cacheReadTokens: 512 } });
+  expect(fetcher).toHaveBeenCalledOnce(); expect(vi.getTimerCount()).toBe(0);
+});
+
+it("keeps read failure evidence private even if the observer itself throws", async () => {
+  const evidence: unknown[] = [];
+  const fetcher = vi.fn(async () => response(new ReadableStream({ start(c) { c.enqueue(encode('private-opaque-body')); }, pull(c) { c.error(Error('private provider error')); } })));
+  const result = await createRendererStreamRequester(fetcher, { onEvidence: value => { evidence.push(value); throw Error('observer failure'); } })(input).catch(error => error);
+  expect(result).toMatchObject({ message: "READ_FAILED", phase: "after-response" });
+  expect(evidence.at(-1)).toMatchObject({ stage: "failed", phase: "after-response", diagnostics: { chunkCount: 1 } });
+  expect(JSON.stringify(evidence)).not.toMatch(/private|Authorization|synthetic/); expect(fetcher).toHaveBeenCalledOnce();
+});
+
+it("an optional observer cannot change successful bytes, terminal handling or dispatch count", async () => {
+  const body = 'data: {"type":"response.completed","response":{"status":"completed","output_text":"complete"}}\n\n'; const evidence: unknown[] = [];
+  const fetcher = vi.fn(async () => response(new ReadableStream({ start(c) { c.enqueue(encode(body)); } })));
+  const result = await createRendererStreamRequester(fetcher, { onEvidence: value => { evidence.push(value); throw Error('observer failure'); } })(input);
+  expect(result.body).toBe(body); expect(evidence.at(-1)).toMatchObject({ stage: "completed", httpStatus: 200, framing: "SSE" });
+  expect(fetcher).toHaveBeenCalledOnce();
+});
+
+it("an unavailable optional MIME observation cannot turn a valid stream into a network failure", async () => {
+  const body='data: {"type":"response.completed","response":{"status":"completed","output_text":"complete"}}\n\n'; const evidence: unknown[]=[];
+  const headers={get(){throw Error("metadata unavailable");},forEach(callback:(value:string,key:string)=>void){callback("text/event-stream","content-type");}};
+  const fetcher=vi.fn(async()=>({status:200,type:"cors",headers,body:new ReadableStream({start(c){c.enqueue(encode(body));}})} as unknown as Response));
+  const result=await createRendererStreamRequester(fetcher,{onEvidence:value=>evidence.push(value)})(input);
+  expect(result.body).toBe(body);expect(evidence.at(-1)).toMatchObject({stage:"completed",responseContentType:"unknown"});expect(fetcher).toHaveBeenCalledOnce();
+});

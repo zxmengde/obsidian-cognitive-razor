@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readFile } from "node:fs/promises";
 import { TFile, type App, type Vault } from "obsidian";
 import { FileStorage } from "../data/file-storage";
 import { WorkflowStore } from "../data/workflow-store";
@@ -13,6 +14,15 @@ import { formatCRTimestamp } from "../utils/date-utils";
 import { extractFrontmatter } from "./frontmatter-utils";
 import { getWriteStageIds } from "./stage-catalog";
 import { backupAndClearPluginData, recoverInterruptedReset } from "../data/runtime-data-maintenance";
+import { PromptManager } from "./prompt-manager";
+import { WriteTaskExecutor } from "./write-task-executor";
+import { ResponsePipeline } from "./response-pipeline";
+import { Validator } from "../data/validator";
+import { buildPhaseJsonSchema, schemaRegistry } from "./schema-registry";
+import { getWriteStageDefinition } from "./stage-catalog";
+import { parseOpenAIResponsesResponse } from "./provider-response-parsers";
+import { PROMPT_VERSION } from "./task-execution-support";
+import type { ChatRequest } from "../types";
 
 const concept: ConfirmedConcept = { type: "entity", name: { chinese: "验收概念", english: "Acceptance" }, coreDefinition: "测试定义", parents: [], source: "define" };
 const logger: ILogger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
@@ -665,4 +675,97 @@ it("keeps a failed retry checkpoint inactive and never revives it after deletion
   expect(reload.queue.getSnapshot().tasks.some(t => t.workflowId === task.workflowId)).toBe(false);
   expect(reload.run).not.toHaveBeenCalled();
   expect((await reload.coordinator.startVerify("Acceptance.md")).ok).toBe(true);
+});
+
+/** Actual envelope writer, parser, validator, durable queue and note projection.
+ * Only provider completion and host filesystem are synthetic. */
+async function useEnvelopeWriter(f: Awaited<ReturnType<typeof fixture>>, wrongStage = false) {
+  const requests: ChatRequest[] = [];
+  f.settings.enableAutoVerify = false;
+  f.settings.defaultProviderId = "synthetic-envelope";
+  f.settings.providers["synthetic-envelope"] = {
+    apiKey: "SYNTHETIC_NOT_A_CREDENTIAL", enabled: true,
+    apiFormat: "openai-responses", baseUrl: "https://never-called.example/v1",
+    embeddingApiFormat: "disabled", defaultChatModel: "gpt-6.1-sol", defaultEmbedModel: "",
+    capabilities: { promptCaching: true, responseContinuation: true, nativeWebSearch: true },
+  };
+  const sample = (value: unknown): unknown => {
+    const schema = value as { type?: string; enum?: unknown[]; properties?: Record<string, unknown>; minimum?: number };
+    if (schema.enum) return schema.enum[0];
+    if (schema.type === "object") return Object.fromEntries(Object.entries(schema.properties ?? {}).map(([key, child]) => [key, sample(child)]));
+    if (schema.type === "array") return [];
+    if (schema.type === "number" || schema.type === "integer") return schema.minimum ?? 1;
+    if (schema.type === "boolean") return true;
+    return "ENVELOPE_VALIDATED_CONTENT";
+  };
+  const writer = new WriteTaskExecutor({
+    logger, schemaRegistry, responsePipeline: new ResponsePipeline(new Validator()),
+    promptManager: new PromptManager({ read: async (path: string) => ok(await readFile(path, "utf8")) } as never, logger),
+    providerManager: { chat: async (request: ChatRequest) => {
+      requests.push(request);
+      const type = f.store.list()[0].type;
+      const stage = getWriteStageDefinition(type, request.requestLabel!)!;
+      const fields = sample(buildPhaseJsonSchema(schemaRegistry.getSchema(type), stage.fields)) as Record<string, unknown>;
+      const raw = JSON.stringify({ result: { stage: wrongStage ? "verify" : stage.id, ...fields } });
+      return parseOpenAIResponsesResponse({ id: "resp_" + stage.id, model: request.model, status: "completed", output: [
+        { type: "reasoning", id: "rs_" + stage.id, summary: [], content: [], encrypted_content: "SYNTHETIC_OPAQUE_" + stage.id },
+        { type: "message", id: "msg_" + stage.id, role: "assistant", phase: "final_answer", status: "completed", content: [{ type: "output_text", text: raw, annotations: [] }] },
+      ] });
+    } } as never,
+  });
+  const old = f.run.getMockImplementation()!;
+  f.run.mockImplementation((task, context) => task.stageId === "tag" || task.stageId === "verify"
+    ? old(task, context)
+    : writer.execute(task as TaskRecord<"core">, new AbortController().signal, context));
+  return requests;
+}
+
+describe("production envelope workflow commits and recovery", () => {
+  it.each(["domain", "issue", "theory", "entity", "mechanism"] as const)("commits all %s stages with one stable wire schema and flat note content", async type => {
+    const f = await fixture();
+    const requests = await useEnvelopeWriter(f);
+    expect((await f.coordinator.startCreate({ ...concept, type }, { targetPathOverride: "Acceptance.md" })).ok).toBe(true);
+    f.start(); await completed(f, getWriteStageIds(type).length + 1);
+    expect(requests.map(request => request.requestLabel)).toEqual(getWriteStageIds(type));
+    expect(new Set(requests.map(request => JSON.stringify(request.response_format))).size).toBe(1);
+    expect(f.files.get("Acceptance.md")).toContain("ENVELOPE_VALIDATED_CONTENT");
+    expect(f.files.get("Acceptance.md")).not.toContain('"result"');
+    expect(f.files.get("Acceptance.md")).not.toContain("SYNTHETIC_OPAQUE");
+    expect(f.queue.getSnapshot().status.failed).toBe(0);
+  });
+
+  it("reloads a paid envelope checkpoint and commits it without another model call", async () => {
+    let saved: Map<string, string> | undefined;
+    const f = await fixture(undefined, (point, context) => {
+      if (point === "vault-commit-confirmed" && context.stageId === "core") {
+        saved = new Map(f.files); throw new Error("synthetic interrupted commit");
+      }
+    });
+    const requests = await useEnvelopeWriter(f);
+    expect((await f.coordinator.startCreate({ ...concept, type: "domain" }, { targetPathOverride: "Acceptance.md" })).ok).toBe(true);
+    f.start(); await vi.waitFor(() => expect(saved).toBeDefined());
+    expect(requests).toHaveLength(1);
+    const reload = await fixture(saved);
+    const artifact = reload.store.list()[0];
+    expect(artifact.conversation?.promptVersion).toBe(PROMPT_VERSION);
+    expect(artifact.conversation?.history?.at(-1)?.content).toContain('"result":{"stage":"core"');
+    expect(artifact.conversation?.responsesOutputHistory).toHaveLength(1);
+    const nextRequests = await useEnvelopeWriter(reload);
+    reload.start(); await completed(reload, 4);
+    expect(nextRequests.map(request => request.requestLabel)).toEqual(["narrative", "structure"]);
+    expect(nextRequests[0].responsesInput?.some(item => item.type === "reasoning")).toBe(true);
+    expect(nextRequests[0].messages.filter(message => message.role === "user").at(-1)?.content).not.toContain("ENVELOPE_VALIDATED_CONTENT");
+  });
+
+  it("does not checkpoint or overwrite a note for a wrong-stage envelope", async () => {
+    const f = await fixture(); const requests = await useEnvelopeWriter(f, true);
+    expect((await f.coordinator.startCreate({ ...concept, type: "domain" }, { targetPathOverride: "Acceptance.md" })).ok).toBe(true);
+    f.start(); await vi.waitFor(() => expect(f.queue.getSnapshot().status.failed).toBe(1));
+    expect(requests).toHaveLength(1);
+    const artifact = f.store.list()[0];
+    expect(artifact.pendingStageResult).toBeUndefined();
+    expect(artifact.conversation).toBeUndefined();
+    expect(artifact.accumulated).toEqual({});
+    expect(f.files.get("Acceptance.md")).not.toContain("ENVELOPE_VALIDATED_CONTENT");
+  });
 });
