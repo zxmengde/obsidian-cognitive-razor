@@ -124,6 +124,7 @@ export class WriteTaskExecutor {
         stageId: phase.id,
         phaseResult: generatedContent,
         accumulated: merged,
+        ...(phaseResult.value.responsesOutput ? { responsesOutput: phaseResult.value.responsesOutput } : {}),
         ...(phaseResult.value.responseId ? { responseId: phaseResult.value.responseId } : {}),
         ...(typeof phaseResult.value.promptUser === "string" ? { promptUser: phaseResult.value.promptUser } : {}),
         ...(typeof phaseResult.value.responseContent === "string" ? { responseContent: phaseResult.value.responseContent } : {}),
@@ -208,6 +209,10 @@ export class WriteTaskExecutor {
       .map((field) => [field, validated.value[field]]));
     return ok({
       ...content,
+      // Opaque state is model-specific. Unknown/aliased reported models keep
+      // the complete text fallback rather than guessing replay compatibility.
+      ...(chatResult.value.responsesOutput && chatResult.value.reportedModel === args.context.modelSnapshot.model
+        ? { responsesOutput: chatResult.value.responsesOutput } : {}),
       ...(chatResult.value.responseId ? { responseId: chatResult.value.responseId } : {}),
       systemPrompt: activeRequest.messages.find((message) => message.role === "system")?.content,
       promptUser: [...activeRequest.messages].reverse().find((message) => message.role === "user")?.content,

@@ -1,5 +1,6 @@
 import { err, ok } from "../types";
 import type { ChatResponse, EmbedResponse, Result, UrlCitation } from "../types";
+import { readResponsesReplayOutput, replayVisibleText } from "../utils/responses-replay";
 import { normalizeExternalHttpUrl } from "./url-utils";
 import { readProviderTokenUsage, tokenUsageCounts, withProviderTokenUsage } from "./provider-token-usage";
 
@@ -38,6 +39,7 @@ interface OpenAIResponsesContentPart {
 
 interface OpenAIResponsesOutputItem {
   type?: string;
+  phase?: string;
   content?: OpenAIResponsesContentPart[] | string;
   text?: unknown;
   output_text?: unknown;
@@ -235,9 +237,11 @@ export function parseOpenAIResponsesResponse(raw: unknown): Result<ChatResponse>
     return err("E207_PROVIDER_RESPONSE_UNSUPPORTED", "API 返回格式异常：Responses 没有可见文本", { responseShape });
   }
 
+  const replayOutput = data.status === "completed" ? readResponsesReplayOutput(data.output) : undefined;
   return ok(withProviderTokenUsage({
     ...reportedMetadata(raw),
     content,
+    ...(replayOutput && replayVisibleText(replayOutput) === content ? { responsesOutput: replayOutput } : {}),
     ...(typeof data.id === "string" ? { responseId: data.id } : {}),
     citations: extractResponsesCitations(data, content),
     webSearchUsed: data.output?.some((item) => item.type === "web_search_call") ?? false,
@@ -327,34 +331,17 @@ function isVisibleResponsesPart(type: unknown): boolean {
   return type === "output_text" || type === "text" || type === undefined;
 }
 
+/** Explicit final phases are authoritative; old relays without phase metadata
+ * retain their SDK-text fallback. Commentary is never task output when the
+ * response distinguishes it from a final answer. */
+function selectedResponsesMessages(data: OpenAIResponsesResponse): OpenAIResponsesOutputItem[] {
+  const messages = (data.output ?? []).filter(item => item.type === "message" || item.type === undefined);
+  const finals = messages.filter(item => item.phase === "final_answer");
+  return finals.length > 0 ? finals : messages.filter(item => item.phase !== "commentary");
+}
+
 function extractResponsesText(data: OpenAIResponsesResponse): string {
-  const direct = textValue(data.output_text);
-  if (direct.length > 0) return direct;
-
-  const chunks: string[] = [];
-  for (const item of data.output ?? []) {
-    if (item.type === "reasoning" || item.type === "web_search_call" ||
-      item.type === "function_call" || item.type === "computer_call") {
-      continue;
-    }
-    if (item.type !== "message" && item.type !== undefined) continue;
-    if (item.type === "message") {
-      const directItemText = textValue(item.text ?? item.output_text);
-      if (directItemText) chunks.push(directItemText);
-    }
-    if (typeof item.content === "string") {
-      chunks.push(item.content);
-      continue;
-    }
-    for (const part of item.content ?? []) {
-      if (!part || typeof part !== "object" || Array.isArray(part)) continue;
-      if (!isVisibleResponsesPart(part.type)) continue;
-      const partText = textValue(part.text ?? part.value);
-      if (partText) chunks.push(partText);
-    }
-  }
-
-  return chunks.join("");
+  return extractResponsesTextWithPartOffsets(data).content;
 }
 
 function extractResponsesTextWithPartOffsets(data: OpenAIResponsesResponse): {
@@ -365,10 +352,11 @@ function extractResponsesTextWithPartOffsets(data: OpenAIResponsesResponse): {
   const direct = textValue(data.output_text);
   const chunks: string[] = [];
   let offset = 0;
-  for (const item of data.output ?? []) {
-    if (item.type === "reasoning" || item.type === "web_search_call" ||
-      item.type === "function_call" || item.type === "computer_call") continue;
-    if (item.type !== "message" && item.type !== undefined) continue;
+  for (const item of selectedResponsesMessages(data)) {
+    if (item.type === "message") {
+      const itemText = textValue(item.text ?? item.output_text);
+      if (itemText) { chunks.push(itemText); offset += itemText.length; }
+    }
     if (typeof item.content === "string") {
       chunks.push(item.content);
       offset += item.content.length;
@@ -384,10 +372,9 @@ function extractResponsesTextWithPartOffsets(data: OpenAIResponsesResponse): {
     }
   }
   const rebuilt = chunks.join("");
-  if (direct.length > 0) {
-    // Keep offsets only when the SDK convenience field is exactly the text
-    // represented by the annotated output parts. Otherwise annotation indexes
-    // cannot be mapped reliably and must not be attached to arbitrary text.
+  const phased = data.output?.some(item => item.phase === "final_answer" || item.phase === "commentary");
+  if (direct.length > 0 && !phased) {
+    // Attach offsets only when the convenience field is the same selected text.
     return rebuilt === direct
       ? { content: direct, offsets: candidateOffsets }
       : { content: direct, offsets: new WeakMap<object, number>() };
@@ -420,7 +407,7 @@ function describeResponsesShape(data: OpenAIResponsesResponse): Record<string, u
 function extractResponsesCitations(data: OpenAIResponsesResponse, content: string): UrlCitation[] {
   const extracted = extractResponsesTextWithPartOffsets(data);
   const citations: UrlCitation[] = [];
-  for (const item of data.output ?? []) {
+  for (const item of selectedResponsesMessages(data)) {
     if (!Array.isArray(item.content)) continue;
     for (const part of item.content) {
       if (!part || typeof part !== "object" || Array.isArray(part)) continue;

@@ -57,6 +57,9 @@ export type ProviderAttemptReason = "initial" | "automatic-retry" | "manual-retr
 /** Native search is declared only by Write and Verify task requests. */
 type WebSearchOptions = { purpose: WebSearchPurpose };
 
+/** Whitelisted official Responses output items, decoded by responses-replay. */
+export type ResponsesReplayItem = Record<string, unknown>;
+
 export interface ChatRequest {
     providerId: string;
     providerSnapshot?: import("./settings").ProviderConfig;
@@ -76,6 +79,8 @@ export interface ChatRequest {
     response_format?: ChatResponseFormat;
     webSearch?: WebSearchOptions;
     previousResponseId?: string;
+    /** Local replay path only, including the current user. Never combine with a server id. */
+    responsesInput?: Array<Record<string, unknown>>;
     promptCacheKey?: string;
     promptCacheMode?: "implicit" | "explicit";
     promptCacheTtl?: "30m";
@@ -99,6 +104,8 @@ export interface UrlCitation {
 }
 
 export interface ChatResponse {
+    /** Opaque native continuation state. Do not expose in logs or task history UI. */
+    responsesOutput?: ResponsesReplayItem[];
     content: string;
     /** Provider-reported fields only. Missing is unknown; an echo is not proof
      * of the actual upstream model, cache policy, or billed cache hit. */

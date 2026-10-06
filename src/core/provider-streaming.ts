@@ -534,7 +534,23 @@ function aggregateOpenAIResponses(events: StreamEvent[]): Result<unknown> {
   let outputTextDone: string | undefined;
   let terminalStatus: "completed" | "incomplete" | undefined;
   const outputItems = new Map<number, Record<string, unknown>>();
+  const originalOutputIndices = new WeakMap<object, number>();
   const annotations: unknown[] = [];
+  interface StreamedPart { text: string; done?: string; annotations: unknown[] }
+  const streamedParts = new Map<string, Map<number, StreamedPart>>();
+  const eventPart = (data: Record<string, unknown>): StreamedPart | undefined => {
+    const key = Number.isSafeInteger(data.output_index) && (data.output_index as number) >= 0
+      ? `index:${data.output_index}`
+      : typeof data.item_id === "string" ? `id:${data.item_id}` : undefined;
+    if (!key) return undefined;
+    const index = Number.isSafeInteger(data.content_index) && (data.content_index as number) >= 0
+      ? data.content_index as number : 0;
+    let parts = streamedParts.get(key);
+    if (!parts) { parts = new Map(); streamedParts.set(key, parts); }
+    let part = parts.get(index);
+    if (!part) { part = { text: "", annotations: [] }; parts.set(index, part); }
+    return part;
+  };
 
   const mergeResponseEnvelope = (data: Record<string, unknown>): void => {
     const eventResponse = asRecord(data.response) ?? (
@@ -553,20 +569,32 @@ function aggregateOpenAIResponses(events: StreamEvent[]): Result<unknown> {
       case "response.in_progress":
         mergeResponseEnvelope(data);
         break;
-      case "response.output_text.delta":
-        outputText += textFromDelta(data.delta);
+      case "response.output_text.delta": {
+        const part = eventPart(data);
+        if (part) part.text += textFromDelta(data.delta);
+        else outputText += textFromDelta(data.delta);
         break;
-      case "response.output_text.done":
-        outputTextDone = textFromDelta(data.text ?? data.value);
+      }
+      case "response.output_text.done": {
+        const part = eventPart(data);
+        if (part) part.done = textFromDelta(data.text ?? data.value);
+        else outputTextDone = textFromDelta(data.text ?? data.value);
         break;
-      case "response.output_text.annotation.added":
-        if (data.annotation !== undefined) annotations.push(data.annotation);
+      }
+      case "response.output_text.annotation.added": {
+        const part = eventPart(data);
+        if (data.annotation !== undefined) (part?.annotations ?? annotations).push(data.annotation);
         break;
+      }
       case "response.output_item.added":
       case "response.output_item.done": {
         const item = asRecord(data.item);
         const index = typeof data.output_index === "number" ? data.output_index : outputItems.size;
-        if (item) outputItems.set(index, { ...(outputItems.get(index) ?? {}), ...item });
+        if (item) {
+          const merged = { ...(outputItems.get(index) ?? {}), ...item };
+          outputItems.set(index, merged);
+          originalOutputIndices.set(merged, index);
+        }
         break;
       }
       case "response.completed":
@@ -598,10 +626,6 @@ function aggregateOpenAIResponses(events: StreamEvent[]): Result<unknown> {
     // earlier `in_progress` status on the final envelope.
     status: terminalStatus,
   };
-  const completedText = textFromDelta(response?.output_text);
-  if (!completedText && (outputText || outputTextDone !== undefined)) {
-    result.output_text = outputTextDone ?? outputText;
-  }
   // `response.created` often includes `output: []`. An empty array must not
   // block streamed output_item events from becoming the final output.
   const envelopeOutput = Array.isArray(result.output) ? result.output : undefined;
@@ -609,6 +633,55 @@ function aggregateOpenAIResponses(events: StreamEvent[]): Result<unknown> {
     result.output = [...outputItems.entries()]
       .sort(([left], [right]) => left - right)
       .map(([, item]) => item);
+  }
+  // Standard events name their output item and content part. Hydrate those
+  // parts independently so commentary text/citations can never enter the final.
+  if (!Array.isArray(result.output) && streamedParts.size > 0) result.output = [];
+  if (Array.isArray(result.output)) {
+    const items = result.output;
+    const hasKnownPhase = items.some(item => {
+      const phase = asRecord(item)?.phase;
+      return phase === "commentary" || phase === "final_answer";
+    });
+    if (!hasKnownPhase) {
+      for (const key of streamedParts.keys()) {
+        if (!key.startsWith("index:")) continue;
+        const index = Number(key.slice(6));
+        if (!items.some((item, position) => (originalOutputIndices.get(item) ?? position) === index)) {
+          const message = { type: "message", content: [] };
+          originalOutputIndices.set(message, index);
+          items.push(message);
+        }
+      }
+    }
+    for (let index = 0; index < items.length; index++) {
+      const item = asRecord(items[index]);
+      if (!item || item.type !== "message") continue;
+      const outputIndex = originalOutputIndices.get(item) ?? index;
+      const parts = streamedParts.get(`index:${outputIndex}`)
+        ?? (typeof item.id === "string" ? streamedParts.get(`id:${item.id}`) : undefined);
+      if (!parts) continue;
+      const content = new Map<number, unknown>((Array.isArray(item.content) ? item.content : [])
+        .map((part, partIndex) => [partIndex, part]));
+      for (const [contentIndex, streamed] of parts) {
+        let part = asRecord(content.get(contentIndex));
+        if (!part) { part = { type: "output_text" }; content.set(contentIndex, part); }
+        if (typeof part.text !== "string" || !part.text) part.text = streamed.done ?? streamed.text;
+        if (streamed.annotations.length && (!Array.isArray(part.annotations)
+          || ((!envelopeOutput || !envelopeOutput.length) && !part.annotations.length))) {
+          part.annotations = streamed.annotations;
+        }
+      }
+      item.content = [...content.entries()].sort(([left], [right]) => left - right).map(([, part]) => part);
+    }
+    result.output = items.filter(item => item !== undefined);
+    // Unindexed legacy buffers have no ownership information. Once distinct
+    // phases are explicit, do not use them to fill or create a final message.
+    if (hasKnownPhase) return ok(result);
+  }
+  const completedText = textFromDelta(response?.output_text);
+  if (!completedText && (outputText || outputTextDone !== undefined)) {
+    result.output_text = outputTextDone ?? outputText;
   }
   if (!Array.isArray(result.output) && (outputText || outputTextDone !== undefined)) {
     result.output = [{
@@ -621,7 +694,8 @@ function aggregateOpenAIResponses(events: StreamEvent[]): Result<unknown> {
     }];
   } else if (Array.isArray(result.output) && (outputText || outputTextDone !== undefined)) {
     const finalText = outputTextDone ?? outputText;
-    const message = result.output.find((item) => asRecord(item)?.type === "message");
+    const message = result.output.find((item) => asRecord(item)?.type === "message" && asRecord(item)?.phase === "final_answer")
+      ?? result.output.find((item) => asRecord(item)?.type === "message" && asRecord(item)?.phase !== "commentary");
     const messageRecord = asRecord(message);
     if (!messageRecord) {
       result.output.push({
@@ -653,7 +727,8 @@ function aggregateOpenAIResponses(events: StreamEvent[]): Result<unknown> {
       }
     }
   } else if (annotations.length > 0 && Array.isArray(result.output)) {
-    const message = result.output.find((item) => asRecord(item)?.type === "message");
+    const message = result.output.find((item) => asRecord(item)?.type === "message" && asRecord(item)?.phase === "final_answer")
+      ?? result.output.find((item) => asRecord(item)?.type === "message" && asRecord(item)?.phase !== "commentary");
     const messageRecord = asRecord(message);
     const content = Array.isArray(messageRecord?.content) ? messageRecord.content : [];
     const outputPart = content.find((item) => asRecord(item)?.type === "output_text");

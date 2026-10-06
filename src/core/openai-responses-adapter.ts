@@ -26,7 +26,7 @@ function buildRequestBody(
   const explicit = request.promptCacheMode === "explicit";
   const body: Record<string, unknown> = {
     model: request.model,
-    input: explicit ? buildResponsesExplicitCacheInput(request.messages).input : defaultInput,
+    input: explicit ? buildResponsesExplicitCacheInput(request.messages, request.responsesInput).input : request.responsesInput ?? defaultInput,
   };
   if (request.previousResponseId) body.previous_response_id = request.previousResponseId;
   if (request.promptCacheKey) body.prompt_cache_key = request.promptCacheKey;
@@ -44,7 +44,7 @@ function buildRequestBody(
       { role: "system" as const, content: instructions },
       ...request.messages.filter((message) => message.role !== "system"),
     ];
-    body.input = buildResponsesExplicitCacheInput(explicitMessages).input;
+    body.input = buildResponsesExplicitCacheInput(explicitMessages, request.responsesInput).input;
   }
   if (request.reasoning_effort !== undefined) {
     body.reasoning = { effort: request.reasoning_effort };

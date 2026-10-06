@@ -661,11 +661,14 @@ export class TaskQueue {
       const previousState = task.state;
       task.state = "completed";
       task.result = clone(result);
+      // Opaque Responses continuation belongs only to the active workflow.
+      // Keep it out of persisted task history, events and the workbench.
+      delete task.result.responsesOutput;
       task.error = undefined;
       task.finishedAt = Date.now();
       task.updatedAt = task.finishedAt;
       this.logStateChange(task, previousState, "completed");
-      const events: QueueEvent[] = [{ type: "task-completed", task: clone(task) }];
+      const events: QueueEvent[] = [{ type: "task-completed", task: this.displayTask(task) }];
       // A continuation is an idempotent workflow intent. A crash/recovery
       // path may already have persisted the same pending stage, so never add
       // a second active task for one (workflowId, stageId) identity.
@@ -744,7 +747,12 @@ export class TaskQueue {
 
   private displayTask(task: TaskRecord): TaskRecord {
     const pending = this.pendingLocalSaves.get(task.id);
-    return pending && task.state === "running" ? { ...clone(task), state: "failed", localSavePending: true, error: clone(pending.error) } : clone(task);
+    const visible = clone(task);
+    if (visible.result) delete visible.result.responsesOutput;
+    if ("conversation" in visible.payload && visible.payload.conversation) delete visible.payload.conversation.responsesOutputHistory;
+    // Internal results remain intact for a local commit retry; public task
+    // views and events never expose opaque continuation state.
+    return pending && task.state === "running" ? { ...visible, state: "failed", localSavePending: true, error: clone(pending.error) } : visible;
   }
 
   private createRuntimeTask(intent: NewTaskRecord): TaskRecord {
@@ -940,7 +948,15 @@ export class TaskQueue {
   }
   private classifyFailure(code: string): TaskFailureStage { if (code === "E310_INVALID_STATE" || code === "E311_NOT_FOUND" || code === "E320_TASK_CONFLICT") return "queue"; if (code.startsWith("E20")) return "provider"; if (code.startsWith("E21")) return "model"; if (code.startsWith("E30")) return "storage"; if (code.startsWith("E40")) return "configuration"; if (code.startsWith("E50")) return "runtime"; return "unknown"; }
   private logStateChange(task: TaskRecord, previousState: string | null, newState: string, level: "info" | "warn" | "error" = "info", extra?: Record<string, unknown>): void { const context = { event: "TASK_STATE_CHANGE", taskId: task.id, previousState, newState, stageId: task.stageId, attempt: task.attempt, ...extra }; if (level === "error") this.logger.error("TaskQueue", `任务状态变更: ${task.id}`, undefined, context); else this.logger[level]("TaskQueue", `任务状态变更: ${task.id}`, context); }
-  private publishEvent(event: QueueEvent): void { if (this.disposed) return; this.invalidateSnapshot(); for (const listener of [...this.listeners]) { try { listener(event); } catch (cause) { this.logger.error("TaskQueue", "队列事件监听器执行失败", cause as Error, { eventType: event.type }); } } }
+  private publishEvent(event: QueueEvent): void {
+    if (this.disposed) return;
+    this.invalidateSnapshot();
+    const visible = "task" in event && event.task ? { ...event, task: this.displayTask(event.task) } : event;
+    for (const listener of [...this.listeners]) {
+      try { listener(visible); }
+      catch (cause) { this.logger.error("TaskQueue", "队列事件监听器执行失败", cause as Error, { eventType: event.type }); }
+    }
+  }
   private generateTaskId(): string { return `task-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`; }
   private normalizeConcurrency(value: number): number { return Number.isInteger(value) && value > 0 ? value : 1; }
 }

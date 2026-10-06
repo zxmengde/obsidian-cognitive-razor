@@ -145,17 +145,19 @@ export function buildResponsesInput(messages: ChatRequest["messages"]): {
 
 /** Preserve a stable developer boundary and recent user endpoints. Merely
  * keeping prefix text is insufficient for explicit-only cache lookup. */
-export function buildResponsesExplicitCacheInput(messages: ChatRequest["messages"]): {
+export function buildResponsesExplicitCacheInput(messages: ChatRequest["messages"], nativeInput?: Array<Record<string, unknown>>): {
   input: Array<Record<string, unknown>>;
 } {
   const system = messages.filter(message => message.role === "system").map(message => message.content.trim()).filter(Boolean).join("\n\n");
-  const nonSystem = messages.filter(message => message.role !== "system");
+  const nonSystem: Array<Record<string, unknown>> = nativeInput ?? messages.filter(message => message.role !== "system")
+    .map(message => ({ role: message.role, content: message.content }));
   const userIndices = nonSystem.flatMap((message, index) => message.role === "user" ? [index] : []);
   const boundaries = new Set(userIndices.slice(-(system ? 3 : 4)));
   const block = (text: string) => [{ type: "input_text", text, prompt_cache_breakpoint: { mode: "explicit" } }];
   return { input: [
     ...(system ? [{ role: "developer", content: block(system) }] : []),
-    ...nonSystem.map((message, index) => ({ role: message.role, content: boundaries.has(index) ? block(message.content) : message.content })),
+    ...nonSystem.map((message, index) => boundaries.has(index)
+      ? { ...message, content: block(message.content as string) } : message),
   ] };
 }
 

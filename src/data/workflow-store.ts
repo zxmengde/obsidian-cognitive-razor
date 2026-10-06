@@ -1,6 +1,7 @@
 import type { ILogger, Result, WorkflowArtifact, WorkflowPatch } from "../types";
 import { CR_TYPES, err, ok, TASK_STAGE_IDS } from "../types";
 import type { FileStorage } from "./file-storage";
+import { readResponsesOutputHistory } from "../utils/responses-replay";
 import { cloneJson } from "../utils/clone";
 const clone = cloneJson;
 
@@ -47,6 +48,7 @@ function isWorkflowConversation(value: unknown): boolean {
     && (value.promptCacheMode === undefined || value.promptCacheMode === "implicit" || value.promptCacheMode === "explicit")
     && (value.responseId === undefined || typeof value.responseId === "string")
     && (value.invalidReason === undefined || typeof value.invalidReason === "string")
+    && (value.responsesOutputHistory === undefined || readResponsesOutputHistory(value.responsesOutputHistory, value.history as Array<{role: string; content: string}> | undefined) !== undefined)
     && (value.history === undefined || (Array.isArray(value.history) && value.history.length <= 32
       && value.history.every((item) => isRecord(item) && (item.role === "user" || item.role === "assistant")
         && typeof item.content === "string" && item.content.length <= 500000)));
@@ -109,6 +111,13 @@ export class WorkflowStore {
       }
       try {
         const parsed: unknown = JSON.parse(read.value);
+        // Corrupt/oversized optional native continuation never loses a valid
+        // workflow: its existing text history remains the recovery path.
+        if (isRecord(parsed) && isRecord(parsed.conversation) && parsed.conversation.responsesOutputHistory !== undefined) {
+          const native = readResponsesOutputHistory(parsed.conversation.responsesOutputHistory, parsed.conversation.history as Array<{role: string; content: string}> | undefined);
+          if (native) parsed.conversation.responsesOutputHistory = native;
+          else delete parsed.conversation.responsesOutputHistory;
+        }
         const fileName = relativePath.slice(`${WORKFLOW_DIR}/`.length, -5);
         if (!isValidArtifact(parsed) || parsed.workflowId !== fileName) {
           this.logger.warn("WorkflowStore", "工作流 artifact 无效或为旧版本，已跳过", { path: relativePath });

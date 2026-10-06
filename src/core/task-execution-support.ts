@@ -1,3 +1,4 @@
+import { buildResponsesReplayInput } from "../utils/responses-replay";
 import { err } from "../types";
 import type {
   ChatRequest,
@@ -156,6 +157,12 @@ export function buildTaskChatRequest(
     promptCacheMode: modelSnapshot.capabilities?.promptCaching ? (modelSnapshot.capabilities.promptCacheMode ?? "implicit") : undefined,
     promptCacheTtl: modelSnapshot.capabilities?.promptCaching ? modelSnapshot.capabilities.promptCacheTtl : undefined,
   };
+
+  if (!serverContinuation && modelSnapshot.providerSnapshot?.apiFormat === "openai-responses"
+    && canReplayConversation(conversation, modelSnapshot)) {
+    const currentUser = [...request.messages].reverse().find(message => message.role === "user");
+    if (currentUser) request.responsesInput = buildResponsesReplayInput(conversation?.history, conversation?.responsesOutputHistory, currentUser.content);
+  }
 
   if (structuredSchema && taskType !== "verify" && taskType !== "cards") {
     const schema = buildStrictJsonSchema(structuredSchema);

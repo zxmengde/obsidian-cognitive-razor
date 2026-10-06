@@ -26,6 +26,7 @@ import { getWriteStageIds, isWriteStage } from "./stage-catalog";
 import { PROMPT_VERSION, canReplayConversation, buildPromptCacheKey } from "./task-execution-support";
 import { formatCRTimestamp } from "../utils/date-utils";
 import { makeVerificationReportBlock } from "./verification-report";
+import { readResponsesReplayOutput, readResponsesOutputHistory } from "../utils/responses-replay";
 import { cloneJson } from "../utils/clone";
 const clone = cloneJson;
 
@@ -91,6 +92,7 @@ function buildConversationSnapshot(artifact: WorkflowArtifact): ConversationCont
     systemPrompt: conversation.systemPrompt,
     sources: artifact.sources,
     history: conversation.history,
+    responsesOutputHistory: conversation.responsesOutputHistory,
   };
 }
 
@@ -465,6 +467,16 @@ export class WorkflowCoordinator {
           ...(typeof stageResult.responseContent === "string" ? [{ role: "assistant" as const, content: stageResult.responseContent }] : []),
         ],
       };
+      // Native state is an optional successful-stage continuation. If any old
+      // turn is text-only, incompatible, oversized or unrecognized, retain the
+      // complete text history instead of inventing a partial native sequence.
+      const conversation = patch.conversation as NonNullable<WorkflowArtifact["conversation"]>;
+      const currentOutput = modelSnapshot.providerSnapshot?.apiFormat === "openai-responses"
+        ? readResponsesReplayOutput(stageResult.responsesOutput) : undefined;
+      const priorOutputs = prior?.history?.length ? readResponsesOutputHistory(prior.responsesOutputHistory, prior.history) : [];
+      if (currentOutput && priorOutputs) {
+        conversation.responsesOutputHistory = readResponsesOutputHistory([...priorOutputs, currentOutput], conversation.history);
+      }
       if (isRecord(stageResult.sourcePackage)) patch.sources = stageResult.sourcePackage;
     } else if (stageResult.conversationInvalidated === true) {
       patch.conversation = undefined;

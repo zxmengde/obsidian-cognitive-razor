@@ -118,6 +118,8 @@ export interface ConversationContinuation {
     /** Prior Responses input turns, retained so each next request extends the
      * exact cached prefix without relying on previous_response_id. */
     history?: Array<{ role: "user" | "assistant"; content: string }>;
+    /** One native output list per verified U+A pair; bounded and disposable. */
+    responsesOutputHistory?: import("./provider").ResponsesReplayItem[][];
 }
 
 // ============================================================================

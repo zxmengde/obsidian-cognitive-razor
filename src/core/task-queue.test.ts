@@ -833,3 +833,79 @@ describe("TaskQueue runtime model", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 });
+
+it("keeps native continuation in the workflow commit and out of queue history/events", async () => {
+  const files = new Map<string, string>();
+  const events: unknown[] = [];
+  const beforeComplete = vi.fn(async (_task: unknown, result: Record<string, unknown>) => {
+    expect(JSON.stringify(result.responsesOutput)).toContain("SYNTHETIC_OPAQUE_STATE");
+    return ok({});
+  });
+  const queue = new TaskQueue(createLogger(), createSettingsStore(), {
+    fileStorage: {
+      read: async (path: string) => files.has(path) ? ok(files.get(path)!) : err("E301_FILE_NOT_FOUND", "missing"),
+      atomicWrite: async (path: string, value: string) => { files.set(path, value); return ok(undefined); },
+    } as never,
+    workflowPort: { resolve: async task => ok({ concept: createConfirmedConcept(task.nodeId) }), beforeComplete },
+  });
+  await queue.initialize();
+  const unsubscribe = queue.subscribe(event => events.push(event));
+  const run = vi.fn(async () => ok({ phaseResult: { definition: "synthetic" }, responsesOutput: [{ type: "reasoning", encrypted_content: "SYNTHETIC_OPAQUE_STATE" }] }));
+  queue.setTaskRunner(createRunner(run));
+  const id = await enqueue(queue, createWriteTask("native-state"));
+  await vi.waitFor(() => expect(queue.getTask(id)?.state).toBe("completed"));
+  expect(beforeComplete).toHaveBeenCalledOnce();
+  expect(run).toHaveBeenCalledOnce();
+  expect(queue.getTask(id)?.result).not.toHaveProperty("responsesOutput");
+  expect(JSON.stringify(events)).not.toContain("SYNTHETIC_OPAQUE_STATE");
+  expect([...files.values()].join("")).not.toContain("SYNTHETIC_OPAQUE_STATE");
+  unsubscribe();
+  await queue.dispose();
+});
+
+it("hides opaque state while a local workflow commit is still pending", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const beforeComplete = vi.fn(async () => { await gate; return ok({}); });
+  const queue = new TaskQueue(createLogger(), createSettingsStore(), {
+    workflowPort: { resolve: async () => ok({}), beforeComplete },
+  });
+  const intent = createWriteTask("native-commit");
+  intent.payload.conversation = { responsesOutputHistory: [[{ encrypted_content: "SYNTHETIC_OPAQUE_PAYLOAD" }]] };
+  const run = vi.fn(async () => ok({ phaseResult: { definition: "synthetic" }, responsesOutput: [{ type: "reasoning", encrypted_content: "SYNTHETIC_OPAQUE_RESULT" }] }));
+  queue.setTaskRunner(createRunner(run));
+  const id = await enqueue(queue, intent);
+  await vi.waitFor(() => expect(beforeComplete).toHaveBeenCalledOnce());
+  expect(JSON.stringify(queue.getTask(id))).not.toContain("SYNTHETIC_OPAQUE");
+  expect(JSON.stringify(queue.getSnapshot())).not.toContain("SYNTHETIC_OPAQUE");
+  release();
+  await vi.waitFor(() => expect(queue.getTask(id)?.state).toBe("completed"));
+  await queue.dispose();
+});
+
+it("redacts opaque retry/remove events while retaining one model result for local retry", async () => {
+  const events: unknown[] = [];
+  let commits = 0;
+  const beforeComplete = vi.fn(async (_task: unknown, result: Record<string, unknown>) => {
+    expect(JSON.stringify(result.responsesOutput)).toContain("SYNTHETIC_OPAQUE");
+    return ++commits === 1 ? err("E302_PERMISSION_DENIED", "synthetic local commit") : ok({});
+  });
+  const queue = new TaskQueue(createLogger(), createSettingsStore(), {
+    workflowPort: { resolve: async () => ok({}), beforeComplete },
+  });
+  queue.subscribe(event => events.push(event));
+  const intent = createWriteTask("native-retry");
+  intent.payload.conversation = { responsesOutputHistory: [[{ encrypted_content: "SYNTHETIC_OPAQUE_PAYLOAD" }]] };
+  const run = vi.fn(async () => ok({ phaseResult: { definition: "synthetic" }, responsesOutput: [{ encrypted_content: "SYNTHETIC_OPAQUE_RESULT" }] }));
+  queue.setTaskRunner(createRunner(run));
+  const id = await enqueue(queue, intent);
+  await vi.waitFor(() => expect(queue.getTask(id)?.state).toBe("failed"));
+  expect(JSON.stringify(queue.getTask(id))).not.toContain("SYNTHETIC_OPAQUE");
+  expect((await queue.retryDurably(id)).ok).toBe(true);
+  await vi.waitFor(() => expect(queue.getTask(id)?.state).toBe("completed"));
+  expect(run).toHaveBeenCalledOnce();
+  expect(commits).toBe(2);
+  expect((await queue.removeDurably(id)).ok).toBe(true);
+  expect(JSON.stringify(events)).not.toContain("SYNTHETIC_OPAQUE");
+  await queue.dispose();
+});

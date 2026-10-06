@@ -58,6 +58,8 @@ export interface WorkflowConversation {
   responseId?: string;
     invalidReason?: string;
     history?: Array<{ role: "user" | "assistant"; content: string }>;
+    /** One native output list per verified U+A pair; bounded and disposable. */
+    responsesOutputHistory?: import("./provider").ResponsesReplayItem[][];
 }
 
 export interface SourcePackageItem {
