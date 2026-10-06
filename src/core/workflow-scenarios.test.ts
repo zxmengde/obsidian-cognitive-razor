@@ -16,6 +16,7 @@ import { getWriteStageIds } from "./stage-catalog";
 import { backupAndClearPluginData, recoverInterruptedReset } from "../data/runtime-data-maintenance";
 import { PromptManager } from "./prompt-manager";
 import { WriteTaskExecutor } from "./write-task-executor";
+import { VerifyTaskExecutor } from "./verify-task-executor";
 import { ResponsePipeline } from "./response-pipeline";
 import { Validator } from "../data/validator";
 import { buildPhaseJsonSchema, schemaRegistry } from "./schema-registry";
@@ -768,4 +769,124 @@ describe("production envelope workflow commits and recovery", () => {
     expect(artifact.accumulated).toEqual({});
     expect(f.files.get("Acceptance.md")).not.toContain("ENVELOPE_VALIDATED_CONTENT");
   });
+});
+
+async function useEnvelopeVerify(f: Awaited<ReturnType<typeof fixture>>) {
+  const requests: ChatRequest[] = [];
+  const prompts = new PromptManager({ read: async (path: string) => ok(await readFile(path, "utf8")) } as never, logger);
+  expect((await prompts.preloadAllTemplates()).ok).toBe(true);
+  const verifier = new VerifyTaskExecutor({ logger, promptManager: prompts, responsePipeline: new ResponsePipeline(new Validator()), providerManager: { chat: async (request: ChatRequest) => {
+    requests.push(request);
+    return parseOpenAIResponsesResponse({ id: "resp_synthetic_verify", model: request.model, status: "completed", output: [{ type: "message", id: "synthetic_final", role: "assistant", phase: "final_answer", status: "completed", content: [{ type: "output_text", text: "合成核查报告", annotations: [] }] }] });
+  } } as never });
+  const prior = f.run.getMockImplementation()!;
+  f.run.mockImplementation((task, context) => task.stageId === "verify" ? verifier.execute(task as TaskRecord<"verify">, new AbortController().signal, context) : prior(task, context));
+  f.settings.enableAutoVerify = true;
+  return requests;
+}
+
+it.each(["core", "verify"] as const)("requires resend confirmation after the %s result checkpoint was never saved and the process restarted", async stage => {
+  const f = await fixture(); const firstWrites = await useEnvelopeWriter(f); const firstVerify = await useEnvelopeVerify(f);
+  const write = f.storage.atomicWrite.bind(f.storage); let block = true;
+  vi.spyOn(f.storage, "atomicWrite").mockImplementation(async (path, text) => {
+    if (block && path.includes("workflows/") && JSON.parse(text).pendingStageResult?.stageId === stage) { block = false; return err("E303_DISK_FULL", "synthetic unsaved response"); }
+    return write(path, text);
+  });
+  expect((await f.coordinator.startCreate({ ...concept, type: "domain" }, { targetPathOverride: "Acceptance.md" })).ok).toBe(true);
+  f.start(); await vi.waitFor(() => expect(f.queue.getSnapshot().status.failed).toBe(1));
+  const task = f.queue.getSnapshot().tasks.find(task => task.state === "failed")!;
+  expect(task.result).toBeDefined(); expect(f.store.list()[0].pendingStageResult).toBeUndefined();
+  const durableText = f.files.get("plugin/data/queue-state-v5.json")!;
+  const durableTask = JSON.parse(durableText).tasks.find((item: { id: string }) => item.id === task.id);
+  expect(durableTask.resultPendingCommit).toBe(true);
+  expect(durableTask.result).toBeUndefined(); expect(durableTask.payload).toBeUndefined();
+  expect(durableText).not.toContain("SYNTHETIC_OPAQUE"); expect(durableText).not.toContain("ENVELOPE_VALIDATED_CONTENT");
+  expect(firstWrites.filter(request => request.requestLabel === stage)).toHaveLength(stage === "core" ? 1 : 0);
+  expect(firstVerify).toHaveLength(stage === "verify" ? 1 : 0);
+  const reload = await fixture(new Map(f.files)); const nextWrites = await useEnvelopeWriter(reload); const nextVerify = await useEnvelopeVerify(reload); reload.start();
+  expect(reload.queue.getTask(task.id)?.result).toBeUndefined();
+  expect(await reload.queue.retryFailedDurably()).toEqual(ok(0));
+  expect((await reload.queue.retryDurably(task.id)).ok).toBe(false);
+  expect(nextWrites).toHaveLength(0); expect(nextVerify).toHaveLength(0);
+  expect(reload.queue.getTask(task.id)).toMatchObject({ state: "interrupted", error: { code: "E322_LOCAL_RESULT_UNAVAILABLE", kind: "uncertain" } });
+  expect((await reload.queue.retryUncertainDurably(task.id)).ok).toBe(true);
+  await completed(reload, 5);
+  expect(nextWrites.map(request => request.requestLabel)).toEqual(stage === "core" ? ["core", "narrative", "structure"] : []);
+  expect(nextVerify).toHaveLength(1);
+  expect(reload.files.get("Acceptance.md")?.match(/<!-- cognitive-razor:verify-report -->/g)).toHaveLength(1);
+});
+
+it("keeps an uncheckpointed paid Write in memory for a local retry, without another request", async () => {
+  const f = await fixture(); const requests = await useEnvelopeWriter(f);
+  const write = f.storage.atomicWrite.bind(f.storage); let blocked = true;
+  vi.spyOn(f.storage, "atomicWrite").mockImplementation(async (path, text) => {
+    if (blocked && path.includes("workflows/") && JSON.parse(text).pendingStageResult?.stageId === "core") { blocked = false; return err("E303_DISK_FULL", "synthetic checkpoint failure"); }
+    return write(path, text);
+  });
+  expect((await f.coordinator.startCreate({ ...concept, type: "domain" }, { targetPathOverride: "Acceptance.md" })).ok).toBe(true);
+  f.start(); await vi.waitFor(() => expect(f.queue.getSnapshot().status.failed).toBe(1));
+  const task = f.queue.getSnapshot().tasks.find(task => task.state === "failed")!;
+  expect(task.resultPendingCommit).toBe(true);
+  expect((await f.queue.retryDurably(task.id)).ok).toBe(true);
+  await completed(f, 4);
+  expect(requests.map(request => request.requestLabel)).toEqual(["core", "narrative", "structure"]);
+  expect(f.queue.getTask(task.id)?.resultPendingCommit).toBeUndefined();
+});
+
+it("fails closed when both the result checkpoint and its receipt queue write fail", async () => {
+  const f = await fixture(); const requests = await useEnvelopeWriter(f);
+  const write = f.storage.atomicWrite.bind(f.storage);
+  vi.spyOn(f.storage, "atomicWrite").mockImplementation(async (path, text) => {
+    const data = JSON.parse(text);
+    if (path.includes("workflows/") && data.pendingStageResult?.stageId === "core") return err("E303_DISK_FULL", "synthetic checkpoint failure");
+    if (path.includes("queue-state") && data.tasks?.some((task: TaskRecord) => task.stageId === "core" && task.state === "failed")) return err("E303_DISK_FULL", "synthetic receipt failure");
+    return write(path, text);
+  });
+  expect((await f.coordinator.startCreate({ ...concept, type: "domain" }, { targetPathOverride: "Acceptance.md" })).ok).toBe(true);
+  f.start(); await vi.waitFor(() => expect(f.queue.getSnapshot().tasks.some(task => task.stageId === "core" && task.localSavePending)).toBe(true));
+  expect(requests).toHaveLength(1);
+  const reload = await fixture(new Map(f.files)); const after = await useEnvelopeWriter(reload); reload.start();
+  expect(reload.queue.getSnapshot().status.interrupted).toBe(1);
+  expect(await reload.queue.retryFailedDurably()).toEqual(ok(0));
+  expect(after).toHaveLength(0);
+});
+
+it("does not blindly replay older storage failures that have no saved model result", async () => {
+  const f = await fixture(); await useEnvelopeWriter(f);
+  const write = f.storage.atomicWrite.bind(f.storage); let blocked = true;
+  vi.spyOn(f.storage, "atomicWrite").mockImplementation(async (path, text) => {
+    if (blocked && path.includes("workflows/") && JSON.parse(text).pendingStageResult?.stageId === "core") { blocked = false; return err("E303_DISK_FULL", "synthetic older checkpoint failure"); }
+    return write(path, text);
+  });
+  expect((await f.coordinator.startCreate({ ...concept, type: "domain" }, { targetPathOverride: "Acceptance.md" })).ok).toBe(true);
+  f.start(); await vi.waitFor(() => expect(f.queue.getSnapshot().status.failed).toBe(1));
+  const path = "plugin/data/queue-state-v5.json"; const state = JSON.parse(f.files.get(path)!);
+  for (const task of state.tasks) { delete task.resultPendingCommit; if (task.state === "failed") delete task.error.stage; }
+  f.files.set(path, JSON.stringify(state));
+  const reload = await fixture(new Map(f.files)); const after = await useEnvelopeWriter(reload); reload.start();
+  expect(reload.queue.getSnapshot().status.interrupted).toBe(1);
+  expect(await reload.queue.retryFailedDurably()).toEqual(ok(0));
+  expect(after).toHaveLength(0);
+});
+
+it.each(["pending-checkpoint", "applied-checkpoint"] as const)("resumes a later recovered exact Verify receipt from E322 at %s without another model request", async point => {
+  let saved: Map<string, string> | undefined;
+  const f = await fixture(undefined, (at, context) => {
+    if (at === point && context.stageId === "verify") { saved = new Map(f.files); throw new Error("synthetic recovery boundary"); }
+  });
+  await useEnvelopeWriter(f); const firstVerify = await useEnvelopeVerify(f);
+  expect((await f.coordinator.startCreate({ ...concept, type: "domain" }, { targetPathOverride: "Acceptance.md" })).ok).toBe(true);
+  f.start(); await vi.waitFor(() => expect(saved).toBeDefined());
+  expect(firstVerify).toHaveLength(1);
+  const path = "plugin/data/queue-state-v5.json"; const state = JSON.parse(saved!.get(path)!);
+  const task = state.tasks.find((task: TaskRecord) => task.stageId === "verify");
+  task.state = "interrupted"; task.resultPendingCommit = true;
+  task.error = { code: "E322_LOCAL_RESULT_UNAVAILABLE", message: "synthetic missing receipt from an earlier restart", kind: "uncertain", stage: "storage" };
+  saved!.set(path, JSON.stringify(state));
+  const reload = await fixture(saved); const writes = await useEnvelopeWriter(reload); const verifies = await useEnvelopeVerify(reload); reload.start();
+  await completed(reload, 5);
+  expect(writes).toHaveLength(0); expect(verifies).toHaveLength(0);
+  expect(reload.queue.getTask(task.id)?.error).toBeUndefined();
+  expect(reload.queue.getTask(task.id)?.resultPendingCommit).toBeUndefined();
+  expect(reload.files.get("Acceptance.md")?.match(/<!-- cognitive-razor:verify-report -->/g)).toHaveLength(1);
 });

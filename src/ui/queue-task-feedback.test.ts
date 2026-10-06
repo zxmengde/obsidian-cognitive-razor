@@ -46,3 +46,10 @@ describe('safe queue failure presentation', () => {
         expect(queueTaskFeedback({ ...task, startedAt, finishedAt }, 'safe fallback')?.elapsedSeconds).toBeUndefined();
     });
 });
+
+it('shows local-result loss rather than an upstream timeout and does not expose persisted text', () => {
+    const value = queueTaskFeedback({ ...task, error: { code: 'E322_LOCAL_RESULT_UNAVAILABLE', kind: 'uncertain', message: 'private response contents', upstreamStatus: 524, requestTimeoutMs: 180000 }, startedAt: 1000, finishedAt: 900000 }, 'fallback');
+    expect(value).toMatchObject({ uncertain: true, message: '本地保存失败，重启后没有可恢复的结果', elapsedSeconds: undefined, upstreamStatus: undefined, requestTimeoutMs: undefined });
+    expect(JSON.stringify(value)).not.toContain('private response contents');
+    expect(value?.details).toContain('可能再次消耗额度');
+});

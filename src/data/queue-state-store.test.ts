@@ -106,3 +106,15 @@ describe("QueueStateStore", () => {
     expect(files.has(QUEUE_STATE_PATH)).toBe(true);
   });
 });
+
+it("round-trips a result receipt without serializing response content and rejects malformed receipts", async () => {
+  const item = { id: "receipt", workflowId: "w", nodeId: "n", stageId: "core" as const, state: "failed" as const, queueOrder: 1, createdAt: 1, updatedAt: 2, attempt: 1, resultPendingCommit: true as const };
+  const { fileStorage } = storage(); const store = new QueueStateStore(fileStorage);
+  const receipt = { ...state, tasks: [item] };
+  expect((await store.save(receipt)).ok).toBe(true);
+  expect(await new QueueStateStore(fileStorage).load()).toEqual(ok({ kind: "ready", state: receipt }));
+  for (const invalid of [false, "true", 1, { response: "must not be persisted here" }]) {
+    const f = storage({ [QUEUE_STATE_PATH]: JSON.stringify({ ...state, tasks: [{ ...item, resultPendingCommit: invalid }] }) });
+    expect((await new QueueStateStore(f.fileStorage).load())).toMatchObject({ ok: true, value: { kind: "quarantined" } });
+  }
+});

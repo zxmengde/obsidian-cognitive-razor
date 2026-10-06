@@ -13,11 +13,16 @@ export function queueTaskFeedback(task: TaskRecord, fallback: string) {
         'Draft 笔记已被修改，未覆盖用户内容',
         '核查期间笔记已修改，未覆盖用户内容',
     ].includes(task.error.message);
-    const feedback = toSafeErrorFeedback({ code: uncertain ? 'E206_PROVIDER_REQUEST_UNCERTAIN' : snapshotConflict ? 'E321_NOTE_SNAPSHOT_CHANGED' : task.error?.code }, fallback);
+    const feedback = toSafeErrorFeedback({ code: task.error?.code === 'E322_LOCAL_RESULT_UNAVAILABLE' ? task.error.code
+        : uncertain ? 'E206_PROVIDER_REQUEST_UNCERTAIN' : snapshotConflict ? 'E321_NOTE_SNAPSHOT_CHANGED' : task.error?.code }, fallback);
     if (task.localSavePending) return {
         ...feedback, uncertain: false,
         message: '任务请求已结束，但本地状态保存失败',
         details: '检查磁盘权限和可用空间后重试保存；会保存已有结果，不会再次请求模型',
+        elapsedSeconds: undefined, upstreamStatus: undefined, requestTimeoutMs: undefined,
+    };
+    if (task.error?.code === 'E322_LOCAL_RESULT_UNAVAILABLE') return {
+        ...feedback, uncertain: true,
         elapsedSeconds: undefined, upstreamStatus: undefined, requestTimeoutMs: undefined,
     };
     const { startedAt, finishedAt } = task;

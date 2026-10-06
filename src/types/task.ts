@@ -171,6 +171,9 @@ interface TaskRecordBase {
     error?: TaskError;
     /** 仅在当前进程内传递给完成事件；不会序列化到 queue-state.json。 */
     result?: Record<string, unknown>;
+    /** Durable receipt only, never response text. A restarted task must prove
+     * its result is recoverable locally before sending another request. */
+    resultPendingCommit?: true;
     /** Display-only local commit failure; retries save the existing outcome without a model request. */
     localSavePending?: boolean;
 }
@@ -218,4 +221,5 @@ export interface PersistedTaskRecord {
     finishedAt?: number;
     attempt: number;
     error?: TaskError;
+    resultPendingCommit?: true;
 }

@@ -204,6 +204,31 @@ export class TaskQueue {
     this.nextQueueOrder = Math.max(1, parsed.nextQueueOrder);
     let changed = false;
     for (const task of rehydrated) {
+      // A later journal/backup recovery may restore the exact local receipt.
+      // Only this local-result condition can resume without resend approval.
+      if (task.error?.code === "E322_LOCAL_RESULT_UNAVAILABLE"
+        && (task.state === "failed" || task.state === "interrupted")
+        && this.workflowPort?.canResumeWithoutRequest?.(task) === true) {
+        task.state = "pending";
+        task.error = undefined;
+        task.finishedAt = undefined;
+        task.updatedAt = Date.now();
+        changed = true;
+      }
+      // Old storage failures did not record receipt ownership. Without a
+      // durable result, they cannot prove that an ordinary retry is free.
+      const oldStorageFailure = task.state === "failed"
+        && (task.error?.stage === "storage" || task.error?.code.startsWith("E30"))
+        && task.startedAt !== undefined;
+      if ((task.resultPendingCommit || oldStorageFailure)
+        && (task.state === "failed" || task.state === "pending" || task.state === "running")
+        && !this.workflowPort?.canResumeWithoutRequest?.(task)) {
+        task.state = "interrupted";
+        task.error = this.unavailableLocalResult();
+        task.finishedAt = Date.now();
+        task.updatedAt = task.finishedAt;
+        changed = true;
+      }
       if (task.state === "failed" && isUncertainTask(task)) {
         task.state = "interrupted";
         changed = true;
@@ -622,7 +647,8 @@ export class TaskQueue {
       if (!this.executionService.isCurrent(task, token) || this.terminalTokens.get(task.id) === token) return;
       const result = cachedResult
         ? cachedResult
-        : await runner.run(clone(task), context);
+        : task.resultPendingCommit ? err("E322_LOCAL_RESULT_UNAVAILABLE", "本地结果无法恢复，重新请求需要确认")
+          : await runner.run(clone(task), context);
       // Cancellation owns its durable state transition before a late result
       // may touch the note. If cancellation fails, the same result can proceed.
       while (this.pendingCancellations.has(task.id)) await this.pendingCancellations.get(task.id);
@@ -631,6 +657,7 @@ export class TaskQueue {
       // Preserve a validated response across a local storage retry. This is
       // intentionally in memory only until the workflow checkpoint succeeds.
       task.result = clone(result.value);
+      task.resultPendingCommit = true;
       this.resultContexts.set(task.id, context);
       this.committingTasks.add(task.id);
       this.executionService.clearTimeout(task.id, token);
@@ -665,6 +692,7 @@ export class TaskQueue {
       // Keep it out of persisted task history, events and the workbench.
       delete task.result.responsesOutput;
       task.error = undefined;
+      delete task.resultPendingCommit;
       task.finishedAt = Date.now();
       task.updatedAt = task.finishedAt;
       this.logStateChange(task, previousState, "completed");
@@ -707,7 +735,7 @@ export class TaskQueue {
       code: failure.code,
       message: failure.message,
       ...(failure.code === "E206_PROVIDER_REQUEST_UNCERTAIN" ? taskFailureDiagnostics(failure.details) : {}),
-      kind: failure.kind ?? (failure.code === "E206_PROVIDER_REQUEST_UNCERTAIN" ? "uncertain" : "known"),
+      kind: failure.kind ?? (["E206_PROVIDER_REQUEST_UNCERTAIN", "E322_LOCAL_RESULT_UNAVAILABLE"].includes(failure.code) ? "uncertain" : "known"),
       stage: this.classifyFailure(failure.code),
       ...(providerAttempts === undefined ? {} : { providerAttempts }),
     };
@@ -816,6 +844,9 @@ export class TaskQueue {
 
   private prepareRetry(task: TaskRecord): void {
     const previousState = task.state;
+    // Only an explicitly confirmed resend may discard a missing receipt.
+    // Existing in-memory/checkpoint results remain local-save retries.
+    if (!task.result && !this.workflowPort?.canResumeWithoutRequest?.(task)) delete task.resultPendingCommit;
     task.state = "pending";
     task.error = undefined;
     task.startedAt = undefined;
@@ -904,7 +935,7 @@ export class TaskQueue {
   }
 
   private toPersistedTask(task: TaskRecord): PersistedTaskRecord {
-    return { id: task.id, workflowId: task.workflowId ?? "", nodeId: task.nodeId, stageId: task.stageId, state: task.state, queueOrder: task.queueOrder ?? 1, noteTitle: task.noteTitle, filePath: task.filePath, conceptType: task.conceptType, createdAt: task.createdAt, updatedAt: task.updatedAt, startedAt: task.startedAt, finishedAt: task.finishedAt, attempt: task.attempt, error: task.error ? clone(task.error) : undefined };
+    return { id: task.id, workflowId: task.workflowId ?? "", nodeId: task.nodeId, stageId: task.stageId, state: task.state, queueOrder: task.queueOrder ?? 1, noteTitle: task.noteTitle, filePath: task.filePath, conceptType: task.conceptType, createdAt: task.createdAt, updatedAt: task.updatedAt, startedAt: task.startedAt, finishedAt: task.finishedAt, attempt: task.attempt, error: task.error ? clone(task.error) : undefined, ...(task.resultPendingCommit ? { resultPendingCommit: true } : {}) };
   }
 
   private nextPendingTask(): TaskRecord | undefined { return [...this.tasks.values()].filter((task) => task.state === "pending").sort((a, b) => (a.queueOrder ?? 0) - (b.queueOrder ?? 0) || a.createdAt - b.createdAt)[0]; }
@@ -940,13 +971,14 @@ export class TaskQueue {
   private isTerminal(state: TaskRecord["state"]): boolean { return state === "completed" || state === "failed" || state === "cancelled" || state === "interrupted"; }
   private canRetryInBulk(task: TaskRecord): boolean { return task.stageId !== "cards" && task.state === "failed" && !isUncertainTask(task); }
   private uncertainFailure(message: string): TaskError { return { code: "E206_PROVIDER_REQUEST_UNCERTAIN", message, kind: "uncertain", stage: "provider" }; }
+  private unavailableLocalResult(): TaskError { return { code: "E322_LOCAL_RESULT_UNAVAILABLE", message: "本地结果无法恢复，重新请求需要确认", kind: "uncertain", stage: "storage" }; }
   private executionContext(task: TaskRecord): TaskExecutionContext {
     return {
       attemptReason: task.attempt > 1 ? "manual-retry" : "initial",
       modelSnapshot: clone(resolveTaskModelSnapshot(this.settingsStore.getSettings(), getStageRole(task.stageId))),
     };
   }
-  private classifyFailure(code: string): TaskFailureStage { if (code === "E310_INVALID_STATE" || code === "E311_NOT_FOUND" || code === "E320_TASK_CONFLICT") return "queue"; if (code.startsWith("E20")) return "provider"; if (code.startsWith("E21")) return "model"; if (code.startsWith("E30")) return "storage"; if (code.startsWith("E40")) return "configuration"; if (code.startsWith("E50")) return "runtime"; return "unknown"; }
+  private classifyFailure(code: string): TaskFailureStage { if (code === "E310_INVALID_STATE" || code === "E311_NOT_FOUND" || code === "E320_TASK_CONFLICT") return "queue"; if (code.startsWith("E20")) return "provider"; if (code.startsWith("E21")) return "model"; if (code.startsWith("E30") || code === "E322_LOCAL_RESULT_UNAVAILABLE") return "storage"; if (code.startsWith("E40")) return "configuration"; if (code.startsWith("E50")) return "runtime"; return "unknown"; }
   private logStateChange(task: TaskRecord, previousState: string | null, newState: string, level: "info" | "warn" | "error" = "info", extra?: Record<string, unknown>): void { const context = { event: "TASK_STATE_CHANGE", taskId: task.id, previousState, newState, stageId: task.stageId, attempt: task.attempt, ...extra }; if (level === "error") this.logger.error("TaskQueue", `任务状态变更: ${task.id}`, undefined, context); else this.logger[level]("TaskQueue", `任务状态变更: ${task.id}`, context); }
   private publishEvent(event: QueueEvent): void {
     if (this.disposed) return;

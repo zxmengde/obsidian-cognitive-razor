@@ -58,7 +58,7 @@ function isValidPersistedTask(value: unknown): value is PersistedTaskRecord {
   const task = value as Record<string, unknown>;
   const allowedKeys = new Set([
     "id", "workflowId", "nodeId", "stageId", "state", "queueOrder",
-    "noteTitle", "filePath", "conceptType", "createdAt", "updatedAt", "startedAt", "finishedAt", "attempt", "error",
+    "noteTitle", "filePath", "conceptType", "createdAt", "updatedAt", "startedAt", "finishedAt", "attempt", "error", "resultPendingCommit",
   ]);
   if (Object.keys(task).some((key) => !allowedKeys.has(key))) return false;
   if (typeof task.id !== "string" || !task.id || typeof task.workflowId !== "string" || !task.workflowId ||
@@ -73,6 +73,7 @@ function isValidPersistedTask(value: unknown): value is PersistedTaskRecord {
   if (task.startedAt !== undefined && !Number.isFinite(task.startedAt)) return false;
   if (task.finishedAt !== undefined && !Number.isFinite(task.finishedAt)) return false;
   if (task.error !== undefined && !isSafeTaskError(task.error)) return false;
+  if (task.resultPendingCommit !== undefined && task.resultPendingCommit !== true) return false;
   return true;
 }
 

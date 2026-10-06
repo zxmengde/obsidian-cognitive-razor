@@ -226,6 +226,14 @@ export const ERROR_CODE_INFO = {
     retryable: false,
     fixSuggestion: "生成结果已保留。当前正文与任务快照不同，等待不会消除差异；请先检查并保留你的编辑。重试仅尝试保存已有结果，不会再次请求模型。",
   },
+  E322_LOCAL_RESULT_UNAVAILABLE: {
+    code: "E322_LOCAL_RESULT_UNAVAILABLE",
+    name: "LOCAL_RESULT_UNAVAILABLE",
+    description: "本地保存失败，重启后没有可恢复的结果",
+    category: "SYSTEM_IO",
+    retryable: false,
+    fixSuggestion: "普通和批量重试不会重新请求模型。请先检查保存故障；若确认重新发送，会产生新的模型请求，可能再次消耗额度。",
+  },
 
   // E4xx 配置（不可重试）
   E401_PROVIDER_NOT_CONFIGURED: {
