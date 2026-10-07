@@ -24,7 +24,8 @@ describe("default Write prompt separates shared policy, task and field semantics
         const request = buildTaskChatRequest("write", prompt, model, schema, phase.id, "initial", prior);
         const system = request.messages[0].content; systems.add(system);
         expect(system.match(/<knowledge_policy>/g)).toHaveLength(1);
-        expect(system.length).toBeLessThan(800);
+        expect(system.match(/<hierarchy_rules>/g)).toHaveLength(1);
+        expect(system.length).toBeLessThan(1100);
         expect(system).not.toMatch(/学科名|量子|统计热力学|费米|宁可保留|几何学与/);
         expect(request.messages.map(message => message.content).join("\n")).not.toContain("<phase_instructions>");
         expect(request.messages.at(-1)?.content).toContain("合成定义");
@@ -32,8 +33,8 @@ describe("default Write prompt separates shared policy, task and field semantics
         if (phase.id === "structure") {
           const task = /<task_instruction>([\s\S]*?)<\/task_instruction>/.exec(prompt)![1].trim();
           structureTasks.add(task);
-          expect(task).toContain("直接下一层"); expect(task).toContain("同义项合并");
-          expect(task).toContain("不设数量目标"); expect(task).toContain("不按知名度筛选");
+          expect(task).toContain("层级子项遵守 hierarchy_rules");
+          expect(task).toContain("关联项按字段含义列出有据内容");
           expect(task).not.toMatch(/\bsub_|\bentities\b|\bmechanisms\b|stakeholder/);
         }
         prior = { systemPrompt: system, history: [...prior?.history ?? [], { role: "user", content: request.messages.at(-1)!.content }, { role: "assistant", content: "{}" }], promptVersion: PROMPT_VERSION };

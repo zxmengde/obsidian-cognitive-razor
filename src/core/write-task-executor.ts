@@ -191,7 +191,7 @@ export class WriteTaskExecutor {
       wireSchema,
       args.phase.id,
       args.context.attemptReason,
-      canReplay ? continuation : { promptCacheKey: continuation?.promptCacheKey },
+      canReplay ? continuation : undefined,
     );
     // Use the same standard message representation from the first turn onward
     // on the validated envelope path. Native replay already supplies its items.
@@ -214,7 +214,7 @@ export class WriteTaskExecutor {
       }, templateResult.value);
       const fallbackRequest = buildTaskChatRequest(
         "write", fallbackPrompt, args.context.modelSnapshot, wireSchema, args.phase.id,
-        args.context.attemptReason, { promptCacheKey: continuation?.promptCacheKey },
+        args.context.attemptReason,
       );
       activeRequest = fallbackRequest;
       chatResult = await this.deps.providerManager.chat(fallbackRequest, args.signal);

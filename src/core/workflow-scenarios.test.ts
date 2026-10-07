@@ -296,7 +296,7 @@ describe("workflow user scenarios", () => {
     expect(finalUpdated).not.toBe(formatCRTimestamp(created));
   });
 
-  it.each(["pending-checkpoint", "vault-commit-confirmed", "applied-checkpoint", "follow-up-intent"] as WorkflowCommitFailurePoint[])("recovers serialized bytes at %s without resending the paid stage", async (point) => {
+  it.each(["pending-checkpoint", "vault-commit-confirmed", "applied-checkpoint", "follow-up-intent"] as WorkflowCommitFailurePoint[])("recovers an old v9 receipt at %s without resending the paid stage", async (point) => {
     let crashBytes: Map<string, string> | undefined;
     const f = await fixture(undefined, (at, context) => {
       if (at === point && context.stageId === (point === "follow-up-intent" ? "core" : "verify")) {
@@ -307,6 +307,17 @@ describe("workflow user scenarios", () => {
     await create(f);
     f.start();
     await vi.waitFor(() => expect(crashBytes).toBeDefined());
+    let markedOldVersion = false;
+    for (const [path, text] of crashBytes!) {
+      if (!path.includes("/workflows/") || !path.endsWith(".json")) continue;
+      const artifact = JSON.parse(text);
+      if (!artifact.conversation) continue;
+      artifact.conversation.promptVersion = "v9";
+      artifact.conversation.systemPrompt = "OLD_V9_SYSTEM";
+      crashBytes!.set(path, JSON.stringify(artifact));
+      markedOldVersion = true;
+    }
+    expect(markedOldVersion).toBe(true);
     const reload = await fixture(crashBytes);
     reload.start();
     await completed(reload);

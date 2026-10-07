@@ -17,8 +17,8 @@ import { buildStrictJsonSchema } from "./schema-registry";
 import { splitPromptIntoMessages } from "./prompt-message-builder";
 import { normalizeExternalHttpUrl } from "./url-utils";
 
-// v9 isolates the stable Write output envelope; the on-disk templates are unchanged.
-export const PROMPT_VERSION = "v9";
+// v10 isolates revised hierarchy policy and API schema instructions from v9 history and cache routing.
+export const PROMPT_VERSION = "v10";
 export function buildPromptCacheKey(
   providerId: string,
   model: string,

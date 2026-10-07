@@ -7,7 +7,7 @@ import { PromptManager } from "./prompt-manager";
 import { ResponsePipeline } from "./response-pipeline";
 import { schemaRegistry } from "./schema-registry";
 import { getWriteStageDefinitions } from "./stage-catalog";
-import { PROMPT_VERSION } from "./task-execution-support";
+import { PROMPT_VERSION, buildPromptCacheKey } from "./task-execution-support";
 import { WriteTaskExecutor } from "./write-task-executor";
 import { WorkflowCoordinator } from "./workflow-coordinator";
 import { parseOpenAIResponsesResponse } from "./provider-response-parsers";
@@ -65,6 +65,9 @@ describe("production stable Write lifecycle",()=>{
     expect(f.requests).toHaveLength(3);expect(Array.isArray(f.bodies[0].input)).toBe(true);expect(f.requests[0].response_format).toEqual(f.requests[1].response_format);expect(f.requests[1].response_format).toEqual(f.requests[2].response_format);
     expect(f.requests[1].responsesInput?.some(item=>item.type==="reasoning")).toBe(true);
     expect(f.requests.every(r=>!r.previousResponseId)).toBe(true);
+    expect(f.requests.every(r=>r.messages[0].content===f.requests[0].messages[0].content)).toBe(true);
+    expect(f.requests.every(r=>r.promptCacheKey===buildPromptCacheKey(model.providerId,model.model,model.providerSnapshot?.apiFormat,model.providerSnapshot?.baseUrl))).toBe(true);
+    expect(f.requests.every(r=>!r.messages.some(message=>message.content.includes("<phase_instructions>")))).toBe(true);
   });
 
   it.each(["wrong-stage","extra","failed","cancelled"] as const)("%s cannot produce a stage result or trigger a repair request",async mode=>{
@@ -72,11 +75,14 @@ describe("production stable Write lifecycle",()=>{
     expect(result.ok).toBe(false);expect(f.requests).toHaveLength(1);
   });
 
-  it("isolates old v8 text/native/responseID and keeps its authoritative draft for the next phase",async()=>{
-    const f=await fixture();const previous:ConversationContinuation={providerId:model.providerId,model:model.model,apiFormat:"openai-responses",endpoint:"openai-responses|https://never-called.example/v1",promptVersion:"v8",responseContinuationEnabled:true,promptCachingEnabled:true,promptCacheMode:"implicit",previousResponseId:"old-id",systemPrompt:"OLD_SYSTEM",history:[{role:"user",content:"OLD_USER"},{role:"assistant",content:JSON.stringify(fields.core)}]};
+  it.each(["v8","v9"])("isolates old %s text/native/responseID and keeps its authoritative draft for the next phase",async version=>{
+    const f=await fixture();const previous:ConversationContinuation={providerId:model.providerId,model:model.model,apiFormat:"openai-responses",endpoint:"openai-responses|https://never-called.example/v1",promptVersion:version,responseContinuationEnabled:true,promptCachingEnabled:true,promptCacheMode:"implicit",promptCacheKey:"OLD_CACHE_KEY",previousResponseId:"old-id",systemPrompt:"OLD_SYSTEM",history:[{role:"user",content:"OLD_USER"},{role:"assistant",content:JSON.stringify(fields.core)}]};
     const result=await f.executor.execute(f.task("narrative",fields.core,previous),f.signal.signal,{modelSnapshot:model,attemptReason:"initial"});
     expect(result.ok).toBe(true);expect(f.requests).toHaveLength(1);expect(f.requests[0].previousResponseId).toBeUndefined();expect(f.requests[0].responsesInput).toEqual([{role:"user",content:f.requests[0].messages.find(message=>message.role==="user")!.content}]);
     const text=f.requests[0].messages.map(m=>m.content).join("\n");expect(text).not.toContain("OLD_SYSTEM");expect(text).not.toContain("OLD_USER");expect(text).toContain("PRESERVED_DEFINITION");
+    expect(f.requests[0].promptCacheKey).toBe(buildPromptCacheKey(model.providerId,model.model,model.providerSnapshot?.apiFormat,model.providerSnapshot?.baseUrl));
+    expect(f.requests[0].promptCacheKey).not.toBe("OLD_CACHE_KEY");
+    expect(f.requests[0].messages[0].content).toContain("子项范围的并集等于父项范围");
     expect(result.ok&&result.value.accumulated).toEqual({...fields.core,...fields.narrative});
   });
 

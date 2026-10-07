@@ -117,11 +117,11 @@ const DOMAIN_SCHEMA: JSONSchema = {
     },
     core_questions: {
       type: "string",
-      description: "研究目标与问题：说明该领域主要试图理解、解释或解决什么。若不存在统一目标，区分主要传统及其适用范围。"
+      description: "研究目标与问题：说明该领域持续理解、解释或解决的问题；若目标不统一，分别说明各传统及其适用范围。"
     },
     methodology: {
       type: "string",
-      description: "认识论与方法：说明该领域形成、检验或论证知识的主要方法；区分经验、形式、解释性等方法，不虚构具体范式。"
+      description: "认识论与方法：说明该领域形成、检验或论证知识所采用的方法及其适用范围，不虚构具体范式。"
     },
     boundaries: {
       type: "array",
@@ -138,7 +138,7 @@ const DOMAIN_SCHEMA: JSONSchema = {
     },
     sub_domains: {
       type: "array",
-      description: "当前领域直接下一层、已确立的研究分支。",
+      description: "当前领域直接下一层的研究分支；各分支范围的并集等于输入确定的领域范围。",
       items: {
         type: "object",
         required: ["name", "description"],
@@ -150,7 +150,7 @@ const DOMAIN_SCHEMA: JSONSchema = {
     },
     issues: {
       type: "array",
-      description: "本领域具有独立问题内核的重要议题，区别于研究分支。",
+      description: "与本领域直接相关、具有独立问题内核的议题；这是关联列表，不是子领域划分。",
       items: {
         type: "object",
         required: ["name", "description"],
@@ -208,7 +208,7 @@ const ISSUE_SCHEMA: JSONSchema = {
     },
     sub_issues: {
       type: "array",
-      description: "当前议题直接下一层、具有独立问题内核的子问题。",
+      description: "当前议题直接下一层的子问题；各子问题范围的并集等于输入确定的议题范围。",
       items: {
         type: "object",
         required: ["name", "description"],
@@ -254,7 +254,7 @@ const ISSUE_SCHEMA: JSONSchema = {
     },
     holistic_understanding: {
       type: "string",
-      description: "综合理解：整合议题的对象、证据结构、主要立场、实践影响和适用边界。只写相关且有依据的维度。"
+      description: "综合理解：整合议题的对象、证据结构、有依据的立场、实践影响和适用边界。"
     }
   }
 };
@@ -288,26 +288,26 @@ const THEORY_SCHEMA: JSONSchema = {
         type: "object",
         required: ["statement", "justification"],
         properties: {
-          statement: { type: "string", description: "前提陈述及其性质，例如公理、经验假设或模型前提。" },
+          statement: { type: "string", description: "陈述理论采用的前提及其性质。" },
           justification: { type: "string", description: "说明采用该前提的依据、用途或限制；不要声称其必然或不可替代。" }
         }
       }
     },
     sub_theories: {
       type: "array",
-      description: "当前理论框架内直接下一层的子理论、特例或变体。",
+      description: "当前理论直属下一层、有依据的理论子项；各子项范围的并集等于输入确定的理论范围。",
       items: {
         type: "object",
         required: ["name", "description"],
         properties: {
-          name: { type: "string", description: "已确立的子理论或变体名称。" },
-          description: { type: "string", description: "该子理论或变体的主张、范围及其与当前理论的特化或变体关系。" }
+          name: { type: "string", description: "有依据的理论子项名称。" },
+          description: { type: "string", description: "该项的主张、范围及其与当前理论的从属关系。" }
         }
       }
     },
     logical_structure: {
       type: "string",
-      description: "从已列前提到主要结论的推导结构。显式标出缺失前提、经验跳步和条件性关系，不把相关性改写为因果性。"
+      description: "从已列前提到理论结论的推导结构。显式标出缺失前提、经验跳步和条件性关系，不把相关性改写为因果性。"
     },
     entities: {
       type: "array",
@@ -423,7 +423,7 @@ const ENTITY_SCHEMA: JSONSchema = {
         has_parts: {
           type: "array",
           items: { type: "string" },
-          description: "向下分解——它由什么组成？列出构成性部分，而非任意关联物"
+          description: "该实体的直接构成性部分；各部分范围的并集等于父实体的组成范围，不列任意关联物。"
         },
         part_of: { type: "string", description: "有明确组成关系时指出最直接的上位系统；按知识类型确实不适用时写“不适用”，材料不足时写“目前依据不足”或“待核实”。" }
       }
@@ -485,7 +485,7 @@ const MECHANISM_SCHEMA: JSONSchema = {
         required: ["entity", "role"],
         properties: {
           entity: { type: "string", description: "作用对象名称" },
-          role: { type: "string", description: "该对象在机制中的具体角色，例如主体、客体、介质或催化因素；不要虚构不可替代性。" }
+          role: { type: "string", description: "该对象在机制中的具体作用及参与方式；不要虚构不可替代性。" }
         }
       }
     },
@@ -527,7 +527,7 @@ const MECHANISM_SCHEMA: JSONSchema = {
     },
     side_effects: {
       type: "array",
-      description: "有证据支持的附带效应或非主要结果；不预设其不可避免，没有可靠条目时使用空数组。",
+      description: "有证据支持的非目标伴随结果；不预设其不可避免，没有可靠条目时使用空数组。",
       items: { type: "string", description: "附带效应、发生条件及能够确认的产生环节或原因。" }
     },
     termination_conditions: {

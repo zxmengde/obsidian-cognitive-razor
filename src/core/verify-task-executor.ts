@@ -81,7 +81,7 @@ export class VerifyTaskExecutor {
     const canContinue = canUseContinuation(continuation, context.modelSnapshot);
     const canReplay = canReplayConversation(continuation, context.modelSnapshot);
     const request = buildTaskChatRequest("verify", prompt, context.modelSnapshot, undefined, "verify:report", context.attemptReason,
-      canReplay ? continuation : { promptCacheKey: continuation?.promptCacheKey });
+      canReplay ? continuation : undefined);
     let chatResult = await this.deps.providerManager.chat(request, signal);
     let activeRequest = request;
     if (!chatResult.ok && canContinue && isInvalidResponseContinuationError(chatResult.error)) {
@@ -89,7 +89,7 @@ export class VerifyTaskExecutor {
       const fallbackPrompt = `${prompt}${sourcePackage ? `\n\n${sourcePackage}` : ""}`;
       const fallbackRequest = buildTaskChatRequest(
         "verify", fallbackPrompt, context.modelSnapshot, undefined, "verify:report", context.attemptReason,
-        { promptCacheKey: continuation?.promptCacheKey },
+        undefined,
       );
       activeRequest = fallbackRequest;
       chatResult = await this.deps.providerManager.chat(fallbackRequest, signal);

@@ -122,7 +122,7 @@ describe("生产提示词契约", () => {
     }
   });
 
-  it("笔记契约禁止为形式完整性编造历史、穷尽分类或强因果", () => {
+  it("笔记契约区分父子覆盖与关联清单，并禁止编造历史或强因果", () => {
     const allPromptText = [
       readPrompt("base/knowledge-policy.md"),
       readPrompt("base/writing-style.md"),
@@ -131,7 +131,7 @@ describe("生产提示词契约", () => {
 
     expect(allPromptText).toContain("高风险细节");
     expect(allPromptText).toContain("相关性不等于因果性");
-    expect(allPromptText).toContain("常见分类不等于完全穷尽");
+    expect(allPromptText).toContain("父子分类按父项边界核查覆盖，关联清单不作此要求");
     expect(allPromptText).toContain("不声称覆盖全部");
     expect(allPromptText).not.toContain("按辩证法结构（正题");
     expect(allPromptText).not.toContain("每个事件锚定具体的人名和年份");

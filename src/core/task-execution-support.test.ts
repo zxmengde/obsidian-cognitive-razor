@@ -30,6 +30,8 @@ describe("continuation support", () => {
     expect(chat).not.toBe(responses);
     expect(relay).not.toBe(responses);
     expect(responses.length).toBeLessThanOrEqual(64);
+    expect(responses).toContain(PROMPT_VERSION);
+    expect(responses).not.toContain("v9");
   });
 
   it("does not reuse a continuation after the cache capability changes", () => {
@@ -176,5 +178,6 @@ describe("compatible local history without server IDs", () => {
     expect(request.messages.slice(1, 3)).toEqual(conversation.history);
     for (const incompatible of [{ ...snapshot, model: "changed" }, { ...snapshot, providerId: "other" }, { ...snapshot, providerSnapshot: { ...snapshot.providerSnapshot!, baseUrl: "https://different.test/v1" } }]) expect(canReplayConversation(conversation, incompatible)).toBe(false);
     expect(canReplayConversation({ ...conversation, promptVersion: "v3" }, snapshot)).toBe(false);
+    expect(canReplayConversation({ ...conversation, promptVersion: "v9" }, snapshot)).toBe(false);
   });
 });
