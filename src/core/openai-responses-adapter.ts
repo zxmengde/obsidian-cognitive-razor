@@ -1,0 +1,75 @@
+import type { ChatRequest } from "../types";
+import {
+  buildResponsesInput,
+  buildResponsesExplicitCacheInput,
+  buildResponsesTextConfig,
+  buildWebSearchPolicy,
+  suppressChatSampling,
+} from "./provider-request-builders";
+import { parseOpenAIResponsesResponse } from "./provider-response-parsers";
+import type {
+  ChatProtocolAdapter,
+  ProtocolWebSearchOptions,
+} from "./chat-protocol-adapter";
+
+function buildRequestBody(
+  request: ChatRequest,
+  webSearch?: ProtocolWebSearchOptions,
+): Record<string, unknown> {
+  const { instructions: baseInstructions, input: defaultInput } = buildResponsesInput(request.messages);
+  const instructions = webSearch
+    ? [baseInstructions, buildWebSearchPolicy(webSearch.purpose, !!request.response_format)]
+      .filter((content): content is string => !!content)
+      .join("\n\n")
+    : baseInstructions;
+
+  const explicit = request.promptCacheMode === "explicit";
+  const body: Record<string, unknown> = {
+    model: request.model,
+    input: explicit ? buildResponsesExplicitCacheInput(request.messages, request.responsesInput).input : request.responsesInput ?? defaultInput,
+  };
+  if (request.previousResponseId) body.previous_response_id = request.previousResponseId;
+  if (request.promptCacheKey) body.prompt_cache_key = request.promptCacheKey;
+  // 默认隐式缓存不附加选项；只在明确选择模式或 TTL 时发送控制字段。
+  if (request.promptCacheMode === "explicit" || request.promptCacheTtl) {
+    body.prompt_cache_options = {
+      ...(request.promptCacheMode ? { mode: request.promptCacheMode } : {}),
+      ...(request.promptCacheTtl ? { ttl: request.promptCacheTtl } : {}),
+    };
+  }
+  if (instructions && !explicit) body.instructions = instructions;
+  if (explicit && instructions) {
+    const explicitMessages = [
+      { role: "system" as const, content: instructions },
+      ...request.messages.filter((message) => message.role !== "system"),
+    ];
+    body.input = buildResponsesExplicitCacheInput(explicitMessages, request.responsesInput).input;
+  }
+  if (request.reasoning_effort !== undefined) {
+    body.reasoning = { effort: request.reasoning_effort };
+  }
+  const reasoningActive = suppressChatSampling("openai-responses", request.model, request.reasoning_effort);
+  if (!reasoningActive && request.temperature !== undefined) body.temperature = request.temperature;
+  if (!reasoningActive && request.topP !== undefined) body.top_p = request.topP;
+  if (request.maxTokens !== undefined) body.max_output_tokens = request.maxTokens;
+
+  const textConfig = buildResponsesTextConfig(request.response_format);
+  if (textConfig) body.text = { format: textConfig };
+  if (webSearch) {
+    body.tools = [{ type: "web_search" }];
+    // Write can reuse the supplied evidence and search when a new claim needs
+    // it. Verify retains mandatory independent search; both keep the tool.
+    body.tool_choice = webSearch.purpose === "verify" ? "required" : "auto";
+  }
+  return body;
+}
+
+export const OPENAI_RESPONSES_ADAPTER: ChatProtocolAdapter = {
+  apiFormat: "openai-responses",
+  requestPath: "responses",
+  streamProtocol: "openai-responses",
+  authScheme: "bearer",
+  displayName: "OpenAI Responses",
+  buildRequestBody,
+  parseResponse: parseOpenAIResponsesResponse,
+};

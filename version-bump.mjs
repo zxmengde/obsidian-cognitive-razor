@@ -1,0 +1,14 @@
+import { readFileSync, writeFileSync } from "fs";
+
+const targetVersion = process.env.npm_package_version;
+
+// read minAppVersion from manifest.json and bump version to target version
+const manifest = JSON.parse(readFileSync("manifest.json", "utf8"));
+const { minAppVersion } = manifest;
+manifest.version = targetVersion;
+writeFileSync("manifest.json", JSON.stringify(manifest, null, "\t"));
+
+// 每个发布版本都需记录兼容要求，即使最低 Obsidian 版本没有变化。
+const versions = JSON.parse(readFileSync('versions.json', 'utf8'));
+versions[targetVersion] = minAppVersion;
+writeFileSync('versions.json', JSON.stringify(versions, null, '\t'));

@@ -1,0 +1,523 @@
+/**
+ * Cognitive Razor - Obsidian Plugin Styles
+ *
+ * 全局样式：仅保留 CSS 变量定义、按钮系统、工具类、
+ * 动画关键帧、无障碍增强和响应式断点。
+ * 所有组件样式已迁移至 Svelte scoped styles。
+ */
+
+/* ========================================
+   1. Scope & Variable Mapping
+   ======================================== */
+
+.cr-scope {
+    /* === 间距系统（唯一间距入口） === */
+    --cr-space-half: 2px;
+    --cr-space-1: var(--size-4-1, 4px);
+    --cr-space-1h: 6px;
+    --cr-space-2: var(--size-4-2, 8px);
+    --cr-space-3: var(--size-4-3, 12px);
+    --cr-space-4: var(--size-4-4, 16px);
+    --cr-space-5: var(--size-4-5, 20px);
+    --cr-space-6: var(--size-4-6, 24px);
+    --cr-space-8: var(--size-4-8, 32px);
+    --cr-space-10: var(--size-4-10, 40px);
+    --cr-space-12: var(--size-4-12, 48px);
+
+    /* === 颜色系统（唯一颜色入口） === */
+
+    /* 背景 */
+    --cr-bg-base: var(--background-primary);
+    --cr-bg-secondary: var(--background-secondary);
+    --cr-bg-surface: var(--background-secondary);
+    --cr-bg-hover: var(--background-modifier-hover);
+    --cr-bg-active: var(--background-modifier-active-hover, var(--background-modifier-hover));
+    --cr-bg-accent-subtle: var(--interactive-accent-hover);
+    --cr-bg-border-hover: var(--background-modifier-border-hover, var(--background-modifier-border));
+    --cr-bg-focus-ring: var(--background-modifier-border-focus);
+    --cr-bg-cover: var(--background-modifier-cover);
+
+    /* 文字 */
+    --cr-text-normal: var(--text-normal);
+    --cr-text-muted: var(--text-muted);
+    --cr-text-faint: var(--text-faint);
+    --cr-text-accent: var(--interactive-accent);
+    --cr-text-on-accent: var(--text-on-accent);
+    --cr-text-error: var(--text-error);
+    --cr-text-success: var(--text-success);
+
+    /* 边框 */
+    --cr-border: var(--background-modifier-border);
+    --cr-border-focus: var(--interactive-accent);
+
+    /* 交互色 */
+    --cr-interactive-accent: var(--interactive-accent);
+    --cr-interactive-accent-hover: var(--interactive-accent-hover);
+
+    /* 状态色 */
+    --cr-status-success: var(--color-green);
+    --cr-status-warning: var(--color-orange);
+    --cr-status-error: var(--color-red);
+    --cr-status-info: var(--color-blue);
+
+    /* 半透明叠加色（color-mix） */
+    --cr-overlay-success-15: color-mix(in srgb, var(--cr-status-success) 15%, transparent);
+    --cr-overlay-success-10: color-mix(in srgb, var(--cr-status-success) 10%, transparent);
+    --cr-overlay-error-15: color-mix(in srgb, var(--cr-status-error) 15%, transparent);
+    --cr-overlay-error-10: color-mix(in srgb, var(--cr-status-error) 10%, transparent);
+    --cr-overlay-info-15: color-mix(in srgb, var(--cr-status-info) 15%, transparent);
+    --cr-overlay-warning-15: color-mix(in srgb, var(--cr-status-warning) 15%, transparent);
+    --cr-overlay-warning-10: color-mix(in srgb, var(--cr-status-warning) 10%, var(--cr-bg-base));
+    --cr-overlay-accent-15: color-mix(in srgb, var(--cr-interactive-accent) 15%, transparent);
+    --cr-overlay-accent-10: color-mix(in srgb, var(--cr-interactive-accent) 10%, transparent);
+
+    /* === 圆角 === */
+    --cr-radius-sm: var(--radius-s, 4px);
+    --cr-radius-md: var(--radius-m, 8px);
+    --cr-radius-lg: var(--radius-l, 12px);
+    --cr-radius-pill: 999px;
+
+    --cr-layer-modal: var(--layer-modal, 1000);
+
+    /* === 阴影 === */
+    --cr-shadow-sm: var(--shadow-s);
+    --cr-shadow-lg: var(--shadow-l);
+
+    /* === 功能色：任务状态 === */
+    --cr-task-pending: var(--cr-text-muted);
+    --cr-task-running: var(--cr-interactive-accent);
+    --cr-task-completed: var(--cr-status-success);
+    --cr-task-failed: var(--cr-status-error);
+
+    /* === 功能色：置信度分级 === */
+    --cr-confidence-high: var(--cr-status-success);
+    --cr-confidence-medium: var(--cr-status-warning);
+    --cr-confidence-low: var(--cr-text-muted);
+
+    /* === 排版 === */
+    --cr-font-base: var(--font-ui-medium, 14px);
+    --cr-font-sm: var(--font-ui-small, 13px);
+    --cr-font-xs: var(--font-ui-smaller, 12px);
+    --cr-settings-title-size: var(--font-ui-large, 20px);
+    --cr-line-height-body: 1.5;
+    --cr-line-height-compact: 1.3;
+}
+
+/* Product surfaces inherit the active Obsidian theme. */
+.cr-scope {
+    --cr-field-radius: var(--radius-s, 4px);
+    --cr-font-fine: var(--font-ui-smaller, 12px);
+    --cr-heading-workbench: var(--font-ui-large, 20px);
+    --cr-bg-field: var(--background-modifier-form-field);
+    --cr-bg-selected: var(--background-modifier-active-hover, var(--background-modifier-hover));
+}
+.cr-scope:has(.cr-workbench-root) { background: var(--cr-bg-base); padding: 0; }
+.cr-scope .cr-workbench-root, .cr-scope .cr-settings-root { color: var(--cr-text-normal); }
+.cr-scope .cr-btn-primary, .cr-scope .cr-btn-secondary { border-radius: var(--cr-field-radius); }
+
+/* ========================================
+   2. 动画关键帧
+   ======================================== */
+
+@keyframes cr-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+@keyframes pulse {
+    0% { opacity: 0.5; transform: scale(0.9); }
+    50% { opacity: 1; transform: scale(1.1); }
+    100% { opacity: 0.5; transform: scale(0.9); }
+}
+
+/* ========================================
+   3. 全局工具类
+   ======================================== */
+
+/* 加载旋转器（Button.svelte、ExpandPanel.svelte、ProviderCard.svelte 使用） */
+.cr-scope .cr-loading-spinner {
+    border: 2px solid var(--cr-border);
+    border-top: 2px solid var(--cr-interactive-accent);
+    border-radius: 50%;
+    width: var(--cr-space-4);
+    height: var(--cr-space-4);
+    animation: cr-spin 0.8s linear infinite;
+}
+
+/* ========================================
+   4. 按钮系统
+   ======================================== */
+
+/* === 按钮默认高度：32px === */
+.cr-scope .cr-btn-primary,
+.cr-scope .cr-btn-secondary,
+.cr-scope .cr-btn-ghost,
+.cr-scope .cr-btn-danger {
+    height: auto;
+    min-height: 32px;
+    white-space: normal;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--cr-space-1);
+    line-height: 1.3;
+    box-shadow: none;
+}
+
+/* --- Primary --- */
+.cr-scope .cr-btn-primary {
+    border: 1px solid var(--cr-interactive-accent);
+    border-radius: var(--cr-radius-sm);
+    background: var(--cr-interactive-accent);
+    color: var(--cr-text-on-accent);
+    cursor: pointer;
+    padding: var(--cr-space-2) var(--cr-space-3);
+    font-size: var(--font-ui-small);
+    font-weight: 500;
+    transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.cr-scope .cr-btn-primary:hover {
+    background: var(--cr-interactive-accent-hover);
+    border-color: var(--cr-interactive-accent-hover);
+}
+
+.cr-scope .cr-btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* --- Secondary --- */
+.cr-scope .cr-btn-secondary {
+    border: 1px solid var(--cr-border);
+    border-radius: var(--cr-radius-sm);
+    background: var(--cr-bg-surface);
+    color: var(--cr-text-normal);
+    cursor: pointer;
+    padding: var(--cr-space-2) var(--cr-space-3);
+    font-size: var(--font-ui-small);
+    font-weight: 500;
+    transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.cr-scope .cr-btn-secondary:hover {
+    background: var(--cr-bg-hover);
+    border-color: var(--cr-border-focus);
+}
+
+.cr-scope .cr-btn-secondary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* --- Ghost --- */
+.cr-scope .cr-btn-ghost {
+    border: 1px solid transparent;
+    border-radius: var(--cr-radius-sm);
+    background: transparent;
+    color: var(--cr-text-muted);
+    cursor: pointer;
+    padding: var(--cr-space-2) var(--cr-space-3);
+    font-size: var(--font-ui-small);
+    font-weight: 500;
+    transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.cr-scope .cr-btn-ghost:hover {
+    background: var(--cr-bg-hover);
+    color: var(--cr-text-normal);
+}
+
+.cr-scope .cr-btn-ghost:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.cr-scope .cr-btn-ghost:disabled:hover {
+    background: transparent;
+    color: var(--cr-text-muted);
+    transform: none;
+}
+
+/* --- Danger --- */
+.cr-scope .cr-btn-danger {
+    border: 1px solid var(--cr-status-error);
+    border-radius: var(--cr-radius-sm);
+    background: var(--cr-status-error);
+    color: var(--cr-text-on-accent);
+    cursor: pointer;
+    padding: var(--cr-space-2) var(--cr-space-3);
+    font-size: var(--font-ui-small);
+    font-weight: 500;
+    transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.cr-scope .cr-btn-danger:hover {
+    opacity: 0.9;
+}
+
+.cr-scope .cr-btn-danger:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* --- 按钮统一 active / focus 状态 --- */
+.cr-scope .cr-btn-primary:active,
+.cr-scope .cr-btn-secondary:active,
+.cr-scope .cr-btn-ghost:active,
+.cr-scope .cr-btn-danger:active {
+    transform: scale(0.98);
+}
+
+.cr-scope .cr-btn-primary:disabled:active,
+.cr-scope .cr-btn-secondary:disabled:active,
+.cr-scope .cr-btn-ghost:disabled:active,
+.cr-scope .cr-btn-danger:disabled:active {
+    transform: none;
+}
+
+.cr-scope .cr-btn-primary:focus-visible,
+.cr-scope .cr-btn-secondary:focus-visible,
+.cr-scope .cr-btn-ghost:focus-visible,
+.cr-scope .cr-btn-danger:focus-visible {
+    outline: 2px solid var(--cr-interactive-accent);
+    outline-offset: 2px;
+    box-shadow: none;
+}
+
+/* --- 按钮尺寸修饰符 --- */
+
+/* 小尺寸：28px 高 */
+.cr-scope .cr-btn--sm {
+    height: auto;
+    min-height: 28px;
+    padding: var(--cr-space-1) var(--cr-space-2);
+    font-size: var(--font-ui-smaller);
+    line-height: 1.3;
+}
+
+/* 图标按钮：28px × 28px 正方形 */
+.cr-scope .cr-btn--icon {
+    width: 28px;
+    height: 28px;
+    min-height: 28px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.cr-scope .cr-btn--icon svg {
+    width: var(--cr-space-4);
+    height: var(--cr-space-4);
+}
+
+/* --- 按钮 Loading 状态 --- */
+.cr-scope .cr-btn-loading {
+    position: relative;
+    pointer-events: none;
+    color: transparent;
+}
+
+.cr-scope .cr-btn-loading::after {
+    content: "";
+    position: absolute;
+    width: var(--cr-space-4);
+    height: var(--cr-space-4);
+    border-radius: 50%;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    animation: cr-spin 0.8s linear infinite;
+}
+
+.cr-scope .cr-btn-primary.cr-btn-loading::after {
+    border-color: var(--cr-text-on-accent);
+    border-right-color: transparent;
+}
+
+.cr-scope .cr-btn-secondary.cr-btn-loading::after,
+.cr-scope .cr-btn-ghost.cr-btn-loading::after {
+    border-color: var(--cr-text-muted);
+    border-right-color: transparent;
+}
+
+.cr-scope .cr-btn-danger.cr-btn-loading::after {
+    border-color: var(--cr-text-on-accent);
+    border-right-color: transparent;
+}
+
+/* ========================================
+   5. 输入框宽度类
+   ======================================== */
+
+.cr-scope .cr-input-xs {
+    width: 60px;
+}
+
+.cr-scope .cr-input-sm {
+    width: 100px;
+}
+
+.cr-scope .cr-input-md {
+    width: 160px;
+}
+
+.cr-scope .cr-input-lg {
+    width: 240px;
+}
+
+/* ========================================
+   6. 无障碍增强
+   ======================================== */
+
+/* 统一焦点样式 */
+.cr-scope *:focus-visible {
+    outline: 2px solid var(--cr-interactive-accent);
+    outline-offset: 2px;
+}
+
+/* 输入框焦点：内嵌 outline 避免布局偏移 */
+.cr-scope input:focus-visible,
+.cr-scope textarea:focus-visible,
+.cr-scope select:focus-visible {
+    outline-offset: -2px;
+}
+
+/* ========================================
+   7. 减少动画支持（prefers-reduced-motion）
+   ======================================== */
+
+@media (prefers-reduced-motion: reduce) {
+    /* 全局：禁用所有动画和过渡 */
+    .cr-scope *,
+    .cr-scope *::before,
+    .cr-scope *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+
+    /* 加载旋转：静态替代 */
+    .cr-loading-spinner {
+        animation: none !important;
+        border-color: var(--cr-interactive-accent);
+        border-right-color: transparent;
+    }
+
+    /* 按钮 active scale 效果：禁用 */
+    .cr-scope .cr-btn-primary:active,
+    .cr-scope .cr-btn-secondary:active,
+    .cr-scope .cr-btn-ghost:active,
+    .cr-scope .cr-btn-danger:active {
+        transform: none !important;
+    }
+
+    /* 按钮 loading 旋转：静态替代 */
+    .cr-scope .cr-btn-loading::after {
+        animation: none !important;
+    }
+}
+
+/* 高对比度模式 */
+@media (prefers-contrast: high) {
+    .cr-scope input,
+    .cr-scope select,
+    .cr-scope button {
+        border-width: 2px;
+    }
+}
+
+/* ========================================
+   8. 响应式布局（容器查询）
+   ======================================== */
+
+/* Workbench sizing inherits the host UI scale, not Markdown heading scale. */
+.cr-workbench-root { font-size: var(--cr-font-base); line-height: var(--cr-line-height-body); }
+.cr-workbench-root *, .cr-workbench-root *::before, .cr-workbench-root *::after { box-sizing: border-box; }
+
+/* 工作台面板：设为容器查询上下文 */
+.cr-workbench-root {
+    container-type: inline-size;
+    container-name: cr-workbench;
+}
+
+/* 工作台 < 280px：紧凑布局 */
+@container cr-workbench (max-width: 279px) {
+    .cr-workbench-root {
+        padding: var(--cr-space-3) var(--cr-space-2);
+        gap: var(--cr-space-3);
+    }
+}
+
+/* 工作台 280-400px：标准单列布局 */
+@container cr-workbench (min-width: 280px) and (max-width: 400px) {
+    .cr-workbench-root {
+        padding: var(--cr-space-4);
+        gap: var(--cr-space-4);
+    }
+}
+
+/* 视口级回退（不支持 container query 的旧浏览器） */
+@media (max-width: 768px) {
+    .cr-workbench-root {
+        padding: var(--cr-space-4);
+        gap: var(--cr-space-4);
+    }
+}
+
+
+
+/* Settings use the host's theme and available pane width, including split panes. */
+.cr-settings-root { container-type: inline-size; min-width: 0; }
+.cr-settings-root *, .cr-settings-root *::before, .cr-settings-root *::after { box-sizing: border-box; }
+/* Quiet settings actions must not inherit Obsidian's native button shadow. */
+.cr-scope .cr-settings-root .cr-btn-ghost { box-shadow: none; color: var(--cr-interactive-accent); }
+.cr-settings-root .cr-settings-page-heading { margin: 0 0 var(--cr-space-4); }
+.cr-settings-root .cr-settings-page-heading h2 { font-size: 1.45em; margin: 0 0 8px; padding: 0; }
+.cr-settings-root .cr-settings-page-heading p, .cr-settings-root .cr-settings-hint { color: var(--text-muted); line-height: 1.6; font-size: var(--cr-font-sm, 14px); margin: 8px 0; overflow-wrap: anywhere; }
+.cr-settings-root .cr-settings-page-heading p { margin-bottom: 0; }
+.cr-settings-root .cr-settings-disclosure summary, .cr-settings-root .cr-result-details summary { cursor: pointer; color: var(--text-muted); padding: 8px 0; }
+.cr-settings-root summary:focus-visible, .cr-settings-root button:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 2px; }
+.cr-scope .cr-settings-root input, .cr-scope .cr-settings-root select { max-width: 100%; min-width: 0; font-size: var(--cr-font-sm); }
+.cr-settings-root .cr-setting-item__desc { overflow-wrap: anywhere; }
+.cr-settings-root .cr-setting-item__control { max-width: 60%; flex-wrap: wrap; justify-content: flex-end; }
+/* Outrank Svelte scoped selectors even when their CSS is injected later. */
+@container (max-width: 520px) {
+    /* Only longer controls need their own line; switches stay beside the label. */
+    .cr-scope .cr-settings-root .cr-setting-item:not(.cr-setting-item--inline-control) { flex-direction: column; align-items: stretch; gap: 8px; }
+    .cr-scope .cr-settings-root .cr-setting-item__control { max-width: 100%; justify-content: flex-start; }
+    .cr-scope .cr-settings-root .cr-setting-item__control > input, .cr-scope .cr-settings-root .cr-setting-item__control > select { width: 100%; }
+    .cr-scope .cr-settings-root .cr-setting-item__control .cr-slider { max-width: 100%; min-width: 0; width: 100%; }
+    .cr-scope .cr-settings-root .cr-slider__number { flex: 0 0 56px; }
+    .cr-scope .cr-settings-root .cr-settings-section__header { flex-wrap: wrap; gap: 8px; }
+    .cr-scope .cr-settings-root .cr-missing-item { grid-template-columns: 1fr; }
+    .cr-scope .cr-settings-root .cr-settings-nav { gap: var(--cr-space-4); }
+    .cr-scope .cr-settings-root .cr-settings-nav .cr-settings-nav-tab { padding: 10px 0; font-size: var(--cr-font-sm); }
+    .cr-scope .cr-settings-root .cr-settings-content { padding-left: 0; padding-right: 0; }
+}
+
+@container (max-width: 420px) {
+    .cr-scope .cr-settings-root .cr-task-model-card__parameter { grid-template-columns: minmax(0, 1fr) minmax(100px, 42%); gap: var(--cr-space-2); }
+    .cr-scope .cr-settings-root .cr-task-model-card__parameter-result { grid-column: 1 / -1; }
+    .cr-scope .cr-settings-root .cr-task-model-card__parameter-controls { grid-row: auto; }
+}
+
+/* Match the approved product surfaces after host and scoped defaults. */
+.cr-scope .cr-workbench-root.cr-workbench-root { padding: 22px 20px; gap: 0; }
+
+.cr-scope .cr-settings-root .cr-settings-page-heading { margin-bottom: 28px; }
+.cr-scope .cr-settings-root .cr-settings-page-heading h2 { font-size: var(--font-ui-large); margin-bottom: 10px; font-weight: 600; }
+.cr-scope .cr-settings-root .cr-settings-section h3 { font-size: var(--font-ui-medium); }
+.cr-scope .cr-settings-root .cr-settings-section__header { margin-bottom: 16px; }
+.cr-scope .cr-settings-root .cr-settings-hint { color: var(--cr-text-muted); }
+.cr-scope .cr-settings-root .cr-providers-tab > .cr-settings-section:first-of-type > select { width: 100%; min-height: 42px; border-radius: 7px; background-color: var(--cr-bg-field); box-shadow: none; }
+.cr-scope .cr-settings-root .cr-task-row:first-child { border-top: 0; }
+.cr-scope .cr-settings-root .cr-task-summary { padding: 18px 0 23px; }
+.cr-scope .cr-settings-root .cr-task-summary__copy { gap: 9px; }
+.cr-scope .cr-settings-root .cr-task-summary__title { font-size: var(--font-ui-medium); }
+.cr-scope .cr-settings-root .cr-task-summary__action { color: var(--cr-interactive-accent); }
+.cr-scope .cr-settings-root .cr-task-overrides-toggle { border-top: 1px solid var(--cr-border); padding: 22px 0 10px; }
+.cr-scope .cr-settings-root .cr-task-overrides-toggle > span:first-child { color: var(--cr-text-normal); }
+
+.cr-scope .cr-btn-primary { font-weight: 600; }

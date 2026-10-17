@@ -1,0 +1,319 @@
+import * as obsidian from 'obsidian';
+import { DEFAULT_SETTINGS } from '../../data/settings-store';
+import { TaskQueue } from '../../core/task-queue';
+import { ProviderManager } from '../../core/provider-manager';
+import { VerifyTaskExecutor } from '../../core/verify-task-executor';
+import { ProviderTimeoutError } from '../../core/provider-transport';
+import type { TaskExecutionContext } from '../../types';
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { build } from "esbuild";
+import { readFileSync } from "node:fs";
+import sveltePlugin from "esbuild-svelte";
+import sveltePreprocess from "svelte-preprocess";
+import { compile } from "svelte/compiler";
+import { I18n } from "../../core/i18n";
+import { ok, type TaskRecord, type QueueStatus } from "../../types";
+
+let ui: {
+  mount: (component: unknown, options: { target: HTMLElement; props: Record<string, unknown> }) => object;
+  unmount: (instance: object) => Promise<void>;
+  flushSync: () => void;
+  QueueHost: unknown;
+};
+beforeAll(async () => {
+  Object.defineProperty(HTMLElement.prototype, "empty", { configurable: true, value() { this.replaceChildren(); } });
+  const result = await build({
+    stdin: { contents: 'export { mount, unmount, flushSync } from "svelte"; export { default as QueueHost } from "queue-host";', resolveDir: process.cwd() },
+    bundle: true, write: false, format: "iife", globalName: "QueueTestUI",
+    conditions: ["svelte", "browser"], mainFields: ["svelte", "browser", "module", "main"],
+    alias: { obsidian: "./__mocks__/obsidian.ts", "@": "./src" },
+    plugins: [{ name: "queue-host", setup(builder) {
+      builder.onResolve({ filter: /^queue-host$/ }, () => ({ path: "queue-host", namespace: "test" }));
+      builder.onLoad({ filter: /.*/, namespace: "test" }, () => ({ resolveDir: process.cwd(), contents: compile(
+        '<script>import Queue from "./src/ui/svelte/workbench/QueueSection.svelte"; import { setWorkbenchContext } from "./src/ui/bridge/context"; let { context, tasks, status } = $props(); setWorkbenchContext(context);</script><Queue {tasks} {status} />',
+        { filename: "QueueHost.svelte", css: "injected" },
+      ).js.code }));
+    } }, sveltePlugin({ preprocess: sveltePreprocess(), compilerOptions: { css: "injected" } })],
+  });
+  ui = new Function(`${result.outputFiles[0].text}; return QueueTestUI;`)();
+});
+
+afterAll(() => { Reflect.deleteProperty(HTMLElement.prototype, "empty"); });
+
+
+function fixture() {
+  const tasks: TaskRecord[] = [
+    { id: "known", nodeId: "known", noteTitle: "Known failure", stageId: "core", payload: {}, state: "failed", createdAt: 1, updatedAt: 1, attempt: 1, error: { code: "E401_PROVIDER_NOT_CONFIGURED", kind: "known", message: "synthetic private body" } },
+    { id: "uncertain", nodeId: "uncertain", noteTitle: "Uncertain request", stageId: "core", payload: {}, state: "interrupted", createdAt: 2, updatedAt: 2, attempt: 1, error: { code: "E206_PROVIDER_REQUEST_UNCERTAIN", kind: "uncertain", message: "synthetic private body" } },
+  ];
+  const queue = {
+    retry: vi.fn(async (_id: string) => ok(true)), retryUncertain: vi.fn(async (_id: string) => ok(true)),
+    cancelAllActive: vi.fn(async () => ok(1)), retryFailed: vi.fn(async () => ok(1)), cancel: vi.fn(async (_id: string) => ok(true)),
+    remove: vi.fn(async (_id: string) => ok(true)), pause: vi.fn(async () => ok(true)), resume: vi.fn(async () => ok(true)),
+    removeTerminal: vi.fn(async () => ok(2)),
+  };
+  const status: QueueStatus = { paused: false, total: 2, pending: 0, running: 0, failed: 1, interrupted: 1, completed: 0, cancelled: 0 };
+  const i18n = new I18n();
+  const context = { i18n, application: { queue }, settingsApplication: { getSettings: () => ({ queuePageSize: 50 }), subscribeSettings: () => () => undefined } };
+  return { tasks, status, queue, context, labels: i18n.messages.workbench.queueStatus };
+}
+
+describe("queue user actions with synthetic application responses", () => {
+  it("keeps filtered selection beside history clearing without bypassing confirmation", async () => {
+    const f = fixture();
+    const target = document.body.appendChild(document.createElement('div'));
+    const instance = ui.mount(ui.QueueHost, { target, props: f });
+    try {
+      ui.flushSync();
+      target.querySelector<HTMLDetailsElement>('.cr-queue-management')!.querySelector('summary')!.click(); ui.flushSync();
+      expect(target.querySelector('.cr-queue-summary')).toBeNull();
+      const filters = target.querySelectorAll<HTMLSelectElement>('.cr-queue-select-label select');
+      filters[0].value = 'failed'; filters[0].dispatchEvent(new Event('change', { bubbles: true }));
+      filters[1].value = 'core'; filters[1].dispatchEvent(new Event('change', { bubbles: true })); ui.flushSync();
+      expect(target.querySelectorAll('.cr-task-item')).toHaveLength(1);
+      const tools = target.querySelector('.cr-queue-history-tools')!;
+      const selectAll = tools.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+      const clear = tools.querySelector<HTMLButtonElement>('button')!;
+      expect(clear.textContent).toContain(f.labels.clearHistory);
+      expect(target.querySelector('.cr-queue-actions')?.contains(clear)).toBe(false);
+      selectAll.click(); ui.flushSync();
+      expect(selectAll.checked).toBe(true);
+      expect(target.querySelector<HTMLInputElement>('.cr-task-select')!.checked).toBe(true);
+      selectAll.click(); ui.flushSync();
+      expect(target.querySelector<HTMLInputElement>('.cr-task-select')!.checked).toBe(false);
+      clear.click(); ui.flushSync();
+      expect(target.querySelector('[role="dialog"]')?.textContent).toContain(f.labels.clearHistoryConfirmTitle);
+      expect(f.queue.removeTerminal).not.toHaveBeenCalled();
+      target.querySelector<HTMLButtonElement>('[role="dialog"] .cr-btn-secondary')!.click(); ui.flushSync();
+      expect(target.querySelector('[role="dialog"]')).toBeNull();
+      expect(f.queue.removeTerminal).not.toHaveBeenCalled();
+      clear.click(); ui.flushSync();
+      target.querySelector<HTMLButtonElement>('[role="dialog"] .cr-btn-danger')!.click();
+      await vi.waitFor(() => expect(f.queue.removeTerminal).toHaveBeenCalledOnce());
+    } finally { await ui.unmount(instance); target.remove(); }
+  });
+
+  it("keeps unresolved tasks above folded history and reveals safe details only on demand", async () => {
+    const f = fixture();
+    f.tasks.unshift({ ...f.tasks[0], id: 'done', noteTitle: 'Completed history', state: 'completed', error: undefined });
+    f.status.completed = 1; f.status.total = 3;
+    const target = document.body.appendChild(document.createElement('div'));
+    const instance = ui.mount(ui.QueueHost, { target, props: f });
+    try {
+      ui.flushSync();
+      const rows = target.querySelectorAll('.cr-task-item');
+      expect(rows[0].textContent).toContain('Known failure');
+      expect(rows[1].textContent).toContain('Uncertain request');
+      expect(rows).toHaveLength(2);
+      expect(target.querySelectorAll('.cr-task-select')).toHaveLength(0);
+      const history = target.querySelector<HTMLDetailsElement>('.cr-queue-history')!;
+      expect(history.open).toBe(false);
+
+      expect(target.querySelector<HTMLDetailsElement>('.cr-queue-management')!.open).toBe(false);
+      const details = rows[1].querySelector<HTMLDetailsElement>('details')!;
+      expect(details.open).toBe(false);
+      expect(target.querySelectorAll('.cr-queue-uncertain-notice')).toHaveLength(1);
+      expect(target.querySelector('.cr-queue-uncertain-notice')?.textContent).toContain('需要处理');
+      expect(rows[1].querySelector('.cr-task-warning')).toBeNull();
+      expect(rows[1].querySelector('.cr-task-state')?.closest('details')).toBeNull();
+      details.querySelector('summary')!.click(); ui.flushSync();
+      expect(details.open).toBe(true); expect(details.textContent).toContain('必须由你单独确认');
+      history.querySelector('summary')!.click(); ui.flushSync();
+      expect(history.open).toBe(true);
+      expect(history.querySelector('.cr-task-item')?.textContent).toContain('Completed history');
+      expect(f.queue.retryUncertain).not.toHaveBeenCalled();
+    } finally { await ui.unmount(instance); target.remove(); }
+  });
+
+  it("groups repeated uncertainty once and keeps code-only E206 behind explicit retry confirmation", async () => {
+    const f = fixture();
+    f.tasks.push({ ...f.tasks[1], id: 'code-only', noteTitle: 'Code-only uncertainty', state: 'failed', error: { code: 'E206_PROVIDER_REQUEST_UNCERTAIN', kind: 'known', message: 'synthetic' } });
+    f.status.failed++; f.status.total++;
+    const target = document.body.appendChild(document.createElement('div'));
+    const instance = ui.mount(ui.QueueHost, { target, props: f });
+    try {
+      ui.flushSync();
+      expect(target.querySelectorAll('.cr-queue-uncertain-notice')).toHaveLength(1);
+      expect(target.querySelector('.cr-queue-uncertain-notice')?.textContent).toContain('需要处理 · 3 项');
+      expect(target.querySelectorAll('.cr-task-feedback')).toHaveLength(3);
+      const row = target.querySelectorAll('.cr-task-item')[2];
+      row.querySelector<HTMLButtonElement>(`button[aria-label="${f.labels.retry}"]`)!.click(); ui.flushSync();
+      expect(f.queue.retry).not.toHaveBeenCalled(); expect(f.queue.retryUncertain).not.toHaveBeenCalled();
+      target.querySelector<HTMLButtonElement>('[role="dialog"] .cr-btn-secondary')!.click(); ui.flushSync();
+      expect(target.querySelector('[role="dialog"]')).toBeNull();
+      expect(f.queue.retryUncertain).not.toHaveBeenCalled();
+      target.querySelector<HTMLDetailsElement>('.cr-queue-management')!.querySelector('summary')!.click(); ui.flushSync();
+      for (const input of Array.from(target.querySelectorAll<HTMLInputElement>('.cr-task-select'))) input.click();
+      ui.flushSync();
+      const batch = Array.from(target.querySelectorAll('button')).find(button => button.textContent?.includes(f.labels.retrySelected))!;
+      expect(batch.textContent).toContain('(1)');
+      batch.click(); await vi.waitFor(() => expect(f.queue.retry).toHaveBeenCalledExactlyOnceWith('known'));
+      const filter = target.querySelector<HTMLSelectElement>('.cr-queue-select-label select')!;
+      filter.value = 'completed'; filter.dispatchEvent(new Event('change', { bubbles: true })); ui.flushSync();
+      expect(target.querySelector('.cr-queue-uncertain-notice')).toBeNull();
+    } finally { await ui.unmount(instance); target.remove(); }
+  });
+
+  it.each(['http524', 'local-timeout'] as const)('preserves %s from transport through Verify wrapping, queue reload and rendered feedback', async (mode) => {
+    const request = vi.spyOn(obsidian, 'requestUrl');
+    if (mode === 'http524') request.mockResolvedValue({ status: 524, headers: {}, text: 'private response body', json: {} } as never);
+    else request.mockRejectedValue(new ProviderTimeoutError(60000));
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.defaultProviderId = 'synthetic';
+    settings.providers.synthetic = { apiKey: '', baseUrl: 'https://example.test/v1', enabled: true, apiFormat: 'openai-responses', embeddingApiFormat: 'disabled', defaultChatModel: 'synthetic', defaultEmbedModel: '' };
+    const settingsStore = { getSettings: () => settings, subscribe: () => () => undefined };
+    const logger = { debug() {}, info() {}, warn() {}, error() {} };
+    const files = new Map<string, string>();
+    const fileStorage = {
+      read: async (path: string) => files.has(path) ? ok(files.get(path)!) : { ok: false, error: { code: 'E301_FILE_NOT_FOUND', message: 'missing' } },
+      atomicWrite: async (path: string, value: string) => { files.set(path, value); return ok(undefined); },
+    };
+    const manager = new ProviderManager(settingsStore as never, logger);
+    const executor = new VerifyTaskExecutor({ providerManager: manager, logger,
+      promptManager: { build: () => '<system_instructions>synthetic audit</system_instructions>synthetic input' } as never,
+      responsePipeline: {} as never,
+    });
+    const queue = new TaskQueue(logger, settingsStore as never, { fileStorage: fileStorage as never });
+    const restored = new TaskQueue(logger, settingsStore as never, { fileStorage: fileStorage as never });
+    const target = document.body.appendChild(document.createElement('div'));
+    let instance: object | undefined;
+    try {
+      expect((await queue.initialize()).ok).toBe(true);
+      queue.setTaskRunner({ run: (task: TaskRecord, context: TaskExecutionContext) => executor.execute(task as TaskRecord<'verify'>, new AbortController().signal, context), abort() {} } as never);
+      const admitted = await queue.enqueueDurably({ nodeId: 'node', workflowId: 'workflow', stageId: 'verify', payload: { filePath: 'Synthetic.md', currentContent: 'synthetic content', noteType: 'entity' } });
+      expect(admitted.ok).toBe(true);
+      await vi.waitFor(() => expect(queue.getSnapshot().status.interrupted).toBe(1));
+      expect(request).toHaveBeenCalledOnce();
+      expect((await restored.initialize()).ok).toBe(true);
+      const snapshot = restored.getSnapshot();
+      expect(snapshot.tasks[0].error).toMatchObject(mode === 'http524' ? { upstreamStatus: 524 } : { requestTimeoutMs: 60000 });
+      expect(JSON.stringify(snapshot)).not.toContain('private response body');
+      const f = fixture();
+      instance = ui.mount(ui.QueueHost, { target, props: { ...f, ...snapshot } }); ui.flushSync();
+      expect(target.textContent).toContain(mode === 'http524' ? '上游返回 HTTP 524' : '本地等待超时（本次阈值 60 秒）');
+      expect(target.textContent).toContain('必须由你单独确认');
+      expect(request).toHaveBeenCalledOnce();
+    } finally { if (instance) await ui.unmount(instance); target.remove(); await queue.dispose(); await restored.dispose(); manager.dispose(); request.mockRestore(); }
+  });
+
+  it('removes cancel-all and the decorative running bar while retaining state and individual cancel', async () => {
+    const f = fixture(); f.tasks[0].state = 'running'; f.status.running = 1; f.status.failed = 0;
+    const target = document.body.appendChild(document.createElement('div'));
+    const instance = ui.mount(ui.QueueHost, { target, props: f });
+    try {
+      ui.flushSync();
+      target.querySelector<HTMLDetailsElement>('.cr-queue-management')!.querySelector('summary')!.click(); ui.flushSync();
+      expect(Array.from(target.querySelectorAll('button')).some(button => button.textContent?.trim() === '取消全部活动任务')).toBe(false);
+      expect(target.querySelector('.cr-task-progress')).toBeNull();
+      expect(target.querySelector('.cr-task-state--running')?.textContent).toBe(f.labels.running);
+      expect(f.queue.cancelAllActive).not.toHaveBeenCalled();
+      target.querySelector<HTMLButtonElement>(`button[aria-label="${f.labels.cancel}"]`)!.click();
+      await vi.waitFor(() => expect(f.queue.cancel).toHaveBeenCalledExactlyOnceWith('known'));
+    } finally { await ui.unmount(instance); target.remove(); }
+  });
+
+  it.each([524, 0])("distinguishes upstream status from a local timeout (%s)", async (status) => {
+    const f = fixture();
+    Object.assign(f.tasks[1].error!, status ? { upstreamStatus: status } : { requestTimeoutMs: 60000 });
+    const target = document.body.appendChild(document.createElement("div"));
+    const instance = ui.mount(ui.QueueHost, { target, props: f });
+    try {
+      ui.flushSync();
+      expect(target.textContent).toContain(status ? '上游返回 HTTP 524' : '本地等待超时（本次阈值 60 秒）');
+      if (status) expect(target.textContent).toContain('提高客户端超时不一定能解决');
+      expect(target.innerHTML).not.toContain('synthetic private body');
+      expect(f.queue.retryUncertain).not.toHaveBeenCalled();
+    } finally { await ui.unmount(instance); target.remove(); }
+  });
+
+  it("shows reason, elapsed time and explicit next steps without exposing sensitive error text", async () => {
+    const f = fixture();
+    f.tasks[1].startedAt = 1000; f.tasks[1].finishedAt = 61000;
+    const target = document.body.appendChild(document.createElement("div"));
+    const instance = ui.mount(ui.QueueHost, { target, props: f });
+    try {
+      ui.flushSync();
+      const rows = target.querySelectorAll('.cr-task-item');
+      expect(rows[0].textContent).toContain('默认服务');
+      expect(rows[1].textContent).toContain('无法确认');
+      expect(rows[1].textContent).toContain('本次运行约 60 秒');
+      expect(rows[1].textContent).toContain('必须由你单独确认');
+      expect(target.innerHTML).not.toContain('synthetic private body');
+      expect(f.queue.retry).not.toHaveBeenCalled(); expect(f.queue.retryUncertain).not.toHaveBeenCalled();
+    } finally { await ui.unmount(instance); target.remove(); }
+  });
+
+  it("keeps filters, equal-width note actions and selection/history tools in shrink-safe rows", () => {
+    // Source-level responsive contract; geometry still requires real host QA.
+    const list = readFileSync('src/ui/svelte/workbench/QueueTaskList.svelte', 'utf8');
+    const section = readFileSync('src/ui/svelte/workbench/QueueSection.svelte', 'utf8');
+    const create = readFileSync('src/ui/svelte/workbench/CreateSection.svelte', 'utf8');
+    expect(list).toContain('@container cr-workbench (max-width: 620px)');
+    expect(section).toContain('.cr-queue-toolbar { display: grid; grid-template-columns: repeat(2, minmax(0,1fr));');
+    expect(section).toContain('grid-template-columns: auto minmax(0,1fr);');
+    expect(section).toContain('width: 100%; min-width: 0; min-height: 28px; max-width: 100%;');
+    expect(create).toContain('.cr-note-actions { display: grid; grid-template-columns: repeat(3, minmax(0,1fr));');
+    expect(create).toContain('.cr-note-action { width: 100%; min-width: 0; min-height: 32px;');
+    expect(create).not.toContain('cr-note-action-description');
+    expect(list).toContain('grid-template-columns: minmax(0,1fr) auto;');
+    expect(list).toContain('flex-wrap: wrap;');
+    expect(list).toContain('white-space: normal; overflow-wrap: anywhere;');
+    expect(section).toContain('height: auto; min-height: 32px; box-shadow: none;');
+    expect(section).toContain('.cr-queue-history-tools { display: grid; grid-template-columns: minmax(0,1fr) auto;');
+    expect(section).not.toContain('cr-queue-summary');
+    expect(section).not.toContain('text-overflow: ellipsis');
+  });
+
+  it('inherits host theme colors and font tokens without a separate dark/light palette', () => {
+    const styles = readFileSync('styles.css', 'utf8');
+    expect(styles).toContain('--cr-bg-base: var(--background-primary);');
+    expect(styles).toContain('--cr-bg-secondary: var(--background-secondary);');
+    expect(styles).toContain('--cr-text-normal: var(--text-normal);');
+    expect(styles).toContain('--cr-interactive-accent: var(--interactive-accent);');
+    expect(styles).toContain('--cr-font-base: var(--font-ui-medium, 14px);');
+    expect(styles).not.toMatch(/#[\da-f]{3,8}\b/i);
+    expect(styles).not.toContain('.theme-dark .cr-scope');
+    expect(styles).not.toContain('.theme-light .cr-scope');
+    expect(styles).not.toContain('--cr-font-base: 14px;');
+  });
+
+  it("requires a separate confirmation for an uncertain retry and suppresses double dispatch", async () => {
+    const f = fixture();
+    let release!: (result: ReturnType<typeof ok<boolean>>) => void;
+    f.queue.retryUncertain.mockImplementation(() => new Promise(resolve => { release = resolve; }));
+    const target = document.body.appendChild(document.createElement("div"));
+    const instance = ui.mount(ui.QueueHost, { target, props: f });
+    try {
+      ui.flushSync();
+      const retry = target.querySelectorAll<HTMLButtonElement>('.cr-task-item')[1].querySelector<HTMLButtonElement>(`button[aria-label="${f.labels.retry}"]`)!;
+      retry.click(); ui.flushSync();
+      expect(f.queue.retry).not.toHaveBeenCalled();
+      expect(f.queue.retryUncertain).not.toHaveBeenCalled();
+      const confirm = target.querySelector<HTMLButtonElement>('[role="dialog"] .cr-btn-danger')!;
+      confirm.click(); confirm.click(); ui.flushSync();
+      expect(f.queue.retryUncertain).toHaveBeenCalledExactlyOnceWith('uncertain');
+      expect(retry.disabled).toBe(true);
+      release(ok(true));
+      await vi.waitFor(() => { ui.flushSync(); expect(retry.disabled).toBe(false); });
+    } finally { release?.(ok(true)); await ui.unmount(instance); target.remove(); }
+  });
+
+  it("excludes uncertain requests from selected bulk retry and safely reports rejected actions", async () => {
+    const f = fixture();
+    f.queue.retry.mockRejectedValueOnce(new Error('synthetic private body'));
+    const target = document.body.appendChild(document.createElement("div"));
+    const instance = ui.mount(ui.QueueHost, { target, props: f });
+    try {
+      ui.flushSync();
+      target.querySelector<HTMLDetailsElement>('.cr-queue-management')!.querySelector('summary')!.click(); ui.flushSync();
+      for (const checkbox of Array.from(target.querySelectorAll<HTMLInputElement>('.cr-task-select'))) checkbox.click();
+      ui.flushSync();
+      const retrySelected = Array.from(target.querySelectorAll('button')).find(button => button.textContent?.includes(f.labels.retrySelected))!;
+      expect(retrySelected.textContent).toContain('(1)');
+      retrySelected.click();
+      await vi.waitFor(() => { ui.flushSync(); expect(f.queue.retry).toHaveBeenCalledExactlyOnceWith('known'); expect(target.querySelector('[role="alert"]')).not.toBeNull(); });
+      expect(f.queue.retryUncertain).not.toHaveBeenCalled();
+      expect(target.textContent).not.toContain('synthetic private body');
+    } finally { await ui.unmount(instance); target.remove(); }
+  });
+});
