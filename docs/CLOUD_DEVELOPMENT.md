@@ -4,7 +4,7 @@
 
 使用 Node.js 24，具体固定版本见 `.nvmrc`；npm 版本见 `package.json` 的 packageManager。通过 `npm ci` 使用现有 package-lock.json 安装，不用 npm update 替代锁文件安装。
 
-安装阶段需要访问依赖源。单元测试、类型检查和构建不需要模型服务、生产密钥、插件 data.json 或真实笔记。源码和开发文档限定在插件仓库内。
+安装阶段需要访问依赖源。开发范围与模型验收约束见[开发约定](../AGENTS.md)。
 
 ## 检查
 
@@ -21,10 +21,10 @@ npm run build
 
 ## 运行与发行
 
-本地仓库位于开发库的插件目录，通过构建覆盖 main.js 即可加载。云端构建产物保留在云端；部署到本机前核对源码及产物。真实宿主测试直接使用本机原库的明确测试笔记，保留既有内容；不另建或注册测试库。
+本地构建加载与云端产物边界见[开发约定](../AGENTS.md)，真实宿主操作见[Obsidian 验收](OBSIDIAN_UI_TESTING.md)。
 
-发行包包含 main.js、manifest.json、styles.css、完整 prompts/ 以及 LICENSE。程序版本同步 package.json、package-lock.json、manifest.json 与 versions.json；提示词身份由 task-execution-support.ts 定义。外部协议版本和依赖版本遵循各自规范。
+发行包安装内容见[安装说明](../README.md#安装)，另附 LICENSE。程序版本同步 package.json、package-lock.json、manifest.json 与 versions.json；提示词身份由 task-execution-support.ts 定义。外部协议版本和依赖版本遵循各自规范。
 
-修改模板后重新生成完整提示词检查稿。导出必须显式指定无凭据的合成配置，不能以日常库 data.json 作为导出输入。模型测试须使用获准的服务与测试数据，并报告实际模型及接口，不静默替换。
+修改模板后的离线导出方式见[提示词检查](PROMPTS.md#离线检查)，模型测试按[开发约定](../AGENTS.md)执行。
 
-Git 提交描述最终行为，使用英文。日常任务可推送功能分支；master、强推、历史改写及远端删除按项目授权规则确认后执行。
+Git 提交描述最终行为，使用英文。推送与发布按[开发约定](../AGENTS.md)执行。
