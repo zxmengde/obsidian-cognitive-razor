@@ -133,6 +133,7 @@ export class SemanticIndexRebuilder {
       const embedded = await this.deps.providerManager.embed(this.buildEmbedRequest(model, config, candidate.input), signal);
       if (this.isStopped(signal)) return this.targetedStopped(signal);
       if (!embedded.ok) { failed++; this.deps.logger.warn("SemanticIndexRebuilder", "缺失向量生成失败", { path: candidate.entry.path, errorCode: embedded.error.code }); continue; }
+      if (!this.isCurrentCandidate(candidate)) { failed++; continue; }
       if (!this.currentConfigMatches(config)) {
         return err("E320_TASK_CONFLICT", "嵌入配置在补齐缺失向量期间发生变化，已中止");
       }
@@ -178,6 +179,7 @@ export class SemanticIndexRebuilder {
     const embedded = await this.deps.providerManager.embed(this.buildEmbedRequest(model, config, candidate.input), signal);
     if (this.isStopped(signal)) return this.targetedStopped(signal);
     if (!embedded.ok) return ok({ indexed: 0, failed: 1 });
+    if (!this.isCurrentCandidate(candidate)) return err("E320_TASK_CONFLICT", "笔记已删除或节点身份已改变，向量未写入");
     if (!this.currentConfigMatches(config)) {
       return err("E320_TASK_CONFLICT", "嵌入配置在单篇生成期间发生变化，向量未写入");
     }
@@ -339,6 +341,9 @@ export class SemanticIndexRebuilder {
       if (candidates.value.length > 0 && vectors.length === 0) {
         return err("E204_PROVIDER_ERROR", "所有笔记的嵌入请求均失败，旧索引保持不变");
       }
+      if (candidates.value.some(candidate => !this.isCurrentCandidate(candidate))) {
+        return err("E320_TASK_CONFLICT", "笔记在重建期间被删除或节点身份改变，本次重建结果未提交");
+      }
       if (!this.currentConfigMatches(vectorConfig) || this.isStopped(controller.signal)) {
         return this.cancelled("嵌入配置在重建期间发生变化，本次重建结果未提交");
       }
@@ -489,6 +494,12 @@ export class SemanticIndexRebuilder {
     }
     const input = buildSemanticIndexText({ name: parsed.frontmatter.name, type: parsed.frontmatter.type, aliases: parsed.frontmatter.aliases, tags: parsed.frontmatter.tags, body: parsed.body });
     return { entry, content, input, sourceHash: semanticIndexTextHash(input), type: parsed.frontmatter.type, status: parsed.frontmatter.status };
+  }
+
+  private isCurrentCandidate(candidate: RebuildCandidate): boolean {
+    const { cruid, file } = candidate.entry;
+    return this.deps.cruidCache.getFile(cruid) === file
+      && this.deps.app.vault.getAbstractFileByPath(file.path) === file && file.extension === "md";
   }
 
   /** Single source for the embed request shape shared by rebuild, embedMissing

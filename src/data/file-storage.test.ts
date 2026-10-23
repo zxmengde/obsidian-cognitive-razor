@@ -27,6 +27,28 @@ describe("FileStorage path boundaries", () => {
     expect(adapter.stat).toHaveBeenCalledWith("plugin-data/data/missing.json");
   });
 
+  it("does not report an unreadable file as absent", async () => {
+    const { storage, adapter } = createStorage();
+    const denied = Object.assign(new Error("forbidden"), { code: "EACCES" });
+    adapter.stat.mockRejectedValue(denied);
+
+    await expect(storage.exists("data/state.json")).rejects.toBe(denied);
+  });
+
+  it("stops a write when checking its parent directory is denied", async () => {
+    const { storage, adapter } = createStorage();
+    adapter.stat.mockRejectedValue(Object.assign(new Error("forbidden"), { code: "EACCES" }));
+    adapter.mkdir.mockResolvedValue();
+    adapter.write.mockResolvedValue();
+
+    await expect(storage.write("data/state.json", "new-state")).resolves.toMatchObject({
+      ok: false,
+      error: { code: "E302_PERMISSION_DENIED", message: expect.stringContaining("data") },
+    });
+    expect(adapter.mkdir).not.toHaveBeenCalled();
+    expect(adapter.write).not.toHaveBeenCalled();
+  });
+
   it("rejects traversal and absolute paths before touching the adapter", async () => {
     const { storage, adapter } = createStorage();
 
@@ -115,6 +137,65 @@ describe("FileStorage path boundaries", () => {
 });
 
 describe("FileStorage atomic recovery", () => {
+  it("reports a backup cleanup failure without rolling back a committed write", async () => {
+    const { storage, adapter } = createStorage();
+    const targetPath = "plugin-data/data/state.json";
+    adapter.stat.mockResolvedValue({ type: "folder" });
+    adapter.read.mockResolvedValue("original");
+    adapter.rename.mockResolvedValue();
+    adapter.remove.mockImplementation(async (path) => {
+      if (path.endsWith(".bak")) throw Object.assign(new Error("forbidden"), { code: "EACCES" });
+    });
+
+    const result = await storage.atomicWrite("data/state.json", "new-state");
+
+    expect(result).toMatchObject({ ok: false, error: { code: "E302_PERMISSION_DENIED", details: { committed: true } } });
+    expect(adapter.write).not.toHaveBeenCalledWith(targetPath, "original");
+  });
+
+  it("retains cleanup diagnostics alongside the original commit failure", async () => {
+    const { storage, adapter } = createStorage();
+    const commitError = Object.assign(new Error("rename failed"), { code: "EIO" });
+    const cleanupError = Object.assign(new Error("cannot remove temp"), { code: "EACCES" });
+    adapter.stat.mockResolvedValue({ type: "folder" });
+    adapter.read.mockRejectedValue(Object.assign(new Error("missing"), { code: "ENOENT" }));
+    adapter.rename.mockRejectedValue(commitError);
+    adapter.remove.mockRejectedValue(cleanupError);
+
+    await expect(storage.atomicWrite("data/state.json", "new-state")).resolves.toMatchObject({
+      ok: false,
+      error: { details: { error: commitError, cleanupError, tempPath: "plugin-data/data/state.json.tmp" } },
+    });
+  });
+
+  it("commits concurrent writes to the same path without sharing temporary files", async () => {
+    const { storage, adapter } = createStorage();
+    const files = new Map([["plugin-data/data/state.json", "original"]]);
+    const missing = () => Object.assign(new Error("missing"), { code: "ENOENT" });
+    adapter.stat.mockResolvedValue({ type: "folder" });
+    adapter.read.mockImplementation(async (path) => {
+      if (!files.has(path)) throw missing();
+      return files.get(path)!;
+    });
+    adapter.write.mockImplementation(async (path, content) => { files.set(path, content); });
+    adapter.remove.mockImplementation(async (path) => {
+      if (!files.delete(path)) throw missing();
+    });
+    adapter.rename.mockImplementation(async (from, to) => {
+      if (!files.has(from)) throw missing();
+      files.set(to, files.get(from)!);
+      files.delete(from);
+    });
+
+    const results = await Promise.all([
+      storage.atomicWrite("data/state.json", "first"),
+      storage.atomicWrite("data/state.json", "second"),
+    ]);
+
+    expect(results).toEqual([{ ok: true, value: undefined }, { ok: true, value: undefined }]);
+    expect([...files.entries()]).toEqual([["plugin-data/data/state.json", "second"]]);
+  });
+
   it("preserves reset backup snapshots including copied tmp and bak files", async () => {
     const { storage, adapter } = createStorage();
     const backupRoot = "plugin-data/data/backups";

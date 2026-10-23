@@ -61,6 +61,7 @@ function isSafeRelativePath(value: unknown): value is string {
 export class FileStorage {
   private vault: Vault;
   private basePath: string;
+  private readonly atomicWrites = new Map<string, Promise<void>>();
 
   /** 构造函数 */
   constructor(vault: Vault, basePath?: string) {
@@ -245,10 +246,24 @@ export class FileStorage {
     if (!isSafeRelativePath(path)) {
       return err("E101_INVALID_INPUT", `Invalid relative path: ${path}`);
     }
+    // 同一路径共用恢复文件，提交与回滚必须整体串行；不同路径仍可并行。
+    const operation = (this.atomicWrites.get(path) ?? Promise.resolve())
+      .then(() => this.commitAtomicWrite(path, content));
+    const settled = operation.then(() => undefined, () => undefined);
+    this.atomicWrites.set(path, settled);
+    try {
+      return await operation;
+    } finally {
+      if (this.atomicWrites.get(path) === settled) this.atomicWrites.delete(path);
+    }
+  }
+
+  private async commitAtomicWrite(path: string, content: string): Promise<Result<void>> {
     const fullPath = this.resolvePath(path);
     const tempPath = `${fullPath}.tmp`;
     const backupPath = `${fullPath}.bak`;
     let backupCreated = false;
+    let committed = false;
     
     try {
       // 确保父目录存在（使用原始 path 而非 fullPath，因为 ensureDir 内部会调用 resolvePath）
@@ -285,19 +300,25 @@ export class FileStorage {
 
       // DataAdapter.rename 是 Obsidian 的标准提交能力；失败时进入备份回滚。
       await this.vault.adapter.rename(tempPath, fullPath);
+      committed = true;
 
       if (backupCreated) {
-        await this.cleanupTempFile(backupPath);
+        await this.removeFullPath(backupPath);
       }
       return ok(undefined);
     } catch (error) {
-      await this.cleanupTempFile(tempPath);
+      let cleanupError: unknown;
+      try {
+        await this.removeFullPath(tempPath);
+      } catch (cause) {
+        cleanupError = cause;
+      }
       let restoreError: unknown;
-      if (backupCreated) {
+      if (backupCreated && !committed) {
         try {
           const backupContent = await this.vault.adapter.read(backupPath);
           await this.vault.adapter.write(fullPath, backupContent);
-          await this.cleanupTempFile(backupPath);
+          await this.removeFullPath(backupPath);
         } catch (candidate) {
           // 恢复失败时绝不删除 .bak；它仍是最后一份可恢复数据。
           restoreError = candidate;
@@ -306,20 +327,9 @@ export class FileStorage {
       
       return err(
         mapFsErrorToErrorCode(error),
-        `Atomic write failed for file: ${path}`,
-        restoreError === undefined
-          ? error
-          : { error, restoreError, backupPath }
+        committed ? `Atomic write committed but cleanup failed for file: ${path}` : `Atomic write failed for file: ${path}`,
+        { error, restoreError, cleanupError, backupPath, tempPath, committed }
       );
-    }
-  }
-
-  /** 清理临时文件 */
-  private async cleanupTempFile(tempPath: string): Promise<void> {
-    try {
-      await this.vault.adapter.remove(tempPath);
-    } catch {
-      // 忽略清理错误（文件可能不存在），避免掩盖原始错误
     }
   }
 
@@ -349,13 +359,7 @@ export class FileStorage {
     if (!isSafeRelativePath(path)) {
       return false;
     }
-    try {
-      const fullPath = this.resolvePath(path);
-      const stat = await this.vault.adapter.stat(fullPath);
-      return stat !== null && stat !== undefined;
-    } catch {
-      return false;
-    }
+    return this.fullPathExists(this.resolvePath(path));
   }
 
   /** 确保目录存在 */
@@ -377,8 +381,8 @@ export class FileStorage {
         let stat = null;
         try {
           stat = await this.vault.adapter.stat(currentPath);
-        } catch {
-          // stat 抛异常视为不存在
+        } catch (error) {
+          if (!isMissingFsError(error)) throw error;
         }
 
         if (stat !== null && stat !== undefined) {
@@ -401,8 +405,8 @@ export class FileStorage {
           let verifyStat = null;
           try {
             verifyStat = await this.vault.adapter.stat(currentPath);
-          } catch {
-            // ignore
+          } catch (error) {
+            if (!isMissingFsError(error)) throw error;
           }
           if (!verifyStat || verifyStat.type !== "folder") {
             return err(

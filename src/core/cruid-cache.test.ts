@@ -75,6 +75,27 @@ function createApp(
 }
 
 describe("CruidCache lifecycle", () => {
+  it("removes node identity and notifies dependents when a note becomes a non-Markdown file", async () => {
+    const file = createFile("notes/one.md");
+    const harness = createApp([file], () => ({ cruid: "one" }));
+    const cache = new CruidCache(harness.app, createLogger());
+    const deleted = vi.fn();
+    cache.onDelete(deleted);
+    cache.start();
+    await cache.waitUntilReady();
+    const rename = [...harness.vaultListeners.entries()].find(([ref]) => ref.includes("vault-rename"))![1];
+
+    file.path = "notes/one.txt";
+    file.extension = "txt";
+    rename(file, "notes/one.md");
+
+    expect(cache.getCruidByPath("notes/one.md")).toBeNull();
+    expect(cache.getPath("one")).toBeNull();
+    expect(deleted).toHaveBeenCalledWith({ cruid: "one", path: "notes/one.md" });
+    await cache.dispose();
+    expect(harness.vaultListeners.size).toBe(0);
+  });
+
   it("finishes initial mappings when browser timers are suspended in a background window", async () => {
     const files = Array.from({ length: 101 }, (_, index) => createFile(`notes/${index}.md`));
     const harness = createApp(files, (file) => ({ cruid: file.basename }));

@@ -126,6 +126,7 @@ function createHarness(contents: Record<string, string>) {
   });
   return {
     service,
+    removeNote: (path: string) => files.delete(path),
     contents,
     cachedRead,
     embed,
@@ -144,6 +145,45 @@ function createHarness(contents: Record<string, string>) {
 }
 
 describe("SemanticIndexRebuilder", () => {
+  it.each(["missing", "rebuild"] as const)("rejects late results for removed notes during %s indexing", async (mode) => {
+    const harness = createHarness({ "notes/a.md": note("a") });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    harness.embed.mockImplementationOnce(async () => { await gate; return ok({ embedding: [1, 0, 0] }); });
+    const pending = mode === "missing" ? harness.service.embedMissing() : harness.service.rebuild();
+    await vi.waitFor(() => expect(harness.embed).toHaveBeenCalledOnce());
+    harness.removeNote("notes/a.md");
+    release();
+
+    const result = await pending;
+
+    expect(result).toMatchObject(mode === "missing"
+      ? { ok: true, value: { indexed: 0, failed: 1 } }
+      : { ok: false, error: { code: "E320_TASK_CONFLICT" } });
+    expect(harness.upsert).not.toHaveBeenCalled();
+    expect(harness.replaceAll).not.toHaveBeenCalled();
+    await harness.service.dispose();
+  });
+
+  it("does not recreate a deleted note's index entry after a delayed embedding response", async () => {
+    const harness = createHarness({ "notes/a.md": note("a") });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    harness.embed.mockImplementationOnce(async () => {
+      await gate;
+      return ok({ embedding: [1, 0, 0] });
+    });
+    const pending = harness.service.embedOne("a");
+    await vi.waitFor(() => expect(harness.embed).toHaveBeenCalledOnce());
+    harness.removeNote("notes/a.md");
+    release();
+
+    await expect(pending).resolves.toMatchObject({ ok: false, error: { code: "E320_TASK_CONFLICT" } });
+    expect(harness.indexed.has("a")).toBe(false);
+    expect(harness.refreshNode).not.toHaveBeenCalled();
+    await harness.service.dispose();
+  });
+
   it("generates every embedding before replacing the index and refreshing duplicates", async () => {
     const harness = createHarness({
       "notes/a.md": note("a", "Alpha"),

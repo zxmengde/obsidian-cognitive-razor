@@ -68,7 +68,9 @@ export class CruidCache {
     // 文件重命名/移动：更新 pathToCruid（同一 TFile 对象 path 会变化）
     const renameRef = this.app.vault.on("rename", (file, oldPath) => {
       if (generation !== this.generation) return;
-      if (!(file instanceof TFile) || file.extension !== "md") {
+      if (!(file instanceof TFile)) return;
+      if (file.extension !== "md") {
+        this.removeMapping(oldPath, generation, file);
         return;
       }
       const known = this.pathToCruid.get(oldPath);
@@ -241,7 +243,7 @@ export class CruidCache {
   }
 
   /** 删除路径对应的映射，并通知依赖方清理旧概念状态。 */
-  private removeMapping(path: string, generation: number): void {
+  private removeMapping(path: string, generation: number, renamedFile?: TFile): void {
     if (generation !== this.generation) {
       return;
     }
@@ -265,7 +267,8 @@ export class CruidCache {
     this.pathToCruid.delete(path);
 
     const existing = this.cruidToFile.get(cruid);
-    if (existing && existing.path === path) {
+    // rename 回调中的 TFile.path 已变更，仍须按同一文件身份清理旧映射。
+    if (existing && (existing.path === path || existing === renamedFile)) {
       this.cruidToFile.delete(cruid);
     }
 

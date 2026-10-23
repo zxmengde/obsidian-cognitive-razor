@@ -35,7 +35,7 @@ function createRuntime(
   settingsStore: SettingsStore = createSettingsStore(),
   i18n: I18n = new I18n(),
 ): PluginRuntime {
-  const app = { vault: {}, metadataCache: {} } as unknown as App;
+  const app = { vault: { adapter: { stat: async () => null } }, metadataCache: {} } as unknown as App;
   return new PluginRuntime(app, "plugin", settingsStore, i18n);
 }
 

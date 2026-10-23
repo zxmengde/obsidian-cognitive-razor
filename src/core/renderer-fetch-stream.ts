@@ -1,6 +1,6 @@
 /** Explicit renderer transport; never selected by runtime failure or provider guessing. */
 import { createResponsesStreamCompletionTracker, readProviderStreamUsage } from "./provider-stream-codec";
-import { ProviderStreamAbortError, ProviderStreamNetworkError, ProviderStreamTimeoutError } from "./provider-streaming";
+import { MAX_PROVIDER_STREAM_BYTES, ProviderStreamAbortError, ProviderStreamNetworkError, ProviderStreamTimeoutError } from "./provider-streaming";
 import type { ProviderStreamDiagnostics, ProviderStreamPhase, ProviderStreamRequester, ProviderStreamResponse } from "./provider-streaming";
 import type { ProviderTokenUsage } from "./provider-token-usage";
 
@@ -112,7 +112,7 @@ export function createRendererStreamRequester(
           if (firstChunkMs !== null) maxChunkGapMs = Math.max(maxChunkGapMs, chunkMs - lastChunkMs);
           firstChunkMs ??= chunkMs; lastChunkMs = chunkMs; chunkCount++;
           bytes += part.value.byteLength;
-          if (bytes > (limits.maxBytes ?? 8 * 1024 * 1024)) { fail(new ProviderStreamNetworkError(phase, "STREAM_SIZE_LIMIT")); return; }
+          if (bytes > (limits.maxBytes ?? MAX_PROVIDER_STREAM_BYTES)) { fail(new ProviderStreamNetworkError(phase, "STREAM_SIZE_LIMIT")); return; }
           resetIdle();
           const text = decoder.decode(part.value, { stream: true });
           body += text;

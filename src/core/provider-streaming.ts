@@ -17,6 +17,7 @@ export type ProviderStreamProtocol =
   | "gemini-generative-language";
 
 export type ProviderStreamTransport = "node-http" | "renderer-fetch";
+export const MAX_PROVIDER_STREAM_BYTES = 8 * 1024 * 1024;
 
 export interface ProviderStreamRequest {
   /** Lets the transport honor authoritative Responses terminal events. */
@@ -197,8 +198,12 @@ export const requestProviderStream: ProviderStreamRequester = (input) =>
         const bytes = typeof chunk === "string"
           ? new TextEncoder().encode(chunk)
           : Uint8Array.from(chunk);
-        chunks.push(bytes);
         totalBytes += bytes.byteLength;
+        if (totalBytes > MAX_PROVIDER_STREAM_BYTES) {
+          settleReject(new ProviderStreamNetworkError("after-response", "STREAM_SIZE_LIMIT"));
+          return;
+        }
+        chunks.push(bytes);
         const end = terminal?.(streamDecoder.decode(bytes, { stream: true }));
         if (end !== undefined && (incoming.statusCode ?? 0) >= 200 && (incoming.statusCode ?? 0) < 300) {
           responseEnded = true;

@@ -31,6 +31,22 @@ interface StorageHarness {
 
 const indexes: VectorIndex[] = [];
 
+it.each([1e200, 1e-200])("preserves cosine similarity for finite embeddings at scale %s", async (scale) => {
+  const harness = createStorage();
+  const index = createIndex(harness);
+  expect((await index.load()).ok).toBe(true);
+  expect((await index.upsert({ uid: "scaled", type: "domain", embedding: [3 * scale, 4 * scale, 0] })).ok).toBe(true);
+  const reloaded = createIndex(harness);
+  expect((await reloaded.load()).ok).toBe(true);
+
+  const result = await reloaded.search("domain", [0, 1, 0], 1);
+
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw new Error(result.error.message);
+  expect(result.value).toHaveLength(1);
+  expect(result.value[0].similarity).toBeCloseTo(0.8, 12);
+});
+
 afterEach(async () => {
   await Promise.all(indexes.splice(0).map((index) => index.dispose()));
 });

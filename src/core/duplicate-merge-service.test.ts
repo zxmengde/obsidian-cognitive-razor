@@ -13,7 +13,7 @@ const logger: ILogger = { debug: () => undefined, info: () => undefined, warn: (
 afterEach(() => vi.useRealTimers());
 
 function readFrontmatterTimestamp(content: string, field: "created" | "updated"): string | undefined {
-  return new RegExp(`^${field}:\\s*(.*)$`, "m").exec(content)?.[1];
+  return extractFrontmatter(content)?.frontmatter[field];
 }
 
 function file(path: string): TFile {

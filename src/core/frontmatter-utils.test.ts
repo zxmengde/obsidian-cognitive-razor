@@ -18,6 +18,22 @@ function validNote(overrides: Record<string, string> = {}): string {
 }
 
 describe("frontmatter current contract", () => {
+  it.each(["\0", "\b", "\f", "\u001f", "\u0085", "\u2028", "\u2029", "\ud800"])("round-trips escaped characters in model-provided aliases: %j", (character) => {
+    const frontmatter = generateFrontmatter({
+      cruid: "node-id", type: "entity", name: "测试", aliases: [`alias${character}tail`],
+    });
+
+    const persisted = new TextDecoder().decode(new TextEncoder().encode(generateMarkdownContent(frontmatter, "正文")));
+    expect(extractFrontmatter(persisted)?.frontmatter).toEqual(frontmatter);
+  });
+
+  it("preserves scalar string types when rewriting valid frontmatter", () => {
+    const parsed = extractFrontmatter(validNote({ cruid: '"true"', created: '"null"', updated: '"42"' }));
+    expect(parsed).not.toBeNull();
+
+    expect(extractFrontmatter(generateMarkdownContent(parsed!.frontmatter, "正文"))?.frontmatter).toEqual(parsed!.frontmatter);
+  });
+
   it("round-trips the single current frontmatter shape", () => {
     const frontmatter = generateFrontmatter({
       cruid: "123e4567-e89b-12d3-a456-426614174000",

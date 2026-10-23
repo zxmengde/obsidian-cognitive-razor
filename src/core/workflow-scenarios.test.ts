@@ -34,7 +34,7 @@ afterEach(async () => {
 });
 
 function readFrontmatterTimestamp(content: string, field: "created" | "updated"): string | undefined {
-  return new RegExp(`^${field}:\\s*(.*)$`, "m").exec(content)?.[1];
+  return extractFrontmatter(content)?.frontmatter[field];
 }
 
 /** Real storage, queue, coordinator and note projection; only the host adapter

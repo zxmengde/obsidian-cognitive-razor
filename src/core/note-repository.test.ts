@@ -13,6 +13,17 @@ const logger: ILogger = {
 };
 
 describe("NoteRepository creation", () => {
+  it.each(["EACCES", "EIO"])("preserves a directory stat error before creating a note: %s", async (code) => {
+    const failure = Object.assign(new Error("directory unavailable"), { code });
+    const adapter = { stat: vi.fn().mockRejectedValue(failure), mkdir: vi.fn().mockResolvedValue(undefined) };
+    const create = vi.fn();
+    const repository = new NoteRepository({ vault: { adapter, create } } as unknown as App, logger);
+
+    await expect(repository.create("notes/example.md", "content")).rejects.toBe(failure);
+    expect(adapter.mkdir).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it("appends cards to the latest user content without changing any existing bytes", async () => {
     const file = new TFile(); file.path = "cards.md";
     const original = "---\r\ntags: [decks]\r\n---\r\n## 手工卡\r\n答案  ";

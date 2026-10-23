@@ -117,9 +117,9 @@ export function isConfirmedConcept(value: unknown): value is ConfirmedConcept {
   const name = normalizeName(candidate.name);
   if (!name.ok) return false;
   const parents = normalizeParents(candidate.parents);
-  if (!parents.ok || !candidate.name || typeof candidate.name !== "object") return false;
+  if (!parents.ok || !Array.isArray(candidate.parents) || !candidate.name || typeof candidate.name !== "object") return false;
   const rawName = candidate.name as Record<string, unknown>;
   if (name.value.chinese !== rawName.chinese || name.value.english !== rawName.english) return false;
-  const rawParents = candidate.parents as unknown[];
+  const rawParents = candidate.parents;
   return parents.value.length === rawParents.length && parents.value.every((parent, index) => parent === rawParents[index]);
 }

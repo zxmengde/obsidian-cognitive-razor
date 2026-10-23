@@ -121,8 +121,8 @@ export class NoteRepository {
       let currentStat = null;
       try {
         currentStat = await adapter.stat(current);
-      } catch {
-        // Missing directories may be reported as null or as an adapter error.
+      } catch (error) {
+        if ((error as { code?: unknown } | null)?.code !== "ENOENT") throw error;
       }
       if (currentStat) {
         if (currentStat.type !== "folder") {
@@ -136,8 +136,8 @@ export class NoteRepository {
         let createdByPeer = null;
         try {
           createdByPeer = await adapter.stat(current);
-        } catch {
-          // Preserve the original mkdir error below.
+        } catch (cause) {
+          if ((cause as { code?: unknown } | null)?.code !== "ENOENT") throw cause;
         }
         if (!createdByPeer || createdByPeer.type !== "folder") {
           throw error;

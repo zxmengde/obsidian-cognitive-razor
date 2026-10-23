@@ -66,4 +66,14 @@ describe("concept domain kernel", () => {
       return result.ok && result.value.type === type;
     }));
   });
+
+  it.each([undefined, null, "[[parent]]", {}])("rejects malformed confirmed parents without throwing: %s", (parents) => {
+    expect(isConfirmedConcept({
+      type: "entity",
+      name: { chinese: "实体", english: "entity" },
+      coreDefinition: "说明",
+      source: "define",
+      parents,
+    })).toBe(false);
+  });
 });

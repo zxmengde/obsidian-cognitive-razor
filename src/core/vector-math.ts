@@ -11,19 +11,22 @@
  * 零向量直接返回原数组。
  */
 export function normalizeVector(vector: number[]): number[] {
+    let scale = 0;
+    for (let i = 0; i < vector.length; i++) {
+        scale = Math.max(scale, Math.abs(vector[i]));
+    }
+    if (scale === 0) return vector;
+
+    // 先缩放再平方，避免有限嵌入分量的平方溢出或下溢。
     let norm = 0;
     for (let i = 0; i < vector.length; i++) {
-        norm += vector[i] * vector[i];
+        norm += (vector[i] / scale) ** 2;
     }
     norm = Math.sqrt(norm);
 
-    if (norm === 0) {
-        return vector;
-    }
-
     const normalized = new Array<number>(vector.length);
     for (let i = 0; i < vector.length; i++) {
-        normalized[i] = vector[i] / norm;
+        normalized[i] = (vector[i] / scale) / norm;
     }
     return normalized;
 }

@@ -1,6 +1,8 @@
 import * as http from "http";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Result } from "../types";
+import { DEFAULT_SETTINGS, type SettingsStore } from "../data/settings-store";
+import { ProviderManager } from "./provider-manager";
 import {
   aggregateProviderStream,
   hasProviderStreamFraming,
@@ -15,6 +17,48 @@ import {
 } from "./provider-response-parsers";
 
 const servers: http.Server[] = [];
+
+it("keeps an oversized local HTTP response uncertain without repeating the model request", async () => {
+  let requests = 0;
+  await withServer((_request, response) => {
+    requests++;
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+    response.end("x".repeat(8 * 1024 * 1024 + 1));
+  }, async (url) => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.enableStreamingKeepalive = true;
+    settings.providerTimeoutMs = 5000;
+    settings.providerMaxAttempts = 3;
+    settings.providers.local = { apiKey: "", baseUrl: new URL("/v1", url).href,
+      apiFormat: "openai-chat-completions", embeddingApiFormat: "disabled",
+      defaultChatModel: "synthetic", defaultEmbedModel: "", enabled: true };
+    const manager = new ProviderManager({ getSettings: () => settings } as SettingsStore,
+      { debug() {}, info() {}, warn() {}, error() {} });
+    try {
+      const result = await manager.chat({ providerId: "local", model: "synthetic", messages: [{ role: "user", content: "synthetic" }] });
+      expect(result).toMatchObject({ ok: false, error: { code: "E206_PROVIDER_REQUEST_UNCERTAIN" } });
+      expect(requests).toBe(1);
+      expect(manager.getExternalCallDiagnostics().attempts).toEqual([
+        expect.objectContaining({ outcome: "uncertain", errorCode: "E206_PROVIDER_REQUEST_UNCERTAIN" }),
+      ]);
+    } finally { manager.dispose(); }
+  });
+});
+
+it.each([8 * 1024 * 1024, 8 * 1024 * 1024 + 1])("bounds Node stream responses by UTF-8 bytes: %s", async (byteLength) => {
+  const body = "知".repeat(Math.floor(byteLength / 3)) + "x".repeat(byteLength % 3);
+  await withServer((_request, response) => {
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+    response.end(body);
+  }, async (url) => {
+    const outcome = await requestProviderStream({ url, headers: {}, body: "{}", timeoutMs: 5000 }).then(
+      response => ({ bytes: new TextEncoder().encode(response.body).byteLength }),
+      (error: unknown) => ({ message: (error as Error).message, phase: (error as { phase: string }).phase }),
+    );
+    expect(outcome).toEqual(byteLength === 8 * 1024 * 1024
+      ? { bytes: byteLength } : { message: "STREAM_SIZE_LIMIT", phase: "after-response" });
+  });
+});
 
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => {

@@ -34,13 +34,8 @@ function readNoteState(value: string): NoteState | null {
 }
 
 function formatYamlString(value: string): string {
-  const escaped = value
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .replace(/\r/g, "\\r")
-    .replace(/\n/g, "\\n")
-    .replace(/\t/g, "\\t");
-  return `"${escaped}"`;
+  // JSON 双引号字符串兼容 YAML，并能保留 UTF-8 写入时会丢失的孤立代理项。
+  return JSON.stringify(value);
 }
 
 function normalizeParentLink(value: string): string | null {
@@ -136,12 +131,12 @@ function frontmatterToYaml(frontmatter: CRFrontmatter): string {
   const lines: string[] = [];
   
   // 必填字段按固定顺序
-  lines.push(`cruid: ${frontmatter.cruid}`);
+  lines.push(`cruid: ${formatYamlString(frontmatter.cruid)}`);
   lines.push(`type: ${frontmatter.type}`);
   lines.push(`name: ${formatYamlString(frontmatter.name)}`);
   lines.push(`status: ${frontmatter.status}`);
-  lines.push(`created: ${frontmatter.created}`);
-  lines.push(`updated: ${frontmatter.updated}`);
+  lines.push(`created: ${formatYamlString(frontmatter.created)}`);
+  lines.push(`updated: ${formatYamlString(frontmatter.updated)}`);
   
   // 必填数组字段 - 始终输出（即使为空）
   const aliasesValue = Array.isArray(frontmatter.aliases) && frontmatter.aliases.length > 0
