@@ -1,6 +1,6 @@
 {
 	"name": "cognitive-razor",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"description": "Cognitive Razor - 公理化知识管理插件",
 	"main": "main.js",
 	"type": "module",

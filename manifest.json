@@ -1,7 +1,7 @@
 {
 	"id": "cognitive-razor",
 	"name": "Cognitive Razor",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"minAppVersion": "1.5.7",
 	"description": "AI-powered knowledge management that transforms vague concepts into structured knowledge nodes with semantic deduplication and reversible operations.",
 	"author": "Cognitive Razor Team",
