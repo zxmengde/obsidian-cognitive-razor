@@ -4,7 +4,7 @@ import sveltePlugin from "esbuild-svelte";
 import sveltePreprocess from "svelte-preprocess";
 import { compile } from "svelte/compiler";
 import { I18n } from "../../core/i18n";
-import { ok, type DuplicateMergeDraft, type DuplicatePair } from "../../types";
+import { err, ok, type DuplicateMergeDraft, type DuplicatePair } from "../../types";
 
 let ui: {
   mount: (component: unknown, options: { target: HTMLElement; props: Record<string, unknown> }) => object;
@@ -51,6 +51,25 @@ function fixture() {
 }
 
 describe("Merge dialog link fidelity", () => {
+  it("keeps the editable draft and offers regeneration after a source-content conflict", async () => {
+    const f = fixture();
+    Object.assign(f.context.application.duplicates, { confirmMerge: vi.fn(async () => err("E321_MERGE_CONTENT_CHANGED", "private note body")) });
+    const target = document.body.appendChild(document.createElement("div"));
+    const onsuccess = vi.fn();
+    const instance = ui.mount(ui.MergeHost, { target, props: { context: f.context, pair: f.pair, initialPreview: f.preview, onclose: vi.fn(), onsuccess } });
+    try {
+      ui.flushSync();
+      const labels = f.context.i18n.messages.workbench.duplicates;
+      Array.from(document.body.querySelectorAll("button")).find(button => button.textContent?.trim() === labels.confirmMerge)!.click();
+      await vi.waitFor(() => { ui.flushSync(); expect(document.body.textContent).toContain("笔记已修改，合并已停止"); });
+      expect(document.body.textContent).not.toContain("private note body");
+      expect(document.body.querySelectorAll<HTMLTextAreaElement>("textarea")[1].value).toBe("body");
+      const regenerate = Array.from(document.body.querySelectorAll("button")).find(button => button.textContent?.trim() === labels.regenerateDraft)!;
+      expect(regenerate.disabled).toBe(false);
+      expect(onsuccess).not.toHaveBeenCalled();
+      expect(f.startMerge).not.toHaveBeenCalled();
+    } finally { await ui.unmount(instance); target.remove(); }
+  });
   it("closes after durable queue acceptance without waiting for a model preview", async () => {
     const f = fixture();
     const startMerge = vi.fn(async () => ok("merge-workflow"));

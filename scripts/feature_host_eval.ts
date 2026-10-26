@@ -45,6 +45,7 @@ export async function run(app: App, fixtures: any, records: any) {
     return generateMarkdownContent(generateFrontmatter({ cruid: id, type: 'entity', name, parents, aliases: [name], tags: ['cr-test'] }), body);
   }
   const results: any = { startedAt: new Date().toISOString(), vault: 'C:/code/obsidian', replay: 'Recorded live GPT-6.1 Sol results, no additional host model request', excluded: ['Installed Cognitive Razor UI and task queue', 'Real embedding/vector refresh: controlled reindex callback only'], checks: [], files: [] };
+  const runTag = Date.now().toString(36);
   lastResults = results;
   const check = (name: string, value: boolean, detail?: unknown) => results.checks.push({ name, passed: value, ...(detail === undefined ? {} : { detail }) });
   const getResult = (id: string) => unwrap(records.cases.find((c: any) => c.id === id).result) as any;
@@ -108,7 +109,8 @@ export async function run(app: App, fixtures: any, records: any) {
   for (const c of fixtures.cases.filter((c: any) => c.taskType === 'merge')) {
     const preview = getResult(c.id);
     const primary = await create(`${TEST_ROOT}/知识/${c.id}-主笔记.md`, content(`${c.id}-a`, c.title, c.primary));
-    const secondary = await create(`${TEST_ROOT}/知识/${c.id}-冗余笔记.md`, content(`${c.id}-b`, c.title, c.secondary));
+    // 每轮使用独立回收站文件，避免旧的同名测试记录造成假阳性。
+    const secondary = await create(`${TEST_ROOT}/知识/${c.id}-冗余笔记-${runTag}.md`, content(`${c.id}-b`, c.title, c.secondary));
     const reference = await create(`${TEST_ROOT}/知识/${c.id}-引用.md`, content(`${c.id}-ref`, `${c.id}-引用`, `正文引用 [[${secondary.path}|保留显示文本]]。\n\n代码不应修复：\`[[${secondary.path}]]\`。`, [`[[${secondary.path}]]`]));
     // Host metadata positions are asynchronous; wait only for our own reference.
     for (let n = 0; n < 40 && !app.metadataCache.getFileCache(reference)?.links?.length; n++) await new Promise(r => setTimeout(r, 100));
@@ -140,9 +142,9 @@ export async function run(app: App, fixtures: any, records: any) {
 }
 
 /** Deterministic reproduction of the known edit window, using real Vault.process. */
-export async function runMergeRace(app: App, records: any, timing: 'after_confirmation' | 'before_confirmation' = 'after_confirmation') {
+export async function runMergeRace(app: App, records: any, timing: 'after_confirmation' | 'before_confirmation' | 'before_confirmation_redundant' = 'after_confirmation') {
   if ((app.vault.adapter as any).getBasePath().replaceAll('\\', '/').toLowerCase() !== 'c:/code/obsidian') throw new Error('Wrong vault');
-  const caseName = timing === 'before_confirmation' ? 'merge_stale' : 'merge_race';
+  const caseName = timing === 'after_confirmation' ? 'merge_race' : timing === 'before_confirmation' ? 'merge_stale' : 'merge_stale_redundant';
   const path = `${TEST_ROOT}/知识/${caseName}-主笔记.md`;
   const redundantPath = `${TEST_ROOT}/知识/${caseName}-冗余笔记.md`;
   const notes = new NoteRepository(app, logger);
@@ -164,15 +166,18 @@ export async function runMergeRace(app: App, records: any, timing: 'after_confir
   const write = journal.atomicWrite.bind(journal);
   let first = true;
   journal.atomicWrite = async (p, value) => { if (timing === 'after_confirmation' && first) { first = false; entered(); await blocked; } return write(p, value); };
-  const service = new DuplicateMergeService({ app: scoped, fileStorage: journal, noteRepository: notes, cruidCache: { getFile: (id: string) => id === pair.nodeIdA ? primary : id === pair.nodeIdB && app.vault.getAbstractFileByPath(redundantPath) ? redundant : undefined } as any, duplicateManager: { getPair: () => pair, removePairsByNodeId: async () => ok(undefined) } as any, providerManager: {} as any, promptManager: {} as any, settingsStore: {} as any, reindex: async () => ok({ indexed: 1, failed: 0 }), logger });
+  const deps = { app: scoped, fileStorage: journal, noteRepository: notes, cruidCache: { getFile: (id: string) => id === pair.nodeIdA ? primary : id === pair.nodeIdB && app.vault.getAbstractFileByPath(redundantPath) ? redundant : undefined } as any, duplicateManager: { getPair: () => pair, removePairsByNodeId: async () => ok(undefined) } as any, providerManager: {} as any, promptManager: {} as any, settingsStore: {} as any, reindex: async () => ok({ indexed: 1, failed: 0 }), logger };
+  const service = new DuplicateMergeService(deps);
+  unwrap(await service.initialize());
   const captured = unwrap(await service.captureMergeInput(pair.id, pair.nodeIdA));
   const draft = { ...original.draft, pairId: pair.id, canonicalNodeId: pair.nodeIdA, redundantNodeId: pair.nodeIdB, canonicalContentHash: captured.canonical.contentHash, redundantContentHash: captured.redundant.contentHash };
   const marker = 'CR测试并发新增的重要内容：本段必须保留。';
+  const changedFile = timing === 'before_confirmation_redundant' ? redundant : primary;
   let beforeCommit;
   let pending;
-  if (timing === 'before_confirmation') {
-    await app.vault.append(primary, `\n\n${marker}\n`);
-    beforeCommit = await app.vault.read(primary);
+  if (timing !== 'after_confirmation') {
+    await app.vault.append(changedFile, `\n\n${marker}\n`);
+    beforeCommit = await app.vault.read(changedFile);
     pending = service.confirmMerge(draft, captured.linkRepairPlan);
   } else {
     pending = service.confirmMerge(draft, captured.linkRepairPlan);
@@ -182,6 +187,20 @@ export async function runMergeRace(app: App, records: any, timing: 'after_confir
   }
   const result = await pending;
   const afterCommit = await app.vault.read(primary);
+  const recovery = service.getRecoveryOperations();
+  let resumed;
+  if (recovery.length) {
+    await service.dispose();
+    const reloaded = new DuplicateMergeService(deps);
+    unwrap(await reloaded.initialize());
+    resumed = await reloaded.resumeMerge(recovery[0].id);
+    await reloaded.dispose();
+  }
   await service.dispose();
-  return { checkedAt: new Date().toISOString(), timing, requirement: 'Preserve an edit made after the draft snapshot was captured', passed: afterCommit.includes(marker), result: result.ok ? { ok: true, phase: result.value.phase } : result, beforeCommit, afterCommit, files: [path, redundantPath], excluded: ['Controlled reindex callback; no real embedding request'] };
+  const finalContent = await app.vault.read(primary);
+  const redundantPresent = !!app.vault.getAbstractFileByPath(redundantPath);
+  const changedContent = app.vault.getAbstractFileByPath(changedFile.path) ? await app.vault.read(changedFile) : null;
+  const recoveryPassed = timing === 'after_confirmation' ? recovery.length === 1 && resumed && !resumed.ok && resumed.error.code === 'E321_MERGE_CONTENT_CHANGED' : recovery.length === 0;
+  const passed = !result.ok && result.error.code === 'E321_MERGE_CONTENT_CHANGED' && changedContent === beforeCommit && redundantPresent && recoveryPassed;
+  return { checkedAt: new Date().toISOString(), timing, requirement: 'Reject changed inputs and preserve their edits, including after recovery', passed, result: result.ok ? { ok: true, phase: result.value.phase } : result, beforeCommit, afterCommit, finalContent, changedContent, redundantPresent, recovery, ...(resumed ? { resumed } : {}), files: [path, redundantPath], excluded: ['Controlled reindex callback; no real embedding request'] };
 }

@@ -5,6 +5,7 @@ import type { CRFrontmatter, DuplicatePair, ILogger, PluginSettings, Result } fr
 import type { FileStorage } from "../data/file-storage";
 import { extractFrontmatter, generateFrontmatter, generateMarkdownContent } from "./frontmatter-utils";
 import { DuplicateMergeService } from "./duplicate-merge-service";
+import { NoteRepository } from "./note-repository";
 import { formatCRTimestamp } from "../utils/date-utils";
 import { renderInternalNoteLink } from "../utils/note-links";
 
@@ -54,6 +55,11 @@ function fixture(options: FixtureOptions = {}) {
     cachedRead: vi.fn(async (target: TFile) => files.get(target.path)?.content ?? ""),
     read: vi.fn(async (target: TFile) => files.get(target.path)?.content ?? ""),
     getAbstractFileByPath: (path: string) => files.get(path)?.file ?? null,
+    process: vi.fn(async (target: TFile, update: (content: string) => string) => {
+      const entry = files.get(target.path);
+      if (!entry) throw new Error("missing note");
+      entry.content = update(entry.content);
+    }),
     trash: vi.fn(async (target: TFile) => { files.delete(target.path); active.delete(target.path.includes("Canonical") ? "canonical" : "redundant"); }),
   };
   const app = {
@@ -66,13 +72,9 @@ function fixture(options: FixtureOptions = {}) {
       })),
     })) },
   };
+  const repository = new NoteRepository(app as never, logger);
   const noteRepository = {
-    replace: vi.fn(async (path: string, content: string) => {
-      const entry = files.get(path);
-      if (!entry) return "missing" as const;
-      entry.content = content;
-      return "updated" as const;
-    }),
+    replaceIfUnchanged: vi.fn(repository.replaceIfUnchanged.bind(repository)),
   };
   let removeCall = 0;
   const duplicateManager = {
@@ -117,6 +119,129 @@ function fixture(options: FixtureOptions = {}) {
 }
 
 describe("DuplicateMergeService", () => {
+  it.each(["canonical", "redundant"] as const)("rejects an old draft after the %s note changes before confirmation", async (changed) => {
+    const f = fixture();
+    const preview = await f.service.prepareMerge(f.pair.id, "canonical");
+    if (!preview.ok) throw new Error("preview failed");
+    f[changed].content += "\n草稿生成后新增的重要内容";
+    const canonical = f.canonical.content, redundant = f.redundant.content, incoming = f.incoming.content;
+
+    expect(await f.service.confirmMerge(preview.value.draft, preview.value.linkRepairPlan))
+      .toMatchObject({ ok: false, error: { code: "E321_MERGE_CONTENT_CHANGED" } });
+    expect(f.canonical.content).toBe(canonical);
+    expect(f.redundant.content).toBe(redundant);
+    expect(f.incoming.content).toBe(incoming);
+    expect(f.vault.trash).not.toHaveBeenCalled();
+    expect(f.service.getRecoveryOperations()).toEqual([]);
+  });
+
+  it("preserves canonical edits during the first journal save, including after reload and recovery", async () => {
+    const f = fixture();
+    const preview = await f.service.prepareMerge(f.pair.id, "canonical");
+    if (!preview.ok) throw new Error("preview failed");
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const writing = new Promise<void>(resolve => { entered = resolve; });
+    f.atomicWrite.mockImplementationOnce(async (path, content) => {
+      entered(); await gate;
+      f.storageFiles.set(path, content);
+      return ok(undefined);
+    });
+    const pending = f.service.confirmMerge(preview.value.draft, preview.value.linkRepairPlan);
+    await writing;
+    f.canonical.content += "\n确认后新增的重要内容";
+    const expected = f.canonical.content;
+    release();
+
+    expect(await pending).toMatchObject({ ok: false, error: { code: "E321_MERGE_CONTENT_CHANGED" } });
+    expect(f.canonical.content).toBe(expected);
+    expect(f.vault.trash).not.toHaveBeenCalled();
+    const recovery = f.service.getRecoveryOperations()[0];
+    expect(recovery).toMatchObject({ phase: "failed", error: { code: "E321_MERGE_CONTENT_CHANGED" } });
+    await f.service.dispose();
+    const reloaded = f.createService();
+    expect((await reloaded.initialize()).ok).toBe(true);
+    expect(await reloaded.resumeMerge(recovery.id)).toMatchObject({ ok: false, error: { code: "E321_MERGE_CONTENT_CHANGED" } });
+    expect(f.canonical.content).toBe(expected);
+    expect(f.incoming.content).toContain("[[archive/Redundant]]");
+    expect(f.files.has(f.redundant.file.path)).toBe(true);
+  });
+
+  it("preserves a reference note edited at the link-repair write boundary", async () => {
+    const f = fixture();
+    const preview = await f.service.prepareMerge(f.pair.id, "canonical");
+    if (!preview.ok) throw new Error("preview failed");
+    const process = f.vault.process.getMockImplementation()!;
+    let edited = false;
+    f.vault.process.mockImplementation(async (file, update) => {
+      if (file.path === f.incoming.file.path && !edited) {
+        edited = true;
+        f.incoming.content += "\n链接修复写入前新增的重要内容";
+      }
+      return process(file, update);
+    });
+
+    expect(await f.service.confirmMerge(preview.value.draft, preview.value.linkRepairPlan))
+      .toMatchObject({ ok: false, error: { code: "E321_MERGE_CONTENT_CHANGED" } });
+    expect(f.incoming.content).toContain("链接修复写入前新增的重要内容");
+    expect(f.vault.trash).not.toHaveBeenCalled();
+    const recovery = f.service.getRecoveryOperations()[0];
+    expect(await f.service.resumeMerge(recovery.id)).toMatchObject({ ok: true });
+    expect(f.incoming.content).toContain("链接修复写入前新增的重要内容");
+    expect(f.incoming.content).not.toContain("[[archive/Redundant]]");
+  });
+
+  it.each([false, true])("recovers a prepared checkpoint without overwriting later edits=%s", async (edited) => {
+    const f = fixture();
+    const preview = await f.service.prepareMerge(f.pair.id, "canonical");
+    if (!preview.ok) throw new Error("preview failed");
+    const write = f.atomicWrite.getMockImplementation()!;
+    let writes = 0;
+    f.atomicWrite.mockImplementation(async (path, content) => {
+      if (++writes === 2) return err("E303_DISK_FULL", "checkpoint unavailable");
+      return write(path, content);
+    });
+    expect(await f.service.confirmMerge(preview.value.draft, preview.value.linkRepairPlan))
+      .toMatchObject({ ok: false, error: { code: "E303_DISK_FULL" } });
+    expect(f.canonical.content).toContain("合并正文");
+    if (edited) f.canonical.content += "\n检查点失败后新增的内容";
+    const current = f.canonical.content;
+    await f.service.dispose();
+    const reloaded = f.createService();
+    expect((await reloaded.initialize()).ok).toBe(true);
+    const recovery = reloaded.getRecoveryOperations()[0];
+    expect(recovery.phase).toBe("prepared");
+    const result = await reloaded.resumeMerge(recovery.id);
+    expect(result).toMatchObject(edited ? { ok: false, error: { code: "E321_MERGE_CONTENT_CHANGED" } } : { ok: true });
+    expect(f.canonical.content).toBe(current);
+    expect(f.vault.trash).toHaveBeenCalledTimes(edited ? 0 : 1);
+  });
+
+  it("rejects an older prepared record whose confirmation snapshot no longer matches its draft", async () => {
+    const f = fixture();
+    const preview = await f.service.prepareMerge(f.pair.id, "canonical");
+    if (!preview.ok) throw new Error("preview failed");
+    f.noteRepository.replaceIfUnchanged.mockRejectedValueOnce(new Error("stopped before note write"));
+    await expect(f.service.confirmMerge(preview.value.draft, preview.value.linkRepairPlan)).rejects.toThrow("stopped before note write");
+    f.canonical.content += "\n旧版本确认前新增的内容";
+    const current = f.canonical.content;
+    const captured = await f.service.captureMergeInput(f.pair.id, "canonical");
+    if (!captured.ok) throw new Error("capture failed");
+    const path = "data/duplicate-merge-operations.json";
+    const persisted = JSON.parse(f.storageFiles.get(path)!);
+    // 旧实现会把变化后的确认快照与变化前的模型草稿一起保存。
+    persisted.operations[0].preview.canonical = captured.value.canonical;
+    f.storageFiles.set(path, JSON.stringify(persisted));
+    await f.service.dispose();
+    const reloaded = f.createService();
+    expect((await reloaded.initialize()).ok).toBe(true);
+
+    expect(await reloaded.resumeMerge(persisted.operations[0].id))
+      .toMatchObject({ ok: false, error: { code: "E321_MERGE_CONTENT_CHANGED" } });
+    expect(f.canonical.content).toBe(current);
+    expect(f.vault.trash).not.toHaveBeenCalled();
+  });
+
   it('repairs generated Markdown note links and parent scalars while preserving literals, images, external URLs and anchors', async () => {
     const f = fixture();
     const reference = renderInternalNoteLink(f.redundant.file.path, '期望值 E[X]');
@@ -261,7 +386,7 @@ describe("DuplicateMergeService", () => {
   it.each(["length", "content_filter"])("rejects interrupted model output even if its JSON is valid (%s)", async (finishReason) => {
     const f = fixture({ finishReason });
     expect(await f.service.prepareMerge(f.pair.id, "canonical")).toMatchObject({ ok: false });
-    expect(f.noteRepository.replace).not.toHaveBeenCalled();
+    expect(f.noteRepository.replaceIfUnchanged).not.toHaveBeenCalled();
   });
 
   it.each([42, { invalid: true }])("ignores malformed aliases in unrelated notes (%j)", async (unrelatedAliases) => {
@@ -371,7 +496,7 @@ describe("DuplicateMergeService", () => {
       return ok({ indexed: 1, failed: 0 });
     });
     const result = await f.service.confirmMerge(preview.value.draft, preview.value.linkRepairPlan);
-    expect(result).toMatchObject({ ok: false, error: { code: "E320_TASK_CONFLICT" } });
+    expect(result).toMatchObject({ ok: false, error: { code: "E321_MERGE_CONTENT_CHANGED" } });
     expect(f.vault.trash).not.toHaveBeenCalled();
     expect(f.files.get(f.redundant.file.path)?.content).toContain("用户新写的重要内容");
   });
@@ -391,7 +516,7 @@ describe("DuplicateMergeService", () => {
     const extra = fixture({ modelContent: JSON.stringify({ body: "正文", name: "n", aliases: [], tags: [], parents: [], sourceUids: [], conflicts: [], extra: true }) });
     const invalid = await extra.service.prepareMerge(extra.pair.id, "canonical");
     expect(invalid.ok).toBe(false);
-    expect(extra.noteRepository.replace).not.toHaveBeenCalled();
+    expect(extra.noteRepository.replaceIfUnchanged).not.toHaveBeenCalled();
     const frontmatter = fixture({ modelContent: JSON.stringify({ body: "---\nname: bad\n---\n正文", name: "n", aliases: [], tags: [], parents: [], sourceUids: [], conflicts: [] }) });
     expect((await frontmatter.service.prepareMerge(frontmatter.pair.id, "canonical")).ok).toBe(false);
   });
@@ -444,7 +569,7 @@ describe("DuplicateMergeService", () => {
     const result = await f.service.confirmMerge(prepared.value.draft, prepared.value.linkRepairPlan);
 
     expect(result).toMatchObject({ ok: false, error: { code: "E303_DISK_FULL" } });
-    expect(f.noteRepository.replace).toHaveBeenCalledTimes(1);
+    expect(f.noteRepository.replaceIfUnchanged).toHaveBeenCalledTimes(1);
     expect(f.vault.trash).not.toHaveBeenCalled();
     expect(f.service.getRecoveryOperations()[0]).toMatchObject({ phase: "canonical-written" });
   });
@@ -568,12 +693,12 @@ describe("DuplicateMergeService", () => {
     expect(entries).toHaveLength(2);
     const firstEntry = entries[0];
     const lastEntry = entries[1];
-    const replace = f.noteRepository.replace.getMockImplementation()!;
+    const replace = f.noteRepository.replaceIfUnchanged.getMockImplementation()!;
     // Fail after one incoming note has actually changed; the journal still
     // records canonical-written and must infer the first repair from bytes.
-    f.noteRepository.replace.mockImplementation(async (path, content) => {
+    f.noteRepository.replaceIfUnchanged.mockImplementation(async (path, expected, content) => {
       if (path === lastEntry.path) throw new Error("synthetic adapter interruption");
-      return replace(path, content);
+      return replace(path, expected, content);
     });
     await expect(f.service.confirmMerge(prepared.value.draft, prepared.value.linkRepairPlan)).rejects.toThrow("synthetic adapter interruption");
     expect(f.files.get(firstEntry.path)?.content).toBe(firstEntry.replacementContent);
@@ -581,7 +706,7 @@ describe("DuplicateMergeService", () => {
     expect(f.vault.trash).not.toHaveBeenCalled();
     const id = f.service.getRecoveryOperations()[0].id;
     await f.service.dispose();
-    f.noteRepository.replace.mockImplementation(replace);
+    f.noteRepository.replaceIfUnchanged.mockImplementation(replace);
     if (editDuringRecovery) f.files.get(lastEntry.path)!.content += "\n用户在恢复前编辑";
     const reloaded = f.createService();
     expect((await reloaded.initialize()).ok).toBe(true);
@@ -602,10 +727,10 @@ describe("DuplicateMergeService", () => {
     await reloaded.dispose();
     const again = f.createService();
     expect((await again.initialize()).ok).toBe(true);
-    f.noteRepository.replace.mockClear();
+    f.noteRepository.replaceIfUnchanged.mockClear();
     const final = await again.resumeMerge(id);
     expect(final).toMatchObject({ ok: true, value: { phase: "completed" } });
-    expect(f.noteRepository.replace).not.toHaveBeenCalled();
+    expect(f.noteRepository.replaceIfUnchanged).not.toHaveBeenCalled();
     expect(f.vault.trash).toHaveBeenCalledOnce();
     expect(again.getRecoveryOperations()).toEqual([]);
     expect(f.providerManager.chat).toHaveBeenCalledOnce();

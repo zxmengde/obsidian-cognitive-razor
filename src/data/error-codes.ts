@@ -218,6 +218,14 @@ export const ERROR_CODE_INFO = {
     retryable: false,
     fixSuggestion: "请等待当前任务完成，或取消后再试。",
   },
+  E321_MERGE_CONTENT_CHANGED: {
+    code: "E321_MERGE_CONTENT_CHANGED",
+    name: "MERGE_CONTENT_CHANGED",
+    description: "笔记已修改，合并已停止",
+    category: "SYSTEM_IO",
+    retryable: false,
+    fixSuggestion: "请保留现有笔记和草稿，重新生成并检查合并草稿后再确认；继续旧恢复记录不会强制覆盖修改。",
+  },
   E322_LOCAL_RESULT_UNAVAILABLE: {
     code: "E322_LOCAL_RESULT_UNAVAILABLE",
     name: "LOCAL_RESULT_UNAVAILABLE",

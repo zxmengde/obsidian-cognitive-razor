@@ -110,6 +110,39 @@ describe("NoteRepository direct writes", () => {
     expect(box.content).toBe("target");
   });
 
+  it("preserves an edit made at the atomic replacement boundary", async () => {
+    const file = new TFile(); file.path = "note.md";
+    let content = "snapshot";
+    const repository = new NoteRepository({ vault: {
+      getAbstractFileByPath: () => file,
+      cachedRead: async () => content,
+      process: async (_file: TFile, update: (value: string) => string) => {
+        content = "snapshot\n用户在原子写入前新增的内容";
+        content = update(content);
+      },
+    } } as unknown as App, logger);
+
+    expect(await repository.replaceIfUnchanged("note.md", "snapshot", "target")).toBe("conflict");
+    expect(content).toBe("snapshot\n用户在原子写入前新增的内容");
+  });
+
+  it.each([
+    ["snapshot", "updated", "target"],
+    ["target", "updated", "target"],
+    ["user edit", "conflict", "user edit"],
+  ])("conditionally replaces %s without losing edits or duplicating a replay", async (initial, status, expected) => {
+    const { repository, box } = repo(initial);
+    expect(await repository.replaceIfUnchanged("note.md", "snapshot", "target")).toBe(status);
+    expect(box.content).toBe(expected);
+  });
+
+  it("reports a missing note without recreating it during conditional replacement", async () => {
+    const process = vi.fn();
+    const repository = new NoteRepository({ vault: { getAbstractFileByPath: () => null, process } } as unknown as App, logger);
+    expect(await repository.replaceIfUnchanged("missing.md", "snapshot", "target")).toBe("missing");
+    expect(process).not.toHaveBeenCalled();
+  });
+
   it("reports an invalid frontmatter without touching the note", async () => {
     const { repository, box } = repo("没有 frontmatter");
     expect(await repository.updateFrontmatter("note.md", { tags: ["tag"] })).toBe("invalid");

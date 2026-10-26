@@ -34,6 +34,7 @@ async function fixture(files = new Map(notes)) {
   const file = (path: string) => { if (!files.has(path)) return null; const result = new TFile(); result.path = path; result.name = path.split("/").at(-1)!; result.basename = result.name.replace(/\.md$/, ""); return result; };
   const vault = {
     adapter, getAbstractFileByPath: file, cachedRead: async (f: TFile) => adapter.read(f.path),
+    read: async (f: TFile) => adapter.read(f.path),
     getMarkdownFiles: () => [...files.keys()].filter(path => path.endsWith(".md")).map(path => file(path)!),
     trash: vi.fn(async (f: TFile) => { files.delete(f.path); }),
     process: vi.fn(async (f: TFile, update: (s: string) => string) => { files.set(f.path, update(await adapter.read(f.path))); }),

@@ -52,6 +52,19 @@ export class NoteRepository {
     return "updated";
   }
 
+  /** 在同一个原子回调内比较快照；已写入相同结果时允许恢复，不覆盖后续编辑。 */
+  async replaceIfUnchanged(path: string, expected: string, content: string): Promise<"updated" | "missing" | "conflict"> {
+    const file = this.getFileByPath(path);
+    if (!file) return "missing";
+    let result: "updated" | "conflict" = "conflict";
+    await this.app.vault.process(file, (current) => {
+      if (current !== expected && current !== content) return current;
+      result = "updated";
+      return content;
+    });
+    return result;
+  }
+
   /** Preserve the current file byte for byte; only a newly created file gets a Decks header. */
   async appendCards(path: string, markdown: string): Promise<void> {
     const append = (current: string) => `${current}\n\n${markdown}\n`;

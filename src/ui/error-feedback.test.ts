@@ -3,6 +3,12 @@ import { describe, expect, it } from "vitest";
 import { toHostErrorFeedback, toSafeErrorFeedback } from "./error-feedback";
 
 describe("UI error feedback", () => {
+  it("tells a user to review a new merge draft when source content changed", () => {
+    const feedback = toSafeErrorFeedback({ code: "E321_MERGE_CONTENT_CHANGED", message: "private note content" }, "合并失败");
+    expect(feedback.message).toContain("笔记已修改");
+    expect(feedback.details).toContain("重新生成");
+    expect(JSON.stringify(feedback)).not.toContain("private note content");
+  });
   it("projects a Cards source-root failure to a specific safe action without showing source paths or content", () => {
     const result = captureCardInput("Private/hidden-note.md", "private note body", "Knowledge", "Cards");
     expect(result).toMatchObject({ ok: false, error: { code: "E103_CARDS_SOURCE_OUTSIDE_ROOT" } });

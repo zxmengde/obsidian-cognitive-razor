@@ -6,6 +6,7 @@ import type {
   DuplicateMergeOperationsStore, DuplicateMergePreview, LinkRepairPlan,
 } from "../types";
 import type { FileStorage } from "../data/file-storage";
+import type { NoteRepository } from "./note-repository";
 import type { SettingsStore } from "../data/settings-store";
 import type { ILogger } from "../types";
 import type { CruidCache } from "./cruid-cache";
@@ -213,7 +214,7 @@ function buildLinkPlan(app: App, redundant: TFile, canonical: TFile, snapshots: 
 interface Deps {
   app: App;
   fileStorage: FileStorage;
-  noteRepository: { replace(path: string, content: string): Promise<"updated" | "missing"> };
+  noteRepository: Pick<NoteRepository, "replaceIfUnchanged">;
   cruidCache: CruidCache;
   duplicateManager: DuplicateManager;
   providerManager: ModelGateway;
@@ -352,6 +353,9 @@ export class DuplicateMergeService {
     if (!pair || pair.status !== "pending") return err("E311_NOT_FOUND", "重复对不存在或已处理");
     const canonical = await this.readSnapshot(draft.canonicalNodeId); const redundant = await this.readSnapshot(draft.redundantNodeId);
     if (!canonical.ok) return canonical; if (!redundant.ok) return redundant;
+    if (canonical.value.contentHash !== draft.canonicalContentHash || redundant.value.contentHash !== draft.redundantContentHash) {
+      return err("E321_MERGE_CONTENT_CHANGED", "合并草稿生成后笔记已修改，请重新生成并检查草稿");
+    }
     const canonicalFile = this.deps.cruidCache.getFile(draft.canonicalNodeId);
     const redundantFile = this.deps.cruidCache.getFile(draft.redundantNodeId);
     if (!canonicalFile || !redundantFile) return err("E311_NOT_FOUND", "重复对涉及的笔记已不存在");
@@ -417,8 +421,13 @@ export class DuplicateMergeService {
       return this.fail(operation, "E311_NOT_FOUND", "冗余笔记不存在");
     }
     if (operation.phase === "prepared") {
-      const result = await this.deps.noteRepository.replace(canonicalFile.path, operation.canonicalTargetContent);
+      // 旧记录可能把已变化的确认快照和过期草稿一起保存；恢复也必须拒绝它。
+      if (preview.canonical.contentHash !== preview.draft.canonicalContentHash || preview.redundant.contentHash !== preview.draft.redundantContentHash) {
+        return this.fail(operation, "E321_MERGE_CONTENT_CHANGED", "恢复记录中的笔记快照与草稿不一致，请重新生成并检查草稿");
+      }
+      const result = await this.deps.noteRepository.replaceIfUnchanged(canonicalFile.path, preview.canonical.content, operation.canonicalTargetContent);
       if (result === "missing") return this.fail(operation, "E311_NOT_FOUND", "主笔记不存在");
+      if (result === "conflict") return this.fail(operation, "E321_MERGE_CONTENT_CHANGED", "主笔记在确认后已修改，未覆盖；请重新生成并检查合并草稿");
       operation.phase = "canonical-written"; operation.completedPaths.push(canonicalFile.path);
       const checkpoint = await this.checkpoint(operation);
       if (!checkpoint.ok) return checkpoint as Result<DuplicateMergeOperation>;
@@ -428,7 +437,7 @@ export class DuplicateMergeService {
         if (this.disposed) return err("E310_INVALID_STATE", "合并服务已停止");
         const file = this.deps.app.vault.getAbstractFileByPath(entry.path);
         if (!file || !("extension" in file)) continue;
-        const current = await this.deps.app.vault.cachedRead(file as TFile);
+        const current = await this.deps.app.vault.read(file as TFile);
         if (current === entry.replacementContent) {
           if (!operation.completedPaths.includes(entry.path)) operation.completedPaths.push(entry.path);
           continue;
@@ -438,7 +447,9 @@ export class DuplicateMergeService {
           ? entry.replacementContent
           : buildLinkPlan(this.deps.app, redundantFile!, canonicalFile, new Map([[entry.path, current]])).entries[0]?.replacementContent;
         if (content === undefined) continue;
-        if (await this.deps.noteRepository.replace(entry.path, content) === "updated") operation.completedPaths.push(entry.path);
+        const replaced = await this.deps.noteRepository.replaceIfUnchanged(entry.path, current, content);
+        if (replaced === "conflict") return this.fail(operation, "E321_MERGE_CONTENT_CHANGED", "引用笔记在链接修复前已修改，未覆盖；请检查笔记后继续恢复");
+        if (replaced === "updated") operation.completedPaths.push(entry.path);
       }
       operation.phase = "links-repaired";
       const checkpoint = await this.checkpoint(operation);
@@ -468,7 +479,7 @@ export class DuplicateMergeService {
       // Indexing and recovery can take arbitrarily long. Never trash edits
       // made after the confirmation snapshot was captured.
       if (await this.deps.app.vault.read(redundantFile) !== preview.redundant.content) {
-        return this.fail(operation, "E320_TASK_CONFLICT", "冗余笔记在合并期间已修改，未移入回收站");
+        return this.fail(operation, "E321_MERGE_CONTENT_CHANGED", "冗余笔记在合并期间已修改，未移入回收站");
       }
       if (this.disposed) return err("E310_INVALID_STATE", "合并服务已停止");
       try { await this.deps.app.vault.trash(redundantFile, false); } catch { return this.fail(operation, "E500_INTERNAL_ERROR", "冗余笔记移入回收站失败"); }
@@ -497,7 +508,7 @@ export class DuplicateMergeService {
 
   private async readSnapshot(nodeId: string): Promise<Result<DuplicateMergeNoteSnapshot>> {
     const file = this.deps.cruidCache.getFile(nodeId); if (!file) return err("E311_NOT_FOUND", `笔记不存在: ${nodeId}`);
-    const content = await this.deps.app.vault.cachedRead(file); const parsed = extractFrontmatter(content); if (!parsed) return err("E101_INVALID_INPUT", `笔记 frontmatter 无效: ${file.path}`);
+    const content = await this.deps.app.vault.read(file); const parsed = extractFrontmatter(content); if (!parsed) return err("E101_INVALID_INPUT", `笔记 frontmatter 无效: ${file.path}`);
     return ok({ nodeId, path: file.path, content, contentHash: hash(content), frontmatter: parsed.frontmatter });
   }
 

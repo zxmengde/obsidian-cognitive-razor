@@ -1,0 +1,431 @@
+{
+  "startedAt": "2026-10-26T10:28:09.522Z",
+  "modelRequests": 0,
+  "recordedModel": "gpt-6.1-sol",
+  "hostBundleSha256": "ccbd456ca7b0615c087522f6b43c1b6e545ef60a992bffa877f266fca9307680",
+  "mainJsSha256": "1adca3779abc7f0ef04206e62496a446fe33044be11ebd86ffcd7a7e1975896a",
+  "pluginEnabled": false,
+  "normal": {
+    "startedAt": "2026-10-26T10:28:09.524Z",
+    "vault": "C:/code/obsidian",
+    "replay": "Recorded live GPT-6.1 Sol results, no additional host model request",
+    "excluded": [
+      "Installed Cognitive Razor UI and task queue",
+      "Real embedding/vector refresh: controlled reindex callback only"
+    ],
+    "checks": [
+      {
+        "name": "verify_clean: report committed",
+        "passed": true
+      },
+      {
+        "name": "verify_clean: source body and later edit preserved",
+        "passed": true
+      },
+      {
+        "name": "verify_clean: status evergreen",
+        "passed": true
+      },
+      {
+        "name": "verify_errors: report committed",
+        "passed": true
+      },
+      {
+        "name": "verify_errors: source body and later edit preserved",
+        "passed": true
+      },
+      {
+        "name": "verify_errors: status evergreen",
+        "passed": true
+      },
+      {
+        "name": "verify_uncertain: report committed",
+        "passed": true
+      },
+      {
+        "name": "verify_uncertain: source body and later edit preserved",
+        "passed": true
+      },
+      {
+        "name": "verify_uncertain: status evergreen",
+        "passed": true
+      },
+      {
+        "name": "verify_source_mismatch: report committed",
+        "passed": true
+      },
+      {
+        "name": "verify_source_mismatch: source body and later edit preserved",
+        "passed": true
+      },
+      {
+        "name": "verify_source_mismatch: status evergreen",
+        "passed": true
+      },
+      {
+        "name": "cards_dense: captured source excludes YAML and report",
+        "passed": true
+      },
+      {
+        "name": "cards_dense: mirrored target path",
+        "passed": true
+      },
+      {
+        "name": "cards_dense: append preserves existing file and manual content",
+        "passed": true
+      },
+      {
+        "name": "cards_dense: repeated generation appends same batch by design",
+        "passed": true
+      },
+      {
+        "name": "cards_dense: completed task cannot append twice",
+        "passed": true
+      },
+      {
+        "name": "cards_sparse: captured source excludes YAML and report",
+        "passed": true
+      },
+      {
+        "name": "cards_sparse: mirrored target path",
+        "passed": true
+      },
+      {
+        "name": "cards_sparse: append preserves existing file and manual content",
+        "passed": true
+      },
+      {
+        "name": "cards_sparse: repeated generation appends same batch by design",
+        "passed": true
+      },
+      {
+        "name": "cards_sparse: completed task cannot append twice",
+        "passed": true
+      },
+      {
+        "name": "merge_overlap: merged body committed",
+        "passed": true
+      },
+      {
+        "name": "merge_overlap: body and parent links repaired",
+        "passed": true,
+        "detail": {
+          "plannedReplacements": 2
+        }
+      },
+      {
+        "name": "merge_overlap: inline code untouched",
+        "passed": true
+      },
+      {
+        "name": "merge_overlap: redundant removed from active vault",
+        "passed": true
+      },
+      {
+        "name": "merge_overlap: redundant found in local trash",
+        "passed": true,
+        "detail": {
+          "path": ".trash/merge_overlap-冗余笔记-mvp45g38.md"
+        }
+      },
+      {
+        "name": "merge_overlap: completed operation not offered for recovery",
+        "passed": true
+      },
+      {
+        "name": "merge_overlap: reindex seam invoked (embedding excluded)",
+        "passed": true
+      },
+      {
+        "name": "merge_complement: merged body committed",
+        "passed": true
+      },
+      {
+        "name": "merge_complement: body and parent links repaired",
+        "passed": true,
+        "detail": {
+          "plannedReplacements": 2
+        }
+      },
+      {
+        "name": "merge_complement: inline code untouched",
+        "passed": true
+      },
+      {
+        "name": "merge_complement: redundant removed from active vault",
+        "passed": true
+      },
+      {
+        "name": "merge_complement: redundant found in local trash",
+        "passed": true,
+        "detail": {
+          "path": ".trash/merge_complement-冗余笔记-mvp45g38.md"
+        }
+      },
+      {
+        "name": "merge_complement: completed operation not offered for recovery",
+        "passed": true
+      },
+      {
+        "name": "merge_complement: reindex seam invoked (embedding excluded)",
+        "passed": true
+      },
+      {
+        "name": "merge_conflict: merged body committed",
+        "passed": true
+      },
+      {
+        "name": "merge_conflict: body and parent links repaired",
+        "passed": true,
+        "detail": {
+          "plannedReplacements": 2
+        }
+      },
+      {
+        "name": "merge_conflict: inline code untouched",
+        "passed": true
+      },
+      {
+        "name": "merge_conflict: redundant removed from active vault",
+        "passed": true
+      },
+      {
+        "name": "merge_conflict: redundant found in local trash",
+        "passed": true,
+        "detail": {
+          "path": ".trash/merge_conflict-冗余笔记-mvp45g38.md"
+        }
+      },
+      {
+        "name": "merge_conflict: completed operation not offered for recovery",
+        "passed": true
+      },
+      {
+        "name": "merge_conflict: reindex seam invoked (embedding excluded)",
+        "passed": true
+      }
+    ],
+    "files": [
+      "CR测试-feature-eval/知识/CR测试-数字低通参数.md",
+      "CR测试-feature-eval/知识/CR测试-数字滤波错误材料.md",
+      "CR测试-feature-eval/知识/CR测试-待核实的实验推断.md",
+      "CR测试-feature-eval/知识/CR测试-事实正确但引证错配.md",
+      "CR测试-feature-eval/知识/CR测试-数字滤波与频率坐标.md",
+      "CR测试-feature-eval/卡片/CR测试-数字滤波与频率坐标-decks.md",
+      "CR测试-feature-eval/知识/CR测试-FFT格点间隔.md",
+      "CR测试-feature-eval/卡片/CR测试-FFT格点间隔-decks.md",
+      "CR测试-feature-eval/知识/merge_overlap-主笔记.md",
+      "CR测试-feature-eval/知识/merge_overlap-引用.md",
+      "CR测试-feature-eval/知识/merge_complement-主笔记.md",
+      "CR测试-feature-eval/知识/merge_complement-引用.md",
+      "CR测试-feature-eval/知识/merge_conflict-主笔记.md",
+      "CR测试-feature-eval/知识/merge_conflict-引用.md"
+    ],
+    "completedAt": "2026-10-26T10:28:10.247Z"
+  },
+  "afterConfirmation": {
+    "checkedAt": "2026-10-26T10:28:10.274Z",
+    "timing": "after_confirmation",
+    "requirement": "Reject changed inputs and preserve their edits, including after recovery",
+    "passed": true,
+    "result": {
+      "ok": false,
+      "error": {
+        "code": "E321_MERGE_CONTENT_CHANGED",
+        "message": "主笔记在确认后已修改，未覆盖；请重新生成并检查合并草稿",
+        "details": {
+          "operationId": "host-merge-race:host-race-a"
+        }
+      }
+    },
+    "beforeCommit": "---\ncruid: \"host-race-a\"\ntype: entity\nname: \"CR测试-采样参数检查\"\nstatus: draft\ncreated: \"2026-10-26 00:00:00\"\nupdated: \"2026-10-26 00:00:00\"\naliases: [\"CR测试-采样参数检查\"]\ntags: [\"cr-test\"]\nparents: [\"[[CR测试-信号处理]]\"]\nsourceUids: [\"cr-test-source-a\"]\n---\n\n\n## 截止频率参数\n这里只讨论数字设计。fs=1000 Hz，fc=100 Hz。显式传 fs 时 Wn=100；省略 fs 时 Wn=0.2。\n\n## 待确认事项\n脚本是否显式传入 fs 尚待代码复核，不能直接把 Wn=100 判为错误。\n\n[[CR测试-调用记录]]\n\n\nCR测试并发新增的重要内容：本段必须保留。\n",
+    "afterCommit": "---\ncruid: \"host-race-a\"\ntype: entity\nname: \"CR测试-采样参数检查\"\nstatus: draft\ncreated: \"2026-10-26 00:00:00\"\nupdated: \"2026-10-26 00:00:00\"\naliases: [\"CR测试-采样参数检查\"]\ntags: [\"cr-test\"]\nparents: [\"[[CR测试-信号处理]]\"]\nsourceUids: [\"cr-test-source-a\"]\n---\n\n\n## 截止频率参数\n这里只讨论数字设计。fs=1000 Hz，fc=100 Hz。显式传 fs 时 Wn=100；省略 fs 时 Wn=0.2。\n\n## 待确认事项\n脚本是否显式传入 fs 尚待代码复核，不能直接把 Wn=100 判为错误。\n\n[[CR测试-调用记录]]\n\n\nCR测试并发新增的重要内容：本段必须保留。\n",
+    "finalContent": "---\ncruid: \"host-race-a\"\ntype: entity\nname: \"CR测试-采样参数检查\"\nstatus: draft\ncreated: \"2026-10-26 00:00:00\"\nupdated: \"2026-10-26 00:00:00\"\naliases: [\"CR测试-采样参数检查\"]\ntags: [\"cr-test\"]\nparents: [\"[[CR测试-信号处理]]\"]\nsourceUids: [\"cr-test-source-a\"]\n---\n\n\n## 截止频率参数\n这里只讨论数字设计。fs=1000 Hz，fc=100 Hz。显式传 fs 时 Wn=100；省略 fs 时 Wn=0.2。\n\n## 待确认事项\n脚本是否显式传入 fs 尚待代码复核，不能直接把 Wn=100 判为错误。\n\n[[CR测试-调用记录]]\n\n\nCR测试并发新增的重要内容：本段必须保留。\n",
+    "changedContent": "---\ncruid: \"host-race-a\"\ntype: entity\nname: \"CR测试-采样参数检查\"\nstatus: draft\ncreated: \"2026-10-26 00:00:00\"\nupdated: \"2026-10-26 00:00:00\"\naliases: [\"CR测试-采样参数检查\"]\ntags: [\"cr-test\"]\nparents: [\"[[CR测试-信号处理]]\"]\nsourceUids: [\"cr-test-source-a\"]\n---\n\n\n## 截止频率参数\n这里只讨论数字设计。fs=1000 Hz，fc=100 Hz。显式传 fs 时 Wn=100；省略 fs 时 Wn=0.2。\n\n## 待确认事项\n脚本是否显式传入 fs 尚待代码复核，不能直接把 Wn=100 判为错误。\n\n[[CR测试-调用记录]]\n\n\nCR测试并发新增的重要内容：本段必须保留。\n",
+    "redundantPresent": true,
+    "recovery": [
+      {
+        "id": "host-merge-race:host-race-a",
+        "version": "1.0.0",
+        "phase": "failed",
+        "preview": {
+          "pairId": "host-merge-race",
+          "type": "entity",
+          "similarity": 0.93,
+          "canonical": {
+            "nodeId": "host-race-a",
+            "path": "CR测试-feature-eval/知识/merge_race-主笔记.md",
+            "content": "---\ncruid: \"host-race-a\"\ntype: entity\nname: \"CR测试-采样参数检查\"\nstatus: draft\ncreated: \"2026-10-26 00:00:00\"\nupdated: \"2026-10-26 00:00:00\"\naliases: [\"CR测试-采样参数检查\"]\ntags: [\"cr-test\"]\nparents: [\"[[CR测试-信号处理]]\"]\nsourceUids: [\"cr-test-source-a\"]\n---\n\n\n## 截止频率参数\n这里只讨论数字设计。fs=1000 Hz，fc=100 Hz。显式传 fs 时 Wn=100；省略 fs 时 Wn=0.2。\n\n## 待确认事项\n脚本是否显式传入 fs 尚待代码复核，不能直接把 Wn=100 判为错误。\n\n[[CR测试-调用记录]]\n",
+            "contentHash": "c9d1fc1d",
+            "frontmatter": {
+              "cruid": "host-race-a",
+              "type": "entity",
+              "name": "CR测试-采样参数检查",
+              "status": "draft",
+              "created": "2026-10-26 00:00:00",
+              "updated": "2026-10-26 00:00:00",
+              "aliases": [
+                "CR测试-采样参数检查"
+              ],
+              "tags": [
+                "cr-test"
+              ],
+              "parents": [
+                "[[CR测试-信号处理]]"
+              ],
+              "sourceUids": [
+                "cr-test-source-a"
+              ]
+            }
+          },
+          "redundant": {
+            "nodeId": "host-race-b",
+            "path": "CR测试-feature-eval/知识/merge_race-冗余笔记.md",
+            "content": "---\ncruid: \"host-race-b\"\ntype: entity\nname: \"CR测试-采样参数检查\"\nstatus: draft\ncreated: \"2026-10-26 00:00:00\"\nupdated: \"2026-10-26 00:00:00\"\naliases: [\"CR测试-采样参数检查\"]\ntags: [\"cr-test\"]\nparents: [\"[[CR测试-信号处理]]\"]\nsourceUids: [\"cr-test-source-b\"]\n---\n\n\n## FFT 坐标自检\nN=1000，d=0.001 s，相邻格点间隔为 1/(N*d)=1 Hz。频率格点间隔不能直接代替两条谱线的可分辨性结论。\n\n## 参考\nhttps://numpy.org/doc/stable/reference/generated/numpy.fft.fftfreq.html\n[[CR测试-频率坐标]]\n",
+            "contentHash": "bb07941d",
+            "frontmatter": {
+              "cruid": "host-race-b",
+              "type": "entity",
+              "name": "CR测试-采样参数检查",
+              "status": "draft",
+              "created": "2026-10-26 00:00:00",
+              "updated": "2026-10-26 00:00:00",
+              "aliases": [
+                "CR测试-采样参数检查"
+              ],
+              "tags": [
+                "cr-test"
+              ],
+              "parents": [
+                "[[CR测试-信号处理]]"
+              ],
+              "sourceUids": [
+                "cr-test-source-b"
+              ]
+            }
+          },
+          "draft": {
+            "pairId": "host-merge-race",
+            "canonicalNodeId": "host-race-a",
+            "redundantNodeId": "host-race-b",
+            "canonicalContentHash": "c9d1fc1d",
+            "redundantContentHash": "bb07941d",
+            "body": "## 截止频率参数\n\n这里只讨论数字设计。采样频率 $f_s = 1000\\,\\mathrm{Hz}$，截止频率 $f_c = 100\\,\\mathrm{Hz}$。显式传入 `fs` 时，`Wn=100`；省略 `fs` 时，`Wn=0.2`。\n\n## 待确认事项\n\n脚本是否显式传入 `fs` 尚待代码复核，不能直接把 `Wn=100` 判为错误。\n\n相关记录：[[CR测试-调用记录]]\n\n## FFT 坐标自检\n\n$N = 1000$，采样间隔 $d = 0.001\\,\\mathrm{s}$，相邻频率格点间隔为：\n\n$$\n\\Delta f = \\frac{1}{Nd} = 1\\,\\mathrm{Hz}\n$$\n\n频率格点间隔不能直接代替两条谱线的可分辨性结论。\n\n## 参考\n\n- https://numpy.org/doc/stable/reference/generated/numpy.fft.fftfreq.html\n- [[CR测试-频率坐标]]",
+            "name": "CR测试-采样参数检查",
+            "aliases": [
+              "CR测试-采样参数检查"
+            ],
+            "tags": [
+              "cr-test"
+            ],
+            "parents": [
+              "[[CR测试-信号处理]]"
+            ],
+            "sourceUids": [
+              "cr-test-source-a",
+              "cr-test-source-b"
+            ],
+            "conflicts": []
+          },
+          "linkRepairPlan": {
+            "entries": [],
+            "replacementCount": 0,
+            "skipped": []
+          }
+        },
+        "canonicalTargetContent": "---\ncruid: \"host-race-a\"\ntype: entity\nname: \"CR测试-采样参数检查\"\nstatus: draft\ncreated: \"2026-10-26 00:00:00\"\nupdated: \"2026-10-26 18:28:10\"\naliases: [\"CR测试-采样参数检查\"]\ntags: [\"cr-test\"]\nparents: [\"[[CR测试-信号处理]]\"]\nsourceUids: [\"cr-test-source-a\", \"cr-test-source-b\"]\n---\n\n## 截止频率参数\n\n这里只讨论数字设计。采样频率 $f_s = 1000\\,\\mathrm{Hz}$，截止频率 $f_c = 100\\,\\mathrm{Hz}$。显式传入 `fs` 时，`Wn=100`；省略 `fs` 时，`Wn=0.2`。\n\n## 待确认事项\n\n脚本是否显式传入 `fs` 尚待代码复核，不能直接把 `Wn=100` 判为错误。\n\n相关记录：[[CR测试-调用记录]]\n\n## FFT 坐标自检\n\n$N = 1000$，采样间隔 $d = 0.001\\,\\mathrm{s}$，相邻频率格点间隔为：\n\n$$\n\\Delta f = \\frac{1}{Nd} = 1\\,\\mathrm{Hz}\n$$\n\n频率格点间隔不能直接代替两条谱线的可分辨性结论。\n\n## 参考\n\n- https://numpy.org/doc/stable/reference/generated/numpy.fft.fftfreq.html\n- [[CR测试-频率坐标]]",
+        "completedPaths": [],
+        "updatedAt": 1793010490263,
+        "error": {
+          "code": "E321_MERGE_CONTENT_CHANGED",
+          "message": "主笔记在确认后已修改，未覆盖；请重新生成并检查合并草稿"
+        }
+      }
+    ],
+    "resumed": {
+      "ok": false,
+      "error": {
+        "code": "E321_MERGE_CONTENT_CHANGED",
+        "message": "主笔记在确认后已修改，未覆盖；请重新生成并检查合并草稿",
+        "details": {
+          "operationId": "host-merge-race:host-race-a"
+        }
+      }
+    },
+    "files": [
+      "CR测试-feature-eval/知识/merge_race-主笔记.md",
+      "CR测试-feature-eval/知识/merge_race-冗余笔记.md"
+    ],
+    "excluded": [
+      "Controlled reindex callback; no real embedding request"
+    ]
+  },
+  "beforeConfirmation": {
+    "checkedAt": "2026-10-26T10:28:10.285Z",
+    "timing": "before_confirmation",
+    "requirement": "Reject changed inputs and preserve their edits, including after recovery",
+    "passed": true,
+    "result": {
+      "ok": false,
+      "error": {
+        "code": "E321_MERGE_CONTENT_CHANGED",
+        "message": "合并草稿生成后笔记已修改，请重新生成并检查草稿"
+      }
+    },
+    "beforeCommit": "---\ncruid: \"host-race-a\"\ntype: entity\nname: \"CR测试-采样参数检查\"\nstatus: draft\ncreated: \"2026-10-26 00:00:00\"\nupdated: \"2026-10-26 00:00:00\"\naliases: [\"CR测试-采样参数检查\"]\ntags: [\"cr-test\"]\nparents: [\"[[CR测试-信号处理]]\"]\nsourceUids: [\"cr-test-source-a\"]\n---\n\n\n## 截止频率参数\n这里只讨论数字设计。fs=1000 Hz，fc=100 Hz。显式传 fs 时 Wn=100；省略 fs 时 Wn=0.2。\n\n## 待确认事项\n脚本是否显式传入 fs 尚待代码复核，不能直接把 Wn=100 判为错误。\n\n[[CR测试-调用记录]]\n\n\nCR测试并发新增的重要内容：本段必须保留。\n",
+    "afterCommit": "---\ncruid: \"host-race-a\"\ntype: entity\nname: \"CR测试-采样参数检查\"\nstatus: draft\ncreated: \"2026-10-26 00:00:00\"\nupdated: \"2026-10-26 00:00:00\"\naliases: [\"CR测试-采样参数检查\"]\ntags: [\"cr-test\"]\nparents: [\"[[CR测试-信号处理]]\"]\nsourceUids: [\"cr-test-source-a\"]\n---\n\n\n## 截止频率参数\n这里只讨论数字设计。fs=1000 Hz，fc=100 Hz。显式传 fs 时 Wn=100；省略 fs 时 Wn=0.2。\n\n## 待确认事项\n脚本是否显式传入 fs 尚待代码复核，不能直接把 Wn=100 判为错误。\n\n[[CR测试-调用记录]]\n\n\nCR测试并发新增的重要内容：本段必须保留。\n",
+    "finalContent": "---\ncruid: \"host-race-a\"\ntype: entity\nname: \"CR测试-采样参数检查\"\nstatus: draft\ncreated: \"2026-10-26 00:00:00\"\nupdated: \"2026-10-26 00:00:00\"\naliases: [\"CR测试-采样参数检查\"]\ntags: [\"cr-test\"]\nparents: [\"[[CR测试-信号处理]]\"]\nsourceUids: [\"cr-test-source-a\"]\n---\n\n\n## 截止频率参数\n这里只讨论数字设计。fs=1000 Hz，fc=100 Hz。显式传 fs 时 Wn=100；省略 fs 时 Wn=0.2。\n\n## 待确认事项\n脚本是否显式传入 fs 尚待代码复核，不能直接把 Wn=100 判为错误。\n\n[[CR测试-调用记录]]\n\n\nCR测试并发新增的重要内容：本段必须保留。\n",
+    "changedContent": "---\ncruid: \"host-race-a\"\ntype: entity\nname: \"CR测试-采样参数检查\"\nstatus: draft\ncreated: \"2026-10-26 00:00:00\"\nupdated: \"2026-10-26 00:00:00\"\naliases: [\"CR测试-采样参数检查\"]\ntags: [\"cr-test\"]\nparents: [\"[[CR测试-信号处理]]\"]\nsourceUids: [\"cr-test-source-a\"]\n---\n\n\n## 截止频率参数\n这里只讨论数字设计。fs=1000 Hz，fc=100 Hz。显式传 fs 时 Wn=100；省略 fs 时 Wn=0.2。\n\n## 待确认事项\n脚本是否显式传入 fs 尚待代码复核，不能直接把 Wn=100 判为错误。\n\n[[CR测试-调用记录]]\n\n\nCR测试并发新增的重要内容：本段必须保留。\n",
+    "redundantPresent": true,
+    "recovery": [],
+    "files": [
+      "CR测试-feature-eval/知识/merge_stale-主笔记.md",
+      "CR测试-feature-eval/知识/merge_stale-冗余笔记.md"
+    ],
+    "excluded": [
+      "Controlled reindex callback; no real embedding request"
+    ]
+  },
+  "redundantBeforeConfirmation": {
+    "checkedAt": "2026-10-26T10:28:10.298Z",
+    "timing": "before_confirmation_redundant",
+    "requirement": "Reject changed inputs and preserve their edits, including after recovery",
+    "passed": true,
+    "result": {
+      "ok": false,
+      "error": {
+        "code": "E321_MERGE_CONTENT_CHANGED",
+        "message": "合并草稿生成后笔记已修改，请重新生成并检查草稿"
+      }
+    },
+    "beforeCommit": "---\ncruid: \"host-race-b\"\ntype: entity\nname: \"CR测试-采样参数检查\"\nstatus: draft\ncreated: \"2026-10-26 00:00:00\"\nupdated: \"2026-10-26 00:00:00\"\naliases: [\"CR测试-采样参数检查\"]\ntags: [\"cr-test\"]\nparents: [\"[[CR测试-信号处理]]\"]\nsourceUids: [\"cr-test-source-b\"]\n---\n\n\n## FFT 坐标自检\nN=1000，d=0.001 s，相邻格点间隔为 1/(N*d)=1 Hz。频率格点间隔不能直接代替两条谱线的可分辨性结论。\n\n## 参考\nhttps://numpy.org/doc/stable/reference/generated/numpy.fft.fftfreq.html\n[[CR测试-频率坐标]]\n\n\nCR测试并发新增的重要内容：本段必须保留。\n",
+    "afterCommit": "---\ncruid: \"host-race-a\"\ntype: entity\nname: \"CR测试-采样参数检查\"\nstatus: draft\ncreated: \"2026-10-26 00:00:00\"\nupdated: \"2026-10-26 00:00:00\"\naliases: [\"CR测试-采样参数检查\"]\ntags: [\"cr-test\"]\nparents: [\"[[CR测试-信号处理]]\"]\nsourceUids: [\"cr-test-source-a\"]\n---\n\n\n## 截止频率参数\n这里只讨论数字设计。fs=1000 Hz，fc=100 Hz。显式传 fs 时 Wn=100；省略 fs 时 Wn=0.2。\n\n## 待确认事项\n脚本是否显式传入 fs 尚待代码复核，不能直接把 Wn=100 判为错误。\n\n[[CR测试-调用记录]]\n",
+    "finalContent": "---\ncruid: \"host-race-a\"\ntype: entity\nname: \"CR测试-采样参数检查\"\nstatus: draft\ncreated: \"2026-10-26 00:00:00\"\nupdated: \"2026-10-26 00:00:00\"\naliases: [\"CR测试-采样参数检查\"]\ntags: [\"cr-test\"]\nparents: [\"[[CR测试-信号处理]]\"]\nsourceUids: [\"cr-test-source-a\"]\n---\n\n\n## 截止频率参数\n这里只讨论数字设计。fs=1000 Hz，fc=100 Hz。显式传 fs 时 Wn=100；省略 fs 时 Wn=0.2。\n\n## 待确认事项\n脚本是否显式传入 fs 尚待代码复核，不能直接把 Wn=100 判为错误。\n\n[[CR测试-调用记录]]\n",
+    "changedContent": "---\ncruid: \"host-race-b\"\ntype: entity\nname: \"CR测试-采样参数检查\"\nstatus: draft\ncreated: \"2026-10-26 00:00:00\"\nupdated: \"2026-10-26 00:00:00\"\naliases: [\"CR测试-采样参数检查\"]\ntags: [\"cr-test\"]\nparents: [\"[[CR测试-信号处理]]\"]\nsourceUids: [\"cr-test-source-b\"]\n---\n\n\n## FFT 坐标自检\nN=1000，d=0.001 s，相邻格点间隔为 1/(N*d)=1 Hz。频率格点间隔不能直接代替两条谱线的可分辨性结论。\n\n## 参考\nhttps://numpy.org/doc/stable/reference/generated/numpy.fft.fftfreq.html\n[[CR测试-频率坐标]]\n\n\nCR测试并发新增的重要内容：本段必须保留。\n",
+    "redundantPresent": true,
+    "recovery": [],
+    "files": [
+      "CR测试-feature-eval/知识/merge_stale_redundant-主笔记.md",
+      "CR测试-feature-eval/知识/merge_stale_redundant-冗余笔记.md"
+    ],
+    "excluded": [
+      "Controlled reindex callback; no real embedding request"
+    ]
+  },
+  "passed": true,
+  "completedAt": "2026-10-26T10:28:10.298Z",
+  "sourceGitBase": "6582c374f40edde21bfaaa4408391cf9b8b1d11c",
+  "sources": {
+    "src/core/duplicate-merge-service.ts": "7c6aafb64081479a87280f5c06fcd47ae4f13a3c27129785ca4ded5769f59256",
+    "src/core/note-repository.ts": "51817685376becac75601858e72c096249278e58b12852212785685c8dc3d5e5",
+    "src/data/error-codes.ts": "af3603eb343d833f8889289e37aaf3c5797c2a192fdb7e9293ec85c1d4eb4aad",
+    "scripts/feature_host_eval.ts": "e6cf262f1aae682c1c8b4772a44027e3d13c9e6ca5510661be2a387e78a10383"
+  },
+  "cleanup": {
+    "checkedAt": "2026-10-26T10:30:53.833Z",
+    "notesMovedToTrash": 21,
+    "emptyFoldersMovedToTrash": 3,
+    "remainingOwnedFiles": [],
+    "trashCleared": false
+  }
+}
