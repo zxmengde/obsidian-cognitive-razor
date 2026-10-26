@@ -26,7 +26,11 @@
 
 用户选主笔记后先生成可编辑草稿；确认后写主笔记、修复链接、更新索引，再把冗余笔记移入回收站。分阶段操作有恢复日志，已有测试覆盖若干失败边界。本次相关测试通过，但未验证真实 Vault、回收站和链接行为。
 
-**并发编辑风险：待下方定向复现。** `duplicate-merge-service.ts:350-367` 在确认时读取主笔记、构造目标文本，然后等待操作日志保存；`418-424` 随后未重检内容便整篇替换。可能的触发是日志保存等待期间用户编辑主笔记。现有测试保护冗余笔记在索引期间的修改，尚未覆盖主笔记在确认与首次写入间的编辑。复现结果及合同依据将在此处更新。
+**已复现的数据丢失边界；产品合同未明文规定此并发窗口。** `docs/REQUIREMENTS.md` 的“索引与合并”只要求选择主笔记、检查预览并确认，随后写主笔记及将冗余笔记移入回收站；未说明确认之后若主笔记被并发编辑应如何处理。实现事实是 `duplicate-merge-service.ts:350-367` 在确认时读取主笔记并生成整篇目标文本，然后等待操作日志保存；`418-424` 随后没有重检便整篇替换。
+
+定向复现使用 `duplicate-merge-service.test.ts` 中现有 mock fixture 和公开 `confirmMerge`：暂停首次合并操作日志的 `atomicWrite`；暂停期间直接给主笔记追加“并发新增的重要内容”；释放写入并等待确认流程。最终 `confirmMerge` 成功，但主笔记不含该新增内容。临时诊断用例命令为 `npm exec vitest -- --run src/core/duplicate-merge-service.test.ts -t 'diagnostic: captures canonical edit made while the initial operation log is being saved'`，结果 `1 passed | 38 skipped`。该临时用例已删除，生产代码未修改。
+
+最小修复边界：保留确认时的主笔记快照，在第一次整篇替换前重读并比较；若已变化，停止覆盖并保留操作恢复记录，提示用户重新检查/确认。现有测试覆盖冗余笔记在索引期间被编辑，但没有覆盖主笔记在确认与首次写入之间被编辑。此处属于已复现的实现数据完整性风险；并发保护是否纳入明确产品合同仍待维护者决定。
 
 ### 制卡：快照后追加，设计明确不去重
 
@@ -36,6 +40,7 @@
 
 - 实际运行：`npm exec vitest -- --run src/core/create-orchestrator.test.ts src/core/duplicate-manager.test.ts src/core/merge-draft-generation-service.test.ts src/core/duplicate-merge-service.test.ts src/core/card-generation.test.ts src/core/cards-task-executor.test.ts src/core/card-generation-service.test.ts src/core/workflow-scenarios.test.ts src/ui/svelte/merge-links.test.ts`
 - 结果：9 个测试文件通过，143 项通过，0 失败。没有另跑全量检查、lint、构建或模型/网络推理；这次只审计与重点业务相关的既有用例。
+- 后续定向复现另运行一条临时诊断用例（1 passed，38 skipped）；该临时用例已从测试文件移除，不计入上述 143 项。
 - 测试基于仓库 `__mocks__/obsidian.ts` 与测试内存 Vault/mock，不代表真实 Obsidian UI、文件系统/回收站行为或模型结果质量。
 - 源仓库 HEAD 与委派给本任务的基线一致，开始时工作区 clean；报告之外没有源码改动。
 
