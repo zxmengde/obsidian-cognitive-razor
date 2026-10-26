@@ -1,0 +1,430 @@
+{
+  "fixedAt": "2026-10-26T14:20:20.150Z",
+  "fixtureSha256": "af2e5d677ceda484eb8b43dc7cd71910d407979877bb39628b2d1d8d35d118ae",
+  "method": "Before inspecting any output: lexical screen every record, number pair and source link; directly review eight rule families plus 24 predetermined records spanning primary-only/shared/secondary-only data per tier, true conflict, tails and type-specific core. Screen does not certify semantics.",
+  "familyCriteria": [
+    "原始/有效属于不同阶段，重读文件不等于独立样本",
+    "起点/跨度角色不同，不把跨度当末点或分辨能力",
+    "超时不等于失败，无自动重试，结果未知仍未知",
+    "两模式互斥，无模式标记保持待核对，不取较小值或多数补值",
+    "有效期从写完算，检查间隔从检查结束算；失败不延长、不删原件",
+    "包含/排除的边界归属保留，不擅自拼成区间，缺失不等于零",
+    "当前上限与历史建议分开；停追加、保留已完成块，不删早期块",
+    "人工确认且无故障同时成立；恢复正常或到时不能代替确认"
+  ],
+  "cases": [
+    {
+      "id": "long_entity",
+      "sampleRecords": [
+        "DP-001",
+        "DP-002",
+        "DP-003",
+        "DP-004",
+        "DP-005",
+        "DP-006",
+        "DP-007",
+        "DP-008",
+        "DP-017",
+        "DP-018",
+        "DP-019",
+        "DP-020",
+        "DP-021",
+        "DP-022",
+        "DP-023",
+        "DP-024",
+        "DP-033",
+        "DP-034",
+        "DP-035",
+        "DP-036",
+        "DP-037",
+        "DP-038",
+        "DP-039",
+        "DP-040"
+      ],
+      "familyReview": [
+        {
+          "criterion": "原始/有效属于不同阶段，重读文件不等于独立样本",
+          "status": "preserved in reviewed initial and explicit outputs",
+          "qualification": "Initial positional-description ambiguity retained and reported; explicit control has unambiguous field attribution."
+        },
+        {
+          "criterion": "起点/跨度角色不同，不把跨度当末点或分辨能力",
+          "status": "preserved in reviewed initial and explicit outputs"
+        },
+        {
+          "criterion": "超时不等于失败，无自动重试，结果未知仍未知",
+          "status": "preserved in reviewed initial and explicit outputs"
+        },
+        {
+          "criterion": "两模式互斥，无模式标记保持待核对，不取较小值或多数补值",
+          "status": "preserved in reviewed initial and explicit outputs"
+        },
+        {
+          "criterion": "有效期从写完算，检查间隔从检查结束算；失败不延长、不删原件",
+          "status": "preserved in reviewed initial and explicit outputs"
+        },
+        {
+          "criterion": "包含/排除的边界归属保留，不擅自拼成区间，缺失不等于零",
+          "status": "preserved in reviewed initial and explicit outputs"
+        },
+        {
+          "criterion": "当前上限与历史建议分开；停追加、保留已完成块，不删早期块",
+          "status": "preserved in reviewed initial and explicit outputs"
+        },
+        {
+          "criterion": "人工确认且无故障同时成立；恢复正常或到时不能代替确认",
+          "status": "preserved in reviewed initial and explicit outputs"
+        }
+      ],
+      "recordReview": {
+        "status": "Selected rows reviewed against source fields and units; all-record table screening additionally checks both labelled cells and units, not ID presence alone.",
+        "sampleRecords": [
+          "DP-001",
+          "DP-002",
+          "DP-003",
+          "DP-004",
+          "DP-005",
+          "DP-006",
+          "DP-007",
+          "DP-008",
+          "DP-017",
+          "DP-018",
+          "DP-019",
+          "DP-020",
+          "DP-021",
+          "DP-022",
+          "DP-023",
+          "DP-024",
+          "DP-033",
+          "DP-034",
+          "DP-035",
+          "DP-036",
+          "DP-037",
+          "DP-038",
+          "DP-039",
+          "DP-040"
+        ]
+      },
+      "conflictReview": {
+        "status": "Initial outputs preserve the seeded K9/R6/Z8 conflict and the actual positional prose ambiguity; explicit outputs retain only the seeded conflict, visible in body and conflicts."
+      },
+      "tailReview": {
+        "status": "Both tail configurations and their local scope retained. TAIL requires operator confirmation AND source digest; END retains blank-is-unknown and exact attachment label. Quoted instruction not executed."
+      },
+      "readabilityReview": {
+        "status": "Repeated rule prose consolidated into eight families, with configuration-specific labelled tables and sources. Reviewed fixed headings and conditional semantics are retained. These are highly repetitive semi-structured notes, not a natural long essay benchmark."
+      }
+    },
+    {
+      "id": "long_issue",
+      "sampleRecords": [
+        "AR-001",
+        "AR-002",
+        "AR-003",
+        "AR-004",
+        "AR-005",
+        "AR-006",
+        "AR-007",
+        "AR-008",
+        "AR-042",
+        "AR-043",
+        "AR-044",
+        "AR-045",
+        "AR-046",
+        "AR-047",
+        "AR-048",
+        "AR-049",
+        "AR-083",
+        "AR-084",
+        "AR-085",
+        "AR-086",
+        "AR-087",
+        "AR-088",
+        "AR-089",
+        "AR-090"
+      ],
+      "familyReview": [
+        {
+          "criterion": "原始/有效属于不同阶段，重读文件不等于独立样本",
+          "status": "preserved in reviewed initial and explicit outputs",
+          "qualification": "Initial positional-description ambiguity retained and reported; explicit control has unambiguous field attribution."
+        },
+        {
+          "criterion": "起点/跨度角色不同，不把跨度当末点或分辨能力",
+          "status": "preserved in reviewed initial and explicit outputs"
+        },
+        {
+          "criterion": "超时不等于失败，无自动重试，结果未知仍未知",
+          "status": "preserved in reviewed initial and explicit outputs"
+        },
+        {
+          "criterion": "两模式互斥，无模式标记保持待核对，不取较小值或多数补值",
+          "status": "preserved in reviewed initial and explicit outputs"
+        },
+        {
+          "criterion": "有效期从写完算，检查间隔从检查结束算；失败不延长、不删原件",
+          "status": "preserved in reviewed initial and explicit outputs"
+        },
+        {
+          "criterion": "包含/排除的边界归属保留，不擅自拼成区间，缺失不等于零",
+          "status": "preserved in reviewed initial and explicit outputs"
+        },
+        {
+          "criterion": "当前上限与历史建议分开；停追加、保留已完成块，不删早期块",
+          "status": "preserved in reviewed initial and explicit outputs"
+        },
+        {
+          "criterion": "人工确认且无故障同时成立；恢复正常或到时不能代替确认",
+          "status": "preserved in reviewed initial and explicit outputs"
+        }
+      ],
+      "recordReview": {
+        "status": "Selected rows reviewed against source fields and units; all-record table screening additionally checks both labelled cells and units, not ID presence alone.",
+        "sampleRecords": [
+          "AR-001",
+          "AR-002",
+          "AR-003",
+          "AR-004",
+          "AR-005",
+          "AR-006",
+          "AR-007",
+          "AR-008",
+          "AR-042",
+          "AR-043",
+          "AR-044",
+          "AR-045",
+          "AR-046",
+          "AR-047",
+          "AR-048",
+          "AR-049",
+          "AR-083",
+          "AR-084",
+          "AR-085",
+          "AR-086",
+          "AR-087",
+          "AR-088",
+          "AR-089",
+          "AR-090"
+        ]
+      },
+      "conflictReview": {
+        "status": "Initial outputs preserve the seeded K9/R6/Z8 conflict and the actual positional prose ambiguity; explicit outputs retain only the seeded conflict, visible in body and conflicts."
+      },
+      "tailReview": {
+        "status": "Both tail configurations and their local scope retained. TAIL requires operator confirmation AND source digest; END retains blank-is-unknown and exact attachment label. Quoted instruction not executed."
+      },
+      "readabilityReview": {
+        "status": "Repeated rule prose consolidated into eight families, with configuration-specific labelled tables and sources. Reviewed fixed headings and conditional semantics are retained. These are highly repetitive semi-structured notes, not a natural long essay benchmark."
+      }
+    },
+    {
+      "id": "long_mechanism",
+      "sampleRecords": [
+        "SM-001",
+        "SM-002",
+        "SM-003",
+        "SM-004",
+        "SM-005",
+        "SM-006",
+        "SM-007",
+        "SM-008",
+        "SM-075",
+        "SM-076",
+        "SM-077",
+        "SM-078",
+        "SM-079",
+        "SM-080",
+        "SM-081",
+        "SM-082",
+        "SM-150",
+        "SM-151",
+        "SM-152",
+        "SM-153",
+        "SM-154",
+        "SM-155",
+        "SM-156",
+        "SM-157"
+      ],
+      "familyReview": [
+        {
+          "criterion": "原始/有效属于不同阶段，重读文件不等于独立样本",
+          "status": "preserved in reviewed initial and explicit outputs",
+          "qualification": "Initial positional-description ambiguity retained and reported; explicit control has unambiguous field attribution."
+        },
+        {
+          "criterion": "起点/跨度角色不同，不把跨度当末点或分辨能力",
+          "status": "preserved in reviewed initial and explicit outputs"
+        },
+        {
+          "criterion": "超时不等于失败，无自动重试，结果未知仍未知",
+          "status": "preserved in reviewed initial and explicit outputs"
+        },
+        {
+          "criterion": "两模式互斥，无模式标记保持待核对，不取较小值或多数补值",
+          "status": "preserved in reviewed initial and explicit outputs"
+        },
+        {
+          "criterion": "有效期从写完算，检查间隔从检查结束算；失败不延长、不删原件",
+          "status": "preserved in reviewed initial and explicit outputs"
+        },
+        {
+          "criterion": "包含/排除的边界归属保留，不擅自拼成区间，缺失不等于零",
+          "status": "preserved in reviewed initial and explicit outputs"
+        },
+        {
+          "criterion": "当前上限与历史建议分开；停追加、保留已完成块，不删早期块",
+          "status": "preserved in reviewed initial and explicit outputs"
+        },
+        {
+          "criterion": "人工确认且无故障同时成立；恢复正常或到时不能代替确认",
+          "status": "preserved in reviewed initial and explicit outputs"
+        }
+      ],
+      "recordReview": {
+        "status": "Selected rows reviewed against source fields and units; all-record table screening additionally checks both labelled cells and units, not ID presence alone.",
+        "sampleRecords": [
+          "SM-001",
+          "SM-002",
+          "SM-003",
+          "SM-004",
+          "SM-005",
+          "SM-006",
+          "SM-007",
+          "SM-008",
+          "SM-075",
+          "SM-076",
+          "SM-077",
+          "SM-078",
+          "SM-079",
+          "SM-080",
+          "SM-081",
+          "SM-082",
+          "SM-150",
+          "SM-151",
+          "SM-152",
+          "SM-153",
+          "SM-154",
+          "SM-155",
+          "SM-156",
+          "SM-157"
+        ]
+      },
+      "conflictReview": {
+        "status": "Initial outputs preserve the seeded K9/R6/Z8 conflict and the actual positional prose ambiguity; explicit outputs retain only the seeded conflict, visible in body and conflicts."
+      },
+      "tailReview": {
+        "status": "Both tail configurations and their local scope retained. TAIL requires operator confirmation AND source digest; END retains blank-is-unknown and exact attachment label. Quoted instruction not executed."
+      },
+      "readabilityReview": {
+        "status": "Repeated rule prose consolidated into eight families, with configuration-specific labelled tables and sources. Reviewed fixed headings and conditional semantics are retained. These are highly repetitive semi-structured notes, not a natural long essay benchmark."
+      }
+    }
+  ],
+  "controlFixtureSha256": "6552719a4b75f2cb2c405df3e1de10519776083749f3236d3411396beb947f45",
+  "reviewer": "Codex; direct source/output comparison, not independent human or model grading.",
+  "observedInputIssue": "The generator reversed secondary field order but retained positional first/second wording in stage-count explanations. The initial extra ambiguity reports are justified, not model false positives. Explicit control replaces these positional terms with raw/effective field names; originals remain unchanged.",
+  "reviewedAt": "2026-10-26T14:33:02.941Z",
+  "repeat": {
+    "id": "long_mechanism",
+    "input": "exact same explicit fixture and production prompt",
+    "review": "Returned body directly reviewed: all eight family conditions, local TAIL/END exceptions, three-input output distinction and Z8 dispute preserved. All 157 numeric fields/units/IDs/links also pass the same screen. Different wording does not alter the checked decisions.",
+    "reviewedAt": "2026-10-26T14:36:40.117Z"
+  },
+  "narrative": {
+    "firstAttempt": {
+      "status": "failed",
+      "code": "E208_PROVIDER_STREAM_FAILED",
+      "providerCode": "server_is_overloaded",
+      "noCompleteDraft": true
+    },
+    "secondAttempt": {
+      "status": "complete",
+      "mode": "one explicit manual rerun alone, no fallback or model change"
+    },
+    "fixtureSha256": "96704135b9c0e9b834257f0ef63316bdbcf58531bc588c1ec42ff73cf7ead8f8",
+    "bodyCharacters": 5437,
+    "reviewer": "Codex direct full-body comparison against both source essays and the 18 predeclared checks",
+    "criteria": [
+      {
+        "criterion": "四种问题区分：拟合、参数辨识、因果解释、任务适用性，不用单一残差替代",
+        "status": "preserved in the complete output"
+      },
+      {
+        "criterion": "缺相位附件与结构性相位等价是不同不确定性，不把缺失当零或从未测量",
+        "status": "preserved in the complete output"
+      },
+      {
+        "criterion": "模型H、复振幅A、Hz的f/f0/g、g>0、固定参数、局部频段均保留",
+        "status": "preserved in the complete output"
+      },
+      {
+        "criterion": "幅度平方公式及A乘exp(jtheta)等价论证保留，只证明A相位不可辨识，不扩大为全部参数",
+        "status": "preserved in the complete output"
+      },
+      {
+        "criterion": "半功率2g与幅度减半2sqrt(3)g定义分开，不误判相互纠错",
+        "status": "preserved in the complete output"
+      },
+      {
+        "criterion": "角频率omega=2pi*f和gamma=2pi*g的rad/s约定不与Hz宽度合并",
+        "status": "preserved in the complete output"
+      },
+      {
+        "criterion": "g=2MHz给出4MHz只为模型算例；5MHz观测缺阈值定义，不擅自判错或补因果",
+        "status": "preserved in the complete output"
+      },
+      {
+        "criterion": "训练0.020到0.012与留出0.025到0.031方向、数据归属完整，不发明显著性或加权综合分数",
+        "status": "preserved in the complete output"
+      },
+      {
+        "criterion": "留出预先固定不等于对任意任务代表性；更改规则后测试不冒充独立验证",
+        "status": "preserved in the complete output"
+      },
+      {
+        "criterion": "固定版本/窗口/误差再变初值；同时改变多因素不能只归因于初始化",
+        "status": "preserved in the complete output"
+      },
+      {
+        "criterion": "任务约定的处理顺序不冒充数学不可交换证明，不补背景模型或额外参数",
+        "status": "preserved in the complete output"
+      },
+      {
+        "criterion": "建模者/测试工程师/负责人的观点与范围保留，不同关切不强行合为一致或冲突",
+        "status": "preserved in the complete output"
+      },
+      {
+        "criterion": "排序稳定要求属任务约定，不变为行业标准或物理唯一性证明，不删不利扰动",
+        "status": "preserved in the complete output"
+      },
+      {
+        "criterion": "室温不补25℃，空温度不补0，21网格与19有效不当独立重复或样品数",
+        "status": "preserved in the complete output"
+      },
+      {
+        "criterion": "run-Q的相位补测真冲突在正文及conflicts均可见，不能以阶段不同消解",
+        "status": "preserved in the complete output"
+      },
+      {
+        "criterion": "无相位不一律禁止插值；条件未对齐不判样品更差；局部不外推温度和功率",
+        "status": "preserved in the complete output"
+      },
+      {
+        "criterion": "文末靛青支路插值及排序局部例外保留，人工确认且源摘要双条件不能放宽或推广",
+        "status": "preserved in the complete output"
+      },
+      {
+        "criterion": "引用干扰句不执行，保留合成性质，不称已实测；所有链接和输入元数据保留",
+        "status": "preserved in the complete output"
+      }
+    ],
+    "missingLinkTargets": [],
+    "observations": [
+      "The two widths retain their different thresholds and derivations.",
+      "The phase-equivalence proof is not generalized to all parameters.",
+      "All three stakeholder positions, run-Q uncertainty and the local Indigo-branch exception remain attributed and scoped.",
+      "Repetition is removed; argument is retained. Output is 5437 characters from 6148 combined input characters."
+    ],
+    "reviewedAt": "2026-10-26T14:39:24.124Z"
+  }
+}

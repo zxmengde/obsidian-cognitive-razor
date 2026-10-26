@@ -1,0 +1,231 @@
+{
+  "startedAt": "2026-10-26T14:37:33.487Z",
+  "vault": "C:/code/obsidian",
+  "replay": "Recorded live GPT-6.1 Sol results, no additional host model request",
+  "excluded": [
+    "Installed Cognitive Razor UI and task queue",
+    "Real embedding/vector refresh: controlled reindex callback only"
+  ],
+  "checks": [
+    {
+      "name": "long_entity: merged body committed",
+      "passed": true
+    },
+    {
+      "name": "long_entity: knowledge type retained",
+      "passed": true
+    },
+    {
+      "name": "long_entity: old verification projection excluded",
+      "passed": true
+    },
+    {
+      "name": "long_entity: body and parent links repaired",
+      "passed": true,
+      "detail": {
+        "plannedReplacements": 2
+      }
+    },
+    {
+      "name": "long_entity: inline code untouched",
+      "passed": true
+    },
+    {
+      "name": "long_entity: redundant removed from active vault",
+      "passed": true
+    },
+    {
+      "name": "long_entity: redundant found in local trash",
+      "passed": true,
+      "detail": {
+        "path": ".trash/long_entity-冗余笔记-mvpd26cv.md"
+      }
+    },
+    {
+      "name": "long_entity: completed operation not offered for recovery",
+      "passed": true
+    },
+    {
+      "name": "long_entity: reindex seam invoked (embedding excluded)",
+      "passed": true
+    },
+    {
+      "name": "long_issue: merged body committed",
+      "passed": true
+    },
+    {
+      "name": "long_issue: knowledge type retained",
+      "passed": true
+    },
+    {
+      "name": "long_issue: old verification projection excluded",
+      "passed": true
+    },
+    {
+      "name": "long_issue: body and parent links repaired",
+      "passed": true,
+      "detail": {
+        "plannedReplacements": 2
+      }
+    },
+    {
+      "name": "long_issue: inline code untouched",
+      "passed": true
+    },
+    {
+      "name": "long_issue: redundant removed from active vault",
+      "passed": true
+    },
+    {
+      "name": "long_issue: redundant found in local trash",
+      "passed": true,
+      "detail": {
+        "path": ".trash/long_issue-冗余笔记-mvpd26cv.md"
+      }
+    },
+    {
+      "name": "long_issue: completed operation not offered for recovery",
+      "passed": true
+    },
+    {
+      "name": "long_issue: reindex seam invoked (embedding excluded)",
+      "passed": true
+    },
+    {
+      "name": "long_mechanism: merged body committed",
+      "passed": true
+    },
+    {
+      "name": "long_mechanism: knowledge type retained",
+      "passed": true
+    },
+    {
+      "name": "long_mechanism: old verification projection excluded",
+      "passed": true
+    },
+    {
+      "name": "long_mechanism: body and parent links repaired",
+      "passed": true,
+      "detail": {
+        "plannedReplacements": 2
+      }
+    },
+    {
+      "name": "long_mechanism: inline code untouched",
+      "passed": true
+    },
+    {
+      "name": "long_mechanism: redundant removed from active vault",
+      "passed": true
+    },
+    {
+      "name": "long_mechanism: redundant found in local trash",
+      "passed": true,
+      "detail": {
+        "path": ".trash/long_mechanism-冗余笔记-mvpd26cv.md"
+      }
+    },
+    {
+      "name": "long_mechanism: completed operation not offered for recovery",
+      "passed": true
+    },
+    {
+      "name": "long_mechanism: reindex seam invoked (embedding excluded)",
+      "passed": true
+    },
+    {
+      "name": "long_narrative: merged body committed",
+      "passed": true
+    },
+    {
+      "name": "long_narrative: knowledge type retained",
+      "passed": true
+    },
+    {
+      "name": "long_narrative: old verification projection excluded",
+      "passed": true
+    },
+    {
+      "name": "long_narrative: body and parent links repaired",
+      "passed": true,
+      "detail": {
+        "plannedReplacements": 2
+      }
+    },
+    {
+      "name": "long_narrative: inline code untouched",
+      "passed": true
+    },
+    {
+      "name": "long_narrative: redundant removed from active vault",
+      "passed": true
+    },
+    {
+      "name": "long_narrative: redundant found in local trash",
+      "passed": true,
+      "detail": {
+        "path": ".trash/long_narrative-冗余笔记-mvpd26cv.md"
+      }
+    },
+    {
+      "name": "long_narrative: completed operation not offered for recovery",
+      "passed": true
+    },
+    {
+      "name": "long_narrative: reindex seam invoked (embedding excluded)",
+      "passed": true
+    }
+  ],
+  "files": [
+    "CR测试-feature-eval/知识/long_entity-主笔记.md",
+    "CR测试-feature-eval/知识/long_entity-引用.md",
+    "CR测试-feature-eval/知识/long_issue-主笔记.md",
+    "CR测试-feature-eval/知识/long_issue-引用.md",
+    "CR测试-feature-eval/知识/long_mechanism-主笔记.md",
+    "CR测试-feature-eval/知识/long_mechanism-引用.md",
+    "CR测试-feature-eval/知识/long_narrative-主笔记.md",
+    "CR测试-feature-eval/知识/long_narrative-引用.md",
+    "CR测试-feature-eval/host-bootstrap.md"
+  ],
+  "completedAt": "2026-10-26T14:37:34.222Z",
+  "application": "Obsidian 1.14.5 (installer 1.14.4)",
+  "draftBodies": [
+    {
+      "id": "long_entity",
+      "characters": 3973
+    },
+    {
+      "id": "long_issue",
+      "characters": 6311
+    },
+    {
+      "id": "long_mechanism",
+      "characters": 9385
+    },
+    {
+      "id": "long_narrative",
+      "characters": 5437
+    }
+  ],
+  "cleanup": {
+    "startedAt": "2026-10-26T14:41:22.471Z",
+    "movedToLocalTrash": [
+      "CR测试-feature-eval/知识/long_entity-主笔记.md",
+      "CR测试-feature-eval/知识/long_entity-引用.md",
+      "CR测试-feature-eval/知识/long_issue-主笔记.md",
+      "CR测试-feature-eval/知识/long_issue-引用.md",
+      "CR测试-feature-eval/知识/long_mechanism-主笔记.md",
+      "CR测试-feature-eval/知识/long_mechanism-引用.md",
+      "CR测试-feature-eval/知识/long_narrative-主笔记.md",
+      "CR测试-feature-eval/知识/long_narrative-引用.md",
+      "CR测试-feature-eval/host-bootstrap.md"
+    ],
+    "emptyFoldersTrashed": [
+      "CR测试-feature-eval/知识",
+      "CR测试-feature-eval"
+    ],
+    "remainingOwnedFiles": [],
+    "recycleBinEmptied": false,
+    "completedAt": "2026-10-26T14:41:22.503Z"
+  }
+}
