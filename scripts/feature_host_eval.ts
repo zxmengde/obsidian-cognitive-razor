@@ -10,7 +10,7 @@ import { CardGenerationService } from '../src/core/card-generation-service';
 import { generateMarkdownContent, generateFrontmatter, extractFrontmatter } from '../src/core/frontmatter-utils';
 import { makeVerificationReportBlock } from '../src/core/verification-report';
 import { SettingsStore, DEFAULT_SETTINGS } from '../src/data/settings-store';
-import { ok, type ILogger, type TaskRecord } from '../src/types';
+import { ok, type CRFrontmatter, type ILogger, type TaskRecord } from '../src/types';
 
 const TEST_ROOT = 'CR测试-feature-eval';
 const DATA_ROOT = '.obsidian/plugins/obsidian-cognitive-razor/tmp/feature_eval/host';
@@ -41,8 +41,8 @@ export async function run(app: App, fixtures: any, records: any) {
     await notes.create(path, content);
     return app.vault.getAbstractFileByPath(path) as TFile;
   }
-  function content(id: string, name: string, body: string, parents: string[] = []) {
-    return generateMarkdownContent(generateFrontmatter({ cruid: id, type: 'entity', name, parents, aliases: [name], tags: ['cr-test'] }), body);
+  function content(id: string, name: string, body: string, parents: string[] = [], metadata: Partial<CRFrontmatter> = {}) {
+    return generateMarkdownContent(generateFrontmatter({ type: 'entity', parents, aliases: [name], tags: ['cr-test'], ...metadata, cruid: id, name }), body);
   }
   const results: any = { startedAt: new Date().toISOString(), vault: 'C:/code/obsidian', replay: 'Recorded live GPT-6.1 Sol results, no additional host model request', excluded: ['Installed Cognitive Razor UI and task queue', 'Real embedding/vector refresh: controlled reindex callback only'], checks: [], files: [] };
   const runTag = Date.now().toString(36);
@@ -108,13 +108,13 @@ export async function run(app: App, fixtures: any, records: any) {
   await cards.dispose();
   for (const c of fixtures.cases.filter((c: any) => c.taskType === 'merge')) {
     const preview = getResult(c.id);
-    const primary = await create(`${TEST_ROOT}/知识/${c.id}-主笔记.md`, content(`${c.id}-a`, c.title, c.primary));
+    const primary = await create(`${TEST_ROOT}/知识/${c.id}-主笔记.md`, content(`${c.id}-a`, c.title, c.primary, [], preview.canonical.frontmatter));
     // 每轮使用独立回收站文件，避免旧的同名测试记录造成假阳性。
-    const secondary = await create(`${TEST_ROOT}/知识/${c.id}-冗余笔记-${runTag}.md`, content(`${c.id}-b`, c.title, c.secondary));
+    const secondary = await create(`${TEST_ROOT}/知识/${c.id}-冗余笔记-${runTag}.md`, content(`${c.id}-b`, c.title, c.secondary, [], preview.redundant.frontmatter));
     const reference = await create(`${TEST_ROOT}/知识/${c.id}-引用.md`, content(`${c.id}-ref`, `${c.id}-引用`, `正文引用 [[${secondary.path}|保留显示文本]]。\n\n代码不应修复：\`[[${secondary.path}]]\`。`, [`[[${secondary.path}]]`]));
     // Host metadata positions are asynchronous; wait only for our own reference.
     for (let n = 0; n < 40 && !app.metadataCache.getFileCache(reference)?.links?.length; n++) await new Promise(r => setTimeout(r, 100));
-    const pair = { id: c.id, type: 'entity', similarity: 0.93, nodeIdA: `${c.id}-a`, nodeIdB: `${c.id}-b`, status: 'pending' };
+    const pair = { id: c.id, type: c.noteType ?? 'entity', similarity: 0.93, nodeIdA: `${c.id}-a`, nodeIdB: `${c.id}-b`, status: 'pending' };
     const cache = { getFile: (id: string) => { const f = id === pair.nodeIdA ? primary : id === pair.nodeIdB ? secondary : undefined; return f && app.vault.getAbstractFileByPath(f.path) === f ? f : undefined; } };
     const journal = new FileStorage(app.vault, `${DATA_ROOT}/${c.id}`);
     unwrap(await journal.initialize());
@@ -127,6 +127,8 @@ export async function run(app: App, fixtures: any, records: any) {
     const final = await app.vault.read(primary);
     const links = await app.vault.read(reference);
     check(`${c.id}: merged body committed`, confirmed.ok && final.includes(draft.body));
+    check(`${c.id}: knowledge type retained`, extractFrontmatter(final)?.frontmatter.type === pair.type);
+    check(`${c.id}: old verification projection excluded`, !final.includes('<!-- cognitive-razor:verify-report -->'));
     check(`${c.id}: body and parent links repaired`, links.includes(`[[${primary.path}|保留显示文本]]`) && extractFrontmatter(links)?.frontmatter.parents.some(p => p.includes(primary.path.replace(/\.md$/, ''))) === true, { plannedReplacements: captured.linkRepairPlan.replacementCount });
     check(`${c.id}: inline code untouched`, links.includes(`\`[[${secondary.path}]]\``));
     check(`${c.id}: redundant removed from active vault`, app.vault.getAbstractFileByPath(secondary.path) === null);

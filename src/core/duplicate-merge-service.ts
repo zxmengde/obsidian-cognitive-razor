@@ -19,6 +19,8 @@ import { resolveTaskModelSnapshot } from "./task-model-resolver";
 import { formatCRTimestamp } from "../utils/date-utils";
 import { resolveAvailableProvider } from "./provider-config";
 import { validateChatFinishReason } from "./provider-response-parsers";
+import { schemaRegistry } from "./schema-registry";
+import { stripVerifyReport } from "./semantic-index-text";
 import type { TaskModelSnapshot } from "../types/task";
 import { parseInternalNoteLink, rewriteInternalNoteLink, rewriteParentNoteLink } from "../utils/note-links";
 import { isScalar, isSeq, parseDocument } from "yaml";
@@ -310,7 +312,9 @@ export class DuplicateMergeService {
   async prepareCapturedMerge(input: DuplicateMergeInput, model: TaskModelSnapshot, signal?: AbortSignal): Promise<Result<DuplicateMergePreview>> {
     if (this.disposed || signal?.aborted) return err("E310_INVALID_STATE", "合并稿生成已停止");
     if (!model.providerId || !model.model || !model.providerSnapshot || model.providerSnapshot.enabled === false) return err("E401_PROVIDER_NOT_CONFIGURED", "请先配置合并任务模型");
-    const current = JSON.stringify({ canonical: input.canonical, redundant: input.redundant });
+    const source = (note: DuplicateMergeNoteSnapshot) => ({ nodeId: note.nodeId, path: note.path, frontmatter: note.frontmatter, content: stripVerifyReport(note.content) });
+    const sectionOrder = schemaRegistry.getFieldDescriptions(input.type).map(field => field.name === "axioms" ? "前提" : field.description);
+    const current = JSON.stringify({ type: input.type, sectionOrder, canonical: source(input.canonical), redundant: source(input.redundant) });
     let prompt: string;
     try { prompt = this.deps.promptManager.build("merge", { CTX_CURRENT: current }); }
     catch (error) { return toErr(error, "E405_TEMPLATE_INVALID", "合并提示词不可用"); }

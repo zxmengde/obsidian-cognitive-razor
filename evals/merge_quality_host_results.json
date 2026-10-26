@@ -1,0 +1,304 @@
+{
+  "startedAt": "2026-10-26T12:09:47.199Z",
+  "vault": "C:/code/obsidian",
+  "replay": "Recorded live GPT-6.1 Sol results, no additional host model request",
+  "excluded": [
+    "Installed Cognitive Razor UI and task queue",
+    "Real embedding/vector refresh: controlled reindex callback only"
+  ],
+  "checks": [
+    {
+      "name": "quality_domain: merged body committed",
+      "passed": true
+    },
+    {
+      "name": "quality_domain: knowledge type retained",
+      "passed": true
+    },
+    {
+      "name": "quality_domain: old verification projection excluded",
+      "passed": true
+    },
+    {
+      "name": "quality_domain: body and parent links repaired",
+      "passed": true,
+      "detail": {
+        "plannedReplacements": 2
+      }
+    },
+    {
+      "name": "quality_domain: inline code untouched",
+      "passed": true
+    },
+    {
+      "name": "quality_domain: redundant removed from active vault",
+      "passed": true
+    },
+    {
+      "name": "quality_domain: redundant found in local trash",
+      "passed": true,
+      "detail": {
+        "path": ".trash/quality_domain-冗余笔记-mvp7s533.md"
+      }
+    },
+    {
+      "name": "quality_domain: completed operation not offered for recovery",
+      "passed": true
+    },
+    {
+      "name": "quality_domain: reindex seam invoked (embedding excluded)",
+      "passed": true
+    },
+    {
+      "name": "quality_issue: merged body committed",
+      "passed": true
+    },
+    {
+      "name": "quality_issue: knowledge type retained",
+      "passed": true
+    },
+    {
+      "name": "quality_issue: old verification projection excluded",
+      "passed": true
+    },
+    {
+      "name": "quality_issue: body and parent links repaired",
+      "passed": true,
+      "detail": {
+        "plannedReplacements": 2
+      }
+    },
+    {
+      "name": "quality_issue: inline code untouched",
+      "passed": true
+    },
+    {
+      "name": "quality_issue: redundant removed from active vault",
+      "passed": true
+    },
+    {
+      "name": "quality_issue: redundant found in local trash",
+      "passed": true,
+      "detail": {
+        "path": ".trash/quality_issue-冗余笔记-mvp7s533.md"
+      }
+    },
+    {
+      "name": "quality_issue: completed operation not offered for recovery",
+      "passed": true
+    },
+    {
+      "name": "quality_issue: reindex seam invoked (embedding excluded)",
+      "passed": true
+    },
+    {
+      "name": "quality_theory: merged body committed",
+      "passed": true
+    },
+    {
+      "name": "quality_theory: knowledge type retained",
+      "passed": true
+    },
+    {
+      "name": "quality_theory: old verification projection excluded",
+      "passed": true
+    },
+    {
+      "name": "quality_theory: body and parent links repaired",
+      "passed": true,
+      "detail": {
+        "plannedReplacements": 2
+      }
+    },
+    {
+      "name": "quality_theory: inline code untouched",
+      "passed": true
+    },
+    {
+      "name": "quality_theory: redundant removed from active vault",
+      "passed": true
+    },
+    {
+      "name": "quality_theory: redundant found in local trash",
+      "passed": true,
+      "detail": {
+        "path": ".trash/quality_theory-冗余笔记-mvp7s533.md"
+      }
+    },
+    {
+      "name": "quality_theory: completed operation not offered for recovery",
+      "passed": true
+    },
+    {
+      "name": "quality_theory: reindex seam invoked (embedding excluded)",
+      "passed": true
+    },
+    {
+      "name": "quality_entity: merged body committed",
+      "passed": true
+    },
+    {
+      "name": "quality_entity: knowledge type retained",
+      "passed": true
+    },
+    {
+      "name": "quality_entity: old verification projection excluded",
+      "passed": true
+    },
+    {
+      "name": "quality_entity: body and parent links repaired",
+      "passed": true,
+      "detail": {
+        "plannedReplacements": 2
+      }
+    },
+    {
+      "name": "quality_entity: inline code untouched",
+      "passed": true
+    },
+    {
+      "name": "quality_entity: redundant removed from active vault",
+      "passed": true
+    },
+    {
+      "name": "quality_entity: redundant found in local trash",
+      "passed": true,
+      "detail": {
+        "path": ".trash/quality_entity-冗余笔记-mvp7s533.md"
+      }
+    },
+    {
+      "name": "quality_entity: completed operation not offered for recovery",
+      "passed": true
+    },
+    {
+      "name": "quality_entity: reindex seam invoked (embedding excluded)",
+      "passed": true
+    },
+    {
+      "name": "quality_mechanism: merged body committed",
+      "passed": true
+    },
+    {
+      "name": "quality_mechanism: knowledge type retained",
+      "passed": true
+    },
+    {
+      "name": "quality_mechanism: old verification projection excluded",
+      "passed": true
+    },
+    {
+      "name": "quality_mechanism: body and parent links repaired",
+      "passed": true,
+      "detail": {
+        "plannedReplacements": 2
+      }
+    },
+    {
+      "name": "quality_mechanism: inline code untouched",
+      "passed": true
+    },
+    {
+      "name": "quality_mechanism: redundant removed from active vault",
+      "passed": true
+    },
+    {
+      "name": "quality_mechanism: redundant found in local trash",
+      "passed": true,
+      "detail": {
+        "path": ".trash/quality_mechanism-冗余笔记-mvp7s533.md"
+      }
+    },
+    {
+      "name": "quality_mechanism: completed operation not offered for recovery",
+      "passed": true
+    },
+    {
+      "name": "quality_mechanism: reindex seam invoked (embedding excluded)",
+      "passed": true
+    },
+    {
+      "name": "quality_holdout: merged body committed",
+      "passed": true
+    },
+    {
+      "name": "quality_holdout: knowledge type retained",
+      "passed": true
+    },
+    {
+      "name": "quality_holdout: old verification projection excluded",
+      "passed": true
+    },
+    {
+      "name": "quality_holdout: body and parent links repaired",
+      "passed": true,
+      "detail": {
+        "plannedReplacements": 2
+      }
+    },
+    {
+      "name": "quality_holdout: inline code untouched",
+      "passed": true
+    },
+    {
+      "name": "quality_holdout: redundant removed from active vault",
+      "passed": true
+    },
+    {
+      "name": "quality_holdout: redundant found in local trash",
+      "passed": true,
+      "detail": {
+        "path": ".trash/quality_holdout-冗余笔记-mvp7s533.md"
+      }
+    },
+    {
+      "name": "quality_holdout: completed operation not offered for recovery",
+      "passed": true
+    },
+    {
+      "name": "quality_holdout: reindex seam invoked (embedding excluded)",
+      "passed": true
+    }
+  ],
+  "files": [
+    "CR测试-feature-eval/知识/quality_domain-主笔记.md",
+    "CR测试-feature-eval/知识/quality_domain-引用.md",
+    "CR测试-feature-eval/知识/quality_issue-主笔记.md",
+    "CR测试-feature-eval/知识/quality_issue-引用.md",
+    "CR测试-feature-eval/知识/quality_theory-主笔记.md",
+    "CR测试-feature-eval/知识/quality_theory-引用.md",
+    "CR测试-feature-eval/知识/quality_entity-主笔记.md",
+    "CR测试-feature-eval/知识/quality_entity-引用.md",
+    "CR测试-feature-eval/知识/quality_mechanism-主笔记.md",
+    "CR测试-feature-eval/知识/quality_mechanism-引用.md",
+    "CR测试-feature-eval/知识/quality_holdout-主笔记.md",
+    "CR测试-feature-eval/知识/quality_holdout-引用.md",
+    "CR测试-feature-eval/host-bootstrap.md"
+  ],
+  "completedAt": "2026-10-26T12:09:48.226Z",
+  "cleanup": {
+    "startedAt": "2026-10-26T12:15:03.986Z",
+    "movedToLocalTrash": [
+      "CR测试-feature-eval/知识/quality_domain-主笔记.md",
+      "CR测试-feature-eval/知识/quality_domain-引用.md",
+      "CR测试-feature-eval/知识/quality_issue-主笔记.md",
+      "CR测试-feature-eval/知识/quality_issue-引用.md",
+      "CR测试-feature-eval/知识/quality_theory-主笔记.md",
+      "CR测试-feature-eval/知识/quality_theory-引用.md",
+      "CR测试-feature-eval/知识/quality_entity-主笔记.md",
+      "CR测试-feature-eval/知识/quality_entity-引用.md",
+      "CR测试-feature-eval/知识/quality_mechanism-主笔记.md",
+      "CR测试-feature-eval/知识/quality_mechanism-引用.md",
+      "CR测试-feature-eval/知识/quality_holdout-主笔记.md",
+      "CR测试-feature-eval/知识/quality_holdout-引用.md",
+      "CR测试-feature-eval/host-bootstrap.md"
+    ],
+    "emptyFoldersTrashed": [
+      "CR测试-feature-eval/知识",
+      "CR测试-feature-eval"
+    ],
+    "remainingOwnedFiles": [],
+    "recycleBinEmptied": false,
+    "completedAt": "2026-10-26T12:15:04.023Z"
+  }
+}

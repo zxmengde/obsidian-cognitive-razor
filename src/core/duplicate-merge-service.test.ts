@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TFile, type CachedMetadata } from "obsidian";
 import { err, ok } from "../types";
-import type { CRFrontmatter, DuplicatePair, ILogger, PluginSettings, Result } from "../types";
+import type { ChatRequest, CRFrontmatter, DuplicatePair, ILogger, PluginSettings, Result } from "../types";
 import type { FileStorage } from "../data/file-storage";
 import { extractFrontmatter, generateFrontmatter, generateMarkdownContent } from "./frontmatter-utils";
 import { DuplicateMergeService } from "./duplicate-merge-service";
@@ -97,8 +97,8 @@ function fixture(options: FixtureOptions = {}) {
       defaultProviderId: "",
     } as unknown as PluginSettings),
   };
-  const providerManager = { chat: vi.fn(async () => ok({ finishReason: options.finishReason, content: options.modelContent ?? JSON.stringify({ body: "合并正文", name: "Canonical", aliases: ["旧别名", "旧别名"], tags: ["tag"], parents: ["[[Parent]]"], sourceUids: ["source-1"], conflicts: ["冲突"] }) })) };
-  const promptManager = { build: vi.fn(() => "<system_instructions>merge</system_instructions>\n<context_slots><merge_input>{{CTX_CURRENT}}</merge_input></context_slots>\n<output_schema>{}</output_schema>\n<task_instruction>merge</task_instruction>") };
+  const providerManager = { chat: vi.fn(async (_request: ChatRequest) => ok({ finishReason: options.finishReason, content: options.modelContent ?? JSON.stringify({ body: "合并正文", name: "Canonical", aliases: ["旧别名", "旧别名"], tags: ["tag"], parents: ["[[Parent]]"], sourceUids: ["source-1"], conflicts: ["冲突"] }) })) };
+  const promptManager = { build: vi.fn((_task: string, slots: Record<string, string>) => `<system_instructions>merge</system_instructions>\n<context_slots><merge_input>${slots.CTX_CURRENT}</merge_input></context_slots>\n<output_schema>{}</output_schema>\n<task_instruction>merge</task_instruction>`) };
   const atomicWrite = vi.fn(async (path: string, content: string): Promise<Result<void>> => { storageFiles.set(path, content); return ok(undefined); });
   const storage: FileStorage = { exists: async (path: string) => storageFiles.has(path), read: async (path: string) => ok(storageFiles.get(path) ?? ""), atomicWrite } as unknown as FileStorage;
   const reindex = vi.fn(async (): Promise<Result<{ indexed: number; failed: number }>> => ok({ indexed: 1, failed: 0 }));
@@ -119,6 +119,43 @@ function fixture(options: FixtureOptions = {}) {
 }
 
 describe("DuplicateMergeService", () => {
+  it.each([
+    ["domain", "子领域"], ["issue", "利益相关者视角"], ["theory", "前提"],
+    ["entity", "区别特征"], ["mechanism", "因果链"],
+  ] as const)("supplies the %s section headings to the model", async (type, heading) => {
+    const f = fixture();
+    f.pair.type = type;
+    for (const note of [f.canonical, f.redundant]) {
+      note.frontmatter.type = type;
+      note.content = generateMarkdownContent(note.frontmatter, "知识正文");
+    }
+    const result = await f.service.prepareMerge(f.pair.id, "canonical");
+    expect(result.ok).toBe(true);
+    const text = f.providerManager.chat.mock.calls[0][0].messages.map(m => m.content).join("\n");
+    const input = JSON.parse(text.match(/<merge_input>([\s\S]*?)<\/merge_input>/)![1]);
+    expect(input.type).toBe(type);
+    expect(input.sectionOrder[0]).toBe("定义");
+    expect(input.sectionOrder).toContain(heading);
+    if (type === "theory") expect(input.sectionOrder).not.toContain("公理");
+  });
+
+  it("excludes old verification reports from model input while retaining the full confirmation snapshots", async () => {
+    const f = fixture();
+    f.canonical.content += "\n<!-- cognitive-razor:verify-report -->\n旧核查报告不应进入合并正文\n<!-- /cognitive-razor:verify-report -->\n";
+    f.redundant.content += "\n<!-- cognitive-razor:verify-report -->\n另一篇旧核查报告\n<!-- /cognitive-razor:verify-report -->\n";
+    const result = await f.service.prepareMerge(f.pair.id, "canonical");
+    if (!result.ok) throw new Error("preview failed");
+    const request = f.providerManager.chat.mock.calls[0][0];
+    const prompt = request.messages.map(m => m.content).join("\n");
+    expect(prompt).toContain("主笔记正文");
+    expect(prompt).toContain("冗余笔记正文");
+    expect(prompt).not.toContain("旧核查报告");
+    expect(prompt).not.toContain("cognitive-razor:verify-report");
+    expect(result.value.canonical.content).toBe(f.canonical.content);
+    expect(result.value.redundant.content).toBe(f.redundant.content);
+    expect((await f.service.confirmMerge(result.value.draft, result.value.linkRepairPlan)).ok).toBe(true);
+  });
+
   it.each(["canonical", "redundant"] as const)("rejects an old draft after the %s note changes before confirmation", async (changed) => {
     const f = fixture();
     const preview = await f.service.prepareMerge(f.pair.id, "canonical");

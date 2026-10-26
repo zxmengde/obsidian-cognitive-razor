@@ -12,7 +12,8 @@ const baseUrl = 'http://39.105.206.63:8317/v1';
 const model = 'gpt-6.1-sol';
 const key = process.env.CR_TEST_API_KEY;
 if (!key) throw new Error('Set CR_TEST_API_KEY for an explicitly authorized test run.');
-const fixture = JSON.parse(await readFile(resolve(root, 'evals/core_features.json'), 'utf8'));
+const fixturePath = resolve(root, process.env.CR_EVAL_CASES || 'evals/core_features.json');
+const fixture = JSON.parse(await readFile(fixturePath, 'utf8'));
 const output = resolve(root, process.env.CR_EVAL_OUTPUT || 'tmp/feature_eval/results.json');
 const selected = process.argv.slice(2);
 const cases = fixture.cases.filter(c => !selected.length || selected.includes(c.id));
@@ -32,7 +33,7 @@ settings.providers = { 'feature-eval': { apiKey: key, baseUrl, apiFormat: 'opena
 settings.providerTimeoutMs = 180000;
 settings.providerMaxAttempts = 1;
 settings.enableStreamingKeepalive = true;
-const results = { generatedAt: new Date().toISOString(), gitHead: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(), sourceDigest, model, baseUrl, protocol: 'openai-responses', reasoningEffort: 'high', transport: 'production node-http streaming; production request assembly, parsing and task executors; mocked Obsidian host', fixtureSha256: sha(await readFile(resolve(root, 'evals/core_features.json'))), cases: [] };
+const results = { generatedAt: new Date().toISOString(), gitHead: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(), sourceDigest, model, baseUrl, protocol: 'openai-responses', reasoningEffort: 'high', transport: 'production node-http streaming; production request assembly, parsing and task executors; mocked Obsidian host', fixtureSha256: sha(await readFile(fixturePath)), cases: [] };
 let active;
 const transport = {
   async requestJson() { throw new Error('This run explicitly requires production streaming transport.'); },
@@ -47,10 +48,10 @@ const transport = {
   },
   dispose() {}
 };
-function snapshot(id, title, body, suffix) {
-  const frontmatter = { cruid: `${id}-${suffix}`, type: 'entity', name: title, status: 'draft', created: '2026-10-26 00:00:00', updated: '2026-10-26 00:00:00', aliases: [title], tags: ['cr-test'], parents: ['[[CR测试-信号处理]]'], sourceUids: [`cr-test-source-${suffix}`] };
+function snapshot(id, title, body, suffix, type, metadata = {}) {
+  const frontmatter = { name: title, status: 'draft', created: '2026-10-26 00:00:00', updated: '2026-10-26 00:00:00', aliases: [title], tags: ['cr-test'], parents: ['[[CR测试-信号处理]]'], sourceUids: [`cr-test-source-${suffix}`], ...metadata, cruid: `${id}-${suffix}`, type };
   const content = `---\n${Object.entries(frontmatter).map(([k,v]) => `${k}: ${JSON.stringify(v)}`).join('\n')}\n---\n\n${body}\n`;
-  return { nodeId: frontmatter.cruid, path: `CR测试/4-实体/${title}-${suffix}.md`, content, contentHash: sha(content), frontmatter };
+  return { nodeId: frontmatter.cruid, path: `CR测试/${settings.directoryScheme[type].split('/').at(-1)}/${title}-${suffix}.md`, content, contentHash: sha(content), frontmatter };
 }
 const flush = () => {
   const content = JSON.stringify(results, null, 2);
@@ -66,11 +67,13 @@ for (const c of cases) {
   const loaded = await store.loadSettings();
   if (!loaded.ok) throw new Error(`Invalid explicit test configuration: ${loaded.error.code}`);
   const manager = new extra.ProviderManager(store, runtime.logger, undefined, undefined, undefined, transport);
-  const primary = snapshot(c.id, c.title, c.primary ?? c.body, 'a');
+  const type = c.noteType ?? 'entity';
+  if (!['domain', 'issue', 'theory', 'entity', 'mechanism'].includes(type)) throw new Error(`Invalid note type: ${c.id}`);
+  const primary = snapshot(c.id, c.title, c.primary ?? c.body, 'a', type, c.primaryMetadata);
   const task = { id: `test-${c.id}`, nodeId: primary.nodeId, workflowId: `test-${c.id}`, stageId: c.taskType, state: 'running', createdAt: Date.now(), updatedAt: Date.now(), attempt: 1 };
   const example = { id: c.id, taskType: c.taskType, fixture: 'Public-source synthetic test note, not user data.' };
   if (c.taskType === 'merge') {
-    example.merge = { pairId: c.id, type: 'entity', similarity: 0.93, canonical: primary, redundant: snapshot(c.id, c.title, c.secondary, 'b'), linkRepairPlan: { entries: [], replacementCount: 0, skipped: [] } };
+    example.merge = { pairId: c.id, type, similarity: 0.93, canonical: primary, redundant: snapshot(c.id, c.title, c.secondary, 'b', type, c.secondaryMetadata), linkRepairPlan: { entries: [], replacementCount: 0, skipped: [] } };
   } else if (c.taskType === 'verify') {
     example.task = { ...task, payload: { filePath: primary.path, currentContent: primary.content, noteType: 'entity', concept: { type: 'entity', name: { chinese: c.title, english: '' }, coreDefinition: '数字信号处理测试材料', source: 'define', parents: primary.frontmatter.parents } } };
   } else {
