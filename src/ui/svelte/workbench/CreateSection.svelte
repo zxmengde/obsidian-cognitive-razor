@@ -24,14 +24,17 @@
     import { confirmDefinePreview } from '../../../domain/concept';
     import { toSafeErrorFeedback, type UiFeedback } from '../../error-feedback';
     import { showActionFeedback } from '../../feedback';
+    import { onWorkbenchFocus, onWorkbenchPanel, takeWorkbenchFocus, takeWorkbenchPanel, type WorkbenchPanelIntent } from '../../workbench-intent';
 
     /** 当前展开的面板类型 */
     type ActivePanel = 'none' | 'expand';
 
     let {
         activeFile,
+        onOpenSettings,
     }: {
         activeFile: TFile | null;
+        onOpenSettings?: () => void;
     } = $props();
 
     // 从 Context 获取服务
@@ -86,12 +89,32 @@
         const event = ctx.app.vault.on('modify', (changed) => { if (changed === file) void refresh(); });
         return () => { disposed = true; ctx.app.vault.offref(event); };
     });
-    const unsubscribeQueue = application.queue.subscribe((event) => {
-        if (event.type === 'task-completed' && event.task.stageId === 'cards') showActionFeedback(
-            { level: 'success', message: ctx.i18n.format("cards.completed", { path: event.task.payload.targetPath }) }, event.task.payload.filePath,
-        );
+    // Task outcomes are announced once per workbench by the runtime, so this
+    // panel no longer subscribes on its own.
+    // A command asks for the expand panel before the view exists; honour that
+    // request once the note's frontmatter has been read.
+    let requestedPanel = $state<WorkbenchPanelIntent | undefined>(undefined);
+    $effect(() => {
+        if (requestedPanel === 'expand' && isCRNode) {
+            requestedPanel = undefined;
+            activePanel = 'expand';
+        }
     });
-    $effect(() => () => unsubscribeQueue());
+    $effect(() => onWorkbenchPanel((panel) => { requestedPanel = panel; }));
+    $effect(() => {
+        const pending = takeWorkbenchPanel();
+        if (pending) requestedPanel = pending;
+    });
+    // Freshly opened view: the user came here to type, so the cursor starts in
+    // the concept field. Restored leaves never request focus.
+    let inputEl = $state<HTMLInputElement | undefined>(undefined);
+    function focusInput(): void {
+        if (inputEl && inputEl.isConnected) inputEl.focus();
+    }
+    $effect(() => {
+        if (takeWorkbenchFocus()) focusInput();
+    });
+    $effect(() => onWorkbenchFocus(focusInput));
 
     // 派生状态
     let hasInput = $derived(inputValue.trim().length > 0);
@@ -218,12 +241,16 @@
         <div class="cr-search-row">
             <div class="cr-search-field">
                 <input id="cr-concept-input" class="cr-search-input" type="text" placeholder={product.placeholder}
-                    bind:value={inputValue} oninput={() => defineResult = null} onkeydown={handleKeydown} disabled={defining || creating} aria-label={t.workbench.createConcept.placeholder} />
+                    bind:this={inputEl} bind:value={inputValue} oninput={() => defineResult = null} onkeydown={handleKeydown} disabled={defining || creating} aria-label={t.workbench.createConcept.placeholder} />
                 {#if hasInput}<Button variant="ghost" size="icon" onclick={clearInput} disabled={defining || creating} ariaLabel={t.workbench.createConcept.clear}><Icon name="x" size={16} /></Button>{/if}
             </div>
             <Button variant="primary" disabled={!hasInput || creating || defineUnavailable} loading={defining} onclick={() => void handleDefine()} ariaLabel={t.workbench.createConcept.startButton}>{t.workbench.createConcept.startButton}</Button>
         </div>
-        {#if defineUnavailable}<p class="cr-create-help" role="status">{product.notConfigured}</p>{/if}
+        {#if defineUnavailable}
+            <!-- The hint is the only place the user learns why Define is dead;
+                 it must lead somewhere instead of just stating the problem. -->
+            <p class="cr-create-help" role="status">{product.notConfigured}{#if onOpenSettings}<button type="button" class="cr-create-help__link" onclick={onOpenSettings}>{product.settings} ›</button>{/if}</p>
+        {/if}
     {:else}
         <div class="cr-result-heading"><h2>{inputValue}</h2><button class="cr-text-action" type="button" disabled={creating} onclick={() => editingInput = true}>{product.editInput}</button></div>
         <TypeTable concept={defineResult} oncreate={handleCreateType} disabled={creating} />
@@ -247,6 +274,7 @@
     .cr-search-input:focus { border-color: var(--cr-border-focus); }
     .cr-search-row :global(.cr-btn-primary) { width: 100%; min-height: 38px; border-radius: var(--cr-field-radius); }
     .cr-create-help { margin: 16px 0 0; font-size: var(--cr-font-fine); line-height: 1.7; color: var(--cr-text-faint); }
+    .cr-create-help__link { height: auto; padding: 0; margin-left: var(--cr-space-1); border: 0; box-shadow: none; background: none; color: var(--cr-interactive-accent); font-size: var(--cr-font-fine); }
     .cr-result-heading { display: flex; align-items: baseline; gap: 12px; justify-content: space-between; margin-bottom: 24px; }
     .cr-result-heading h2 { min-width: 0; }
     .cr-text-action { flex-shrink: 0; height: auto; padding: 0; border: 0; box-shadow: none; background: none; color: var(--cr-interactive-accent); font-size: var(--cr-font-xs); }

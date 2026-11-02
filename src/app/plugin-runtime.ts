@@ -1,4 +1,6 @@
 import { showWarning } from "../ui/feedback";
+import { showActionFeedback } from "../ui/feedback";
+import { notifyTaskOutcomes } from "../ui/task-outcome";
 import { CardGenerationService } from "../core/card-generation-service";
 import { MergeDraftGenerationService } from "../core/merge-draft-generation-service";
 import type { App } from "obsidian";
@@ -56,6 +58,7 @@ export class PluginRuntime {
   private taskRunner!: TaskRunner;
   private cardGeneration!: CardGenerationService;
   private mergeDraftGeneration!: MergeDraftGenerationService;
+  private stopOutcomeNotices: (() => void) | undefined;
   private workflowStore!: WorkflowStore;
   private workflowCoordinator!: WorkflowCoordinator;
   taskQueue!: TaskQueue;
@@ -384,6 +387,9 @@ export class PluginRuntime {
       duplicateMergeService: this.duplicateMergeService,
       mergeDraftGeneration: this.mergeDraftGeneration,
     });
+    // Queue outcomes outlive the workbench view: the user closes the panel and
+    // still needs to learn that their note finished or failed.
+    this.stopOutcomeNotices = notifyTaskOutcomes(this.taskQueue, this.i18n, (notice) => showActionFeedback(notice));
   }
 
   async dispose(): Promise<void> {
@@ -531,6 +537,8 @@ export class PluginRuntime {
     await this.releaseSafely("DuplicateMergeService", () => this.duplicateMergeService?.dispose());
     this.unsubscribeSettings?.();
     this.unsubscribeSettings = undefined;
+    this.stopOutcomeNotices?.();
+    this.stopOutcomeNotices = undefined;
     this.unsubscribeDelete?.();
     this.unsubscribeDelete = undefined;
 
