@@ -80,7 +80,9 @@
         width: 16px;
         height: 16px;
         border-radius: 50%;
-        background: white;
+        /* The thumb sits on the accent fill, so it follows the theme's
+           on-accent colour instead of a hardcoded white. */
+        background: var(--cr-text-on-accent);
         transition: transform 0.15s ease;
     }
 

@@ -2,7 +2,7 @@
   DuplicatesSection.svelte — 工作台重复对区
 
   职责：
-  - Collapsible 包装（默认展开，header 显示数量 badge）
+  - Collapsible 包装（默认收起，header 显示数量 badge）
   - 列表按相似度降序排列
   - 空状态显示"暂无重复概念"
 

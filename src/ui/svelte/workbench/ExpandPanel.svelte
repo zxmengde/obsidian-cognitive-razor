@@ -36,6 +36,8 @@
     // 组件状态
     let loading = $state(true);
     let loadFailed = $state(false);
+    /** Why the panel is empty; shown inline so the user need not recall a notice. */
+    let loadError = $state<UiFeedback | null>(null);
     let plan = $state<ExpandPlan | null>(null);
     let abstractPreview = $state<AbstractExpandPreview | null>(null);
     const selected = new SvelteSet<number>();
@@ -91,7 +93,9 @@
         if (!file) {
             if (generation !== loadGeneration) return;
             loadFailed = true;
-            report({ level: 'error', message: t.expand.notInitialized });
+            const feedback = { level: 'error' as const, message: t.expand.notInitialized };
+            loadError = feedback;
+            report(feedback);
             plan = null;
             abstractPreview = null;
             selected.clear();
@@ -101,6 +105,7 @@
 
         loading = true;
         loadFailed = false;
+        loadError = null;
         submitting = false;
         plan = null;
         abstractPreview = null;
@@ -113,12 +118,14 @@
                 plan = result.value;
             } else {
                 loadFailed = true;
-                report(toSafeErrorFeedback(result.error, t.workbench.notifications.unknownFailure), file.path);
+                loadError = toSafeErrorFeedback(result.error, t.workbench.notifications.unknownFailure);
+                report(loadError, file.path);
             }
         } catch (_error) {
             if (generation !== loadGeneration) return;
             loadFailed = true;
-            report(toSafeErrorFeedback(_error, t.workbench.notifications.unknownFailure), file.path);
+            loadError = toSafeErrorFeedback(_error, t.workbench.notifications.unknownFailure);
+            report(loadError, file.path);
         } finally {
             if (generation === loadGeneration) {
                 loading = false;
@@ -245,6 +252,12 @@
         if (submitting) return;
         abstractPreview = null;
     }
+
+    /** 失败后重试同一次加载，不必收起再打开面板 */
+    function retryLoad(): void {
+        if (loading) return;
+        void loadCandidates(activeFile, ++loadGeneration);
+    }
 </script>
 
 <!-- 加载状态 -->
@@ -254,10 +267,15 @@
         <span>{t.workbench.buttons.expand}...</span>
     </div>
 {:else if loadFailed && !plan}
-    <div class="cr-expand-feedback">
-        <Button variant="ghost" size="sm" onclick={() => onclose?.()}>
-            {t.common.cancel}
-        </Button>
+    <div class="cr-expand-feedback" role="status">
+        <p class="cr-expand-feedback__message">{loadError?.message ?? t.workbench.notifications.unknownFailure}</p>
+        {#if loadError?.details}<p class="cr-expand-feedback__hint">{loadError.details}</p>{/if}
+        <div class="cr-expand-feedback__actions">
+            <Button variant="secondary" size="sm" onclick={retryLoad}>{t.workbench.queueStatus.retry}</Button>
+            <Button variant="ghost" size="sm" onclick={() => onclose?.()}>
+                {t.common.cancel}
+            </Button>
+        </div>
     </div>
 {:else if plan}
     <div class="cr-expand-panel">
@@ -387,6 +405,10 @@
         gap: var(--cr-space-2);
         font-size: var(--cr-font-sm);
     }
+
+    .cr-expand-feedback__message { margin: 0; color: var(--cr-text-error); line-height: 1.7; overflow-wrap: anywhere; }
+    .cr-expand-feedback__hint { margin: 0; color: var(--cr-text-muted); font-size: var(--cr-font-xs); line-height: 1.6; }
+    .cr-expand-feedback__actions { display: flex; gap: var(--cr-space-2); }
 
     .cr-expand-panel {
         display: flex;

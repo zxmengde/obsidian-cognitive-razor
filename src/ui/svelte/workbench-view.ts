@@ -58,16 +58,18 @@ export class WorkbenchView extends ItemView {
       if (generation !== this.openGeneration) {
         return;
       }
-      // A failed runtime start blocks the whole workbench; keep the reason
-      // visible instead of collapsing it into a generic "unknown error".
+      // A failed runtime start blocks the whole workbench; keep the reason and
+      // a way to retry instead of collapsing it into a generic error.
+      const i18n = this.plugin.getI18n();
       container.empty();
-      container.createEl("div", {
-        cls: "cr-error",
-        text: toHostErrorFeedback(
-          error,
-          this.plugin.getI18n().messages.workbench.notifications.unknownFailure,
-        ).message,
-      });
+      const message = toHostErrorFeedback(
+        error,
+        i18n.messages.workbench.notifications.unknownFailure,
+      ).message;
+      const panel = container.createEl("div", { cls: "cr-error" });
+      panel.createEl("p", { text: message });
+      const retry = panel.createEl("button", { text: i18n.messages.workbench.queueStatus.retry });
+      retry.addEventListener("click", () => { void this.onOpen(); });
     }
   }
 

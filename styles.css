@@ -436,35 +436,41 @@
 .cr-workbench-root { font-size: var(--cr-font-base); line-height: var(--cr-line-height-body); }
 .cr-workbench-root *, .cr-workbench-root *::before, .cr-workbench-root *::after { box-sizing: border-box; }
 
-/* 工作台面板：设为容器查询上下文 */
+/* 工作台面板：根节点本身既是容器，也是下方内层组件容器查询的参照。 */
 .cr-workbench-root {
     container-type: inline-size;
     container-name: cr-workbench;
 }
 
-/* 工作台 < 280px：紧凑布局 */
-@container cr-workbench (max-width: 279px) {
-    .cr-workbench-root {
-        padding: var(--cr-space-3) var(--cr-space-2);
-        gap: var(--cr-space-3);
-    }
+/* 窄侧栏：工作台根节点的间距必须跟着可见宽度收紧。容器只能查询后代，
+   所以把根节点外面的视图容器设为查询上下文；之前直接查询根节点自己的
+   规则永远不匹配，窄栏里仍然是 22px 20px 的宽屏留白。 */
+.cr-scope:has(.cr-workbench-root) {
+    container-type: inline-size;
+    container-name: cr-workbench-pane;
 }
 
-/* 工作台 280-400px：标准单列布局 */
-@container cr-workbench (min-width: 280px) and (max-width: 400px) {
-    .cr-workbench-root {
-        padding: var(--cr-space-4);
-        gap: var(--cr-space-4);
-    }
+/* 加载态与启动失败：视图在 Svelte 挂载前渲染这两个节点，缺少样式时失败原因
+   会变成一段没有着色的正文，看起来像正常内容。 */
+.cr-scope .cr-loading {
+    padding: var(--cr-space-4);
+    color: var(--cr-text-muted);
+    font-size: var(--cr-font-sm);
+    line-height: 1.7;
 }
 
-/* 视口级回退（不支持 container query 的旧浏览器） */
-@media (max-width: 768px) {
-    .cr-workbench-root {
-        padding: var(--cr-space-4);
-        gap: var(--cr-space-4);
-    }
+.cr-scope .cr-error {
+    margin: var(--cr-space-4);
+    padding: var(--cr-space-3) var(--cr-space-4);
+    border: 1px solid var(--cr-status-error);
+    border-radius: var(--cr-field-radius);
+    background: var(--cr-overlay-error-10);
+    color: var(--cr-text-error);
+    font-size: var(--cr-font-sm);
+    line-height: 1.7;
+    overflow-wrap: anywhere;
 }
+
 
 
 
@@ -505,6 +511,18 @@
 
 /* Match the approved product surfaces after host and scoped defaults. */
 .cr-scope .cr-workbench-root.cr-workbench-root { padding: 22px 20px; gap: 0; }
+
+/* Narrow panes: the same specificity as the wide default above, so this block
+   has to stay after it. The workbench root cannot query itself, hence the
+   surrounding .cr-scope view container. */
+@container cr-workbench-pane (max-width: 400px) {
+    .cr-scope .cr-workbench-root.cr-workbench-root { padding: var(--cr-space-4) var(--cr-space-3); }
+}
+
+/* Viewport fallback for hosts without container queries. */
+@media (max-width: 768px) {
+    .cr-scope .cr-workbench-root.cr-workbench-root { padding: var(--cr-space-4) var(--cr-space-3); }
+}
 
 .cr-scope .cr-settings-root .cr-settings-page-heading { margin-bottom: 28px; }
 .cr-scope .cr-settings-root .cr-settings-page-heading h2 { font-size: var(--font-ui-large); margin-bottom: 10px; font-weight: 600; }

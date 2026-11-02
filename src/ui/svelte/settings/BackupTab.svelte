@@ -34,7 +34,10 @@
             const file = input.files?.[0];
             if (!file) return;
             try {
-                await settingsApplication.importSettings(await file.text());
+                // importSettings reports rejection through Result, so an
+                // ignored return value would look like a successful import.
+                const result = await settingsApplication.importSettings(await file.text());
+                if (!result.ok) importError = i18n.t('settings.importExport.importFailed');
             } catch {
                 importError = i18n.t('settings.importExport.importFailed');
             }

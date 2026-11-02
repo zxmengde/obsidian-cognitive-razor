@@ -189,11 +189,13 @@ describe("keyboard interaction safety", () => {
     const target = document.body.appendChild(document.createElement('div'));
     const i18n = new I18n();
     const start = vi.fn(async () => ({ ok: true, value: 'verify-workflow' }));
-    const unsubscribe = vi.fn();
+    // Queue outcome notices belong to the runtime, so the panel must not
+    // subscribe on its own or the same task would be announced twice.
+    const subscribe = vi.fn(() => () => undefined);
     ui.noticeMessages.length = 0;
     const instance = ui.mount(ui.CreateHost, { target, props: { activeFile: { path: 'Notice-admission.md', extension: 'md' }, context: {
       i18n, app: { vault: { on: () => ({}), offref() {}, cachedRead: async () => generateMarkdownContent(generateFrontmatter({ cruid: 'notice', type: 'entity', name: 'Notice' }), '') } },
-      application: { verify: { start }, queue: { subscribe: () => unsubscribe } },
+      application: { verify: { start }, queue: { subscribe } },
       settingsApplication: { getSettings: () => ({}), subscribeSettings: () => () => undefined },
     } } });
     try {
@@ -206,7 +208,7 @@ describe("keyboard interaction safety", () => {
       expect(target.querySelector('[role="alert"]')).toBeNull();
       expect(target.textContent).not.toContain(i18n.messages.workbench.notifications.verifyStarted);
     } finally { await ui.unmount(instance); target.remove(); }
-    expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(subscribe).not.toHaveBeenCalled();
   });
 
   it("owns keyboard and focus in the dialog's popout document", async () => {

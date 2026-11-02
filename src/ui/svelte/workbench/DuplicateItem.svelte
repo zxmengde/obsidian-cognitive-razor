@@ -164,17 +164,18 @@
         font-variant-numeric: tabular-nums;
     }
 
-    /* 操作按钮：默认半透明，hover 淡入 */
+    /* 操作按钮常显：0.4 透明度会把按钮文字压到不可读，键盘用户也无法靠
+       hover 让它恢复。 */
     .cr-dup-item__actions {
         display: flex;
         gap: var(--cr-space-1);
         justify-content: flex-end;
-        opacity: 0.4;
-        transition: opacity 0.15s;
     }
 
-    .cr-dup-item:hover .cr-dup-item__actions {
-        opacity: 1;
+    .cr-dup-item__actions:focus-within {
+        outline: 2px solid var(--cr-border-focus);
+        outline-offset: 2px;
+        border-radius: var(--cr-field-radius);
     }
 
     /* 减弱动效 */

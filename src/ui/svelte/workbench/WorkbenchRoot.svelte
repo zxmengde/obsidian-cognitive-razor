@@ -50,12 +50,12 @@
 <div class="cr-workbench-root">
     <header class="cr-workbench-heading"><h1>{t.workbench.product.title}</h1>{#if onOpenSettings}<button type="button" onclick={onOpenSettings}>{t.workbench.product.settings}</button>{/if}</header>
     <section class="cr-section" aria-label={t.workbench.sections.create}>
-        <CreateSection activeFile={activeFileStore.file} />
+        <CreateSection activeFile={activeFileStore.file} {onOpenSettings} />
     </section>
-    <section class="cr-section" aria-label={t.workbench.sections.queue}>
+    <section class="cr-section" aria-label={t.workbench.product.tasks}>
         <QueueSection status={queueStore.status} tasks={queueStore.tasks} />
     </section>
-    <section class="cr-section" aria-label={t.workbench.sections.duplicates}>
+    <section class="cr-section" aria-label={t.workbench.product.similarNotes}>
         <DuplicatesSection pairs={duplicatesStore.pairs} />
     </section>
 </div>
