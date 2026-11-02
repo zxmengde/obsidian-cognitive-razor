@@ -392,11 +392,11 @@ export class TaskQueue {
   }
 
   async removeTerminalDurably(): Promise<Result<number>> {
-    const terminal = [...this.tasks.values()].filter((task) => this.isTerminal(task.state));
+    const terminal = [...this.tasks.values()].filter((task) => this.isBulkClearable(task.state));
     const result = await this.commitMutation(() => {
       const removed = terminal.filter((task) => {
         const current = this.tasks.get(task.id);
-        return current && this.isTerminal(current.state) && this.tasks.delete(task.id);
+        return current && this.isBulkClearable(current.state) && this.tasks.delete(task.id);
       });
       if (removed.length) this.invalidateSnapshot();
       return ok({ value: removed, events: removed.length ? [{ type: "tasks-removed", taskIds: removed.map((task) => task.id) }] : [] });
@@ -959,6 +959,12 @@ export class TaskQueue {
   private invalidateSnapshot(): void { this.snapshot = undefined; }
 
   private isTerminal(state: TaskRecord["state"]): boolean { return state === "completed" || state === "failed" || state === "cancelled" || state === "interrupted"; }
+  /**
+   * Bulk history cleanup keeps "interrupted" rows: they record a request whose
+   * outcome is unknown, and the user needs that record to check provider usage
+   * before deciding whether to resend. Users can still delete them one by one.
+   */
+  private isBulkClearable(state: TaskRecord["state"]): boolean { return state === "completed" || state === "failed" || state === "cancelled"; }
   private canRetryInBulk(task: TaskRecord): boolean { return task.stageId !== "cards" && task.state === "failed" && !isUncertainTask(task); }
   private uncertainFailure(message: string): TaskError { return { code: "E206_PROVIDER_REQUEST_UNCERTAIN", message, kind: "uncertain", stage: "provider" }; }
   private unavailableLocalResult(): TaskError { return { code: "E322_LOCAL_RESULT_UNAVAILABLE", message: "本地结果无法恢复，重新请求需要确认", kind: "uncertain", stage: "storage" }; }

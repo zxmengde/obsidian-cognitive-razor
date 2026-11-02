@@ -110,6 +110,27 @@ it("exposes uncertain requests as interrupted and excludes them from bulk retry"
   await queue.dispose();
 });
 
+it("keeps interrupted history when clearing finished tasks, because its outcome is unknown", async () => {
+  const queue = new TaskQueue(createLogger(), createSettingsStore());
+  const uncertainId = await enqueue(queue, createTagTask("interrupted"));
+  queue.setTaskRunner(createRunner(async () => err("E206_PROVIDER_REQUEST_UNCERTAIN", "连接中断")));
+  await vi.waitFor(() => expect(queue.getTask(uncertainId)?.state).toBe("interrupted"));
+
+  // A known failure is bulk-clearable; the uncertain row is not.
+  queue.setTaskRunner(createRunner(async () => err("E204_PROVIDER_ERROR", "服务返回错误")));
+  const knownId = await enqueue(queue, createTagTask("known-failure"));
+  await vi.waitFor(() => expect(queue.getTask(knownId)?.state).toBe("failed"));
+
+  await expect(queue.removeTerminalDurably()).resolves.toEqual(ok(1));
+  expect(queue.getTask(knownId)).toBeUndefined();
+  expect(queue.getTask(uncertainId)?.state).toBe("interrupted");
+
+  // A single delete still works, so the list is removable when the user decides.
+  await expect(queue.removeDurably(uncertainId)).resolves.toEqual(ok(true));
+  expect(queue.getTask(uncertainId)).toBeUndefined();
+  await queue.dispose();
+});
+
 it.each(["known", "uncertain"] as const)("restores E206/%s history without bulk or unconfirmed retry", async (kind) => {
   const state = { version: QUEUE_STATE_VERSION, paused: true, nextQueueOrder: 3, tasks: [
     { id: 'uncertain-history', workflowId: 'history', nodeId: 'history', stageId: 'core', state: 'interrupted', queueOrder: 1, createdAt: 1, updatedAt: 1, attempt: 1, error: { code: 'E206_PROVIDER_REQUEST_UNCERTAIN', message: 'synthetic', kind } },
@@ -742,13 +763,24 @@ describe("TaskQueue runtime model", () => {
     let release!: (result: Result<Record<string, unknown>>) => void;
     const pending = new Promise<Result<Record<string, unknown>>>((resolve) => { release = resolve; });
     const queue = new TaskQueue(createLogger(), createSettingsStore());
-    queue.setTaskRunner(createRunner(() => pending, vi.fn()));
+    await queue.pauseDurably();
+    // A queued task that was never dispatched becomes plainly cancelled, which
+    // is the history bulk cleanup owns.
+    const queued = await enqueue(queue, createWriteTask("queued-cancel"));
+    await expect(queue.cancelDurably(queued)).resolves.toEqual(ok(true));
+    const runner = createRunner(() => pending, vi.fn());
+    queue.setTaskRunner(runner);
+    await queue.resumeDurably();
     const running = await enqueue(queue, createWriteTask("protected"));
     await vi.waitFor(() => expect(queue.getTask(running)?.state).toBe("running"));
     await expect(queue.removeDurably(running)).resolves.toMatchObject({ ok: false, error: { code: "E310_INVALID_STATE" } });
+    // Cancelling a dispatched request leaves an unknown outcome, so it stays in
+    // the list as interrupted instead of disappearing with the history.
     await expect(queue.cancelDurably(running)).resolves.toEqual(ok(true));
+    expect(queue.getTask(running)?.state).toBe("interrupted");
     await expect(queue.removeTerminalDurably()).resolves.toEqual(ok(1));
-    expect(queue.getTask(running)).toBeUndefined();
+    expect(queue.getTask(queued)).toBeUndefined();
+    expect(queue.getTask(running)?.state).toBe("interrupted");
     release(ok({}));
     await queue.dispose();
   });
