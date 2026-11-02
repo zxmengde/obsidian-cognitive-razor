@@ -58,7 +58,7 @@
 >
     <!-- 相似度进度条 -->
     <div class="cr-dup-item__bar">
-        <ProgressBar value={pair.similarity} color={barColor} />
+        <ProgressBar value={pair.similarity} color={barColor} label={ctx.i18n.t('workbench.duplicates.similarityBar')} />
     </div>
 
     <!-- 概念信息 -->

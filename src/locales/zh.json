@@ -98,7 +98,8 @@
       "linkPreview": "链接修复",
       "files": "个文件",
       "skipped": "跳过的歧义链接",
-      "ariaLabel": "{nameA} 与 {nameB}，相似度 {percent}%"
+      "ariaLabel": "{nameA} 与 {nameB}，相似度 {percent}%",
+    "similarityBar": "相似度"
     },
     "queueStatus": {
       "manageQueue": "筛选与批量操作",

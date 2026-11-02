@@ -12,10 +12,13 @@
         value = 0,
         color = 'default',
         showLabel = false,
+        label = undefined,
     }: {
         value?: number;
         color?: BarColor;
         showLabel?: boolean;
+        /** Accessible name; a bare progressbar announces only a number. */
+        label?: string | undefined;
     } = $props();
 
     /** 归一化为 0-100 百分比 */
@@ -24,7 +27,7 @@
     );
 </script>
 
-<div class="cr-progress" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
+<div class="cr-progress" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100} aria-label={label}>
     <div
         class="cr-progress__fill cr-progress__fill--{color}"
         style:width="{percent}%"
