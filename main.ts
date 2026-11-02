@@ -8,6 +8,7 @@ import type { WorkbenchApplication } from "./src/app/workbench-application";
 import { WorkbenchView, VIEW_TYPE_CR_WORKBENCH } from "./src/ui/svelte/workbench-view";
 import { CRSettingTab } from "./src/ui/svelte/settings-tab";
 import { CommandDispatcher } from "./src/ui/command-dispatcher";
+import { requestWorkbenchFocus } from "./src/ui/workbench-intent";
 import { showError } from "./src/ui/feedback";
 import { InMemoryExternalCallLedger } from "./src/core/external-call-ledger";
 import { reportHostDiagnostic } from "./src/data/logger";
@@ -204,9 +205,13 @@ export default class CognitiveRazorPlugin extends Plugin {
 
   async openWorkbench(): Promise<void> {
     const { workspace } = this.app;
+    // Opening the workbench is an explicit "I want to type" action, so the
+    // cursor goes to the concept input. Restored leaves never come through here.
+    const focusAfterOpen = () => requestWorkbenchFocus();
     const existing = workspace.getLeavesOfType(VIEW_TYPE_CR_WORKBENCH);
     if (existing.length > 0) {
       workspace.revealLeaf(existing[0]);
+      focusAfterOpen();
       return;
     }
 
@@ -216,5 +221,6 @@ export default class CognitiveRazorPlugin extends Plugin {
     }
     await leaf.setViewState({ type: VIEW_TYPE_CR_WORKBENCH, active: true });
     workspace.revealLeaf(leaf);
+    focusAfterOpen();
   }
 }
