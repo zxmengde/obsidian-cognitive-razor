@@ -89,6 +89,10 @@
                 <span class="cr-task-state cr-task-state--{task.state}">{task.localSavePending ? t.workbench.queueStatus.localSavePending : failure?.uncertain ? t.workbench.product.unknown : getStateLabel(task.state)}</span>
             </div>
             {#if failure}
+                <p class="cr-task-reason" class:cr-task-reason--uncertain={failure.uncertain}>
+                    {failure.uncertain ? t.workbench.product.unknownHint : failure.message}
+                </p>
+                {#if (task.localSavePending || task.stageId !== 'cards') && (task.state === 'failed' || task.state === 'interrupted')}<Button variant="secondary" size="sm" disabled={disabled} onclick={() => onretry(task.id)} ariaLabel={task.localSavePending ? t.workbench.queueStatus.retrySave : t.workbench.queueStatus.retry}>{task.localSavePending ? t.workbench.queueStatus.retrySave : failure.uncertain ? t.workbench.product.resend : t.workbench.queueStatus.retry}</Button>{/if}
                 <details class="cr-task-feedback">
                     <summary>{t.workbench.queueStatus.compactDetails} ›</summary>
                     <div class="cr-task-resolution" class:cr-task-resolution--uncertain={failure.uncertain}>
@@ -100,7 +104,6 @@
                             {#if failure.elapsedSeconds !== undefined}<p>{ctx.i18n.format('workbench.queueStatus.elapsedRun', {seconds: failure.elapsedSeconds})}</p>{/if}
                             <p>{failure.uncertain ? t.workbench.queueStatus.uncertainNextStep : failure.details || t.workbench.queueStatus.failureNextStep}</p>
                         </details>
-                        {#if (task.localSavePending || task.stageId !== 'cards') && (task.state === 'failed' || task.state === 'interrupted')}<Button variant="ghost" size="sm" disabled={disabled} onclick={() => onretry(task.id)} ariaLabel={task.localSavePending ? t.workbench.queueStatus.retrySave : t.workbench.queueStatus.retry}>{task.localSavePending ? t.workbench.queueStatus.retrySave : failure.uncertain ? t.workbench.product.resend : t.workbench.queueStatus.retry}</Button>{/if}
                     </div>
                 </details>
             {/if}
@@ -131,6 +134,12 @@
     .cr-task-item--selectable .cr-task-meta, .cr-task-item--selectable .cr-task-feedback { grid-column: 2 / -1; }
     .cr-task-stage::after { content: ' ·'; }
     .cr-task-state--running { color: var(--cr-interactive-accent); }
+    /* A failed row must be recognizable without reading the label text. */
+    .cr-task-state--failed { color: var(--cr-status-error); font-weight: 600; }
+    .cr-task-state--interrupted { color: var(--cr-status-warning); font-weight: 600; }
+    .cr-task-reason { grid-column: 1 / -1; margin: 0; color: var(--cr-status-error); font-size: var(--cr-font-xs); line-height: 1.6; overflow-wrap: anywhere; }
+    .cr-task-reason--uncertain { color: var(--cr-status-warning); }
+    .cr-task-item > :global(.cr-btn-secondary) { grid-column: 1 / -1; justify-self: start; min-height: 26px; padding: 2px var(--cr-space-2); font-size: var(--cr-font-xs); }
     .cr-task-feedback { grid-column: 1 / -1; min-width: 0; font-size: var(--cr-font-xs); color: var(--cr-text-muted); }
     .cr-task-feedback summary { cursor: pointer; list-style: none; padding: 0; font-size: var(--cr-font-xs); }
     .cr-task-resolution { margin-top: 12px; padding: 12px; background: var(--cr-bg-secondary); border-radius: var(--cr-field-radius); display: flex; align-items: baseline; flex-wrap: wrap; gap: 14px 12px; }

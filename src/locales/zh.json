@@ -29,7 +29,8 @@
     }
   },
   "commands": {
-    "openWorkbench": "打开工作台"
+    "openWorkbench": "打开工作台",
+    "expandCurrentNote": "拓展当前笔记"
   },
   "host": {
     "settingsLoadFailed": "Cognitive Razor 设置读取失败，已使用当前可用设置",
@@ -137,6 +138,7 @@
       "clearHistory": "清理历史",
       "clearHistoryConfirmTitle": "确认清理任务历史",
       "clearHistoryConfirmMessage": "将删除已完成、失败和已取消的任务记录，无法恢复。是否继续？",
+    "clearHistoryKeepsUncertain": "结果未知的任务会保留，需你先核对服务端记录后单独删除。",
       "compactDetails": "详情"
     },
     "recovery": {
@@ -156,7 +158,11 @@
       "verifyStarted": "核查任务已启动，请等待 AI 生成核查报告...",
       "defineFailed": "定义失败，请重试",
       "unknownFailure": "未知错误",
-      "commandFailed": "命令执行失败: {message}"
+      "commandFailed": "命令执行失败: {message}",
+      "taskCompleted": "「{name}」处理完成",
+      "taskFailed": "「{name}」{stage}失败：{reason}",
+      "taskUncertain": "「{name}」{stage}结果未知，请先确认服务端是否已完成",
+      "openNote": "打开笔记"
     },
     "product": {
       "title": "工作台",

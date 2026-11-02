@@ -200,7 +200,7 @@
         </div>
             <div class="cr-queue-details">
                 <details class="cr-queue-management" bind:open={managing}>
-                    <summary aria-label={t.workbench.queueStatus.manageQueue}>{managing ? t.workbench.product.doneManage : t.workbench.product.manage}</summary>
+                    <summary>{managing ? t.workbench.product.doneManage : t.workbench.product.manage}</summary>
                 <p class="cr-queue-overall">{ctx.i18n.format('workbench.product.needsHandling', {count: status.failed + status.interrupted})}</p>
                 <div class="cr-queue-toolbar">
                     <label class="cr-queue-select-label">
@@ -310,7 +310,7 @@
 {#if pendingConfirmation === 'clear-history'}
     <ConfirmModal
         title={t.workbench.queueStatus.clearHistoryConfirmTitle}
-        message={t.workbench.queueStatus.clearHistoryConfirmMessage}
+        message={t.workbench.queueStatus.clearHistoryConfirmMessage + (status.interrupted > 0 ? ` ${t.workbench.queueStatus.clearHistoryKeepsUncertain}` : '')}
         confirmLabel={t.workbench.queueStatus.clearHistory}
         cancelLabel={t.common.cancel}
         danger={true}
