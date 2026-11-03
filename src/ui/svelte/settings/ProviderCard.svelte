@@ -129,12 +129,20 @@
         </div>
         <Button variant="ghost" size="sm" ariaLabel={`${i18n.t('common.edit')} ${id}`} onclick={() => onEdit(id)}>{i18n.t('common.edit')} ›</Button>
     </div>
+    <!-- The connection test is the first thing a new user needs; it no longer
+         hides behind the "⋯" menu. Task-parameter probes stay in the menu. -->
+    <div class="cr-provider-card__actions">
+        <Button variant="secondary" size="sm" disabled={!config.enabled} loading={testing} ariaLabel={`${i18n.t('settings.provider.testConnection')} ${id}`} onclick={() => void handleTest('initial')}>{i18n.t('settings.provider.testConnection')}</Button>
+        <button type="button" class="cr-provider-link" aria-expanded={showTest} onclick={() => showTest = !showTest}>{i18n.t('settings.redesign.test')}</button>
+    </div>
+    <!-- Results stay outside the menu: the promoted button must show its own
+         outcome without the user opening anything else. -->
+    {#if testResult}<ProviderProbeStatus result={testResult} {i18n} onretry={() => void handleTest('manual-retry', lastTaskProbeType)} retrying={testing} />{/if}
     <details class="cr-provider-extra">
         <summary aria-label={`${i18n.t('settings.product.connectionActions')} ${id}`}>⋯</summary>
         <div class="cr-provider-menu">
             <dl><dt>API Key</dt><dd>{keyStatus}</dd><dt>Base URL</dt><dd>{publicProviderEndpoint(config.baseUrl)}</dd><dt>API</dt><dd>{apiFormatLabel}</dd><dt>{i18n.t('settings.provider.model')}</dt><dd>{config.defaultChatModel || '—'}</dd><dt>{i18n.t('modals.providerConfig.fields.embedModel')}</dt><dd>{config.defaultEmbedModel || '—'}</dd></dl>
             <div class="cr-provider-card__more"><span>{i18n.t('settings.provider.enabled')}</span><Toggle checked={config.enabled} onchange={(value) => onToggleEnabled(id, value)} ariaLabel={`${i18n.t('settings.provider.enabled')} ${id}`} /><Button variant="danger" size="sm" ariaLabel={`${i18n.t('common.delete')} ${id}`} onclick={() => onDelete(id)}>{i18n.t('common.delete')}</Button></div>
-            <button class="cr-provider-link" aria-expanded={showTest} onclick={() => showTest = !showTest}>{i18n.t('settings.redesign.test')}</button>
             {#if showTest}
                 <div class="cr-provider-test">
                     <Select value={testMode} options={[{value:'connection',label:i18n.t('settings.provider.testConnection')},{value:'temporary',label:i18n.t('settings.product.temporaryProvider')}]} ariaLabel={i18n.t('settings.redesign.testMode')} onchange={value => testMode = value} />
@@ -143,7 +151,6 @@
                     <p class="cr-settings-hint">{i18n.t(testMode === 'temporary' ? 'settings.product.temporaryProviderHint' : 'settings.redesign.connectionTestNotice')} ({id})</p>
                 </div>
             {/if}
-            {#if testResult}<ProviderProbeStatus result={testResult} {i18n} onretry={() => void handleTest('manual-retry', lastTaskProbeType)} retrying={testing} />{/if}
         </div>
     </details>
 </div>
@@ -162,6 +169,7 @@
     .cr-provider-menu dl { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: var(--cr-space-2); font-size: var(--cr-font-sm); color: var(--cr-text-muted); }
     .cr-provider-menu dd { margin: 0; overflow-wrap: anywhere; color: var(--cr-text-normal); }
     .cr-provider-card__more, .cr-provider-test { display: flex; align-items: center; flex-wrap: wrap; gap: var(--cr-space-2); }
+    .cr-provider-card__actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--cr-space-2); margin-top: var(--cr-space-2); }
     .cr-provider-test { padding: var(--cr-space-2) 0; }
     .cr-provider-test :global(select) { max-width: 100%; }
     .cr-provider-test p { width: 100%; }

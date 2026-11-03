@@ -3,6 +3,7 @@ import type CognitiveRazorPlugin from "../../../main";
 import WorkbenchRoot from "./workbench/WorkbenchRoot.svelte";
 import { mountSvelteComponent } from "../bridge/mount";
 import { toHostErrorFeedback } from "../error-feedback";
+import { requestSettingsSection } from "../settings-intent";
 
 export const VIEW_TYPE_CR_WORKBENCH = "cr-workbench";
 
@@ -48,6 +49,9 @@ export class WorkbenchView extends ItemView {
         settingsApplication: this.plugin.getSettingsApplication(),
         application,
         onOpenSettings: () => {
+          // The hint in the create panel points at the connection test, which
+          // lives on the providers tab; ask the settings page to land there.
+          requestSettingsSection("connections");
           const settings = (this.app as unknown as { setting?: { open(): void; openTabById(id: string): void } }).setting;
           settings?.open();
           settings?.openTabById(this.plugin.manifest.id);

@@ -212,6 +212,7 @@
       "indexDisabled": "语义索引未启用",
       "duplicatesDisabled": "相似笔记检查未启用",
       "notConfigured": "先在设置中配置可用的模型，再识别概念。",
+      "openSettings": "打开设置",
       "needsHandling": "需要处理 · {count} 项"
     }
   },

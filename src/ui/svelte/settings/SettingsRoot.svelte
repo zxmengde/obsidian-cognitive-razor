@@ -11,6 +11,7 @@
     import MaintenanceTab from './MaintenanceTab.svelte';
     import type { TaskType } from '../../../types';
     import Button from '../../components/Button.svelte';
+    import { onSettingsSection, takeSettingsSection } from '../../settings-intent';
 
     type SettingsTab = 'providers' | 'workflow' | 'backup';
 
@@ -41,13 +42,30 @@
     let visitedTasks = $state<TaskType[]>([]);
     let navigationVersion = 0;
     let destroyed = false;
+    const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+
+    /** Anchor may take focus itself, or only through a control inside it. */
+    function focusAnchor(focusId: string): void {
+        const anchor = rootElement.querySelector<HTMLElement>(`#${focusId}`);
+        if (!anchor) return;
+        // Headings and lists are deliberately focusable via tabindex="-1" so
+        // the user lands on the section itself, not on its first button.
+        if (anchor.hasAttribute('tabindex') || anchor.matches(FOCUSABLE)) {
+            anchor.focus();
+            return;
+        }
+        // A plain container (an empty connection section) has nothing to focus,
+        // so hand focus to its first control instead of dropping it.
+        anchor.querySelector<HTMLElement>(FOCUSABLE)?.focus();
+    }
+
     async function finishNavigation(focusId?: string) {
         const version = ++navigationVersion;
         await tick();
         if (destroyed || version !== navigationVersion) return;
         onTabNavigate?.();
         if (destroyed || version !== navigationVersion) return;
-        if (focusId) rootElement.querySelector<HTMLElement>(`#${focusId}`)?.focus();
+        if (focusId) focusAnchor(focusId);
     }
     async function navigateToTab(tab: SettingsTab) {
         if (activeTab === tab && selectedTask === undefined) {
@@ -71,6 +89,22 @@
         selectedTask = undefined;
         await finishNavigation(`cr-task-trigger-${task}`);
     }
+
+    /** 工作台提示的落点：连接列表与其中的连接测试。 */
+    const CONNECTIONS_SECTION_ID = 'cr-settings-connections';
+
+    async function goToConnections() {
+        selectedTask = undefined;
+        activeTab = 'providers';
+        await finishNavigation(CONNECTIONS_SECTION_ID);
+    }
+
+    $effect(() => {
+        if (takeSettingsSection() === 'connections') void goToConnections();
+    });
+    $effect(() => onSettingsSection((section) => {
+        if (section === 'connections') void goToConnections();
+    }));
 
     let activeTab = $state<SettingsTab>('providers');
     let saveState = $state(untrack(() => settingsApplication.getSaveState()));

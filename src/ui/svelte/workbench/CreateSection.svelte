@@ -281,9 +281,17 @@
             </div>
         {/if}
         {#if defineUnavailable}
-            <!-- The hint is the only place the user learns why Define is dead;
-                 it must lead somewhere instead of just stating the problem. -->
-            <p class="cr-create-help" role="status">{product.notConfigured}{#if onOpenSettings}<button type="button" class="cr-create-help__link" onclick={onOpenSettings}>{product.settings} ›</button>{/if}</p>
+            <!-- The hint is the only place the user learns why Define is dead.
+                 The whole sentence is the entry point, not just a trailing
+                 link: this is the first thing a new user has to act on. -->
+            {#if onOpenSettings}
+                <button type="button" class="cr-create-help cr-create-help--action" onclick={onOpenSettings} aria-label={`${product.notConfigured} ${product.openSettings}`}>
+                    <span class="cr-create-help__text">{product.notConfigured}</span>
+                    <span class="cr-create-help__cue">{product.openSettings} ›</span>
+                </button>
+            {:else}
+                <p class="cr-create-help" role="status">{product.notConfigured}</p>
+            {/if}
         {/if}
     {:else}
         <div class="cr-result-heading"><h2>{inputValue}</h2><button class="cr-text-action" type="button" disabled={creating} onclick={() => editingInput = true}>{product.editInput}</button></div>
@@ -308,7 +316,13 @@
     .cr-search-input:focus { border-color: var(--cr-border-focus); }
     .cr-search-row :global(.cr-btn-primary) { width: 100%; min-height: 38px; border-radius: var(--cr-field-radius); }
     .cr-create-help { margin: 16px 0 0; font-size: var(--cr-font-fine); line-height: 1.7; color: var(--cr-text-faint); }
-    .cr-create-help__link { height: auto; padding: 0; margin-left: var(--cr-space-1); border: 0; box-shadow: none; background: none; color: var(--cr-interactive-accent); font-size: var(--cr-font-fine); }
+    /* The whole sentence is the button; keep it reading as a hint but show the
+       pointer and focus ring of an action. */
+    .cr-create-help--action { display: block; width: 100%; padding: 0; border: 0; border-radius: var(--cr-field-radius); box-shadow: none; background: none; text-align: left; font: inherit; font-size: var(--cr-font-fine); line-height: 1.7; color: var(--cr-text-faint); cursor: pointer; }
+    .cr-create-help--action:hover .cr-create-help__cue,
+    .cr-create-help--action:focus-visible .cr-create-help__cue { text-decoration: underline; }
+    .cr-create-help--action:focus-visible { outline: 2px solid var(--cr-border-focus); outline-offset: 2px; }
+    .cr-create-help__cue { margin-left: var(--cr-space-1); color: var(--cr-interactive-accent); }
     .cr-define-progress { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 4px; }
     .cr-define-progress__elapsed { color: var(--cr-text-muted); font-size: var(--cr-font-xs); font-variant-numeric: tabular-nums; }
     .cr-result-heading { display: flex; align-items: baseline; gap: 12px; justify-content: space-between; margin-bottom: 24px; }

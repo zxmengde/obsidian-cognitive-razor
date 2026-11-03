@@ -27,7 +27,7 @@ Define 请求不经过 TaskQueue。确认后按类型目录和标准名称生成
 
 核查由 VerifyOrchestrator 捕获现有笔记并创建工作流；卡片由 CardGenerationService 独立入队。内容提交约束见[核查](REQUIREMENTS.md#核查)与[记忆卡片](REQUIREMENTS.md#记忆卡片)。
 
-Define 使用独立的 `AbortController`，等待期间按秒显示已用时间。取消时先中止请求再复位状态，回调据此丢弃迟到结果，输入框清空；取消不写任何持久记录。
+Define 使用独立的 `AbortController`，等待期间按秒显示已用时间。取消时先中止请求再复位状态，回调据此丢弃迟到结果，输入框清空；取消不写任何持久记录。工作台入口的设置跳转通过 `settings-intent.ts` 传递：设置页未挂载时保存待处理定位，已挂载时直接通知，由 `SettingsRoot` 切到服务页并把焦点交给连接列表。
 
 ## 合并提交与内容保护
 

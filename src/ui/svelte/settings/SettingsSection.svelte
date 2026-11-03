@@ -2,11 +2,14 @@
     import type { Snippet } from 'svelte';
 
     let {
+        id,
         title,
         description = '',
         actions,
         children,
     }: {
+        /** Anchor for cross-entry navigation. */
+        id?: string;
         title?: string;
         description?: string;
         actions?: Snippet;
@@ -14,7 +17,7 @@
     } = $props();
 </script>
 
-<section class="cr-settings-section">
+<section class="cr-settings-section" {id}>
     {#if title}
     <div class="cr-settings-section__header">
         <div class="cr-settings-section__heading">

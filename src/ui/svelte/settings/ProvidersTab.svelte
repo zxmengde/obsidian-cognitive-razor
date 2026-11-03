@@ -220,7 +220,7 @@
         </button>
         {#if !overridesOpen}<p class="cr-other-task-summary">{otherTasks.map(({taskType}) => i18n.t(`settings.redesign.tasks.${taskType}`)).join('、')}</p>{/if}
     </SettingsSection>
-    <SettingsSection title={i18n.t('settings.product.connections')}>
+    <SettingsSection id="cr-settings-connections" title={i18n.t('settings.product.connections')}>
         {#snippet actions()}<Button variant="ghost" size="sm" onclick={handleAddProvider}>{i18n.t('settings.redesign.addConnection')}</Button>{/snippet}
         {#if providerIds.length === 0}<div class="cr-empty-hint">{i18n.t('settings.provider.noProvider')}</div>{:else}
             <div class="cr-provider-list">{#each providerIds as pid (pid)}
