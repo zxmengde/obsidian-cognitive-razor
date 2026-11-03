@@ -56,6 +56,7 @@
     $effect(() => () => unsubscribeSettings());
     const defineUnavailable = $derived(Boolean(settings.providers && settings.taskModels && taskSettingsSummary(settings, 'define').issue));
     let defining = $state(false);
+    let defineElapsedSeconds = $state(0);
     let defineResult = $state<DefinePreview | null>(null);
     let feedback = $state<UiFeedback | null>(null);
     let activePanel = $state<ActivePanel>('none');
@@ -149,10 +150,17 @@
         if (!hasInput || defining || defineUnavailable) return;
 
         defining = true;
+        defineElapsedSeconds = 0;
         feedback = null;
         defineResult = null;
         const controller = new AbortController();
         defineAbortController = controller;
+        const startedAt = Date.now();
+        // The wait can run for tens of seconds, so show how long it has been
+        // going instead of an indefinite spinner.
+        const timer = window.setInterval(() => {
+            defineElapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
+        }, 1000);
 
         try {
             const result = await application.create.define(inputValue.trim(), controller.signal);
@@ -167,11 +175,29 @@
             if (controller.signal.aborted) return;
             reportError(_error, t.workbench.notifications.defineFailed);
         } finally {
+            window.clearInterval(timer);
             if (defineAbortController === controller) {
                 defineAbortController = undefined;
                 defining = false;
             }
         }
+    }
+
+    /**
+     * 取消 Define：中止请求并清空输入。
+     *
+     * The user asked to drop this attempt, so the draft goes with it and no
+     * error feedback is shown; a cancelled request is not a failure.
+     */
+    function cancelDefine(): void {
+        const controller = defineAbortController;
+        if (!controller) return;
+        defineAbortController = undefined;
+        defining = false;
+        defineElapsedSeconds = 0;
+        controller.abort('define cancelled by user');
+        clearInput();
+        focusInput();
     }
 
     /** 键盘事件：Enter 触发 Define */
@@ -246,6 +272,14 @@
             </div>
             <Button variant="primary" disabled={!hasInput || creating || defineUnavailable} loading={defining} onclick={() => void handleDefine()} ariaLabel={t.workbench.createConcept.startButton}>{t.workbench.createConcept.startButton}</Button>
         </div>
+        {#if defining}
+            <!-- No live region: the counter changes every second and would talk
+                 over the screen reader. The cancel button carries the label. -->
+            <div class="cr-define-progress">
+                <span class="cr-define-progress__elapsed">{ctx.i18n.format('workbench.createConcept.elapsed', { seconds: defineElapsedSeconds })}</span>
+                <Button variant="secondary" size="sm" onclick={cancelDefine} ariaLabel={t.workbench.createConcept.cancel}>{t.workbench.createConcept.cancel}</Button>
+            </div>
+        {/if}
         {#if defineUnavailable}
             <!-- The hint is the only place the user learns why Define is dead;
                  it must lead somewhere instead of just stating the problem. -->
@@ -275,6 +309,8 @@
     .cr-search-row :global(.cr-btn-primary) { width: 100%; min-height: 38px; border-radius: var(--cr-field-radius); }
     .cr-create-help { margin: 16px 0 0; font-size: var(--cr-font-fine); line-height: 1.7; color: var(--cr-text-faint); }
     .cr-create-help__link { height: auto; padding: 0; margin-left: var(--cr-space-1); border: 0; box-shadow: none; background: none; color: var(--cr-interactive-accent); font-size: var(--cr-font-fine); }
+    .cr-define-progress { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 4px; }
+    .cr-define-progress__elapsed { color: var(--cr-text-muted); font-size: var(--cr-font-xs); font-variant-numeric: tabular-nums; }
     .cr-result-heading { display: flex; align-items: baseline; gap: 12px; justify-content: space-between; margin-bottom: 24px; }
     .cr-result-heading h2 { min-width: 0; }
     .cr-text-action { flex-shrink: 0; height: auto; padding: 0; border: 0; box-shadow: none; background: none; color: var(--cr-interactive-accent); font-size: var(--cr-font-xs); }

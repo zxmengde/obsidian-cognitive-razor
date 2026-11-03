@@ -74,7 +74,9 @@
       "startButton": "识别概念",
       "selectType": "请选择概念类型",
       "create": "创建",
-      "clear": "清空输入"
+      "clear": "清空输入",
+      "cancel": "取消识别",
+      "elapsed": "已等待 {seconds} 秒"
     },
     "duplicates": {
       "dismiss": "忽略",
