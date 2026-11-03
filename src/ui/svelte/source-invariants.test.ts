@@ -35,6 +35,8 @@ describe("current UI architecture", () => {
   it("keeps the queue workbench minimal and stage-driven", () => {
     const list = read("src/ui/svelte/workbench/QueueTaskList.svelte");
     const section = read("src/ui/svelte/workbench/QueueSection.svelte");
+    // Filter/batch markup moved to its own component; the section keeps the wiring.
+    const management = read("src/ui/svelte/workbench/QueueManagementPanel.svelte");
 
     expect(list).toContain("task.state === 'failed'");
     expect(list).toContain("formatStandardName");
@@ -45,22 +47,22 @@ describe("current UI architecture", () => {
     expect(section).toContain("queue.retryFailed()");
     expect(section).toContain("queue.removeTerminal()");
     expect(section).toContain("selectedIds");
-    expect(section).toContain("TASK_STAGE_IDS");
-    expect(section).toContain("stageFilter");
+    expect(management).toContain("TASK_STAGE_IDS");
+    expect(management).toContain("stageFilter");
     expect(list).toContain("onretry");
     expect(list).toContain("onremove");
     expect(section).toMatch(/catch\s*(?:\([^)]*\))?\s*\{/);
     expect(section).not.toContain("queue.reorder");
     expect(list).not.toContain("draggable");
     expect(list).not.toContain("ondrag");
-    expect(section).not.toContain("draggable");
-    expect(section).not.toContain("ondrag");
-    expect(section).not.toContain("failureGroups");
-    expect(section).not.toContain("providerAttempts");
-    expect(section).not.toContain("modelSnapshot");
-    expect(section).not.toContain("error.message");
-    expect(section).not.toContain("queueStatus.details");
-    expect(section).not.toContain("queueStatus.failureSummary");
+    expect(management).not.toContain("draggable");
+    expect(management).not.toContain("ondrag");
+    expect(management).not.toContain("failureGroups");
+    expect(management).not.toContain("providerAttempts");
+    expect(management).not.toContain("modelSnapshot");
+    expect(management).not.toContain("error.message");
+    expect(management).not.toContain("queueStatus.details");
+    expect(management).not.toContain("queueStatus.failureSummary");
     expect(list).toContain("queueTaskFeedback");
     expect(list).not.toContain("task.error.message");
 
