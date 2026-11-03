@@ -55,6 +55,7 @@ export type {
 export type {
   DuplicateMergeNoteSnapshot,
   DuplicateMergeInput,
+  DuplicateMergeImpact,
   DuplicateMergeDraft,
   LinkRepairEntry,
   LinkRepairPlan,

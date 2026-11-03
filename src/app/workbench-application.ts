@@ -1,5 +1,5 @@
 import type { TFile } from "obsidian";
-import type { Result, TaskRecord, QueueStatus, QueueEventListener, DuplicatePair, ConfirmedConcept, DefinePreview, DuplicateMergeDraft, DuplicateMergePreview, DuplicateMergeOperation, LinkRepairPlan } from "../types";
+import type { Result, TaskRecord, QueueStatus, QueueEventListener, DuplicatePair, ConfirmedConcept, DefinePreview, DuplicateMergeDraft, DuplicateMergeImpact, DuplicateMergePreview, DuplicateMergeOperation, LinkRepairPlan } from "../types";
 import type { TaskQueue } from "../core/task-queue";
 import type { CreateOrchestrator } from "../core/create-orchestrator";
 import type { VerifyOrchestrator } from "../core/verify-orchestrator";
@@ -57,6 +57,8 @@ export interface DuplicateApplication {
   dismiss(pairId: string): Promise<Result<void>>;
   getConceptName(cruid: string): string | null;
   getConceptPath(cruid: string): string | null;
+  /** Read-only impact summary shown for confirmation before any merge work. */
+  previewMergeImpact(pairId: string, canonicalNodeId: string): Promise<Result<DuplicateMergeImpact>>;
   startMerge(pairId: string, canonicalNodeId: string): Promise<Result<string>>;
   getMergeDraft(workflowId: string): Promise<Result<DuplicateMergePreview>>;
   findReadyMergeDraft(pairId: string): Promise<Result<DuplicateMergePreview | undefined>>;
@@ -144,6 +146,7 @@ export class WorkbenchApplication {
       dismiss: (pairId) => this.deps.duplicateManager.markAsNonDuplicate(pairId),
       getConceptName: (cruid) => this.deps.getConceptName(cruid),
       getConceptPath: (cruid) => this.deps.getConceptPath(cruid),
+      previewMergeImpact: (pairId, canonicalNodeId) => this.deps.duplicateMergeService.previewImpact(pairId, canonicalNodeId),
       startMerge: (pairId, canonicalNodeId) => this.deps.mergeDraftGeneration.start(pairId, canonicalNodeId),
       getMergeDraft: (id) => this.deps.mergeDraftGeneration.getDraft(id),
       findReadyMergeDraft: (pairId) => this.deps.mergeDraftGeneration.findReadyDraft(pairId),

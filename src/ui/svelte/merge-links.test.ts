@@ -46,8 +46,15 @@ function fixture() {
   const startMerge = vi.fn(async () => ok("merge-workflow"));
   const preview = { pairId: pair.id, type: pair.type, canonical: { nodeId: "a", path: paths.get("a")! }, redundant: { nodeId: "b", path: paths.get("b")! }, draft, similarity: .9, linkRepairPlan: { entries: [], skipped: [], replacementCount: 0 } };
   const confirmMerge = vi.fn(async (_draft: DuplicateMergeDraft, _plan: unknown) => ok({}));
-  const context = { i18n: new I18n(), app: { workspace: { openLinkText } }, application: { duplicates: { getConceptName: () => "Same", getConceptPath, startMerge, prepareMerge, confirmMerge } } };
-  return { pair, draft, preview, paths, openLinkText, getConceptPath, startMerge, prepareMerge, confirmMerge, context };
+  const impact = {
+    pairId: pair.id, type: pair.type, similarity: 0.9,
+    canonical: { nodeId: "a", path: paths.get("a")!, name: "Same" },
+    redundant: { nodeId: "b", path: paths.get("b")!, name: "Same" },
+    linkedPaths: [], linkReplacements: 0, ambiguousLinks: [],
+  };
+  const previewMergeImpact = vi.fn(async (_pairId: string, _nodeId: string) => ok(impact));
+  const context = { i18n: new I18n(), app: { workspace: { openLinkText } }, application: { duplicates: { getConceptName: () => "Same", getConceptPath, previewMergeImpact, startMerge, prepareMerge, confirmMerge } } };
+  return { pair, draft, preview, impact, paths, openLinkText, getConceptPath, previewMergeImpact, startMerge, prepareMerge, confirmMerge, context };
 }
 
 describe("Merge dialog link fidelity", () => {
@@ -79,7 +86,9 @@ describe("Merge dialog link fidelity", () => {
     const instance = ui.mount(ui.MergeHost, { target, props: { context: f.context, pair: f.pair, onclose, onsuccess: vi.fn() } });
     try {
       ui.flushSync();
-      document.body.querySelector<HTMLButtonElement>(".cr-modal-footer .cr-btn-primary")!.click();
+      // The impact preview must arrive before the draft request can start.
+      await vi.waitFor(() => expect(f.previewMergeImpact).toHaveBeenCalledOnce());
+      await vi.waitFor(() => { ui.flushSync(); expect(document.body.querySelector<HTMLButtonElement>(".cr-modal-footer .cr-btn-primary")!.disabled).toBe(false); });
       document.body.querySelector<HTMLButtonElement>(".cr-modal-footer .cr-btn-primary")!.click();
       await vi.waitFor(() => expect(onclose).toHaveBeenCalledOnce());
       expect(startMerge).toHaveBeenCalledWith(f.pair.id, "a");
@@ -133,6 +142,7 @@ describe("Merge dialog link fidelity", () => {
     const onsuccess = vi.fn();
     const instance = ui.mount(ui.MergeHost, { target, props: { context: f.context, pair: f.pair, onclose: vi.fn(), onsuccess } });
     ui.flushSync();
+    await vi.waitFor(() => { ui.flushSync(); expect(document.body.querySelector<HTMLButtonElement>(".cr-modal-footer .cr-btn-primary")!.disabled).toBe(false); });
     document.body.querySelector<HTMLButtonElement>('.cr-modal-footer .cr-btn-primary')!.click();
     ui.flushSync();
     expect(f.startMerge).toHaveBeenCalledOnce();
@@ -178,7 +188,7 @@ describe("Merge dialog link fidelity", () => {
     try {
       ui.flushSync();
       const labels = f.context.i18n.messages.workbench.duplicates;
-      const open = Array.from(document.body.querySelectorAll("button")).filter((button) => button.textContent?.trim() === labels.openNote);
+      const open = Array.from(document.body.querySelectorAll<HTMLButtonElement>("button.cr-btn-ghost")).filter((button) => button.textContent?.trim() === labels.openNote);
       expect(open).toHaveLength(2);
       open[0].click(); open[1].click();
       expect(f.openLinkText.mock.calls).toEqual([["Current/Same.md", "", true], ["Archive/Same.md", "", true]]);

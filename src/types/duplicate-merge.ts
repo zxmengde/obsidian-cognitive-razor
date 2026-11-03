@@ -37,6 +37,24 @@ export interface LinkRepairPlan {
   skipped: string[];
 }
 
+/**
+ * Read-only summary shown before any merge work starts.
+ *
+ * The merge preview needs a model draft, which costs a request; users must
+ * first see which notes would be written and which would leave the vault.
+ */
+export interface DuplicateMergeImpact {
+  pairId: string;
+  type: CRType;
+  similarity: number;
+  canonical: { nodeId: string; path: string; name: string };
+  redundant: { nodeId: string; path: string; name: string };
+  /** Notes whose links would be rewritten to point at the canonical note. */
+  linkedPaths: string[];
+  linkReplacements: number;
+  ambiguousLinks: string[];
+}
+
 /** Confirmed immutable inputs for one queued merge-draft request. */
 export interface DuplicateMergeInput {
   pairId: string;

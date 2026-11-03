@@ -2,7 +2,7 @@ import type { App, TFile } from "obsidian";
 import { err, ok, toErr } from "../types";
 import type { CRFrontmatter, Result } from "../types";
 import type {
-  DuplicateMergeDraft, DuplicateMergeInput, DuplicateMergeNoteSnapshot, DuplicateMergeOperation,
+  DuplicateMergeDraft, DuplicateMergeImpact, DuplicateMergeInput, DuplicateMergeNoteSnapshot, DuplicateMergeOperation,
   DuplicateMergeOperationsStore, DuplicateMergePreview, LinkRepairPlan,
 } from "../types";
 import type { FileStorage } from "../data/file-storage";
@@ -297,6 +297,27 @@ export class DuplicateMergeService {
     return ok({ pairId, type: pair.type, similarity: pair.similarity, canonical: canonical.value, redundant: redundant.value, linkRepairPlan: buildLinkPlan(this.deps.app, redundantFile, canonicalFile, snapshots) });
   }
 
+  /**
+   * Read-only impact summary for the confirmation step that runs before any
+   * merge work. It reuses the same snapshot and link-plan code as the real
+   * merge, so the preview cannot promise a different set of files.
+   */
+  async previewImpact(pairId: string, canonicalNodeId: string): Promise<Result<DuplicateMergeImpact>> {
+    if (this.disposed) return err("E310_INVALID_STATE", "合并服务已停止");
+    const captured = await this.captureMergeInput(pairId, canonicalNodeId);
+    if (!captured.ok) return captured;
+    const input = captured.value;
+    return ok({
+      pairId,
+      type: input.type,
+      similarity: input.similarity,
+      canonical: { nodeId: input.canonical.nodeId, path: input.canonical.path, name: input.canonical.frontmatter.name },
+      redundant: { nodeId: input.redundant.nodeId, path: input.redundant.path, name: input.redundant.frontmatter.name },
+      linkedPaths: input.linkRepairPlan.entries.map((entry) => entry.path),
+      linkReplacements: input.linkRepairPlan.replacementCount,
+      ambiguousLinks: input.linkRepairPlan.skipped,
+    });
+  }
   /** Direct core helper retained for callers/tests; the workbench submits only through the durable queue. */
   async prepareMerge(pairId: string, canonicalNodeId: string, signal?: AbortSignal): Promise<Result<DuplicateMergePreview>> {
     const captured = await this.captureMergeInput(pairId, canonicalNodeId);
