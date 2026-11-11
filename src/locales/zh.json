@@ -111,7 +111,7 @@
       "files": "个文件",
       "skipped": "跳过的歧义链接",
       "ariaLabel": "{nameA} 与 {nameB}，相似度 {percent}%",
-    "similarityBar": "相似度"
+      "similarityBar": "相似度"
     },
     "queueStatus": {
       "manageQueue": "筛选与批量操作",
@@ -151,7 +151,7 @@
       "clearHistory": "清理历史",
       "clearHistoryConfirmTitle": "确认清理任务历史",
       "clearHistoryConfirmMessage": "将删除已完成、失败和已取消的任务记录，无法恢复。是否继续？",
-    "clearHistoryKeepsUncertain": "结果未知的任务会保留，需你先核对服务端记录后单独删除。",
+      "clearHistoryKeepsUncertain": "结果未知的任务会保留，需你先核对服务端记录后单独删除。",
       "compactDetails": "详情"
     },
     "recovery": {
@@ -214,6 +214,20 @@
       "notConfigured": "先在设置中配置可用的模型，再识别概念。",
       "openSettings": "打开设置",
       "needsHandling": "需要处理 · {count} 项"
+    },
+    "verifyIssues": {
+      "title": "核查问题",
+      "progress": "{done}/{total} 已处理",
+      "verifiedAt": "核查于 {time}",
+      "clean": "上次核查未发现需要修改的问题。",
+      "unsplit": "报告没有可逐条处理的问题列表。",
+      "openReport": "打开报告",
+      "markResolved": "标记为已处理：{title}",
+      "jumpAria": "在笔记中定位：{title}",
+      "notLocated": "正文中没有找到这条问题引用的原文，已转到报告中的这一条。",
+      "conflict": "报告已被修改，请重试。",
+      "allResolved": "已全部处理。修改完正文后，用上方“核查”重新核查，旧报告会被替换。",
+      "writeFailed": "无法更新报告，请稍后重试。"
     }
   },
   "expand": {

@@ -13,6 +13,7 @@
     import CreateSection from './CreateSection.svelte';
     import QueueSection from './QueueSection.svelte';
     import DuplicatesSection from './DuplicatesSection.svelte';
+    import VerifyIssuesPanel from './VerifyIssuesPanel.svelte';
 
     let {
         app,
@@ -51,6 +52,7 @@
     <header class="cr-workbench-heading"><h1>{t.workbench.product.title}</h1>{#if onOpenSettings}<button type="button" onclick={onOpenSettings}>{t.workbench.product.settings}</button>{/if}</header>
     <section class="cr-section" aria-label={t.workbench.sections.create}>
         <CreateSection activeFile={activeFileStore.file} {onOpenSettings} />
+        <VerifyIssuesPanel activeFile={activeFileStore.file} />
     </section>
     <section class="cr-section" aria-label={t.workbench.product.tasks}>
         <QueueSection status={queueStore.status} tasks={queueStore.tasks} />
