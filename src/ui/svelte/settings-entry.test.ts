@@ -164,7 +164,7 @@ describe('unconfigured workbench hint', () => {
     const instance = ui.mount(ui.CreateHost, { target, props: {
       onOpenSettings,
       context: {
-        i18n, app: { vault: { on: () => ({}), offref() {} } },
+        i18n, app: { metadataCache: { on: () => ({}), offref() {}, getFileCache: () => null }, vault: { on: () => ({}), offref() {} } },
         application: { create: { define: vi.fn() }, queue: { subscribe: () => () => undefined } },
         settingsApplication: { getSettings: () => structuredClone(DEFAULT_SETTINGS), subscribeSettings: () => () => undefined },
       },

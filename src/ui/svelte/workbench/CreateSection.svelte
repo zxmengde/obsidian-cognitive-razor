@@ -12,7 +12,7 @@
 <script lang="ts">
     import { taskSettingsSummary } from '../../settings-summaries';
     import { extractFrontmatter } from '../../../core/frontmatter-utils';
-    import type { TFile } from 'obsidian';
+    import type { CachedMetadata, TFile } from 'obsidian';
     import { getWorkbenchContext } from '../../bridge/context';
     import Button from '../../components/Button.svelte';
     import Icon from '../../components/Icon.svelte';
@@ -77,18 +77,37 @@
         generatingCards = false;
         activePanel = 'none';
         isCRNode = false;
-        const refresh = async () => {
+        // 只解析 frontmatter 段；正文编辑不改变它时直接沿用上次结论。
+        let lastFrontmatter: string | undefined;
+        const judge = (content: string, cache: CachedMetadata | null): void => {
+            const end = cache?.frontmatterPosition?.end.offset;
+            const head = end === undefined ? content : content.slice(0, end);
+            if (head === lastFrontmatter) return;
+            lastFrontmatter = head;
+            isCRNode = !!extractFrontmatter(head);
+        };
+        // 元数据缓存已确认没有 cruid 时，严格解析必然失败，不必读文件。
+        const lacksCruid = (cache: CachedMetadata | null): boolean =>
+            cache !== null && typeof cache.frontmatter?.cruid !== 'string';
+        const initial = async () => {
             const sequence = ++refreshSequence;
-            isCRNode = false;
             if (!file || file.extension !== 'md') return;
+            const cache = ctx.app.metadataCache.getFileCache(file);
+            if (lacksCruid(cache)) return;
             try {
                 const content = await ctx.app.vault.cachedRead(file);
-                if (!disposed && sequence === refreshSequence) isCRNode = !!extractFrontmatter(content);
+                if (!disposed && sequence === refreshSequence) judge(content, cache);
             } catch { if (!disposed && sequence === refreshSequence) isCRNode = false; }
         };
-        void refresh();
-        const event = ctx.app.vault.on('modify', (changed) => { if (changed === file) void refresh(); });
-        return () => { disposed = true; ctx.app.vault.offref(event); };
+        void initial();
+        // changed 事件自带解析后的正文与缓存，只在当前笔记重新解析后触发，不再读文件。
+        const event = ctx.app.metadataCache.on('changed', (changed, data, cache) => {
+            if (changed !== file || disposed) return;
+            refreshSequence++;
+            if (lacksCruid(cache)) { lastFrontmatter = undefined; isCRNode = false; return; }
+            judge(data, cache);
+        });
+        return () => { disposed = true; ctx.app.metadataCache.offref(event); };
     });
     // Task outcomes are announced once per workbench by the runtime, so this
     // panel no longer subscribes on its own.

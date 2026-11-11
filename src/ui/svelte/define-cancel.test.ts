@@ -52,7 +52,7 @@ function harness() {
   });
   const context = {
     i18n,
-    app: { vault: { on: () => ({}), offref() {} } },
+    app: { metadataCache: { on: () => ({}), offref() {}, getFileCache: () => null }, vault: { on: () => ({}), offref() {} } },
     application: { create: { define }, queue: { subscribe: () => () => undefined } },
     settingsApplication: { getSettings: () => configuredSettings(), subscribeSettings: () => () => undefined },
   };
@@ -106,7 +106,7 @@ describe('Define cancellation and elapsed time', () => {
     const target = document.body.appendChild(document.createElement('div'));
     const define = vi.fn(async () => ({ ok: false as const, error: { code: 'E500_INTERNAL_ERROR' } }));
     const instance = ui.mount(ui.CreateHost, { target, props: { context: {
-      i18n, app: { vault: { on: () => ({}), offref() {} } },
+      i18n, app: { metadataCache: { on: () => ({}), offref() {}, getFileCache: () => null }, vault: { on: () => ({}), offref() {} } },
       application: { create: { define }, queue: { subscribe: () => () => undefined } },
       settingsApplication: { getSettings: () => configuredSettings(), subscribeSettings: () => () => undefined },
     } } });

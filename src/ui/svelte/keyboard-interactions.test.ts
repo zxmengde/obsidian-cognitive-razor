@@ -61,7 +61,7 @@ describe("keyboard interaction safety", () => {
     const target = document.body.appendChild(document.createElement('div'));
     const i18n = new I18n();
     const instance = ui.mount(ui.CreateHost, { target, props: { activeFile: { path: 'Synthetic.md', basename: 'Synthetic', extension: 'md' }, context: {
-      i18n, app: { vault: { on: () => ({}), offref() {}, cachedRead: async () => generateMarkdownContent(generateFrontmatter({ cruid: 'synthetic', type: 'entity', name: 'Synthetic' }), '') } },
+      i18n, app: { metadataCache: { on: () => ({}), offref() {}, getFileCache: () => null }, vault: { on: () => ({}), offref() {}, cachedRead: async () => generateMarkdownContent(generateFrontmatter({ cruid: 'synthetic', type: 'entity', name: 'Synthetic' }), '') } },
       application: { expand: { prepare }, verify: { start: verify }, cards: { start: cards }, queue: { subscribe: () => () => {}, getSnapshot: () => ({ tasks: [] }) } },
       settingsApplication: { getSettings: () => ({}), subscribeSettings: () => () => undefined },
     } } });
@@ -109,7 +109,7 @@ describe("keyboard interaction safety", () => {
     const target = document.body.appendChild(document.createElement('div'));
     const i18n = new I18n();
     const instance = ui.mount(ui.CreateHost, { target, props: { activeFile: { path: 'Synthetic.md', basename: 'Synthetic', extension: 'md' }, context: {
-      i18n, app: { vault: { on: () => ({}), offref() {}, cachedRead: async () => generateMarkdownContent(generateFrontmatter({ cruid: 'synthetic', type: 'entity', name: 'Synthetic' }), '') } },
+      i18n, app: { metadataCache: { on: () => ({}), offref() {}, getFileCache: () => null }, vault: { on: () => ({}), offref() {}, cachedRead: async () => generateMarkdownContent(generateFrontmatter({ cruid: 'synthetic', type: 'entity', name: 'Synthetic' }), '') } },
       application: { create: { define }, expand: { prepare }, verify: { start: verify }, cards: { start: cards }, queue: { subscribe: () => () => {}, getSnapshot: () => ({ tasks: [] }) } },
       settingsApplication: { getSettings: () => ({}), subscribeSettings: () => () => undefined },
     } } });
@@ -169,7 +169,7 @@ describe("keyboard interaction safety", () => {
     const define = vi.fn();
     const i18n = new I18n();
     const instance = ui.mount(ui.CreateHost, { target, props: { context: {
-      i18n, app: { vault: { on: () => ({}), offref() {} } },
+      i18n, app: { metadataCache: { on: () => ({}), offref() {}, getFileCache: () => null }, vault: { on: () => ({}), offref() {} } },
       application: { queue: { subscribe: () => () => undefined }, create: { define } },
       settingsApplication: { getSettings: () => structuredClone(DEFAULT_SETTINGS), subscribeSettings: () => () => undefined },
     } } });
@@ -194,7 +194,7 @@ describe("keyboard interaction safety", () => {
     const subscribe = vi.fn(() => () => undefined);
     ui.noticeMessages.length = 0;
     const instance = ui.mount(ui.CreateHost, { target, props: { activeFile: { path: 'Notice-admission.md', extension: 'md' }, context: {
-      i18n, app: { vault: { on: () => ({}), offref() {}, cachedRead: async () => generateMarkdownContent(generateFrontmatter({ cruid: 'notice', type: 'entity', name: 'Notice' }), '') } },
+      i18n, app: { metadataCache: { on: () => ({}), offref() {}, getFileCache: () => null }, vault: { on: () => ({}), offref() {}, cachedRead: async () => generateMarkdownContent(generateFrontmatter({ cruid: 'notice', type: 'entity', name: 'Notice' }), '') } },
       application: { verify: { start }, queue: { subscribe } },
       settingsApplication: { getSettings: () => ({}), subscribeSettings: () => () => undefined },
     } } });
@@ -328,7 +328,7 @@ describe("keyboard interaction safety", () => {
   it("shows an English-only Define candidate so users can identify what they create", async () => {
     const target = document.body.appendChild(document.createElement("div"));
     const instance = ui.mount(ui.CreateHost, { target, props: { context: {
-      i18n: new I18n(), app: { vault: { on: () => ({}), offref() {} } }, application: { queue: { subscribe: () => () => undefined }, create: { define: async () => ({ ok: true, value: {
+      i18n: new I18n(), app: { metadataCache: { on: () => ({}), offref() {}, getFileCache: () => null }, vault: { on: () => ({}), offref() {} } }, application: { queue: { subscribe: () => () => undefined }, create: { define: async () => ({ ok: true, value: {
         coreDefinition: "", candidates: Object.fromEntries(CR_TYPES.map((type) => [type, {
           name: { chinese: "", english: `${type} English Name` }, confidence: 0.8,
         }])),
@@ -355,7 +355,7 @@ describe("keyboard interaction safety", () => {
     const confirm = vi.fn((_concept: unknown) => new Promise(resolve => { release = resolve; }));
     const define = vi.fn(async () => ({ ok: true, value: { coreDefinition: 'fixture', candidates: Object.fromEntries(CR_TYPES.map((type, index) => [type, { name: { chinese: type, english: type }, confidence: 0.9 - index * 0.1 }])) } }));
     const instance = ui.mount(ui.CreateHost, {target, props: {context: {
-      i18n: new I18n(), app: {vault: {on: () => ({}), offref() {}}},
+      i18n: new I18n(), app: { metadataCache: { on: () => ({}), offref() {}, getFileCache: () => null }, vault: {on: () => ({}), offref() {}}},
       application: {queue: {subscribe: () => () => undefined}, create: {define, confirm}},
       settingsApplication: {getSettings: () => ({}), subscribeSettings: () => () => undefined},
     }}});
@@ -384,7 +384,7 @@ describe("keyboard interaction safety", () => {
     const target = document.body.appendChild(document.createElement("div"));
     const define = vi.fn(async () => ({ ok: false, error: { code: "E101_INVALID_INPUT" } }));
     const instance = ui.mount(ui.CreateHost, { target, props: { context: {
-      i18n: new I18n(), app: { vault: { on: () => ({}), offref() {} } }, application: { queue: { subscribe: () => () => undefined }, create: { define } },
+      i18n: new I18n(), app: { metadataCache: { on: () => ({}), offref() {}, getFileCache: () => null }, vault: { on: () => ({}), offref() {} } }, application: { queue: { subscribe: () => () => undefined }, create: { define } },
       settingsApplication: { getSettings: () => ({ enableSemanticIndexing: false }), subscribeSettings: () => () => undefined },
     } } });
     try {
@@ -403,15 +403,19 @@ describe("keyboard interaction safety", () => {
 
 
 describe("card generation entry", () => {
-  it('uses the newest same-file read for all three action qualifications', async () => {
+  it('lets a newer metadata change win over a late first read for all three action qualifications', async () => {
     const reads: Array<(text: string) => void> = [];
-    let modified!: (file: object) => void;
+    let changed!: (file: object, data: string, cache: object) => void;
     const file = { path: 'Read-order.md', extension: 'md' };
     const target = document.body.appendChild(document.createElement('div'));
     const actions = { verify: { start: vi.fn() }, cards: { start: vi.fn() }, expand: { prepare: vi.fn() } };
+    const crContent = (cruid: string) => generateMarkdownContent(generateFrontmatter({ cruid, type: 'entity', name: cruid }), '正文');
+    const crCache = (content: string) => ({ frontmatter: { cruid: 'x' }, frontmatterPosition: { end: { offset: content.indexOf('\n---', 3) + 4 } } });
+    const cachedRead = vi.fn(() => new Promise<string>(resolve => reads.push(resolve)));
     const instance = ui.mount(ui.CreateHost, { target, props: { activeFile: file, context: {
-      i18n: new I18n(), app: { vault: { cachedRead: () => new Promise<string>(resolve => reads.push(resolve)),
-        on: (_event: string, callback: (file: object) => void) => { modified = callback; return {}; }, offref() {} } },
+      i18n: new I18n(), app: {
+        metadataCache: { getFileCache: () => null, on: (_event: string, callback: typeof changed) => { changed = callback; return {}; }, offref() {} },
+        vault: { cachedRead, on: () => ({}), offref() {} } },
       application: { ...actions, queue: { subscribe: () => () => undefined } },
       settingsApplication: { getSettings: () => ({}), subscribeSettings: () => () => undefined },
     } } });
@@ -419,9 +423,8 @@ describe("card generation entry", () => {
     try {
       ui.flushSync();
       expect(disabled()).toBe(true);
-      modified(file); ui.flushSync();
-      reads[1]('ordinary note'); await Promise.resolve(); ui.flushSync();
-      reads[0](generateMarkdownContent(generateFrontmatter({ cruid: 'old', type: 'entity', name: 'Old' }), ''));
+      changed(file, 'ordinary note', {}); ui.flushSync();
+      reads[0](crContent('old'));
       await Promise.resolve(); ui.flushSync();
       expect(disabled()).toBe(true);
       for (const button of Array.from(target.querySelectorAll<HTMLButtonElement>('.cr-note-action'))) {
@@ -430,11 +433,31 @@ describe("card generation entry", () => {
       expect(actions.verify.start).not.toHaveBeenCalled();
       expect(actions.cards.start).not.toHaveBeenCalled();
       expect(actions.expand.prepare).not.toHaveBeenCalled();
-      modified(file); ui.flushSync();
+      changed({ path: 'Other.md', extension: 'md' }, crContent('other'), crCache(crContent('other'))); ui.flushSync();
       expect(disabled()).toBe(true);
-      reads[2](generateMarkdownContent(generateFrontmatter({ cruid: 'latest', type: 'entity', name: 'Latest' }), ''));
-      await Promise.resolve(); ui.flushSync();
+      const latest = crContent('latest');
+      changed(file, latest, crCache(latest)); ui.flushSync();
       expect(Array.from(target.querySelectorAll<HTMLButtonElement>('.cr-note-action')).every(button => !button.disabled)).toBe(true);
+      changed(file, `${latest}\n更多正文`, crCache(latest)); ui.flushSync();
+      expect(disabled()).toBe(false);
+      expect(cachedRead).toHaveBeenCalledTimes(1);
+    } finally { await ui.unmount(instance); target.remove(); }
+  });
+
+  it('skips reading a note whose cached frontmatter has no cruid', async () => {
+    const cachedRead = vi.fn(async () => 'plain');
+    const target = document.body.appendChild(document.createElement('div'));
+    const instance = ui.mount(ui.CreateHost, { target, props: { activeFile: { path: 'Plain.md', extension: 'md' }, context: {
+      i18n: new I18n(), app: {
+        metadataCache: { getFileCache: () => ({ frontmatter: { title: 'x' } }), on: () => ({}), offref() {} },
+        vault: { cachedRead, on: () => ({}), offref() {} } },
+      application: { queue: { subscribe: () => () => undefined } },
+      settingsApplication: { getSettings: () => ({}), subscribeSettings: () => () => undefined },
+    } } });
+    try {
+      await Promise.resolve(); ui.flushSync();
+      expect(cachedRead).not.toHaveBeenCalled();
+      expect(Array.from(target.querySelectorAll<HTMLButtonElement>('.cr-note-action')).every(button => button.disabled)).toBe(true);
     } finally { await ui.unmount(instance); target.remove(); }
   });
 
@@ -444,7 +467,7 @@ describe("card generation entry", () => {
     const target = document.body.appendChild(document.createElement('div'));
     ui.noticeMessages.length = 0;
     const instance = ui.mount(ui.CreateHost, { target, props: { activeFile: { path: `${action}-A.md`, extension: 'md' }, context: {
-      i18n: new I18n(), app: { vault: { cachedRead: async () => generateMarkdownContent(generateFrontmatter({ cruid: 'race', type: 'entity', name: 'Race' }), ''), on: () => ({}), offref() {} } },
+      i18n: new I18n(), app: { metadataCache: { on: () => ({}), offref() {}, getFileCache: () => null }, vault: { cachedRead: async () => generateMarkdownContent(generateFrontmatter({ cruid: 'race', type: 'entity', name: 'Race' }), ''), on: () => ({}), offref() {} } },
       application: { [action]: { start }, queue: { subscribe: () => () => undefined } },
       settingsApplication: { getSettings: () => ({}), subscribeSettings: () => () => undefined },
     } } });
@@ -476,7 +499,7 @@ describe("card generation entry", () => {
     let release!: (value: unknown) => void;
     const target = document.body.appendChild(document.createElement('div'));
     const instance = ui.mount(ui.CreateHost, { target, props: { activeFile: { path: `unmounted-${action}.md`, extension: 'md' }, context: {
-      i18n: new I18n(), app: { vault: { cachedRead: async () => generateMarkdownContent(generateFrontmatter({ cruid: 'unmount', type: 'entity', name: 'Unmount' }), ''), on: () => ({}), offref() {} } },
+      i18n: new I18n(), app: { metadataCache: { on: () => ({}), offref() {}, getFileCache: () => null }, vault: { cachedRead: async () => generateMarkdownContent(generateFrontmatter({ cruid: 'unmount', type: 'entity', name: 'Unmount' }), ''), on: () => ({}), offref() {} } },
       application: { [action]: { start: () => new Promise(resolve => { release = resolve; }) }, queue: { subscribe: () => () => undefined } },
       settingsApplication: { getSettings: () => ({}), subscribeSettings: () => () => undefined },
     } } });
@@ -494,7 +517,7 @@ describe("card generation entry", () => {
     const target = document.body.appendChild(document.createElement('div'));
     const content = generateMarkdownContent(generateFrontmatter({ cruid: 'node', type: 'entity', name: 'Synthetic' }), 'body');
     const instance = ui.mount(ui.CreateHost, { target, props: { activeFile: { path: 'Outside.md', extension: 'md' }, context: {
-      i18n: new I18n(), app: { vault: { cachedRead: async () => content, on: () => ({}), offref() {} } },
+      i18n: new I18n(), app: { metadataCache: { on: () => ({}), offref() {}, getFileCache: () => null }, vault: { cachedRead: async () => content, on: () => ({}), offref() {} } },
       application: { queue: { subscribe: () => () => undefined }, cards: { start } },
       settingsApplication: { getSettings: () => ({}), subscribeSettings: () => () => undefined },
     } } });
@@ -526,7 +549,7 @@ describe("card generation entry", () => {
     const start = vi.fn(async () => ({ ok: true, value: "D-习题库/测试-decks.md" }));
     const content = isNode ? generateMarkdownContent(generateFrontmatter({ cruid: "node", type: "entity", name: "测试" }), "正文") : "普通笔记";
     const instance = ui.mount(ui.CreateHost, { target, props: { activeFile: { path: "C-知识库/测试.md", extension: "md" }, context: {
-      i18n: new I18n(), app: { vault: { cachedRead: async () => content, on: () => ({}), offref() {} } },
+      i18n: new I18n(), app: { metadataCache: { on: () => ({}), offref() {}, getFileCache: () => null }, vault: { cachedRead: async () => content, on: () => ({}), offref() {} } },
       application: { queue: { subscribe: () => () => undefined }, cards: { start } },
       settingsApplication: { getSettings: () => ({ enableSemanticIndexing: false }), subscribeSettings: () => () => undefined },
     } } });
