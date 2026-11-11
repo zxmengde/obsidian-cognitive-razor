@@ -62,7 +62,7 @@ describe("Verify issues panel", () => {
     const target = document.createElement("div");
     const instance = ui.mount(ui.PanelHost, { target, props: { context: f.context, activeFile: f.file } });
     await settle();
-    const titles = [...target.querySelectorAll(".cr-verify-issue-title")].map(node => node.textContent);
+    const titles = Array.from(target.querySelectorAll(".cr-verify-issue-title")).map(node => node.textContent);
     expect(titles).toEqual(["“所有金属都导电”过于绝对。", "「特性」一节缺少来源。"]);
     expect(target.textContent).toContain("0/2 已处理");
 
