@@ -29,14 +29,17 @@ import type {
  */
 export function createQueueStore(taskQueue: QueueApplication) {
     const initial = taskQueue.getSnapshot();
-    let status = $state<QueueStatus>(initial.status);
-    let tasks = $state<TaskRecord[]>(initial.tasks);
+    // 快照每次都是新克隆；用 raw 状态并复用未变化的对象，
+    // 一个任务变化时只让读取它的行重新计算，状态未变时不通知。
+    let status = $state.raw<QueueStatus>(initial.status);
+    let tasks = $state.raw<TaskRecord[]>(initial.tasks);
 
     // 每个事件只读取一次一致快照，避免重复遍历任务集合。
     const unsubscribe = taskQueue.subscribe(() => {
         const snapshot = taskQueue.getSnapshot();
-        status = snapshot.status;
-        tasks = snapshot.tasks;
+        if (!sameValue(status, snapshot.status)) status = snapshot.status;
+        const next = reuseUnchanged(tasks, snapshot.tasks);
+        if (next !== tasks) tasks = next;
     });
 
     return {
@@ -44,6 +47,29 @@ export function createQueueStore(taskQueue: QueueApplication) {
         get tasks() { return tasks; },
         destroy: unsubscribe,
     };
+}
+
+/** 按 id 复用内容相同的旧任务；全部相同且顺序不变时返回旧数组本身。 */
+function reuseUnchanged(previous: TaskRecord[], next: TaskRecord[]): TaskRecord[] {
+    const byId = new Map(previous.map(task => [task.id, task]));
+    let changed = previous.length !== next.length;
+    const merged = next.map((task, index) => {
+        const old = byId.get(task.id);
+        const kept = old && sameValue(old, task) ? old : task;
+        if (kept !== previous[index]) changed = true;
+        return kept;
+    });
+    return changed ? merged : previous;
+}
+
+/** 快照是可 JSON 化的纯数据，结构比较即可判断内容是否变化。 */
+function sameValue(a: unknown, b: unknown): boolean {
+    if (a === b) return true;
+    if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+    if (Array.isArray(a) !== Array.isArray(b)) return false;
+    const keysA = Object.keys(a);
+    if (keysA.length !== Object.keys(b).length) return false;
+    return keysA.every(key => sameValue((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]));
 }
 
 // ============================================================================
