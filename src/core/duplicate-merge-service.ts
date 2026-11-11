@@ -253,6 +253,8 @@ interface Deps {
   promptManager: PromptManager;
   settingsStore: SettingsStore;
   reindex: (path: string) => Promise<Result<{ indexed: number; failed: number }>>;
+  /** 合并在写入主笔记和链接之后必须刷新向量；配置不满足时应在第一次写入前拒绝。 */
+  canReindex: () => Result<void>;
   logger: ILogger;
 }
 
@@ -409,6 +411,9 @@ export class DuplicateMergeService {
   private async confirmMergeInternal(draft: DuplicateMergeDraft, linkRepairPlan: LinkRepairPlan): Promise<Result<DuplicateMergeOperation>> {
     const pair = this.deps.duplicateManager.getPair(draft.pairId);
     if (!pair || pair.status !== "pending") return err("E311_NOT_FOUND", "重复对不存在或已处理");
+    // 否则主笔记和链接已改写、冗余笔记却留在库中，只能靠恢复继续。
+    const indexReady = this.deps.canReindex();
+    if (!indexReady.ok) return indexReady as Result<DuplicateMergeOperation>;
     const canonical = await this.readSnapshot(draft.canonicalNodeId); const redundant = await this.readSnapshot(draft.redundantNodeId);
     if (!canonical.ok) return canonical; if (!redundant.ok) return redundant;
     if (canonical.value.contentHash !== draft.canonicalContentHash || redundant.value.contentHash !== draft.redundantContentHash) {

@@ -104,6 +104,7 @@ function fixture(options: FixtureOptions = {}) {
   const atomicWrite = vi.fn(async (path: string, content: string): Promise<Result<void>> => { storageFiles.set(path, content); return ok(undefined); });
   const storage: FileStorage = { exists: async (path: string) => storageFiles.has(path), read: async (path: string) => ok(storageFiles.get(path) ?? ""), atomicWrite } as unknown as FileStorage;
   const reindex = vi.fn(async (): Promise<Result<{ indexed: number; failed: number }>> => ok({ indexed: 1, failed: 0 }));
+  const canReindex = vi.fn((): Result<void> => ok(undefined));
   const createService = () => new DuplicateMergeService({
     app: app as never,
     fileStorage: storage,
@@ -114,10 +115,11 @@ function fixture(options: FixtureOptions = {}) {
     promptManager: promptManager as never,
     settingsStore: settings as never,
     reindex,
+    canReindex,
     logger,
   });
   const service = createService();
-  return { service, createService, app, files, active, vault, noteRepository, providerManager, duplicateManager, storage, atomicWrite, storageFiles, pair, canonical, redundant, incoming, reindex };
+  return { service, createService, app, files, active, vault, noteRepository, providerManager, duplicateManager, storage, atomicWrite, storageFiles, pair, canonical, redundant, incoming, reindex, canReindex };
 }
 
 describe("DuplicateMergeService", () => {
@@ -388,6 +390,20 @@ describe("DuplicateMergeService", () => {
     if (!prepared.ok) throw new Error("preview failed");
     expect((await f.service.confirmMerge({ ...prepared.value.draft, parents: [] }, prepared.value.linkRepairPlan)).ok).toBe(true);
     expect(extractFrontmatter(f.canonical.content)?.frontmatter.parents).toEqual([]);
+  });
+
+  it("refuses to start writing when the canonical note cannot be reindexed", async () => {
+    const f = fixture();
+    const preview = await f.service.prepareMerge(f.pair.id, "canonical");
+    if (!preview.ok) throw new Error("preview failed");
+    const contents = () => [...f.files].map(([path, entry]) => [path, entry.content]);
+    const before = contents();
+    f.canReindex.mockReturnValue(err("E401_PROVIDER_NOT_CONFIGURED", "Index 任务没有可用的嵌入 Provider"));
+    const result = await f.service.confirmMerge(preview.value.draft, preview.value.linkRepairPlan);
+    expect(result.ok ? undefined : result.error.code).toBe("E401_PROVIDER_NOT_CONFIGURED");
+    expect(contents()).toEqual(before);
+    expect(f.service.getRecoveryOperations()).toEqual([]);
+    expect(f.reindex).not.toHaveBeenCalled();
   });
 
   it("prevents concurrent journal mutations from undoing another recovery removal on rollback", async () => {

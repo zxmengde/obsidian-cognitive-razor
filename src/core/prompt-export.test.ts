@@ -65,7 +65,7 @@ async function reference(example: PromptExample, store: SettingsStore, manager: 
     case "write": return new WriteTaskExecutor(shared).execute(example.task as TaskRecord<"write">, signal, context);
     case "cards": return new CardsTaskExecutor(shared).execute(example.task as TaskRecord<"cards">, signal, context);
     case "merge": return new DuplicateMergeService({ ...shared, app: {} as never, fileStorage: {} as never, noteRepository: {} as never,
-      cruidCache: {} as never, duplicateManager: {} as never, reindex: vi.fn() }).prepareCapturedMerge(example.merge!, context.modelSnapshot, signal);
+      cruidCache: {} as never, duplicateManager: {} as never, reindex: vi.fn(), canReindex: vi.fn() }).prepareCapturedMerge(example.merge!, context.modelSnapshot, signal);
   }
 }
 

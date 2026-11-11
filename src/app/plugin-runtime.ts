@@ -303,6 +303,7 @@ export class PluginRuntime {
       promptManager: this.promptManager,
       settingsStore: this.settingsStore,
       reindex: (path) => this.rebuildSemanticNote(path),
+      canReindex: () => this.semanticIndexRebuilder?.checkPrerequisites() ?? err("E310_INVALID_STATE", "插件运行时尚未就绪"),
       logger: this.logger,
     });
     this.requireSuccess(await this.duplicateMergeService.initialize(), "加载合并操作状态失败");

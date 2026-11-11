@@ -405,6 +405,11 @@ export class SemanticIndexRebuilder {
     }
   }
 
+  /** 当前设置能否刷新单篇向量；合并在写入任何文件前用它预检。 */
+  checkPrerequisites(): Result<void> {
+    return this.validatePrerequisites(this.deps.settingsStore.getSettings());
+  }
+
   private validatePrerequisites(settings: PluginSettings): Result<void> {
     if (!settings.enableSemanticIndexing) {
       return err("E310_INVALID_STATE", "请先启用语义索引");

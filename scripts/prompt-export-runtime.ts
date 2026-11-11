@@ -240,7 +240,7 @@ export async function executePromptExample(example: PromptExample, deps: Example
     case "verify": return new VerifyTaskExecutor(shared).execute(example.task as TaskRecord<"verify">, signal, context);
     case "cards": return new CardsTaskExecutor(shared).execute(example.task as TaskRecord<"cards">, signal, context);
     case "merge": return new DuplicateMergeService({ ...shared, app: blocked<App>(), fileStorage: blocked(), noteRepository: blocked(),
-      cruidCache: blocked(), duplicateManager: blocked(), reindex: forbidden }).prepareCapturedMerge(example.merge!, context.modelSnapshot, signal);
+      cruidCache: blocked(), duplicateManager: blocked(), reindex: forbidden, canReindex: forbidden }).prepareCapturedMerge(example.merge!, context.modelSnapshot, signal);
   }
 }
 
