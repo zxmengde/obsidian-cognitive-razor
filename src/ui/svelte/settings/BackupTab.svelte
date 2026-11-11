@@ -99,8 +99,8 @@
 
 <style>
     .cr-settings-danger { margin-top: var(--cr-space-6); padding-top: var(--cr-space-4); border-top: 1px solid var(--cr-border); }
-    .cr-settings-danger h3 { color: var(--cr-text-normal); font-size: calc(var(--cr-font-base) + 1px); padding: 0; }
-    .cr-settings-danger p { color: var(--cr-text-muted); font-size: var(--cr-font-sm); line-height: 1.6; }
+    .cr-settings-danger h3 { color: var(--cr-text-normal); font-size: var(--cr-font-base); padding: 0; }
+    .cr-settings-danger p { color: var(--cr-text-muted); font-size: var(--cr-font-sm); line-height: var(--cr-line-height-body); }
     .cr-settings-danger :global(.cr-btn-danger) { background: transparent; color: var(--cr-text-error); border-color: var(--cr-border); box-shadow: none; }
     .cr-settings-danger :global(.cr-btn-danger:hover:not(:disabled)) { background: var(--cr-overlay-error-10); border-color: var(--cr-status-error); opacity: 1; }
 </style>

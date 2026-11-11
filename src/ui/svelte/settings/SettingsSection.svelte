@@ -58,7 +58,7 @@
         align-items: flex-start;
         justify-content: space-between;
         gap: var(--cr-space-4);
-        margin-bottom: var(--cr-space-3);
+        margin-bottom: var(--cr-space-4);
     }
 
     .cr-settings-section__heading {
@@ -69,7 +69,7 @@
         margin: 0;
         padding: 0;
         color: var(--cr-text-normal);
-        font-size: calc(var(--cr-font-base) + 1px);
+        font-size: var(--cr-font-base);
         font-weight: 600;
     }
 

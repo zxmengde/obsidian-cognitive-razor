@@ -22,7 +22,7 @@
 </script>
 
 <div class="cr-workflow-tab">
-    <header class="cr-settings-page-heading"><h2>{i18n.t('settings.tabs.workflow')}</h2><p>{i18n.t('settings.product.notesDesc')}</p></header>
+    <header class="cr-settings-page-heading"><p>{i18n.t('settings.product.notesDesc')}</p></header>
     <LocationsEditor {settings} />
     <SettingsSection title={i18n.t('settings.product.generation')}>
         <SettingItem inlineControl name={i18n.t('settings.product.autoVerify')}>

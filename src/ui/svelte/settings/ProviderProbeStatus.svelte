@@ -90,7 +90,7 @@
         display: grid;
         gap: var(--cr-space-1);
         padding: 0 var(--cr-space-3);
-        color: var(--text-muted);
+        color: var(--cr-text-muted);
         font-size: var(--cr-font-sm);
     }
 
@@ -101,13 +101,13 @@
     }
 
     .cr-provider-probe-status__row span:last-child {
-        color: var(--text-normal);
+        color: var(--cr-text-normal);
     }
 
     .cr-provider-probe-status__hint {
         margin: 0;
         padding: 0 var(--cr-space-3);
-        color: var(--text-warning);
+        color: var(--cr-status-warning);
         font-size: var(--cr-font-sm);
     }
 

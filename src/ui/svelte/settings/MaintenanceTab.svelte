@@ -173,7 +173,7 @@
 </script>
 
 <div class="cr-maintenance-tab">
-    <header class="cr-settings-page-heading"><h2>{i18n.t('settings.tabs.backup')}</h2><p>{i18n.t('settings.redesign.maintenanceDesc')}</p></header>
+    <header class="cr-settings-page-heading"><p>{i18n.t('settings.redesign.maintenanceDesc')}</p></header>
     {#if rebuildState.status === 'completed' && rebuildState.summary}
         <InlineAlert
             level="success"

@@ -193,7 +193,7 @@
 </script>
 
 <div class="cr-providers-tab">
-    <header class="cr-settings-page-heading"><h2>{i18n.t('settings.tabs.providers')}</h2><p>{i18n.t('settings.product.aiDesc')}</p></header>
+    <header class="cr-settings-page-heading"><p>{i18n.t('settings.product.aiDesc')}</p></header>
     <SettingsSection title={i18n.t('settings.product.daily')}>
         <Select value={settings.defaultProviderId} options={defaultProviderOptions} ariaLabel={i18n.t('settings.provider.defaultProvider')} onchange={handleDefaultProviderChange} />
         {#if enabledChatProviderIds.length > 0 && !settings.defaultProviderId}<p class="cr-task-summary__issue" role="status">{i18n.t('settings.redesign.defaultMissing')}</p>{/if}
@@ -260,16 +260,18 @@
     .cr-providers-tab { display: flex; flex-direction: column; }
     .cr-empty-hint { color: var(--cr-text-muted); font-size: var(--cr-font-sm); }
     .cr-other-task-summary { margin: var(--cr-space-2) 0 0; color: var(--cr-text-muted); font-size: var(--cr-font-sm); }
-    .cr-task-overrides-toggle { display: flex; justify-content: space-between; gap: var(--cr-space-3); width: 100%; height: auto; padding: var(--cr-space-2) 0; border: 0; background: transparent; box-shadow: none; color: var(--cr-interactive-accent); font: inherit; text-align: left; cursor: pointer; }
+    .cr-task-overrides-toggle { display: flex; justify-content: space-between; gap: var(--cr-space-3); width: 100%; height: auto; padding: var(--cr-space-5) 0 var(--cr-space-2); border: 0; border-top: 1px solid var(--cr-border); border-radius: 0; background: transparent; box-shadow: none; color: var(--cr-interactive-accent); font: inherit; text-align: left; cursor: pointer; }
+    .cr-task-overrides-toggle > span:first-child { color: var(--cr-text-normal); }
     .cr-task-overrides-toggle:focus-visible { outline: 2px solid var(--cr-border-focus); }
     .cr-task-row { border-top: 1px solid var(--cr-border); }
-    .cr-task-summary { display: flex; align-items: center; justify-content: space-between; gap: var(--cr-space-3); width: 100%; height: auto; border: 0; border-radius: 0; background: transparent; box-shadow: none; text-align: left; padding: var(--cr-space-3) 0; line-height: var(--cr-line-height-body); color: var(--cr-text-normal); }
+    .cr-task-row:first-child { border-top: 0; }
+    .cr-task-summary { display: flex; align-items: center; justify-content: space-between; gap: var(--cr-space-3); width: 100%; height: auto; border: 0; border-radius: 0; background: transparent; box-shadow: none; text-align: left; padding: var(--cr-space-4) 0; line-height: var(--cr-line-height-body); color: var(--cr-text-normal); }
     button.cr-task-summary:hover { background: var(--cr-bg-hover); }
     .cr-task-summary:focus-visible { outline: 2px solid var(--cr-border-focus); outline-offset: 2px; }
-    .cr-task-summary__copy { display: flex; flex-direction: column; gap: var(--cr-space-1); min-width: 0; overflow-wrap: anywhere; }
-    .cr-task-summary__title { font-weight: 600; font-size: var(--cr-font-base); }
+    .cr-task-summary__copy { display: flex; flex-direction: column; gap: var(--cr-space-2); min-width: 0; overflow-wrap: anywhere; }
+    .cr-task-summary__title { font-weight: 500; font-size: var(--cr-font-base); }
     .cr-task-summary__model { color: var(--cr-text-muted); font-size: var(--cr-font-sm); }
     .cr-task-summary__hint, .cr-task-summary__action { font-size: var(--cr-font-xs); color: var(--cr-text-muted); }
-    .cr-task-summary__action { flex-shrink: 0; }
+    .cr-task-summary__action { flex-shrink: 0; color: var(--cr-interactive-accent); }
     .cr-task-summary__issue { color: var(--cr-status-warning); font-size: var(--cr-font-xs); }
 </style>

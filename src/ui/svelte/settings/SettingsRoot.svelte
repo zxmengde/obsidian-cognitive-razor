@@ -215,14 +215,14 @@
         gap: var(--cr-space-2);
         padding: 0;
         overflow-wrap: anywhere;
-        color: var(--text-muted);
+        color: var(--cr-text-muted);
         font-size: var(--cr-font-sm);
         min-height: 1.4em;
     }
 
     .cr-settings-save-state--failed {
         justify-content: space-between;
-        color: var(--text-error);
+        color: var(--cr-text-error);
     }
 
 </style>

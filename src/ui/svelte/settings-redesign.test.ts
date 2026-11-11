@@ -338,9 +338,8 @@ describe('approved settings information architecture', () => {
                 h.click(label);
                 const section = h.target.querySelector<HTMLElement>('.cr-settings-section')!;
                 expect(getComputedStyle(section).paddingTop).toBe('0px');
-                const heading = h.target.querySelector<HTMLElement>('.cr-settings-page-heading h2')!;
-                expect(getComputedStyle(heading).paddingLeft).toBe('0px');
-                expect(getComputedStyle(heading).paddingRight).toBe('0px');
+                // 标签页已由选中的标签命名，页内不再重复同名标题。
+                expect(h.target.querySelector('.cr-settings-page-heading h2')).toBeNull();
                 for (const heading of Array.from(h.target.querySelectorAll<HTMLElement>('.cr-settings-section h3, .cr-settings-danger h3'))) {
                     expect(getComputedStyle(heading).paddingLeft).toBe('0px');
                     expect(getComputedStyle(heading).paddingRight).toBe('0px');
