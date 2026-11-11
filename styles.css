@@ -443,8 +443,7 @@
 }
 
 /* 窄侧栏：工作台根节点的间距必须跟着可见宽度收紧。容器只能查询后代，
-   所以把根节点外面的视图容器设为查询上下文；之前直接查询根节点自己的
-   规则永远不匹配，窄栏里仍然是 22px 20px 的宽屏留白。 */
+   根节点查询自身的规则永远不会匹配，所以把外面的视图容器设为查询上下文。 */
 .cr-scope:has(.cr-workbench-root) {
     container-type: inline-size;
     container-name: cr-workbench-pane;
@@ -509,11 +508,8 @@
     .cr-scope .cr-settings-root .cr-task-model-card__parameter-controls { grid-row: auto; }
 }
 
-/* Match the approved product surfaces after host and scoped defaults. */
-.cr-scope .cr-workbench-root.cr-workbench-root { padding: 22px 20px; gap: 0; }
-
-/* Narrow panes: the same specificity as the wide default above, so this block
-   has to stay after it. The workbench root cannot query itself, hence the
+/* Narrow panes: the doubled class outranks the scoped default padding in
+   WorkbenchRoot.svelte. The workbench root cannot query itself, hence the
    surrounding .cr-scope view container. */
 @container cr-workbench-pane (max-width: 400px) {
     .cr-scope .cr-workbench-root.cr-workbench-root { padding: var(--cr-space-4) var(--cr-space-3); }

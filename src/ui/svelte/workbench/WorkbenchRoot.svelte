@@ -66,15 +66,15 @@
     .cr-workbench-root {
         max-width: 900px;
         margin: 0 auto;
-        padding: 22px 20px;
+        padding: var(--cr-space-5) var(--cr-space-4);
         display: flex;
         flex-direction: column;
         gap: 0;
     }
 
-    .cr-workbench-heading { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 18px; }
+    .cr-workbench-heading { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: var(--cr-space-4); }
     .cr-workbench-heading h1 { display: block; margin: 0; padding: 0; font-size: var(--cr-heading-workbench); font-weight: 600; line-height: 1.3; }
     .cr-workbench-heading button { padding: 0; height: auto; border: 0; box-shadow: none; background: none; color: var(--cr-text-muted); font-size: var(--cr-font-xs); }
     .cr-section { width: 100%; min-width: 0; }
-    .cr-section + .cr-section { border-top: 1px solid var(--cr-border); padding-top: 23px; margin-top: 36px; }
+    .cr-section + .cr-section { border-top: 1px solid var(--cr-border); padding-top: var(--cr-space-5); margin-top: var(--cr-space-5); }
 </style>

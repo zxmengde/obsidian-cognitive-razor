@@ -122,12 +122,12 @@
 {/if}
 <style>
     .cr-task-list { display: flex; flex-direction: column; }
-    .cr-task-item { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: baseline; gap: 10px 12px; padding: 14px 0 20px; border-bottom: 1px solid var(--cr-border); }
+    .cr-task-item { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: baseline; gap: var(--cr-space-1) var(--cr-space-3); padding: var(--cr-space-3) 0; border-bottom: 1px solid var(--cr-border); }
     .cr-task-item:first-child { padding-top: 0; }
     .cr-task-item:last-child { border-bottom: 0; }
     .cr-task-item--selectable { grid-template-columns: 20px minmax(0,1fr) auto; }
     .cr-task-select { width: 16px; height: 16px; margin: 0; }
-    .cr-task-name { color: var(--cr-text-normal); font-size: var(--cr-font-base); font-weight: 600; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+    .cr-task-name { color: var(--cr-text-normal); font-size: var(--cr-font-base); font-weight: 500; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
     .cr-task-actions { justify-self: end; display: flex; gap: 12px; }
     .cr-task-actions :global(button) { min-height: 0; padding: 0; font-size: var(--cr-font-xs); }
     .cr-task-meta { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; color: var(--cr-text-muted); font-size: var(--cr-font-xs); min-width: 0; }

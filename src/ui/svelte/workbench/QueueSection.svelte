@@ -13,7 +13,6 @@
     import { SvelteSet } from 'svelte/reactivity';
     import { getWorkbenchContext } from '../../bridge/context';
     import Button from '../../components/Button.svelte';
-    import SectionCard from '../../components/SectionCard.svelte';
     import EmptyState from '../../components/EmptyState.svelte';
     import ConfirmModal from '../../components/ConfirmModal.svelte';
     import InlineAlert from '../../components/InlineAlert.svelte';
@@ -194,67 +193,65 @@
     }
 </script>
 
-<SectionCard>
-    <div class="cr-queue-section">
-        <div class="cr-queue-status-bar">
-            <h2 class="cr-queue-title">{t.workbench.product.tasks}</h2>
-            {#if status.paused || status.pending > 0 || status.running > 0}
-                <Button variant="ghost" size="sm" disabled={actionRunning} onclick={handleTogglePause} ariaLabel={status.paused ? t.workbench.queueStatus.resumeQueue : t.workbench.queueStatus.pauseQueue}>{status.paused ? t.workbench.queueStatus.resumeQueue : t.workbench.queueStatus.pauseQueue}</Button>
-            {/if}
-        </div>
-        <div class="cr-queue-details">
-            <QueueManagementPanel
-                bind:open={managing}
-                {status}
-                bind:stateFilter
-                bind:stageFilter
-                {allFilteredSelected}
-                {selection}
-                {retryableFailedCount}
-                {actionRunning}
-                onStateFilter={handleStateFilter}
-                onStageFilter={handleStageFilter}
-                onToggleSelectAll={toggleSelectAll}
-                onClearHistory={() => pendingConfirmation = 'clear-history'}
-                onRetrySelected={handleRetrySelected}
-                onCancelSelected={handleCancelSelected}
-                onRemoveSelected={handleRemoveSelected}
-                onRetryFailed={handleRetryFailed}
-            />
-            {#if attentionCount > 0}<p class="cr-queue-uncertain-notice" role="status">{ctx.i18n.format(uncertainCount === attentionCount ? 'workbench.product.needsAttention' : 'workbench.product.needsHandling', {count: attentionCount})}</p>{/if}
-            {#if displayedTasks.length > 0}
-                <QueueTaskList
-                    tasks={displayedTasks}
-                    {selectedIds}
-                    selectable={managing}
-                    onselect={selectTask}
-                    onretry={handleRetry}
-                    oncancel={handleCancel}
-                    onremove={handleRemove}
-                    disabled={actionRunning}
-                />
-                {#if hasMore}
-                    <Button variant="ghost" size="sm" onclick={() => visibleLimit += pageSize}>
-                        {t.workbench.queueStatus.showMore} ({primaryTasks.length - displayedTasks.length})
-                    </Button>
-                {/if}
-            {:else}
-                {#if tasks.length === 0}<div class="cr-queue-empty"><p>{t.workbench.product.noTasks}</p><p>{t.workbench.product.noTasksHint}</p></div>{:else if stateFilter !== 'all'}<EmptyState message={t.workbench.queueStatus.noFilteredTasks} icon="inbox" />{/if}
-            {/if}
-            {#if historyTasks.length > 0}
-                <details class="cr-queue-history" bind:open={historyOpen}>
-                    <summary><span>{ctx.i18n.format('workbench.product.historySummary', {completed: status.completed, cancelled: status.cancelled})}</span><span>{t.workbench.product.viewHistory} ›</span></summary>
-                    {#if historyOpen}
-                    <QueueTaskList tasks={historyTasks.slice(0, historyLimit)} {selectedIds} selectable={managing} onselect={selectTask} onretry={handleRetry} oncancel={handleCancel} onremove={handleRemove} disabled={actionRunning} />
-                    {#if historyTasks.length > historyLimit}
-                        <Button variant="ghost" size="sm" onclick={() => historyLimit += pageSize}>{t.workbench.queueStatus.showMore} ({historyTasks.length - historyLimit})</Button>
-                    {/if}
-                    {/if}
-                </details>
-            {/if}
-        </div>
+<div class="cr-queue-section">
+    <div class="cr-queue-status-bar">
+        <h2 class="cr-queue-title">{t.workbench.product.tasks}</h2>
+        {#if status.paused || status.pending > 0 || status.running > 0}
+            <Button variant="ghost" size="sm" disabled={actionRunning} onclick={handleTogglePause} ariaLabel={status.paused ? t.workbench.queueStatus.resumeQueue : t.workbench.queueStatus.pauseQueue}>{status.paused ? t.workbench.queueStatus.resumeQueue : t.workbench.queueStatus.pauseQueue}</Button>
+        {/if}
     </div>
-</SectionCard>
+    <div class="cr-queue-details">
+        <QueueManagementPanel
+            bind:open={managing}
+            {status}
+            bind:stateFilter
+            bind:stageFilter
+            {allFilteredSelected}
+            {selection}
+            {retryableFailedCount}
+            {actionRunning}
+            onStateFilter={handleStateFilter}
+            onStageFilter={handleStageFilter}
+            onToggleSelectAll={toggleSelectAll}
+            onClearHistory={() => pendingConfirmation = 'clear-history'}
+            onRetrySelected={handleRetrySelected}
+            onCancelSelected={handleCancelSelected}
+            onRemoveSelected={handleRemoveSelected}
+            onRetryFailed={handleRetryFailed}
+        />
+        {#if attentionCount > 0}<p class="cr-queue-uncertain-notice" role="status">{ctx.i18n.format(uncertainCount === attentionCount ? 'workbench.product.needsAttention' : 'workbench.product.needsHandling', {count: attentionCount})}</p>{/if}
+        {#if displayedTasks.length > 0}
+            <QueueTaskList
+                tasks={displayedTasks}
+                {selectedIds}
+                selectable={managing}
+                onselect={selectTask}
+                onretry={handleRetry}
+                oncancel={handleCancel}
+                onremove={handleRemove}
+                disabled={actionRunning}
+            />
+            {#if hasMore}
+                <Button variant="ghost" size="sm" onclick={() => visibleLimit += pageSize}>
+                    {t.workbench.queueStatus.showMore} ({primaryTasks.length - displayedTasks.length})
+                </Button>
+            {/if}
+        {:else}
+            {#if tasks.length === 0}<div class="cr-queue-empty"><p>{t.workbench.product.noTasks}</p><p>{t.workbench.product.noTasksHint}</p></div>{:else if stateFilter !== 'all'}<EmptyState message={t.workbench.queueStatus.noFilteredTasks} icon="inbox" />{/if}
+        {/if}
+        {#if historyTasks.length > 0}
+            <details class="cr-queue-history" bind:open={historyOpen}>
+                <summary><span>{ctx.i18n.format('workbench.product.historySummary', {completed: status.completed, cancelled: status.cancelled})}</span><span>{t.workbench.product.viewHistory} ›</span></summary>
+                {#if historyOpen}
+                <QueueTaskList tasks={historyTasks.slice(0, historyLimit)} {selectedIds} selectable={managing} onselect={selectTask} onretry={handleRetry} oncancel={handleCancel} onremove={handleRemove} disabled={actionRunning} />
+                {#if historyTasks.length > historyLimit}
+                    <Button variant="ghost" size="sm" onclick={() => historyLimit += pageSize}>{t.workbench.queueStatus.showMore} ({historyTasks.length - historyLimit})</Button>
+                {/if}
+                {/if}
+            </details>
+        {/if}
+    </div>
+</div>
 
 {#if feedback}
     <InlineAlert level={feedback.level} message={feedback.message} details={feedback.details} {detailsToggleLabels} />
@@ -286,12 +283,12 @@
 
 <style>
     .cr-queue-section { position: relative; min-width: 0; }
-    .cr-queue-status-bar { display: flex; align-items: baseline; gap: 12px; margin-bottom: 24px; padding-right: 80px; }
+    .cr-queue-status-bar { display: flex; align-items: baseline; gap: var(--cr-space-3); margin-bottom: var(--cr-space-3); padding-right: 80px; }
     .cr-queue-title { margin: 0; padding: 0; font-size: var(--cr-font-base); font-weight: 600; color: var(--cr-text-normal); }
     .cr-queue-status-bar :global(button) { padding: 0; font-size: var(--cr-font-xs); min-height: 0; }
-    .cr-queue-uncertain-notice { margin: 0 0 16px; color: var(--cr-status-warning); font-size: var(--cr-font-sm); }
-    .cr-queue-history { margin-top: 20px; border-top: 1px solid var(--cr-border); }
-    .cr-queue-history > summary { display: flex; justify-content: space-between; gap: 12px; padding-top: 16px; font-size: var(--cr-font-xs); color: var(--cr-text-muted); cursor: pointer; list-style: none; }
-    .cr-queue-empty p { margin: 0; color: var(--cr-text-muted); font-size: var(--cr-font-sm); line-height: 1.7; }
-    .cr-queue-empty p + p { margin-top: 12px; font-size: var(--cr-font-xs); color: var(--cr-text-faint); }
+    .cr-queue-uncertain-notice { margin: 0 0 var(--cr-space-4); color: var(--cr-status-warning); font-size: var(--cr-font-sm); }
+    .cr-queue-history { margin-top: var(--cr-space-4); border-top: 1px solid var(--cr-border); }
+    .cr-queue-history > summary { display: flex; justify-content: space-between; gap: var(--cr-space-3); padding-top: var(--cr-space-3); font-size: var(--cr-font-xs); color: var(--cr-text-muted); cursor: pointer; list-style: none; }
+    .cr-queue-empty p { margin: 0; color: var(--cr-text-muted); font-size: var(--cr-font-sm); line-height: var(--cr-line-height-body); }
+    .cr-queue-empty p + p { margin-top: var(--cr-space-1); font-size: var(--cr-font-xs); color: var(--cr-text-faint); }
 </style>
