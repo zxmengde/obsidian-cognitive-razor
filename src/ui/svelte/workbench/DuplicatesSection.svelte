@@ -2,26 +2,28 @@
   DuplicatesSection.svelte — 工作台重复对区
 
   职责：
-  - Collapsible 包装（默认收起，header 显示数量 badge）
-  - 列表按相似度降序排列
-  - 空状态显示"暂无重复概念"
+  - 默认收起，标题行显示数量
+  - 列表按相似度降序排列，每项显示该重复对的合并稿状态（来自任务队列）
+  - 恢复记录显示停在哪一步
 
 -->
 <script lang="ts">
     import { fade } from 'svelte/transition';
-    import { SvelteSet } from 'svelte/reactivity';
+    import { SvelteMap, SvelteSet } from 'svelte/reactivity';
     import { getWorkbenchContext } from '../../bridge/context';
     import Button from '../../components/Button.svelte';
     import InlineAlert from '../../components/InlineAlert.svelte';
     import DuplicateItem from './DuplicateItem.svelte';
-    import type { DuplicatePair, DuplicateMergePreview } from '../../../types';
+    import type { DuplicatePair, DuplicateMergePreview, TaskRecord } from '../../../types';
     import { toSafeErrorFeedback, type UiFeedback } from '../../error-feedback';
     import MergeModal from './MergeModal.svelte';
 
     let {
         pairs,
+        tasks = [],
     }: {
         pairs: DuplicatePair[];
+        tasks?: TaskRecord[];
     } = $props();
 
     // 从 Context 获取服务
@@ -51,6 +53,30 @@
         [...pairs].sort((a, b) => b.similarity - a.similarity)
     );
 
+    /**
+     * 每个重复对最近一次合并稿任务的状态。用户提交后可以离开对话框，
+     * 列表需要告诉他稿子在生成还是已经可以审阅。
+     */
+    let latestMergeTasks = $derived.by(() => {
+        const latest = new SvelteMap<string, TaskRecord>();
+        for (const task of tasks) {
+            if (task.stageId !== 'merge') continue;
+            const pairId = (task.payload as { pairId?: string }).pairId;
+            if (!pairId) continue;
+            const current = latest.get(pairId);
+            if (!current || task.createdAt > current.createdAt) latest.set(pairId, task);
+        }
+        return latest;
+    });
+    let mergeStates = $derived.by(() => {
+        const states = new SvelteMap<string, 'generating' | 'ready'>();
+        for (const [pairId, task] of latestMergeTasks) {
+            if (task.state === 'pending' || task.state === 'running') states.set(pairId, 'generating');
+            else if (task.state === 'completed') states.set(pairId, 'ready');
+        }
+        return states;
+    });
+
     /** 通过 CruidCache 解析概念名称 */
     function resolveName(nodeId: string): string {
         return duplicates.getConceptName(nodeId) ?? nodeId;
@@ -68,7 +94,14 @@
     async function openMerge(pair: DuplicatePair): Promise<void> {
         const generation = ++openingMerge;
         try {
-            const ready = await duplicates.findReadyMergeDraft(pair.id);
+            // 生成中的任务由对话框接上；刚完成的任务直接按 workflowId 读稿，
+            // 只有队列里已没有记录时才扫描草稿目录找旧稿。
+            const task = latestMergeTasks.get(pair.id);
+            const ready = task && (task.state === 'pending' || task.state === 'running')
+                ? { ok: true as const, value: undefined }
+                : task?.state === 'completed' && task.workflowId
+                    ? await duplicates.getMergeDraft(task.workflowId)
+                    : await duplicates.findReadyMergeDraft(pair.id);
             if (generation !== openingMerge) return;
             if (!ready.ok) { feedback = toSafeErrorFeedback(ready.error, t.workbench.notifications.mergeFailed); return; }
             readyMergePreview = ready.value;
@@ -137,7 +170,7 @@
         {#each recovery as operation (operation.id)}
             <div class="cr-dup-recovery__item">
                 <span>{operation.preview.canonical.path} → {operation.preview.redundant.path}</span>
-                <span class="cr-dup-recovery__phase">{operation.phase}</span>
+                <span class="cr-dup-recovery__phase">{ctx.i18n.format('workbench.recovery.stoppedAt', { phase: t.workbench.recovery.phases[operation.phase] })}</span>
                 <div class="cr-dup-recovery__actions">
                     <Button size="sm" variant="primary" loading={recoveryIds.has(operation.id)} disabled={recoveryIds.has(operation.id)} onclick={() => void handleRecovery(operation.id)}>{t.workbench.recovery.continueMerge}</Button>
                     <Button size="sm" variant="ghost" disabled={recoveryIds.has(operation.id)} onclick={() => void handleDiscardRecovery(operation.id)}>{t.workbench.recovery.discard}</Button>
@@ -154,13 +187,14 @@
     </button>
     {#if !collapsed}
     {#if sortedPairs.length > 0}
-        <div class="cr-dup-list">
+        <div class="cr-dup-list" role="list">
             {#each sortedPairs as pair (pair.id)}
                 <div out:fade={{ duration: 150 }}>
                     <DuplicateItem
                         {pair}
                         nameA={resolveName(pair.nodeIdA)}
                         nameB={resolveName(pair.nodeIdB)}
+                        mergeState={mergeStates.get(pair.id)}
                         dismissing={dismissingIds.has(pair.id)}
                         ondismiss={(p) => void handleDismiss(p)}
                         onmerge={(p) => void openMerge(p)}
@@ -192,16 +226,14 @@
 {/if}
 
 <style>
-    .cr-duplicates-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; width: 100%; text-align: left; padding: 0; height: auto; border: 0; box-shadow: none; background: none; color: var(--cr-text-normal); }
+    .cr-duplicates-heading { display: flex; justify-content: space-between; align-items: baseline; gap: var(--cr-space-3); width: 100%; text-align: left; padding: 0; height: auto; border: 0; box-shadow: none; background: none; color: var(--cr-text-normal); }
     .cr-duplicates-heading strong { font-size: var(--cr-font-base); font-weight: 600; }
     .cr-duplicates-heading span { font-size: var(--cr-font-xs); color: var(--cr-text-muted); }
-    .cr-duplicates-empty { color: var(--cr-text-muted); font-size: var(--cr-font-xs); margin-top: 18px; }
-    .cr-dup-list { margin-top: 20px; }
-
+    .cr-duplicates-empty { color: var(--cr-text-muted); font-size: var(--cr-font-xs); margin-top: var(--cr-space-3); }
     .cr-dup-list {
         display: flex;
         flex-direction: column;
-        gap: var(--cr-space-1);
+        margin-top: var(--cr-space-3);
     }
 
     .cr-dup-recovery {
@@ -226,7 +258,7 @@
     .cr-dup-recovery__heading span,
     .cr-dup-recovery__phase {
         color: var(--cr-text-muted);
-        font-size: var(--font-ui-smaller);
+        font-size: var(--cr-font-xs);
     }
 
     .cr-dup-recovery__item {

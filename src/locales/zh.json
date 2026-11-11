@@ -80,9 +80,9 @@
     },
     "duplicates": {
       "dismiss": "忽略",
-      "dismissAria": "忽略此重复对",
+      "dismissAria": "忽略 {nameA} 与 {nameB}：保留两篇笔记",
       "merge": "处理",
-      "mergeAria": "处理此重复对",
+      "mergeAria": "处理 {nameA} 与 {nameB}",
       "mergeTitle": "处理重复笔记",
       "chooseCanonical": "选择要保留的笔记。另一篇的独有内容会并入它，然后移入回收站。",
       "openNote": "打开笔记",
@@ -110,7 +110,6 @@
       "files": "个文件",
       "skipped": "跳过的歧义链接",
       "ariaLabel": "{nameA} 与 {nameB}，相似度 {percent}%",
-      "similarityBar": "相似度",
       "openNoteAria": "打开 {name}",
       "generating": "正在生成合并稿 · 已用 {seconds} 秒",
       "generatingHint": "可以关闭此窗口，生成在任务队列中继续；完成后再点“处理”查看合并稿。",
@@ -124,7 +123,11 @@
       "allKept": "原文各行都能在合并稿中找到对应内容。",
       "missingFacts": "合并稿中找不到：",
       "reviewHint": "标记按字面覆盖判断，只用于复核，不代表语义已核对。",
-      "confirmSummary": "确认后改写“{keep}”，修复 {files} 个文件中的 {links} 处链接，并把“{trash}”移入回收站。"
+      "confirmSummary": "确认后改写“{keep}”，修复 {files} 个文件中的 {links} 处链接，并把“{trash}”移入回收站。",
+      "reviewDraft": "审阅合并稿",
+      "viewProgress": "查看进度",
+      "stateGenerating": "合并稿生成中",
+      "stateReady": "合并稿待审阅"
     },
     "queueStatus": {
       "manageQueue": "筛选与批量操作",
@@ -172,7 +175,18 @@
       "summary": "{count} 项需要人工确认",
       "actionCompleted": "恢复记录已更新",
       "continueMerge": "继续合并",
-      "discard": "放弃并删除"
+      "discard": "放弃并删除",
+      "stoppedAt": "停在：{phase}",
+      "phases": {
+        "prepared": "尚未写入",
+        "canonical-written": "已写入主笔记",
+        "links-repaired": "已修复链接",
+        "canonical-indexed": "已更新主笔记索引",
+        "redundant-trash-pending": "待移入回收站",
+        "redundant-trashed": "冗余笔记已移入回收站",
+        "completed": "已完成",
+        "failed": "已失败"
+      }
     },
     "notifications": {
       "indexingFailed": "「{noteTitle}」已生成，但自动向量化未完成。请到设置 → 维护与备份 → 扫描缺失向量，为该笔记生成向量（可能产生 API 费用）。",

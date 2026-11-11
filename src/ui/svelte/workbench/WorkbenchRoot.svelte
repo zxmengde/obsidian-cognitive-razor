@@ -58,7 +58,7 @@
         <QueueSection status={queueStore.status} tasks={queueStore.tasks} />
     </section>
     <section class="cr-section" aria-label={t.workbench.product.similarNotes}>
-        <DuplicatesSection pairs={duplicatesStore.pairs} />
+        <DuplicatesSection pairs={duplicatesStore.pairs} tasks={queueStore.tasks} />
     </section>
 </div>
 

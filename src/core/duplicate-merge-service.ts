@@ -20,7 +20,7 @@ import { formatCRTimestamp } from "../utils/date-utils";
 import { resolveAvailableProvider } from "./provider-config";
 import { validateChatFinishReason } from "./provider-response-parsers";
 import { schemaRegistry } from "./schema-registry";
-import { stripVerifyReport } from "./semantic-index-text";
+import { stripVerifyReport } from "./verification-report";
 import type { TaskModelSnapshot } from "../types/task";
 import { parseInternalNoteLink, rewriteInternalNoteLink, rewriteParentNoteLink } from "../utils/note-links";
 import { isScalar, isSeq, parseDocument } from "yaml";
@@ -108,6 +108,36 @@ function validMergeOperation(value: unknown): value is DuplicateMergeOperation {
     const item = entry as Record<string, unknown>;
     return typeof item.path === "string" && typeof item.expectedContent === "string"
       && typeof item.replacementContent === "string" && typeof item.replacements === "number";
+  });
+}
+
+/**
+ * 只有可能指向冗余笔记的文件才需要读取全文。
+ *
+ * 读全库是合并预览最慢的一步：每次打开对话框、切换主笔记都要顺序读完所有笔记。
+ * 元数据缓存已经给出每篇笔记的链接原文，按与改写相同的解析规则筛出目标是
+ * 冗余笔记路径、文件名或别名的文件；没有缓存的文件无法判断，照旧读取。
+ * 改写本身仍以全文快照为准，提交时再核对全文，缓存过期不会造成误写。
+ */
+function linkPlanCandidates(app: App, redundant: TFile): TFile[] {
+  const redundantPath = redundant.path.replace(/\.md$/i, "");
+  const rawAliases: unknown = app.metadataCache.getFileCache(redundant)?.frontmatter?.aliases;
+  const targets = new Set([redundantPath, redundant.basename]);
+  for (const alias of (Array.isArray(rawAliases) ? rawAliases : typeof rawAliases === "string" ? [rawAliases] : [])) {
+    if (typeof alias === "string") targets.add(alias);
+  }
+  const pointsAtRedundant = (text: unknown): boolean => {
+    if (typeof text !== "string") return false;
+    const trimmed = text.trim();
+    const parsed = parseInternalNoteLink(trimmed.startsWith("!") ? trimmed.slice(1) : trimmed);
+    return parsed !== undefined && targets.has(parsed.target.replace(/\.md$/i, ""));
+  };
+  return app.vault.getMarkdownFiles().filter((file) => {
+    const cache = app.metadataCache.getFileCache(file);
+    if (!cache) return true;
+    const parents: unknown = cache.frontmatter?.parents;
+    return [...(cache.links ?? []), ...(cache.embeds ?? []), ...(cache.frontmatterLinks ?? [])].some((link) => pointsAtRedundant(link.original))
+      || (Array.isArray(parents) ? parents : [parents]).some(pointsAtRedundant);
   });
 }
 
@@ -289,11 +319,14 @@ export class DuplicateMergeService {
     const canonical = await this.readSnapshot(canonicalNodeId);
     const redundant = await this.readSnapshot(redundantNodeId);
     if (!canonical.ok) return canonical; if (!redundant.ok) return redundant;
-    const snapshots = new Map<string, string>();
-    for (const file of this.deps.app.vault.getMarkdownFiles()) snapshots.set(file.path, await this.deps.app.vault.cachedRead(file));
     const redundantFile = this.deps.cruidCache.getFile(redundantNodeId);
     const canonicalFile = this.deps.cruidCache.getFile(canonicalNodeId);
     if (!redundantFile || !canonicalFile || this.disposed) return err("E311_NOT_FOUND", "重复对涉及的笔记已不存在或服务已停止");
+    const snapshots = new Map<string, string>();
+    for (const file of linkPlanCandidates(this.deps.app, redundantFile)) {
+      if (file.path !== canonicalFile.path && file.path !== redundantFile.path) snapshots.set(file.path, await this.deps.app.vault.cachedRead(file));
+    }
+    if (this.disposed) return err("E311_NOT_FOUND", "重复对涉及的笔记已不存在或服务已停止");
     return ok({ pairId, type: pair.type, similarity: pair.similarity, canonical: canonical.value, redundant: redundant.value, linkRepairPlan: buildLinkPlan(this.deps.app, redundantFile, canonicalFile, snapshots) });
   }
 

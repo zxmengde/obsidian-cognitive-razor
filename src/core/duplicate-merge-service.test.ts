@@ -65,7 +65,9 @@ function fixture(options: FixtureOptions = {}) {
   const app = {
     vault,
     metadataCache: { getFileCache: vi.fn((target: TFile): CachedMetadata => ({
-      frontmatter: { aliases: target.path === redundant.file.path ? ["旧别名"] : options.unrelatedAliases },
+      // Obsidian 缓存的 frontmatter 含解析后的 parents，链接候选筛选依赖它。
+      frontmatter: { aliases: target.path === redundant.file.path ? ["旧别名"] : options.unrelatedAliases,
+        parents: extractFrontmatter(files.get(target.path)?.content ?? "")?.frontmatter.parents },
       links: [...(files.get(target.path)?.content ?? "").matchAll(/!?\[\[([^\]]+)\]\]/g)].map((match) => ({
         original: match[0], link: match[1],
         position: { start: { line: 0, col: 0, offset: match.index }, end: { line: 0, col: 0, offset: match.index + match[0].length } },
@@ -306,6 +308,14 @@ describe("DuplicateMergeService", () => {
     expect(extractFrontmatter(repaired)?.frontmatter.parents[0]).not.toContain('archive/Redundant');
     expect((await f.service.confirmMerge(result.value.draft, result.value.linkRepairPlan)).ok).toBe(true);
     expect(f.incoming.content).toBe(repaired);
+  });
+  it('reads only notes whose cached links can point at the redundant note', async () => {
+    const f = fixture();
+    const result = await f.service.prepareMerge(f.pair.id, 'canonical');
+    expect(result.ok).toBe(true);
+    const read = f.app.vault.cachedRead.mock.calls.map(([file]) => file.path);
+    expect(read).toContain(f.incoming.file.path);
+    expect(read).not.toContain('other/Redundant.md');
   });
   it('repairs only YAML parent scalar ranges, retaining comments, other fields and aliases', async () => {
     const f = fixture();

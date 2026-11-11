@@ -1,25 +1,19 @@
 <!--
   DuplicateItem.svelte — 重复对列表项
 
-  显示一对语义相似的概念：
-  - 顶部相似度进度条（颜色分级：>90% 红、80-90% 橙、<80% 蓝）
-  - 两个概念名称 + 类型标签 + 相似度百分比
-  - 忽略按钮，hover 淡入
-
+  一行给出两篇笔记、类型与相似度，第二行是合并稿状态和操作。
+  相似度只用数字表示：它只是候选依据，不该用红橙色暗示“危险”。
 -->
 <script lang="ts">
     import { getWorkbenchContext } from '../../bridge/context';
-    import Icon from '../../components/Icon.svelte';
-    import ProgressBar from '../../components/ProgressBar.svelte';
     import Button from '../../components/Button.svelte';
-    import type { DuplicatePair, CRType } from '../../../types';
-
-    type BarColor = 'red' | 'orange' | 'blue';
+    import type { DuplicatePair } from '../../../types';
 
     let {
         pair,
         nameA,
         nameB,
+        mergeState = undefined,
         dismissing = false,
         ondismiss,
         onmerge,
@@ -27,70 +21,48 @@
         pair: DuplicatePair;
         nameA: string;
         nameB: string;
+        mergeState?: 'generating' | 'ready';
         dismissing?: boolean;
         ondismiss: (pair: DuplicatePair) => void;
         onmerge: (pair: DuplicatePair) => void;
     } = $props();
 
     const ctx = getWorkbenchContext();
-    const t = ctx.i18n.messages;
+    const d = ctx.i18n.messages.workbench.duplicates;
 
-    /** 相似度百分比 */
     let percent = $derived(Math.round(pair.similarity * 100));
-
-    /** 进度条颜色分级 */
-    let barColor: BarColor = $derived.by(() => {
-        if (pair.similarity > 0.9) return 'red';
-        if (pair.similarity >= 0.8) return 'orange';
-        return 'blue';
-    });
-
-    /** 类型标签（通过 i18n 获取） */
-    function getTypeLabel(type: CRType): string {
-        return t.crTypes[type];
-    }
+    let mergeLabel = $derived(mergeState === 'ready' ? d.reviewDraft : mergeState === 'generating' ? d.viewProgress : d.merge);
 </script>
 
-    <div
+<div
     class="cr-dup-item"
     role="listitem"
     aria-label={ctx.i18n.format('workbench.duplicates.ariaLabel', { nameA, nameB, percent })}
 >
-    <!-- 相似度进度条 -->
-    <div class="cr-dup-item__bar">
-        <ProgressBar value={pair.similarity} color={barColor} label={ctx.i18n.t('workbench.duplicates.similarityBar')} />
+    <div class="cr-dup-item__names">
+        <span class="cr-dup-item__name">{nameA}</span>
+        <span class="cr-dup-item__vs" aria-hidden="true">·</span>
+        <span class="cr-dup-item__name">{nameB}</span>
     </div>
-
-    <!-- 概念信息 -->
-    <div class="cr-dup-item__body">
-        <div class="cr-dup-item__concepts">
-            <span class="cr-dup-item__name">{nameA}</span>
-            <span class="cr-dup-item__vs" aria-hidden="true">
-                <Icon name="arrow-left-right" size={16} />
-            </span>
-            <span class="cr-dup-item__name">{nameB}</span>
+    <div class="cr-dup-item__row">
+        <span class="cr-dup-item__meta">
+            {ctx.i18n.messages.crTypes[pair.type]} · {percent}%{#if mergeState} · <span class:is-ready={mergeState === 'ready'}>{mergeState === 'ready' ? d.stateReady : d.stateGenerating}</span>{/if}
+        </span>
+        <div class="cr-dup-item__actions">
+            <Button variant={mergeState === 'ready' ? 'primary' : 'secondary'} size="sm" ariaLabel={ctx.i18n.format('workbench.duplicates.mergeAria', { nameA, nameB })} onclick={(e: MouseEvent) => { e.stopPropagation(); onmerge(pair); }}>
+                {mergeLabel}
+            </Button>
+            <Button
+                variant="ghost"
+                size="sm"
+                loading={dismissing}
+                disabled={dismissing}
+                ariaLabel={ctx.i18n.format('workbench.duplicates.dismissAria', { nameA, nameB })}
+                onclick={(e: MouseEvent) => { e.stopPropagation(); if (!dismissing) ondismiss(pair); }}
+            >
+                {d.dismiss}
+            </Button>
         </div>
-        <div class="cr-dup-item__meta">
-            <span class="cr-dup-item__type">{getTypeLabel(pair.type)}</span>
-            <span class="cr-dup-item__similarity">{percent}%</span>
-        </div>
-    </div>
-
-    <!-- 操作按钮 -->
-    <div class="cr-dup-item__actions">
-        <Button variant="primary" size="sm" ariaLabel={t.workbench.duplicates.mergeAria} onclick={(e: MouseEvent) => { e.stopPropagation(); onmerge(pair); }}>
-            {t.workbench.duplicates.merge}
-        </Button>
-        <Button
-            variant="ghost"
-            size="sm"
-            loading={dismissing}
-            disabled={dismissing}
-            ariaLabel={t.workbench.duplicates.dismissAria}
-            onclick={(e: MouseEvent) => { e.stopPropagation(); if (!dismissing) ondismiss(pair); }}
-        >
-            {t.workbench.duplicates.dismiss}
-        </Button>
     </div>
 </div>
 
@@ -99,90 +71,51 @@
         display: flex;
         flex-direction: column;
         gap: var(--cr-space-1);
-        padding: var(--cr-space-2);
-        border-radius: var(--cr-radius-sm);
-        transition: background 0.15s;
+        padding: var(--cr-space-2) 0;
+        border-bottom: 1px solid var(--cr-border);
     }
 
-    .cr-dup-item:hover {
-        background: var(--cr-bg-hover);
+    .cr-dup-item__names {
+        display: flex;
+        align-items: baseline;
+        gap: var(--cr-space-1);
+        min-width: 0;
+        font-size: var(--cr-font-sm);
+        color: var(--cr-text-normal);
     }
 
-    .cr-dup-item__bar {
-        width: 100%;
+    .cr-dup-item__name {
+        min-width: 0;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
     }
 
-    .cr-dup-item__body {
+    .cr-dup-item__vs {
+        flex-shrink: 0;
+        color: var(--cr-text-faint);
+    }
+
+    .cr-dup-item__row {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: var(--cr-space-2);
-        min-width: 0;
-    }
-
-    .cr-dup-item__concepts {
-        display: flex;
-        align-items: center;
-        gap: var(--cr-space-1);
-        min-width: 0;
-        flex: 1;
-    }
-
-    .cr-dup-item__name {
-        font-size: var(--font-ui-small);
-        color: var(--cr-text-normal);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        max-width: 40%;
-    }
-
-    .cr-dup-item__vs {
-        font-size: 11px;
-        color: var(--cr-text-faint);
-        flex-shrink: 0;
+        flex-wrap: wrap;
     }
 
     .cr-dup-item__meta {
-        display: flex;
-        align-items: center;
-        gap: var(--cr-space-2);
-        flex-shrink: 0;
-    }
-
-    .cr-dup-item__type {
-        font-size: var(--font-ui-smaller);
-        color: var(--cr-text-muted);
-        padding: 1px 6px;
-        border-radius: var(--cr-radius-sm);
-        background: var(--cr-bg-secondary);
-    }
-
-    .cr-dup-item__similarity {
-        font-size: var(--font-ui-smaller);
+        font-size: var(--cr-font-xs);
         color: var(--cr-text-muted);
         font-variant-numeric: tabular-nums;
     }
 
-    /* 操作按钮常显：0.4 透明度会把按钮文字压到不可读，键盘用户也无法靠
-       hover 让它恢复。 */
+    .cr-dup-item__meta .is-ready {
+        color: var(--cr-text-accent);
+    }
+
     .cr-dup-item__actions {
         display: flex;
         gap: var(--cr-space-1);
-        justify-content: flex-end;
-    }
-
-    .cr-dup-item__actions:focus-within {
-        outline: 2px solid var(--cr-border-focus);
-        outline-offset: 2px;
-        border-radius: var(--cr-field-radius);
-    }
-
-    /* 减弱动效 */
-    @media (prefers-reduced-motion: reduce) {
-        .cr-dup-item,
-        .cr-dup-item__actions {
-            transition: none;
-        }
     }
 </style>
