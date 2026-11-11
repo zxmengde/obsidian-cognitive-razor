@@ -51,7 +51,7 @@ function harness(impactResult: (nodeId: string) => ReturnType<typeof ok<Duplicat
   const context = {
     i18n,
     app: { workspace: { openLinkText: vi.fn() } },
-    application: { duplicates: {
+    application: { queue: { getSnapshot: () => ({ status: {}, tasks: [] }), subscribe: () => () => undefined, cancel: async () => ({ ok: true, value: true }) }, duplicates: {
       getConceptName: () => 'Same',
       getConceptPath: (id: string) => (id === 'a' ? 'Current/Same.md' : 'Archive/Same.md'),
       previewMergeImpact, startMerge, confirmMerge: vi.fn(async () => ok({})),
@@ -94,9 +94,10 @@ describe('merge impact preview before any merge work', () => {
     try {
       ui.flushSync();
       await vi.waitFor(() => { ui.flushSync(); expect(primary().disabled).toBe(false); });
-      const choice = Array.from(document.body.querySelectorAll<HTMLButtonElement>('.cr-merge-choice button'));
+      const choice = Array.from(document.body.querySelectorAll<HTMLInputElement>('.cr-merge-choice input[type="radio"]'));
       expect(choice).toHaveLength(2);
-      choice[1].click();
+      choice[1].checked = true;
+      choice[1].dispatchEvent(new Event('change', { bubbles: true }));
       ui.flushSync();
       expect(h.previewMergeImpact).toHaveBeenLastCalledWith(pair.id, 'b');
       // Keeping the other note swaps which one is rewritten and which is trashed.

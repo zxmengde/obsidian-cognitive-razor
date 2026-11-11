@@ -1,6 +1,19 @@
 import type { PluginSettings } from '../types';
 import { formatCRTimestamp } from '../utils/date-utils';
 
+/** 插件写入的核查报告块边界；报告只在这对标记之间替换或剥离。 */
+export const VERIFY_START = "<!-- cognitive-razor:verify-report -->";
+export const VERIFY_END = "<!-- /cognitive-razor:verify-report -->";
+
+/** Removes the plugin-owned Verify projection from semantic text. */
+export function stripVerifyReport(body: string): string {
+  const start = body.indexOf(VERIFY_START);
+  if (start < 0) return body;
+  const end = body.indexOf(VERIFY_END, start + VERIFY_START.length);
+  const stripped = end < 0 ? body.slice(0, start) : `${body.slice(0, start)}${body.slice(end + VERIFY_END.length)}`;
+  return stripped.replace(/\n{3,}/g, "\n\n");
+}
+
 /** Formatting is captured with the completed stage, so recovery never reformats it. */
 export function makeVerificationReportBlock(
     report: string,

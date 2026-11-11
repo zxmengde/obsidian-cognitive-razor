@@ -1,5 +1,7 @@
 import { createHash } from "crypto";
 import type { CRType } from "../types";
+import { stripVerifyReport } from "./verification-report";
+export { stripVerifyReport };
 
 const MAX_SEMANTIC_INDEX_TEXT_CHARS = 12_000;
 
@@ -9,18 +11,6 @@ export interface SemanticIndexTextInput {
   aliases?: string[];
   tags?: string[];
   body?: string;
-}
-
-const VERIFY_START = "<!-- cognitive-razor:verify-report -->";
-const VERIFY_END = "<!-- /cognitive-razor:verify-report -->";
-
-/** Removes the plugin-owned Verify projection from semantic text. */
-export function stripVerifyReport(body: string): string {
-  const start = body.indexOf(VERIFY_START);
-  if (start < 0) return body;
-  const end = body.indexOf(VERIFY_END, start + VERIFY_START.length);
-  const stripped = end < 0 ? body.slice(0, start) : `${body.slice(0, start)}${body.slice(end + VERIFY_END.length)}`;
-  return stripped.replace(/\n{3,}/g, "\n\n");
 }
 
 function uniqueNonEmpty(values: string[]): string[] {

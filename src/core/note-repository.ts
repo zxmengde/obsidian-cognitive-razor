@@ -1,6 +1,7 @@
 import { App, TFile } from "obsidian";
 import type { ILogger, CRFrontmatter } from "../types";
 import { extractFrontmatter, generateMarkdownContent } from "./frontmatter-utils";
+import { VERIFY_END, VERIFY_START } from "./verification-report";
 
 function bodyForGeneration(body: string): string {
   // extractFrontmatter includes the newline separating YAML from Markdown;
@@ -105,8 +106,8 @@ export class NoteRepository {
   ): Promise<"updated" | "missing"> {
     const file = this.getFileByPath(path);
     if (!file) return "missing";
-    const markerStart = "<!-- cognitive-razor:verify-report -->";
-    const markerEnd = "<!-- /cognitive-razor:verify-report -->";
+    const markerStart = VERIFY_START;
+    const markerEnd = VERIFY_END;
     const marked = `${markerStart}\n${reportBlock.trim()}\n${markerEnd}`;
     const existing = new RegExp(`${markerStart}[\\s\\S]*?${markerEnd}`, "m");
     await this.app.vault.process(file, (current) => {

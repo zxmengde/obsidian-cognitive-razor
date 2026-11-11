@@ -53,8 +53,17 @@ function fixture() {
     linkedPaths: [], linkReplacements: 0, ambiguousLinks: [],
   };
   const previewMergeImpact = vi.fn(async (_pairId: string, _nodeId: string) => ok(impact));
-  const context = { i18n: new I18n(), app: { workspace: { openLinkText } }, application: { duplicates: { getConceptName: () => "Same", getConceptPath, previewMergeImpact, startMerge, prepareMerge, confirmMerge } } };
-  return { pair, draft, preview, impact, paths, openLinkText, getConceptPath, previewMergeImpact, startMerge, prepareMerge, confirmMerge, context };
+  const getMergeDraft = vi.fn(async (_workflowId: string) => ok(preview));
+  const tasks: Array<Record<string, unknown>> = [];
+  const listeners = new Set<() => void>();
+  const queue = {
+    getSnapshot: () => ({ status: {}, tasks }),
+    subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    cancel: vi.fn(async (_taskId: string) => ok(true)),
+  };
+  const emitQueue = () => { for (const listener of listeners) listener(); };
+  const context = { i18n: new I18n(), app: { workspace: { openLinkText } }, application: { queue, duplicates: { getConceptName: () => "Same", getConceptPath, previewMergeImpact, startMerge, prepareMerge, confirmMerge, getMergeDraft } } };
+  return { pair, draft, preview, impact, paths, openLinkText, getConceptPath, previewMergeImpact, startMerge, prepareMerge, confirmMerge, getMergeDraft, tasks, queue, emitQueue, context };
 }
 
 describe("Merge dialog link fidelity", () => {
@@ -77,9 +86,10 @@ describe("Merge dialog link fidelity", () => {
       expect(f.startMerge).not.toHaveBeenCalled();
     } finally { await ui.unmount(instance); target.remove(); }
   });
-  it("closes after durable queue acceptance without waiting for a model preview", async () => {
+  it("stays open while the draft generates and opens the review when the task completes", async () => {
     const f = fixture();
-    const startMerge = vi.fn(async () => ok("merge-workflow"));
+    const task = { id: "task-1", workflowId: "merge-workflow", nodeId: "a", stageId: "merge", state: "pending", createdAt: Date.now(), payload: { pairId: f.pair.id } };
+    const startMerge = vi.fn(async () => { f.tasks.push(task); return ok("merge-workflow"); });
     Object.assign(f.context.application.duplicates, { startMerge });
     const target = document.body.appendChild(document.createElement("div"));
     const onclose = vi.fn();
@@ -90,11 +100,51 @@ describe("Merge dialog link fidelity", () => {
       await vi.waitFor(() => expect(f.previewMergeImpact).toHaveBeenCalledOnce());
       await vi.waitFor(() => { ui.flushSync(); expect(document.body.querySelector<HTMLButtonElement>(".cr-modal-footer .cr-btn-primary")!.disabled).toBe(false); });
       document.body.querySelector<HTMLButtonElement>(".cr-modal-footer .cr-btn-primary")!.click();
-      await vi.waitFor(() => expect(onclose).toHaveBeenCalledOnce());
+      await vi.waitFor(() => { ui.flushSync(); expect(document.body.textContent).toContain("正在生成合并稿"); });
       expect(startMerge).toHaveBeenCalledWith(f.pair.id, "a");
       expect(startMerge).toHaveBeenCalledOnce();
       expect(f.prepareMerge).not.toHaveBeenCalled();
-      expect(ui.noticeMessages.at(-1)?.message).toContain("Current/Same.md：合并稿生成已加入任务队列");
+      expect(onclose).not.toHaveBeenCalled();
+      const labels = f.context.i18n.messages.workbench.duplicates;
+      Array.from(document.body.querySelectorAll("button")).find(button => button.textContent?.trim() === labels.cancelGeneration)!.click();
+      await vi.waitFor(() => expect(f.queue.cancel).toHaveBeenCalledWith("task-1"));
+      task.state = "completed";
+      f.emitQueue();
+      await vi.waitFor(() => { ui.flushSync(); expect(document.body.querySelectorAll<HTMLTextAreaElement>("textarea")[1]?.value).toBe("body"); });
+      expect(f.getMergeDraft).toHaveBeenCalledWith("merge-workflow");
+      expect(onclose).not.toHaveBeenCalled();
+    } finally { await ui.unmount(instance); target.remove(); }
+  });
+
+  it("resumes a running generation when the dialog is reopened", async () => {
+    const f = fixture();
+    f.tasks.push({ id: "task-2", workflowId: "merge-running", nodeId: "b", stageId: "merge", state: "running", createdAt: Date.now() - 5000, payload: { pairId: f.pair.id } });
+    const target = document.body.appendChild(document.createElement("div"));
+    const instance = ui.mount(ui.MergeHost, { target, props: { context: f.context, pair: f.pair, onclose: vi.fn(), onsuccess: vi.fn() } });
+    try {
+      ui.flushSync();
+      expect(document.body.textContent).toContain("已用 5 秒");
+      expect(f.startMerge).not.toHaveBeenCalled();
+    } finally { await ui.unmount(instance); target.remove(); }
+  });
+
+  it("reports a failed generation and lets the user start again", async () => {
+    const f = fixture();
+    const task = { id: "task-3", workflowId: "merge-workflow", nodeId: "a", stageId: "merge", state: "pending", createdAt: Date.now(), payload: { pairId: f.pair.id } };
+    Object.assign(f.context.application.duplicates, { startMerge: vi.fn(async () => { f.tasks.push(task); return ok("merge-workflow"); }) });
+    const target = document.body.appendChild(document.createElement("div"));
+    const instance = ui.mount(ui.MergeHost, { target, props: { context: f.context, pair: f.pair, onclose: vi.fn(), onsuccess: vi.fn() } });
+    try {
+      ui.flushSync();
+      await vi.waitFor(() => { ui.flushSync(); expect(document.body.querySelector<HTMLButtonElement>(".cr-modal-footer .cr-btn-primary")!.disabled).toBe(false); });
+      document.body.querySelector<HTMLButtonElement>(".cr-modal-footer .cr-btn-primary")!.click();
+      await vi.waitFor(() => { ui.flushSync(); expect(document.body.textContent).toContain("正在生成合并稿"); });
+      task.state = "failed";
+      f.emitQueue();
+      ui.flushSync();
+      expect(document.body.textContent).toContain(f.context.i18n.messages.workbench.duplicates.generationFailed);
+      expect(document.body.querySelector<HTMLButtonElement>(".cr-modal-footer .cr-btn-primary")).not.toBeNull();
+      expect(f.getMergeDraft).not.toHaveBeenCalled();
     } finally { await ui.unmount(instance); target.remove(); }
   });
 
@@ -120,7 +170,8 @@ describe("Merge dialog link fidelity", () => {
       const buttons = overlay.querySelectorAll<HTMLButtonElement>('button');
       buttons[buttons.length - 1].focus();
       buttons[buttons.length - 1].dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
-      expect(owner.activeElement).toBe(buttons[0]);
+      // Tab wraps to the first focusable control, which is now the first keep-note radio.
+      expect(owner.activeElement).toBe(overlay.querySelector('input[type="radio"]'));
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
       expect(onclose).not.toHaveBeenCalled();
       frame.contentWindow!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));

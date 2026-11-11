@@ -7,8 +7,7 @@
  * 文本已变化时放弃写入，绝不覆盖用户的新编辑。
  */
 
-const VERIFY_START = "<!-- cognitive-razor:verify-report -->";
-const VERIFY_END = "<!-- /cognitive-razor:verify-report -->";
+import { VERIFY_END, VERIFY_START } from "./verification-report";
 const ITEM = /^((?:\d+[.)]|[-*+])[ \t]+)(?:\[([ xX])\][ \t]+)?(.*)$/;
 const CLEAN_MARK = "本轮未发现需要修改的问题";
 
