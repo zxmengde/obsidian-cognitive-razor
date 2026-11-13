@@ -18,6 +18,7 @@ import type {
 import type {
   SemanticIndexRebuildProgress,
   SemanticIndexRebuildSummary,
+  SemanticIndexRepairSummary,
   SemanticIndexStatus,
 } from "../core/semantic-index-rebuilder";
 import type {
@@ -384,7 +385,7 @@ export class SettingsApplication {
     }
   }
 
-  async embedMissingSemanticIndex(): Promise<Result<{ eligible: number; indexed: number; skipped: number; failed: number }>> {
+  async embedMissingSemanticIndex(): Promise<Result<SemanticIndexRepairSummary>> {
     if (this.disposed) return err("E310_INVALID_STATE", "设置应用已释放");
     if (this.saveState.status === "saving" || this.rebuildState.status === "running" || this.duplicatePairsRebuild) {
       return err("E320_TASK_CONFLICT", "当前已有语义索引维护操作正在进行");

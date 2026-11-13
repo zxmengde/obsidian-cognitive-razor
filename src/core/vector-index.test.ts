@@ -652,6 +652,76 @@ describe("VectorIndex 当前持久化契约", () => {
     expect(harness.vectors.get(vectorKey("domain", "keep"))?.embedding).toEqual([0, 1, 0]);
   });
 
+  it("findReusableEmbeddings 只返回登记与文件哈希一致且与当前模型兼容的向量", async () => {
+    const withHash = (vector: ConceptVector, sourceHash: string): ConceptVector => ({
+      ...vector, metadata: { ...vector.metadata, sourceHash },
+    });
+    const harness = createStorage(
+      createMeta({
+        same: { type: "domain", sourceHash: "h1" },
+        changed: { type: "domain", sourceHash: "old" },
+        retyped: { type: "issue", sourceHash: "h3" },
+        lost: { type: "domain", sourceHash: "h4" },
+        foreign: { type: "domain", sourceHash: "h5" },
+        drifted: { type: "domain", sourceHash: "h6" },
+      }),
+      [
+        withHash(createVector("same", "domain", [0, 1, 0]), "h1"),
+        withHash(createVector("changed"), "old"),
+        withHash(createVector("retyped", "issue"), "h3"),
+        withHash(createVector("foreign", "domain", [1, 0, 0], "other-model"), "h5"),
+        withHash(createVector("drifted"), "stale-file"),
+      ],
+    );
+    const index = createIndex(harness);
+    expect((await index.load()).ok).toBe(true);
+    harness.mocks.readVectorFile.mockClear();
+
+    const result = await index.findReusableEmbeddings([
+      { uid: "same", type: "domain", sourceHash: "h1" },
+      { uid: "changed", type: "domain", sourceHash: "new" },
+      { uid: "retyped", type: "domain", sourceHash: "h3" },
+      { uid: "lost", type: "domain", sourceHash: "h4" },
+      { uid: "foreign", type: "domain", sourceHash: "h5" },
+      { uid: "drifted", type: "domain", sourceHash: "h6" },
+      { uid: "unknown", type: "domain", sourceHash: "h7" },
+    ]);
+
+    expect(result).toEqual(ok(new Map([["same", [0, 1, 0]]])));
+    // 登记哈希或类型不符的条目不读文件，只有可能沿用的条目才产生磁盘读取。
+    expect(harness.mocks.readVectorFile.mock.calls.map(([, id]) => id).sort())
+      .toEqual(["drifted", "foreign", "lost", "same"]);
+  });
+
+  it("replaceAll 对逐值未变的向量不重写文件并保留原时间戳", async () => {
+    const kept: ConceptVector = {
+      ...createVector("keep", "domain", [1, 0, 0]),
+      metadata: { createdAt: 1, updatedAt: 2, embeddingModel: "embed", dimensions: 3, sourceHash: "h1" },
+    };
+    const harness = createStorage(
+      createMeta({ keep: { type: "domain", sourceHash: "h1" }, edit: { type: "domain", sourceHash: "old" } }),
+      [kept, createVector("edit")],
+    );
+    const index = createIndex(harness);
+    expect((await index.load()).ok).toBe(true);
+    harness.mocks.writeVectorFile.mockClear();
+
+    const result = await index.replaceAll([
+      { uid: "keep", type: "domain", embedding: [1, 0, 0], sourceHash: "h1" },
+      { uid: "edit", type: "domain", embedding: [0, 1, 0], sourceHash: "new" },
+    ]);
+
+    expect(result).toEqual(ok(2));
+    expect(harness.mocks.writeVectorFile.mock.calls.map(([, id]) => id)).toEqual(["edit"]);
+    expect(harness.vectors.get(vectorKey("domain", "keep"))?.metadata).toMatchObject({ createdAt: 1, updatedAt: 2 });
+    expect(harness.getMeta()?.concepts).toEqual({
+      keep: { type: "domain", sourceHash: "h1" },
+      edit: { type: "domain", sourceHash: "new" },
+    });
+    const searched = await index.search("domain", [1, 0, 0], 1);
+    expect(searched.ok && searched.value[0]?.uid).toBe("keep");
+  });
+
   it("replaceAll 元数据提交失败时恢复被覆盖向量并保留旧索引", async () => {
     const original = createVector("keep", "domain", [1, 0, 0]);
     const harness = createStorage(

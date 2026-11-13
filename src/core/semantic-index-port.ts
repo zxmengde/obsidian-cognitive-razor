@@ -2,6 +2,7 @@ import type { Result, VectorFileRef } from "../types";
 import type {
   SemanticIndexRebuildProgress,
   SemanticIndexRebuildSummary,
+  SemanticIndexRepairSummary,
   SemanticIndexStatus,
 } from "./semantic-index-rebuilder";
 import type { VectorCleanupSummary, VectorIndexMaintenanceReport } from "./vector-index";
@@ -14,7 +15,7 @@ export interface SemanticIndexPort {
   rebuildDuplicatePairs(): Promise<Result<number>>;
   cancelSemanticIndexRebuild(): void;
   scanSemanticIndex(): Promise<Result<SemanticIndexStatus>>;
-  embedMissingSemanticIndex(): Promise<Result<{ eligible: number; indexed: number; skipped: number; failed: number }>>;
+  embedMissingSemanticIndex(): Promise<Result<SemanticIndexRepairSummary>>;
   embedOneSemanticIndex(cruid: string): Promise<Result<{ indexed: number; failed: number }>>;
   inspectVectorFiles(): Promise<Result<VectorIndexMaintenanceReport>>;
   cleanupOrphanedVectorFiles(expected: VectorFileRef[]): Promise<Result<VectorCleanupSummary>>;

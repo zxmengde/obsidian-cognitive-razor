@@ -82,9 +82,11 @@
         try {
             const result = await settingsApplication.embedMissingSemanticIndex();
             missingEmbedFeedback = result.ok
-                ? { level: result.value.failed > 0 ? 'error' : 'success', message: i18n.format('settings.advanced.semanticIndexing.missingComplete', result.value) }
+                ? { level: result.value.failed > 0 ? 'error' : 'success', message: i18n.format('settings.advanced.semanticIndexing.missingComplete', { indexed: result.value.indexed, skipped: result.value.skipped, failed: result.value.failed }) }
                 : { level: 'error', message: result.error.message };
-            await scanSemanticIndex(true);
+            // 补齐结果已带回剩余缺失列表；只有失败时才需要重新扫描。
+            if (result.ok) indexStatus = result.value.status;
+            else await scanSemanticIndex(true);
         } finally { missingEmbedRunning = false; }
     }
 
@@ -96,7 +98,13 @@
             ? { level: result.value.failed > 0 ? 'error' : 'success', message: i18n.t('settings.advanced.semanticIndexing.embedOneComplete') }
             : { level: 'error', message: result.error.message };
         missingEmbedRunning = false;
-        await scanSemanticIndex(true);
+        // 单篇成功只影响列表中的这一项，本地移除即可，不必全库重扫。
+        if (result.ok && result.value.indexed > 0 && indexStatus) {
+            const missingNotes = indexStatus.missingNotes.filter(note => note.cruid !== cruid);
+            indexStatus = { ...indexStatus, indexed: indexStatus.eligible - missingNotes.length, missing: missingNotes.length, missingNotes };
+        } else {
+            await scanSemanticIndex(true);
+        }
     }
 
     async function scanVectorFiles(force = false): Promise<void> {
@@ -177,7 +185,7 @@
     {#if rebuildState.status === 'completed' && rebuildState.summary}
         <InlineAlert
             level="success"
-            message={i18n.format('settings.advanced.semanticIndexing.rebuildComplete', { indexed: rebuildState.summary.indexed })}
+            message={i18n.format('settings.advanced.semanticIndexing.rebuildComplete', { indexed: rebuildState.summary.indexed, reused: rebuildState.summary.reused })}
             {detailsToggleLabels}
         />
     {:else if rebuildState.status === 'partial' && rebuildState.summary}

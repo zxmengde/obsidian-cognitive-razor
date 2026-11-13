@@ -346,6 +346,42 @@ export class VectorIndex {
     return !!this.indexMeta?.concepts[uid];
   }
 
+  /**
+   * 找出可沿用的已存向量：登记与物理文件的类型、sourceHash 都等于本次待嵌入
+   * 文本的哈希，且文件与当前模型和维度兼容。配置变化时索引已整体重置，所以同一
+   * 索引内哈希相同就意味着嵌入请求的输入完全相同，重发只会产生费用。
+   * 读失败的条目不沿用，交给调用方重新嵌入，而不是让整次操作失败。
+   */
+  findReusableEmbeddings(
+    entries: Array<{ uid: string; type: CRType; sourceHash: string }>,
+  ): Promise<Result<Map<string, number[]>>> {
+    return this.trackRead("读取可沿用向量", async () => {
+      await this.mutationChain;
+      const meta = this.indexMeta;
+      if (!meta) return err("E310_INVALID_STATE", "向量索引未加载");
+      const reusable = new Map<string, number[]>();
+      const targets = entries.filter((entry) => {
+        const concept = meta.concepts[entry.uid];
+        return concept?.type === entry.type && concept.sourceHash === entry.sourceHash;
+      });
+      for (let offset = 0; offset < targets.length; offset += VECTOR_READ_BATCH_SIZE) {
+        if (this.disposed) return this.stopped();
+        const batch = targets.slice(offset, offset + VECTOR_READ_BATCH_SIZE);
+        const results = await Promise.all(batch.map(async (entry) => ({
+          entry,
+          result: await this.fileStorage.readVectorFile(entry.type, entry.uid),
+        })));
+        for (const { entry, result } of results) {
+          if (result.ok && this.isVectorCompatible(result.value) &&
+            result.value.metadata.sourceHash === entry.sourceHash) {
+            reusable.set(entry.uid, result.value.embedding);
+          }
+        }
+      }
+      return ok(reusable);
+    });
+  }
+
   reconfigure(model: string, dimension: number | undefined, profile = model): Promise<Result<void>> {
     const normalizedModel = model.trim();
     const normalizedProfile = profile.trim();
@@ -487,11 +523,19 @@ export class VectorIndex {
     }
 
     const now = Date.now();
-    const vectors = entries.map((entry) => this.createVector(
-      entry, previousByTarget.get(this.vectorKey(entry.type, entry.uid)), now,
-    ));
+    // 重建沿用的向量与磁盘上的旧文件逐值相同；保留旧文件和旧时间戳，只写真正变化的条目。
+    const unchanged = new Set<ConceptVector>();
+    const vectors = entries.map((entry) => {
+      const previous = previousByTarget.get(this.vectorKey(entry.type, entry.uid));
+      if (previous && this.isSameStoredVector(previous, entry)) {
+        unchanged.add(previous);
+        return previous;
+      }
+      return this.createVector(entry, previous, now);
+    });
     const written: ConceptVector[] = [];
     for (const vector of vectors) {
+      if (unchanged.has(vector)) continue;
       written.push(vector);
       const writeResult = await this.fileStorage.writeVectorFile(vector.type, vector.id, vector);
       if (!writeResult.ok) {
@@ -924,6 +968,13 @@ export class VectorIndex {
       vector.metadata.dimensions === this.dimension &&
       vector.metadata.embeddingModel === this.model &&
       vector.embedding.every((value) => Number.isFinite(value));
+  }
+
+  private isSameStoredVector(stored: ConceptVector, entry: VectorEntry): boolean {
+    return this.isVectorCompatible(stored) && stored.type === entry.type &&
+      stored.metadata.sourceHash === entry.sourceHash &&
+      stored.embedding.length === entry.embedding.length &&
+      stored.embedding.every((value, index) => value === entry.embedding[index]);
   }
 
   private commitVectorToCaches(vector: ConceptVector, previousType?: CRType): void {

@@ -7,6 +7,7 @@ import type { DuplicateManager } from "./duplicate-manager";
 import { extractFrontmatter } from "./frontmatter-utils";
 import type { ModelGateway } from "./model-gateway";
 import { buildSemanticIndexText, semanticIndexTextHash } from "./semantic-index-text";
+import type { SemanticIndexTextInput } from "./semantic-index-text";
 import { resolveTaskModelSnapshot } from "./task-model-resolver";
 import type {
   VectorCleanupSummary,
@@ -36,6 +37,8 @@ export interface SemanticIndexRebuildProgress {
 export interface SemanticIndexRebuildSummary {
   totalNotes: number;
   indexed: number;
+  /** 正文未变、沿用已存向量而没有发出嵌入请求的笔记数，已计入 indexed。 */
+  reused: number;
   skipped: number;
   duplicatePairs?: number;
   duplicateRefreshFailed: boolean;
@@ -43,11 +46,16 @@ export interface SemanticIndexRebuildSummary {
 
 interface RebuildCandidate {
   entry: CruidCacheEntry;
-  content: string;
-  input: string;
-  sourceHash: string;
+  /** 只保存拼装嵌入文本所需的字段；文本和哈希只在确实要嵌入或比对时才计算。 */
+  text: SemanticIndexTextInput;
   type: CRType;
   status: "draft" | "evergreen";
+}
+
+/** 候选笔记本次将发送的嵌入文本及其哈希。 */
+interface PreparedCandidate extends RebuildCandidate {
+  input: string;
+  sourceHash: string;
 }
 
 export interface MissingVectorNote {
@@ -63,6 +71,15 @@ export interface SemanticIndexStatus {
   indexed: number;
   missing: number;
   missingNotes: MissingVectorNote[];
+}
+
+export interface SemanticIndexRepairSummary {
+  eligible: number;
+  indexed: number;
+  skipped: number;
+  failed: number;
+  /** 本次补齐结束时仍缺向量的笔记；设置页据此刷新列表，不必再全库扫描一次。 */
+  status: SemanticIndexStatus;
 }
 
 interface SemanticIndexRebuilderDeps {
@@ -93,12 +110,10 @@ export class SemanticIndexRebuilder {
     const missing = await this.findMissingCandidates(candidates.value);
     if (!missing.ok) return missing as Result<SemanticIndexStatus>;
     if (this.disposed) return err("E310_INVALID_STATE", "语义索引服务已停止");
-    const missingNotes = missing.value
-      .map((candidate) => ({ cruid: candidate.entry.cruid, name: candidate.entry.file.basename, path: candidate.entry.path, type: candidate.type, status: candidate.status }));
-    return ok({ eligible: candidates.value.length, indexed: candidates.value.length - missingNotes.length, missing: missingNotes.length, missingNotes });
+    return ok(this.toStatus(candidates.value.length, missing.value));
   }
 
-  async embedMissing(): Promise<Result<{ eligible: number; indexed: number; skipped: number; failed: number }>> {
+  async embedMissing(): Promise<Result<SemanticIndexRepairSummary>> {
     return this.runTargeted(signal => this.embedMissingInternal(signal), true);
   }
 
@@ -112,33 +127,37 @@ export class SemanticIndexRebuilder {
     return this.runTargeted(() => this.deps.vectorIndex.cleanupOrphanFiles(expected));
   }
 
-  private async embedMissingInternal(signal: AbortSignal): Promise<Result<{ eligible: number; indexed: number; skipped: number; failed: number }>> {
+  private async embedMissingInternal(signal: AbortSignal): Promise<Result<SemanticIndexRepairSummary>> {
     if (this.disposed) return err("E310_INVALID_STATE", "语义索引服务已停止");
     const settings = this.deps.settingsStore.getSettings();
     const prerequisite = this.validatePrerequisites(settings);
-    if (!prerequisite.ok) return prerequisite as Result<{ eligible: number; indexed: number; skipped: number; failed: number }>;
+    if (!prerequisite.ok) return prerequisite as Result<SemanticIndexRepairSummary>;
     const candidates = await this.collectCandidates(await this.deps.cruidCache.snapshotEntries(), signal);
-    if (!candidates.ok) return candidates as Result<{ eligible: number; indexed: number; skipped: number; failed: number }>;
+    if (!candidates.ok) return candidates as Result<SemanticIndexRepairSummary>;
     const missingResult = await this.findMissingCandidates(candidates.value);
-    if (!missingResult.ok) return missingResult as Result<{ eligible: number; indexed: number; skipped: number; failed: number }>;
+    if (!missingResult.ok) return missingResult as Result<SemanticIndexRepairSummary>;
     const missing = missingResult.value;
+    const remaining: RebuildCandidate[] = [];
     let indexed = 0; let failed = 0;
     const config = resolveVectorIndexConfig(settings);
     const model = resolveTaskModelSnapshot(settings, "index");
-    for (const candidate of missing) {
+    for (const pending of missing) {
       if (this.isStopped(signal)) return this.targetedStopped(signal);
+      // 只为确实缺向量的笔记拼装文本和计算哈希；已有向量的笔记不需要。
+      const candidate = this.prepare(pending);
       if (!this.currentConfigMatches(config)) {
         return err("E320_TASK_CONFLICT", "嵌入配置在补齐缺失向量期间发生变化，已中止");
       }
       const embedded = await this.deps.providerManager.embed(this.buildEmbedRequest(model, config, candidate.input), signal);
       if (this.isStopped(signal)) return this.targetedStopped(signal);
-      if (!embedded.ok) { failed++; this.deps.logger.warn("SemanticIndexRebuilder", "缺失向量生成失败", { path: candidate.entry.path, errorCode: embedded.error.code }); continue; }
+      if (!embedded.ok) { failed++; remaining.push(candidate); this.deps.logger.warn("SemanticIndexRebuilder", "缺失向量生成失败", { path: candidate.entry.path, errorCode: embedded.error.code }); continue; }
+      // 笔记已删除或身份已变：它不再是本库应向量化的笔记，不留在缺失列表里。
       if (!this.isCurrentCandidate(candidate)) { failed++; continue; }
       if (!this.currentConfigMatches(config)) {
         return err("E320_TASK_CONFLICT", "嵌入配置在补齐缺失向量期间发生变化，已中止");
       }
       const written = await this.deps.vectorIndex.upsert({ uid: candidate.entry.cruid, type: candidate.type, embedding: embedded.value.embedding, sourceHash: candidate.sourceHash });
-      if (!written.ok) { failed++; this.deps.logger.warn("SemanticIndexRebuilder", "缺失向量写入失败", { path: candidate.entry.path, errorCode: written.error.code }); continue; }
+      if (!written.ok) { failed++; remaining.push(candidate); this.deps.logger.warn("SemanticIndexRebuilder", "缺失向量写入失败", { path: candidate.entry.path, errorCode: written.error.code }); continue; }
       indexed++;
       if (settings.enableDuplicateDetection) {
         // The duplicate store is derived from the index, so a vector written
@@ -151,7 +170,25 @@ export class SemanticIndexRebuilder {
         }
       }
     }
-    return ok({ eligible: candidates.value.length, indexed, skipped: candidates.value.length - missing.length, failed });
+    const eligible = candidates.value.filter(candidate => this.isCurrentCandidate(candidate)).length;
+    return ok({
+      eligible: candidates.value.length,
+      indexed,
+      skipped: candidates.value.length - missing.length,
+      failed,
+      status: this.toStatus(eligible, remaining),
+    });
+  }
+
+  private toStatus(eligible: number, missing: RebuildCandidate[]): SemanticIndexStatus {
+    const missingNotes = missing.map((candidate) => ({
+      cruid: candidate.entry.cruid,
+      name: candidate.entry.file.basename,
+      path: candidate.entry.path,
+      type: candidate.type,
+      status: candidate.status,
+    }));
+    return { eligible, indexed: eligible - missingNotes.length, missing: missingNotes.length, missingNotes };
   }
 
   async embedOne(cruid: string): Promise<Result<{ indexed: number; failed: number }>> {
@@ -172,25 +209,41 @@ export class SemanticIndexRebuilder {
       return err("E311_NOT_FOUND", "笔记不存在或不符合向量化条件");
     }
     if (this.isStopped(signal)) return this.targetedStopped(signal);
-    const candidate = this.buildCandidate({ cruid, path: file.path, file }, content);
-    if (!candidate) return err("E311_NOT_FOUND", "笔记不存在或不符合向量化条件");
+    const parsed = this.buildCandidate({ cruid, path: file.path, file }, content);
+    if (!parsed) return err("E311_NOT_FOUND", "笔记不存在或不符合向量化条件");
+    const candidate = this.prepare(parsed);
     const config = resolveVectorIndexConfig(settings);
     const model = resolveTaskModelSnapshot(settings, "index");
-    const embedded = await this.deps.providerManager.embed(this.buildEmbedRequest(model, config, candidate.input), signal);
+    // 合并、写入后的单篇刷新经常遇到正文实际没变的笔记；沿用已存向量即可，不再计费。
+    const reusable = await this.deps.vectorIndex.findReusableEmbeddings([
+      { uid: candidate.entry.cruid, type: candidate.type, sourceHash: candidate.sourceHash },
+    ]);
     if (this.isStopped(signal)) return this.targetedStopped(signal);
-    if (!embedded.ok) return ok({ indexed: 0, failed: 1 });
+    const stored = reusable.ok ? reusable.value.get(candidate.entry.cruid) : undefined;
+    let embedding: number[];
+    if (stored) {
+      embedding = stored;
+    } else {
+      const embedded = await this.deps.providerManager.embed(this.buildEmbedRequest(model, config, candidate.input), signal);
+      if (this.isStopped(signal)) return this.targetedStopped(signal);
+      if (!embedded.ok) return ok({ indexed: 0, failed: 1 });
+      embedding = embedded.value.embedding;
+    }
     if (!this.isCurrentCandidate(candidate)) return err("E320_TASK_CONFLICT", "笔记已删除或节点身份已改变，向量未写入");
     if (!this.currentConfigMatches(config)) {
       return err("E320_TASK_CONFLICT", "嵌入配置在单篇生成期间发生变化，向量未写入");
     }
-    const written = await this.deps.vectorIndex.upsert({ uid: candidate.entry.cruid, type: candidate.type, embedding: embedded.value.embedding, sourceHash: candidate.sourceHash });
-    if (!written.ok) return ok({ indexed: 0, failed: 1 });
+    if (!stored) {
+      const written = await this.deps.vectorIndex.upsert({ uid: candidate.entry.cruid, type: candidate.type, embedding, sourceHash: candidate.sourceHash });
+      if (!written.ok) return ok({ indexed: 0, failed: 1 });
+    }
     if (settings.enableDuplicateDetection) {
+      // 沿用向量时同样刷新重复关系：调用方可能刚改过其他笔记，或刚开启重复检测。
       try {
         const refreshed = await this.deps.duplicateManager.refreshNode(
           candidate.entry.cruid,
           candidate.type,
-          embedded.value.embedding,
+          embedding,
         );
         if (!refreshed.ok) {
           this.deps.logger.warn("SemanticIndexRebuilder", "单篇向量已写入，但重复关系刷新失败", {
@@ -300,17 +353,32 @@ export class SemanticIndexRebuilder {
         return err("E101_INVALID_INPUT", "没有可索引的有效概念笔记，旧索引保持不变");
       }
 
+      const prepared = candidates.value.map(candidate => this.prepare(candidate));
+      // 正文未变且已存向量仍可用的笔记沿用原向量；只有新增、改过或向量损坏的笔记发出嵌入请求。
+      const reusableResult = await this.deps.vectorIndex.findReusableEmbeddings(
+        prepared.map(candidate => ({ uid: candidate.entry.cruid, type: candidate.type, sourceHash: candidate.sourceHash })),
+      );
+      if (this.isStopped(controller.signal)) return this.cancelled();
+      const reusable = reusableResult.ok ? reusableResult.value : new Map<string, number[]>();
       const vectors: VectorEntry[] = [];
+      let reused = 0;
       let failed = snapshot.length - candidates.value.length;
       this.emit(onProgress, {
         phase: "embedding",
         completed: 0,
-        total: candidates.value.length,
+        total: prepared.length,
         failed,
       });
-      for (let index = 0; index < candidates.value.length; index += 1) {
+      for (let index = 0; index < prepared.length; index += 1) {
         if (this.isStopped(controller.signal)) return this.cancelled();
-        const candidate = candidates.value[index];
+        const candidate = prepared[index];
+        const stored = reusable.get(candidate.entry.cruid);
+        if (stored) {
+          vectors.push({ uid: candidate.entry.cruid, type: candidate.type, embedding: stored, sourceHash: candidate.sourceHash });
+          reused += 1;
+          this.emit(onProgress, { phase: "embedding", completed: index + 1, total: prepared.length, failed });
+          continue;
+        }
         const embedResult = await this.deps.providerManager.embed(
           this.buildEmbedRequest(modelSnapshot, vectorConfig, candidate.input),
           controller.signal,
@@ -333,7 +401,7 @@ export class SemanticIndexRebuilder {
         this.emit(onProgress, {
           phase: "embedding",
           completed: index + 1,
-          total: candidates.value.length,
+          total: prepared.length,
           failed,
         });
       }
@@ -377,6 +445,7 @@ export class SemanticIndexRebuilder {
       const summary: SemanticIndexRebuildSummary = {
         totalNotes: snapshot.length,
         indexed: replaceResult.value,
+        reused,
         skipped: snapshot.length - replaceResult.value,
         duplicatePairs: initialSettings.enableDuplicateDetection && duplicatesResult.ok
           ? duplicatesResult.value
@@ -431,12 +500,12 @@ export class SemanticIndexRebuilder {
     return ok(undefined);
   }
 
-  private async findMissingCandidates(candidates: RebuildCandidate[]): Promise<Result<RebuildCandidate[]>> {
+  private async findMissingCandidates<T extends RebuildCandidate>(candidates: T[]): Promise<Result<T[]>> {
     // Routine note edits deliberately keep their existing embedding. Only
     // missing/unusable physical vectors enter the default repair operation.
     // Read storage, not recent caches: registration alone is not sufficient.
     const inspected = await this.deps.vectorIndex.inspectStorage();
-    if (!inspected.ok) return inspected as Result<RebuildCandidate[]>;
+    if (!inspected.ok) return inspected as Result<T[]>;
     const unavailable = new Set([...inspected.value.missingEntries, ...inspected.value.invalidEntries, ...inspected.value.staleEntries].map(entry => entry.uid));
     return ok(candidates.filter(candidate => unavailable.has(candidate.entry.cruid) ||
       !this.deps.vectorIndex.has(candidate.entry.cruid)));
@@ -497,8 +566,17 @@ export class SemanticIndexRebuilder {
       // seed notes are intentionally not eligible for semantic indexing.
       return null;
     }
-    const input = buildSemanticIndexText({ name: parsed.frontmatter.name, type: parsed.frontmatter.type, aliases: parsed.frontmatter.aliases, tags: parsed.frontmatter.tags, body: parsed.body });
-    return { entry, content, input, sourceHash: semanticIndexTextHash(input), type: parsed.frontmatter.type, status: parsed.frontmatter.status };
+    return {
+      entry,
+      text: { name: parsed.frontmatter.name, type: parsed.frontmatter.type, aliases: parsed.frontmatter.aliases, tags: parsed.frontmatter.tags, body: parsed.body },
+      type: parsed.frontmatter.type,
+      status: parsed.frontmatter.status,
+    };
+  }
+
+  private prepare(candidate: RebuildCandidate): PreparedCandidate {
+    const input = buildSemanticIndexText(candidate.text);
+    return { ...candidate, input, sourceHash: semanticIndexTextHash(input) };
   }
 
   private isCurrentCandidate(candidate: RebuildCandidate): boolean {

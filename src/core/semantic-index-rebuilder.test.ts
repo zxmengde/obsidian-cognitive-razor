@@ -94,13 +94,32 @@ function createHarness(contents: Record<string, string>) {
     _request: EmbedRequest,
     _signal?: AbortSignal,
   ): Promise<Result<EmbedResponse>> => ok({ embedding: [1, 0, 0], tokensUsed: 1 }));
-  const replaceAll = vi.fn(async (vectors: unknown[]) => ok(vectors.length));
+  // 已存向量按 uid 记录 sourceHash 与嵌入，模拟真实索引的沿用判断。
+  const stored = new Map<string, { type: string; sourceHash?: string; embedding: number[] }>();
+  const replaceAll = vi.fn(async (vectors: VectorEntry[]) => {
+    stored.clear();
+    for (const vector of vectors) stored.set(vector.uid, { type: vector.type, sourceHash: vector.sourceHash, embedding: vector.embedding });
+    return ok(vectors.length);
+  });
+  const findReusableEmbeddings = vi.fn(async (requested: Array<{ uid: string; type: string; sourceHash: string }>): Promise<Result<Map<string, number[]>>> => ok(new Map(
+    requested.flatMap((entry) => {
+      const vector = stored.get(entry.uid);
+      return vector && vector.type === entry.type && vector.sourceHash === entry.sourceHash
+        ? [[entry.uid, vector.embedding] as [string, number[]]]
+        : [];
+    }),
+  )));
   const rebuildFromIndex = vi.fn(async (): Promise<Result<number>> => ok(2));
   const clearAll = vi.fn(async (): Promise<Result<number>> => ok(0));
   const refreshNode = vi.fn(async (): Promise<Result<number>> => ok(0));
   const indexed = new Set<string>();
   const currentEntries = new Map<string, VectorEntry>();
-  const upsert = vi.fn(async (entry: VectorEntry) => { indexed.add(entry.uid); currentEntries.set(entry.uid, entry); return ok(undefined); });
+  const upsert = vi.fn(async (entry: VectorEntry) => {
+    indexed.add(entry.uid);
+    currentEntries.set(entry.uid, entry);
+    stored.set(entry.uid, { type: entry.type, sourceHash: entry.sourceHash, embedding: entry.embedding });
+    return ok(undefined);
+  });
   const logger: ILogger = {
     debug: vi.fn(),
     info: vi.fn(),
@@ -116,6 +135,7 @@ function createHarness(contents: Record<string, string>) {
       getEmbeddingModel: () => config.model,
       getEmbeddingDimension: () => config.dimension,
       replaceAll,
+      findReusableEmbeddings,
       inspectStorage: async () => ok({ indexedEntries: currentEntries.size, physicalFiles: currentEntries.size, missingEntries: [], staleEntries: [], invalidEntries: [], orphanFiles: [] }),
       has: (uid: string) => indexed.has(uid),
       upsert,
@@ -131,6 +151,8 @@ function createHarness(contents: Record<string, string>) {
     cachedRead,
     embed,
     replaceAll,
+    findReusableEmbeddings,
+    stored,
     rebuildFromIndex,
     clearAll,
     refreshNode,
@@ -196,6 +218,7 @@ describe("SemanticIndexRebuilder", () => {
     expect(result).toEqual(ok({
       totalNotes: 2,
       indexed: 2,
+      reused: 0,
       skipped: 0,
       duplicatePairs: 2,
       duplicateRefreshFailed: false,
@@ -396,7 +419,7 @@ describe("SemanticIndexRebuilder", () => {
     });
 
     await expect(harness.service.embedMissing()).resolves.toEqual(
-      ok({ eligible: 2, indexed: 2, skipped: 0, failed: 0 }),
+      ok({ eligible: 2, indexed: 2, skipped: 0, failed: 0, status: { eligible: 2, indexed: 2, missing: 0, missingNotes: [] } }),
     );
 
     expect(harness.refreshNode.mock.calls).toEqual([
@@ -413,7 +436,7 @@ describe("SemanticIndexRebuilder", () => {
     harness.setSettings(settings);
 
     await expect(harness.service.embedMissing()).resolves.toEqual(
-      ok({ eligible: 1, indexed: 1, skipped: 0, failed: 0 }),
+      ok({ eligible: 1, indexed: 1, skipped: 0, failed: 0, status: { eligible: 1, indexed: 1, missing: 0, missingNotes: [] } }),
     );
 
     expect(harness.refreshNode).not.toHaveBeenCalled();
@@ -435,6 +458,83 @@ describe("SemanticIndexRebuilder", () => {
 
     expect(result).toMatchObject({ ok: false, error: { code: "E320_TASK_CONFLICT" } });
     expect(harness.upsert).not.toHaveBeenCalled();
+  });
+
+  it("重建时沿用正文未变笔记的已存向量，只为改过的笔记发出嵌入请求", async () => {
+    const harness = createHarness({
+      "notes/a.md": note("a", "Alpha"),
+      "notes/b.md": note("b", "Beta"),
+    });
+    await harness.service.rebuild();
+    expect(harness.embed).toHaveBeenCalledTimes(2);
+    const storedA = harness.stored.get("a")!.embedding;
+    harness.contents["notes/b.md"] = note("b", "Beta changed");
+    harness.embed.mockClear();
+    harness.embed.mockResolvedValueOnce(ok({ embedding: [0, 1, 0], tokensUsed: 1 }));
+
+    const result = await harness.service.rebuild();
+
+    expect(result).toMatchObject({ ok: true, value: { indexed: 2, reused: 1 } });
+    expect(harness.embed).toHaveBeenCalledOnce();
+    expect(harness.embed.mock.calls[0][0].input).toContain("Beta changed");
+    const committed = harness.replaceAll.mock.calls[1][0] as VectorEntry[];
+    expect(committed.find((entry) => entry.uid === "a")?.embedding).toBe(storedA);
+    expect(committed.find((entry) => entry.uid === "b")?.embedding).toEqual([0, 1, 0]);
+  });
+
+  it("重建在无法读取可沿用向量时退回为全部重新嵌入", async () => {
+    const harness = createHarness({ "notes/a.md": note("a", "Alpha") });
+    await harness.service.rebuild();
+    harness.embed.mockClear();
+    harness.findReusableEmbeddings.mockResolvedValueOnce(err("E310_INVALID_STATE", "向量索引未加载"));
+
+    const result = await harness.service.rebuild();
+
+    expect(result).toMatchObject({ ok: true, value: { indexed: 1, reused: 0 } });
+    expect(harness.embed).toHaveBeenCalledOnce();
+  });
+
+  it("单篇刷新遇到正文未变的笔记时沿用已存向量，不计费也不重写，但仍刷新重复关系", async () => {
+    const harness = createHarness({ "notes/a.md": note("a", "Alpha") });
+    await harness.service.embedOne("a");
+    harness.embed.mockClear();
+    harness.upsert.mockClear();
+    harness.refreshNode.mockClear();
+
+    await expect(harness.service.embedOne("a")).resolves.toEqual(ok({ indexed: 1, failed: 0 }));
+
+    expect(harness.embed).not.toHaveBeenCalled();
+    expect(harness.upsert).not.toHaveBeenCalled();
+    expect(harness.refreshNode).toHaveBeenCalledWith("a", "domain", [1, 0, 0]);
+
+    harness.contents["notes/a.md"] = note("a", "Alpha changed");
+    await expect(harness.service.embedOne("a")).resolves.toEqual(ok({ indexed: 1, failed: 0 }));
+    expect(harness.embed).toHaveBeenCalledOnce();
+    expect(harness.upsert).toHaveBeenCalledOnce();
+  });
+
+  it("补齐缺失向量返回仍缺向量的笔记，供设置页刷新列表而不必重扫", async () => {
+    const harness = createHarness({
+      "notes/a.md": note("a", "Alpha"),
+      "notes/b.md": note("b", "Beta"),
+    });
+    harness.embed.mockResolvedValueOnce(err("E204_PROVIDER_ERROR", "offline"));
+
+    const result = await harness.service.embedMissing();
+
+    expect(result).toEqual(ok({
+      eligible: 2,
+      indexed: 1,
+      skipped: 0,
+      failed: 1,
+      status: {
+        eligible: 2,
+        indexed: 1,
+        missing: 1,
+        missingNotes: [{ cruid: "a", name: "a", path: "notes/a.md", type: "domain", status: "draft" }],
+      },
+    }));
+    await expect(harness.service.scanStatus()).resolves.toEqual(ok(result.ok ? result.value.status : undefined));
   });
 
   it("单篇向量化只读取目标笔记文件而不扫描全库", async () => {

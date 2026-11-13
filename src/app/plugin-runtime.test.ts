@@ -372,7 +372,7 @@ describe("PluginRuntime lifecycle", () => {
     const gate = new Promise<void>(resolve => { release = resolve; });
     vi.spyOn(VectorIndex.prototype, "reconfigure").mockImplementation(async () => { await gate; return ok(undefined); });
     const scan = vi.spyOn(SemanticIndexRebuilder.prototype, "scanStatus").mockResolvedValue(ok({ eligible: 0, indexed: 0, missing: 0, missingNotes: [] }));
-    const missing = vi.spyOn(SemanticIndexRebuilder.prototype, "embedMissing").mockResolvedValue(ok({ eligible: 0, indexed: 0, skipped: 0, failed: 0 }));
+    const missing = vi.spyOn(SemanticIndexRebuilder.prototype, "embedMissing").mockResolvedValue(ok({ eligible: 0, indexed: 0, skipped: 0, failed: 0, status: { eligible: 0, indexed: 0, missing: 0, missingNotes: [] } }));
     const one = vi.spyOn(SemanticIndexRebuilder.prototype, "embedOne").mockResolvedValue(ok({ indexed: 0, failed: 0 }));
     const runtime = createRuntime(settingsStore);
     await runtime.start();
