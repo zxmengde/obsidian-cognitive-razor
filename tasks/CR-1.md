@@ -7,10 +7,10 @@
   3. **事实核查（Verify）→ 修订闭环**：改变目前核查报告只往笔记末尾塞一大段纯文本/Callout、用户很难对照正文逐条修改的割裂体验。在不破坏既有 `AGENTS.md` / `REQUIREMENTS.md` 持久化安全与快照冲突保护的前提下，设计并实现清晰的核查问题定位与修订辅助闭环（例如：工作台或核查面板提取/解析核查报告中的可定位问题条目，支持点击定位到原笔记对应段落/句子、一键处理/标记已解决或安全应用局部修订建议，并在修订前严格校验正文快照防误覆盖）。
   4. **重复笔记检测与合并（Duplicates & Merge）全链路审计与体验重构**：端到端审查 `DuplicateManager`、`DuplicateMergeService`、`DuplicatesSection` 与 `MergeModal`。修正当前“点生成草稿→弹窗突然关闭去队列等→等完还要自己再回重复区重新点开才能审阅草稿”的断裂动线，提供清晰的**主/副笔记原文对照 + 合并后草稿差异/冲突可视化 + 影响范围与回收站安全确认**，并在原库用明确标记的测试笔记实测验证完整合并与链接修复链路。
   5. **工程门禁与真实构建**：`npm run check`、`npm run check:test`、`npm run lint`、`npm test`、`node --test scripts/*.node-test.mjs`、`npm run build` 全部通过（严禁删减有效测试或放宽 lint/ts 规则），更新 `main.js` 与必要的 `docs/REQUIREMENTS.md` / `docs/DESIGN.md`（若提示词有变同步 `docs/PROMPTS.md` 与 `prompt-examples.md`）。
-- **唯一负责人**：Claude Opus 5.5（第一轮 `474157db-bef9-42cd-80fe-15ba67cc691d`；第二轮由接力会话收口；工作区 `wks_c47e9b54b588b079`）
-- **状态**：待验收（验收 1–5 已完成；未验证项见第二轮记录）
-- **当前动作**：第二轮已交付 4 个提交并构建 `main.js`，等总控验收。
-- **下一步谁做**：总控验收。mengde 配置嵌入模型后，在真实合并中确认“移入回收站”这一步。
+- **唯一负责人**：Claude Opus 5.5（第一轮 `474157db-bef9-42cd-80fe-15ba67cc691d`；第二轮接力会话，工作区 `wks_c47e9b54b588b079`；第三轮 `edf24edd-56af-4e0b-9a2c-250d0e213e3b`，工作区 `wks_661fe36e88bd41be`）
+- **状态**：待验收（验收 1–5 已全部完成并通过门禁与真机实测）
+- **当前动作**：第三轮已完成语义索引增量处理、Svelte 热重载残留样式清理、窄侧栏修复与真机合并/核查闭环实测，已重新构建 `main.js`，等总控验收。
+- **下一步谁做**：总控验收。需要推送远端或开 PR 时告知。
 - **成果入口**：`C:/CODE/obsidian/.obsidian/plugins/obsidian-cognitive-razor/`
 
 ---
@@ -106,3 +106,50 @@
 **未完成**
 
 - 语义索引增量处理：只做了审计，没有改。
+
+
+### 2026-11-13 第三轮（Claude Opus 5.5 `edf24edd-56af-4e0b-9a2c-250d0e213e3b`）
+
+文中时间为大西洋标准时间（AST，UTC−4）；括号内附本机美东时间（EST）。
+
+**提交**（分支 `fix/uiux-feedback-and-entries`，不推送远端）
+
+- `e6710b8` perf(index)：重建与单篇刷新沿用未变向量，扫描时不再为每篇笔记计算哈希；缺失补建直接返回剩余缺失列表。
+- `d900fdd` fix(ui)：给插件的 Svelte 注入样式加 `cr-svelte-` 前缀，卸载时从所有打开的窗口移除，只删本插件的样式。
+- `2d2ed6b` fix(workbench)：窄侧栏下设置提示按钮允许换行，三枚当前笔记操作按钮同行等高。
+
+**1. 语义索引增量处理与基准对比**
+
+- 改动：
+  - `src/core/semantic-index-rebuilder.ts`：候选笔记拆成轻量解析与按需哈希两步。`scanStatus` 只解析 frontmatter，不再拼接嵌入文本或算 SHA-256；`embedMissing` 只为真正缺失/失效的笔记算哈希，并返回包含剩余缺失列表的 `SemanticIndexRepairSummary`，设置页直接消费，省掉紧随其后的第二次全量扫描。
+  - `src/core/vector-index.ts`：新增 `findReusableEmbeddings`，要求 `index.json` 元数据中的 `type`、`sourceHash` 与向量文件 `isVectorCompatible`（当前模型、维度、有限数值）全部吻合才沿用；配置变化会走 `reconfigure` 重置索引，不会跨模型误沿用。`replaceAll` 对向量内容与元数据都未变的条目跳过磁盘重写并保留原时间戳。
+  - `rebuild` 只对新增、改动或向量文件损坏的笔记调嵌入接口；`embedOne` 对正文未变的笔记跳过嵌入和磁盘写入，只用已有向量刷新重复关系。笔记日常编辑仍不自动重算嵌入。
+  - 同步更新 `src/locales/zh.json`、`src/ui/svelte/settings/MaintenanceTab.svelte`、`docs/REQUIREMENTS.md`、`docs/DESIGN.md`。
+- 2000 篇笔记内存存储实测对比（`HEAD~3` `6517420` → 当前实现）：
+  - 首次全量重建：嵌入请求 `2000 → 2000`，哈希 `2000 → 2000`，向量写入 `2000 → 2000`（185 ms）。
+  - 仅 1 篇笔记改动后重建：嵌入请求 **`2000 → 1`**，向量文件写入 **`2000 → 1`**（158 ms → 147 ms；为保证写失败可回滚，读取旧向量文件 `2000 → 3999`，不增加磁盘写入和外部计费）。
+  - 单篇刷新未变笔记（`embedOne`）：嵌入请求 **`1 → 0`**，向量写入 **`1 → 0`**，索引元数据写入 **`1 → 0`**。
+  - 全库已建索引时状态扫描（`scanStatus`）：SHA-256 哈希 **`2000 → 0`**（137 ms → 132 ms）。
+  - 10 篇缺失时补建 + 设置页刷新状态：笔记读取 **`4000 → 2000`**，SHA-256 哈希 **`4000 → 10`**，向量文件读取 **`3990 → 1990`**，目录列举 **`2 → 1`**（307 ms → 149 ms）。
+
+**2. Svelte 热重载残留样式清理**
+
+- `esbuild.config.mjs` 自定义 `compilerOptions.cssHash`，固定输出 `cr-svelte-<hash>`；打包产物 `main.js` 中 38 处样式 ID 全部带该前缀，不再生成通用 `svelte-*`。
+- `src/ui/injected-styles.ts` 与 `main.ts`：插件 `onunload` 遍历主窗口与所有打开叶子的 `ownerDocument`，只移除 `style[id^="cr-svelte-"]`，其他插件的 `svelte-*` 样式不受影响。
+- 真机验证：在运行中的 Obsidian 里把 7 个 `cr-svelte-*` 样式内容篡改为 `/*stale*/`，同时插入模拟外部插件的 `<style id="svelte-foreign-test">`，执行 `plugin:reload id=cognitive-razor` 后残留旧样式为 0、重开工作台重新注入最新样式、外部 `svelte-foreign-test` 完整保留。
+
+**3. 窄侧栏修复与原库真机闭环验证**
+
+- 窄侧栏缺陷与修复：实测侧栏缩到 300px / 240px 时，`.cr-create-help--action` 继承了 Obsidian `button` 默认的 `white-space: nowrap` 与固定高度（`scrollWidth` 290px > 216px），导致整个工作台出现横向溢出；同时“生成记忆卡片”折成两行后与左侧两枚单行按钮高度不一致。已在 `2d2ed6b` 修复，实测 300px / 240px / 200px 暗色与亮色（Moonstone）下横向溢出元素均为 0，三枚按钮同行等高（240px 下同为 48px，427px 下同为 32px）。
+- 事实核查定位→修订闭环（原库临时笔记 `__cr_test_verify.md`）：工作台准确列出 3 条问题；点第 1 条跳到正文引用句第 14 行并展开补充说明；点第 2 条跳到 `## 过程` 标题行；点无原文引用的第 3 条落回报告第 26 行并提示未定位；勾选第 1 条写回 `1. [x]` 且进度变为 `1/3`；模拟外部改动第 2 条标题后立即勾选，写回中止并提示“报告已被修改，请重试。”，用户改动完好保留。
+- 重复对合并审阅全链路（本地可控 HTTP mock + 内存态临时 provider，未读取、未写入 `data.json`，原库临时笔记 `__cr_test_merge_alpha.md`、`__cr_test_merge_beta.md`、`__cr_test_merge_ref.md`）：两篇笔记嵌入后检出重复对 → 点“处理”打开弹窗看到保留/移入回收站范围与 1 处入链提示 → 点“生成合并稿”期间弹窗保持打开（`generating` 态）并在返回后直接进入对照审阅态，正确标出冲突、缺失行和缺失数字（`2012`、`42`） → 关闭弹窗后重复项按钮变为“审阅合并稿”，重开直接载入已生成草稿 → 点“写入并移入回收站”后主笔记写入合并正文、`__cr_test_merge_ref.md` 中的链接更新为 `[[__cr_test_merge_alpha]]`、`__cr_test_merge_beta.md` 确认进入 `.trash/__cr_test_merge_beta.md`、重复对与恢复队列均归零。测试后全部 `__cr_test_*` 笔记与临时运行产物已移入 `.trash`，插件重载后状态干净。
+
+**4. 门禁与构建证据**
+
+- `npm run check`：447 个文件，0 错误、0 警告。
+- `npm run check:test`：0 错误。
+- `npm run lint`：0 错误、0 警告。
+- `npm test`：105 个测试文件、1547 个测试全部通过（含新增的向量沿用、按需哈希、热重载样式清理单测）。
+- `node --test scripts/*.node-test.mjs`：34 个测试全部通过。
+- `npm run build`：通过，`main.js` 已于 06:34 AST（05:34 EST）由当前源码重新构建并在 Obsidian 1.15.0 重载验证，`dev:errors` 为空。
+- 未验证：真实线上计费模型生成的合并稿措辞质量（本机未配置模型且按规则不读取 `data.json`；HTTP 传输、队列持久化、审阅界面、链接修复与 `.trash` 移入已在真机用本地 HTTP mock 走通）。
