@@ -10,6 +10,7 @@ import { CRSettingTab } from "./src/ui/svelte/settings-tab";
 import { CommandDispatcher } from "./src/ui/command-dispatcher";
 import { requestWorkbenchFocus } from "./src/ui/workbench-intent";
 import { showError } from "./src/ui/feedback";
+import { removeInjectedStyles } from "./src/ui/injected-styles";
 import { InMemoryExternalCallLedger } from "./src/core/external-call-ledger";
 import { reportHostDiagnostic } from "./src/data/logger";
 import { backupAndClearPluginData } from "./src/data/runtime-data-maintenance";
@@ -91,7 +92,17 @@ export default class CognitiveRazorPlugin extends Plugin {
     } finally {
       this.runtime = undefined;
       this.runtimePromise = undefined;
+      this.removeInjectedStyles();
     }
+  }
+
+  /** 停用或重载时移除本插件注入的组件样式，下次加载按新代码重新注入。 */
+  private removeInjectedStyles(): void {
+    const documents = new Set<Document>([document]);
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      documents.add(leaf.view.containerEl.ownerDocument);
+    });
+    removeInjectedStyles(documents);
   }
 
   getI18n(): I18n {

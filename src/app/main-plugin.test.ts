@@ -21,6 +21,7 @@ vi.mock("../../src/ui/feedback", () => ({
 function createPlugin(): CognitiveRazorPlugin {
   const plugin = new CognitiveRazorPlugin({} as App, { dir: "plugin" } as never);
   Object.assign(plugin as unknown as Record<string, unknown>, {
+    app: { workspace: { iterateAllLeaves: () => {} } },
     settingsStore: {} as SettingsStore,
     manifest: { dir: "plugin" },
   });

@@ -29,6 +29,7 @@ describe("backupAndResetRuntimeData race with ensureRuntime", () => {
       detachLeavesOfType: vi.fn(() => { leaves = []; }),
       getRightLeaf: vi.fn(() => freshLeaf),
       revealLeaf: vi.fn(),
+      iterateAllLeaves: vi.fn(),
     };
     const plugin = new CognitiveRazorPlugin({} as App, {} as never);
     Object.assign(plugin, {
@@ -63,7 +64,7 @@ describe("backupAndResetRuntimeData race with ensureRuntime", () => {
 
     const plugin = new CognitiveRazorPlugin({ vault: {} } as unknown as App, { dir: "plugin" } as never);
     Object.assign(plugin as unknown as Record<string, unknown>, {
-      app: { vault: {}, workspace: { detachLeavesOfType: vi.fn() } },
+      app: { vault: {}, workspace: { detachLeavesOfType: vi.fn(), iterateAllLeaves: vi.fn() } },
       settingsStore: { getSettings: () => ({}) } as unknown as SettingsStore,
       manifest: { dir: "plugin" },
     });

@@ -3,6 +3,7 @@ import process from "process";
 import builtins from "builtin-modules";
 import sveltePlugin from "esbuild-svelte";
 import sveltePreprocess from "svelte-preprocess";
+import { INJECTED_STYLE_ID_PREFIX } from "./src/ui/injected-styles.ts";
 
 const banner =
 `/*
@@ -56,6 +57,8 @@ const context = await esbuild.context({
 			compilerOptions: {
 				// 生产模式下启用 CSS 注入，开发模式下也注入（单文件输出）
 				css: "injected",
+				// 默认 id 只按文件名哈希，重载插件后同 id 的旧样式会挡住新样式；加前缀让卸载时能只清理本插件的节点。
+				cssHash: ({ hash, css, filename }) => `${INJECTED_STYLE_ID_PREFIX}${hash(filename === "(unknown)" ? css : filename ?? css)}`,
 			},
 		}),
 	],
