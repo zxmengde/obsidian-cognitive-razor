@@ -8,9 +8,9 @@
   4. **重复笔记检测与合并（Duplicates & Merge）全链路审计与体验重构**：端到端审查 `DuplicateManager`、`DuplicateMergeService`、`DuplicatesSection` 与 `MergeModal`。修正当前“点生成草稿→弹窗突然关闭去队列等→等完还要自己再回重复区重新点开才能审阅草稿”的断裂动线，提供清晰的**主/副笔记原文对照 + 合并后草稿差异/冲突可视化 + 影响范围与回收站安全确认**，并在原库用明确标记的测试笔记实测验证完整合并与链接修复链路。
   5. **工程门禁与真实构建**：`npm run check`、`npm run check:test`、`npm run lint`、`npm test`、`node --test scripts/*.node-test.mjs`、`npm run build` 全部通过（严禁删减有效测试或放宽 lint/ts 规则），更新 `main.js` 与必要的 `docs/REQUIREMENTS.md` / `docs/DESIGN.md`（若提示词有变同步 `docs/PROMPTS.md` 与 `prompt-examples.md`）。
 - **唯一负责人**：Claude Opus 5.5（第一轮 `474157db-bef9-42cd-80fe-15ba67cc691d`；第二轮接力会话，工作区 `wks_c47e9b54b588b079`；第三轮 `edf24edd-56af-4e0b-9a2c-250d0e213e3b`，工作区 `wks_661fe36e88bd41be`）
-- **状态**：待验收（验收 1–5 已全部完成并通过门禁与真机实测）
-- **当前动作**：第三轮已完成语义索引增量处理、Svelte 热重载残留样式清理、窄侧栏修复与真机合并/核查闭环实测，已重新构建 `main.js`，等总控验收。
-- **下一步谁做**：总控验收。需要推送远端或开 PR 时告知。
+- **状态**：已完成（总控 `7915d1cf` 于 2026-11-13 06:39 AST 独立复核全套门禁与单测通过）
+- **当前动作**：三轮全部收口完成，`main.js` 已在 Obsidian 1.15.0 重载生效，工作树干净。
+- **下一步谁做**：日常使用中如已配置真实计费模型，可直接体验合并稿生成；需要合并回主干或推送远端时由 mengde 定。
 - **成果入口**：`C:/CODE/obsidian/.obsidian/plugins/obsidian-cognitive-razor/`
 
 ---
