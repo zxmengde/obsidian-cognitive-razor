@@ -336,8 +336,9 @@
     .cr-search-row :global(.cr-btn-primary) { width: 100%; min-height: 38px; border-radius: var(--cr-field-radius); }
     .cr-create-help { margin: var(--cr-space-3) 0 0; font-size: var(--cr-font-fine); line-height: 1.5; color: var(--cr-text-faint); }
     /* The whole sentence is the button; keep it reading as a hint but show the
-       pointer and focus ring of an action. */
-    .cr-create-help--action { display: block; width: 100%; padding: 0; border: 0; border-radius: var(--cr-field-radius); box-shadow: none; background: none; text-align: left; font: inherit; font-size: var(--cr-font-fine); line-height: 1.5; color: var(--cr-text-faint); cursor: pointer; }
+       pointer and focus ring of an action. Obsidian buttons default to a fixed
+       height and nowrap, which overflows narrow sidebars. */
+    .cr-create-help--action { display: block; width: 100%; height: auto; padding: 0; white-space: normal; overflow-wrap: anywhere; border: 0; border-radius: var(--cr-field-radius); box-shadow: none; background: none; text-align: left; font: inherit; font-size: var(--cr-font-fine); line-height: 1.5; color: var(--cr-text-faint); cursor: pointer; }
     .cr-create-help--action:hover .cr-create-help__cue,
     .cr-create-help--action:focus-visible .cr-create-help__cue { text-decoration: underline; }
     .cr-create-help--action:focus-visible { outline: 2px solid var(--cr-border-focus); outline-offset: 2px; }
@@ -347,6 +348,6 @@
     .cr-result-heading { display: flex; align-items: baseline; gap: 12px; justify-content: space-between; margin-bottom: var(--cr-space-4); }
     .cr-result-heading h2 { min-width: 0; }
     .cr-text-action { flex-shrink: 0; height: auto; padding: 0; border: 0; box-shadow: none; background: none; color: var(--cr-interactive-accent); font-size: var(--cr-font-xs); }
-    .cr-note-actions { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); align-items: center; gap: var(--cr-space-2); margin-top: var(--cr-space-3); }
+    .cr-note-actions { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); align-items: stretch; gap: var(--cr-space-2); margin-top: var(--cr-space-3); }
     .cr-note-action { width: 100%; min-width: 0; min-height: 32px; padding: 6px; box-sizing: border-box; border-radius: var(--cr-field-radius); font-size: var(--cr-font-sm); overflow-wrap: anywhere; }
 </style>
