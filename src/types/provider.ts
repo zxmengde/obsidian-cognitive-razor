@@ -12,7 +12,8 @@
 type ProviderType =
     | "openai-chat-completions"
     | "openai-responses"
-    | "gemini-generative-language";
+    | "gemini-generative-language"
+    | "anthropic-messages";
 
 /** Embedding 能力协议。聊天协议不自动等价于 embedding 能力。 */
 export type EmbeddingApiFormat = "openai-embeddings" | "disabled";
@@ -154,5 +155,6 @@ export interface EmbedResponse {
 export const DEFAULT_ENDPOINTS: Record<ProviderType, string> = {
     "openai-chat-completions": "https://api.openai.com/v1",
     "openai-responses": "https://api.openai.com/v1",
-    "gemini-generative-language": "https://generativelanguage.googleapis.com/v1beta"
+    "gemini-generative-language": "https://generativelanguage.googleapis.com/v1beta",
+    "anthropic-messages": "https://api.anthropic.com/v1"
 };

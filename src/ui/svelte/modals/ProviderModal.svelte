@@ -59,11 +59,12 @@
     let formTopP = $state(untrack(() => currentConfig?.parameters?.topP ?? 1));
     let formReasoningEffort = $state(untrack(() => currentConfig?.parameters?.reasoning_effort ?? ''));
     let formThinkingLevel = $state(untrack(() => currentConfig?.parameters?.thinkingLevel ?? ''));
+    let formThinkingBudget = $state(untrack(() => currentConfig?.parameters?.thinkingBudget === undefined ? '' : String(currentConfig.parameters.thinkingBudget)));
     let formMaxTokens = $state(untrack(() => currentConfig?.parameters?.maxTokens === undefined ? '' : String(currentConfig.parameters.maxTokens)));
     let formEmbeddingDimension = $state(untrack(() => currentConfig?.parameters?.embeddingDimension === undefined ? '' : String(currentConfig.parameters.embeddingDimension)));
     let formEmbeddingApiFormat = $state<EmbeddingApiFormat>(untrack(
         () => currentConfig?.embeddingApiFormat ?? (
-            currentConfig?.apiFormat === 'gemini-generative-language'
+            currentConfig?.apiFormat === 'gemini-generative-language' || currentConfig?.apiFormat === 'anthropic-messages'
                 ? 'disabled'
                 : 'openai-embeddings'
         )
@@ -97,10 +98,17 @@
             : DEFAULT_ENDPOINTS[formApiFormat]
     );
 
-    /** 缓存优化与续传只有 OpenAI Responses 协议支持，其他协议不显示也不保存 */
+    /** 按协议决定可用能力：提示词缓存支持 Responses 与 Anthropic，续传仅支持 Responses。 */
     let responsesOnlyEnabled = $derived(formApiFormat === 'openai-responses');
+    let isAnthropic = $derived(formApiFormat === 'anthropic-messages');
+    let promptCachingSupported = $derived(formApiFormat === 'openai-responses' || formApiFormat === 'anthropic-messages');
+    let webSearchSupported = $derived(formApiFormat === 'openai-responses' || formApiFormat === 'gemini-generative-language' || formApiFormat === 'anthropic-messages');
     let chatModelPlaceholder = $derived(
-        formApiFormat === 'gemini-generative-language' ? 'gemini-2.5-flash' : 'gpt-5-mini'
+        formApiFormat === 'gemini-generative-language'
+            ? 'gemini-2.5-flash'
+            : formApiFormat === 'anthropic-messages'
+                ? 'claude-sonnet-4-5'
+                : 'gpt-5-mini'
     );
 
     /** 翻译快捷方式 */
@@ -112,6 +120,7 @@
         { value: 'openai-chat-completions', label: t('modals.providerConfig.apiFormats.openaiChatCompletions') },
         { value: 'openai-responses', label: t('modals.providerConfig.apiFormats.openaiResponses') },
         { value: 'gemini-generative-language', label: t('modals.providerConfig.apiFormats.geminiGenerativeLanguage') },
+        { value: 'anthropic-messages', label: t('modals.providerConfig.apiFormats.anthropicMessages') },
         { value: 'disabled', label: t('modals.providerConfig.apiFormats.disabled') },
     ];
 
@@ -151,6 +160,24 @@
                 if (!Number.isSafeInteger(parsed) || parsed <= 0) newErrors[field] = t('taskModels.fields.positiveIntegerError');
             }
         }
+        if (isAnthropic) {
+            const parsedBudget = formReasoningSupported && formThinkingBudget.trim() ? Number(formThinkingBudget.trim()) : undefined;
+            if (formReasoningSupported && formThinkingBudget.trim() && (!Number.isSafeInteger(parsedBudget) || (parsedBudget as number) < 1024)) {
+                newErrors.reasoning = t('modals.providerConfig.errors.anthropicBudgetMin');
+            }
+            if (parsedBudget !== undefined && Number.isSafeInteger(parsedBudget) && parsedBudget >= 1024 && formMaxTokens.trim() && !newErrors.maxTokens) {
+                if (Number(formMaxTokens.trim()) <= parsedBudget) {
+                    newErrors.maxTokens = t('modals.providerConfig.errors.anthropicMaxTokensTooSmall');
+                }
+            }
+            const thinkingActive = formReasoningSupported && (parsedBudget !== undefined || (formReasoningEffort.trim() !== '' && formReasoningEffort.trim() !== 'none'));
+            if (formTemperatureSupported && (formTemperature < 0 || formTemperature > 1)) {
+                newErrors.temperature = t('modals.providerConfig.errors.anthropicTemperatureRange');
+            }
+            if (!thinkingActive && formTemperatureSupported && formTopPSupported) {
+                newErrors.sampling = t('modals.providerConfig.errors.anthropicSamplingConflict');
+            }
+        }
         if (formApiFormat === 'disabled' && formEmbeddingApiFormat === 'disabled') {
             newErrors.apiFormat = t('modals.providerConfig.errors.capabilityRequired');
         }
@@ -174,11 +201,11 @@
             baseUrl: formBaseUrl.trim() || undefined,
             apiFormat: formApiFormat,
             capabilities: {
-                nativeWebSearch: formEnableWebSearch,
+                nativeWebSearch: webSearchSupported && formEnableWebSearch,
                 temperature: formTemperatureSupported,
                 topP: formTopPSupported,
                 reasoning: formReasoningSupported,
-                promptCaching: responsesOnlyEnabled && formPromptCaching,
+                promptCaching: promptCachingSupported && formPromptCaching,
                 ...(responsesOnlyEnabled && formPromptCaching ? { promptCacheMode: formPromptCacheMode } : {}),
                 ...(responsesOnlyEnabled && formPromptCaching && formPromptCacheMode === 'explicit' ? { promptCacheTtl: '30m' as const } : {}),
                 responseContinuation: responsesOnlyEnabled && formResponseContinuation,
@@ -188,6 +215,7 @@
                 ...(formTopPSupported ? { topP: formTopP } : {}),
                 ...(formApiFormat === 'gemini-generative-language' && formThinkingLevel.trim() ? { thinkingLevel: formThinkingLevel.trim() } : {}),
                 ...(formApiFormat === 'gemini-generative-language' && currentConfig?.parameters?.thinkingBudget !== undefined ? { thinkingBudget: currentConfig.parameters.thinkingBudget } : {}),
+                ...(formApiFormat === 'anthropic-messages' && formReasoningSupported && formThinkingBudget.trim() ? { thinkingBudget: Number(formThinkingBudget.trim()) } : {}),
                 ...(formReasoningSupported && formApiFormat !== 'gemini-generative-language' && formReasoningEffort.trim() ? { reasoning_effort: formReasoningEffort.trim() } : {}),
                 ...(formMaxTokens.trim() ? { maxTokens: Number(formMaxTokens.trim()) } : {}),
                 ...(formEmbeddingDimension.trim() ? { embeddingDimension: Number(formEmbeddingDimension.trim()) } : {}),
@@ -313,25 +341,23 @@
                 {/if}
             </div>
 
-            <!-- API Key -->
+            <!-- 聊天 API 协议（先选协议，自动匹配端点、模型占位符与可用能力） -->
             <div class="cr-provider-field">
-                <label class="cr-provider-field__label" for="pm-api-key">
-                    {t('modals.providerConfig.fields.apiKey')}
+                <label class="cr-provider-field__label" for="pm-api-format">
+                    {t('modals.providerConfig.fields.apiFormat')}
                 </label>
                 <p class="cr-provider-field__desc">
-                    {t('modals.providerConfig.fields.apiKeyDesc')}
+                    {t('modals.providerConfig.fields.apiFormatDesc')}
                 </p>
-                <PasswordInput
-                    id="pm-api-key"
-                    value={formApiKey}
-                    placeholder="sk-..."
+                <Select
+                    id="pm-api-format"
+                    value={formApiFormat}
+                    options={apiFormatOptions}
                     disabled={saving}
-                    showLabel={t('common.password.show')}
-                    hideLabel={t('common.password.hide')}
-                    onchange={(v) => { formApiKey = v; errors = { ...errors, apiKey: '' }; }}
+                    onchange={handleApiFormatChange}
                 />
-                {#if errors.apiKey}
-                    <p class="cr-provider-field__error">{errors.apiKey}</p>
+                {#if errors.apiFormat}
+                    <p class="cr-provider-field__error">{errors.apiFormat}</p>
                 {/if}
             </div>
 
@@ -355,27 +381,29 @@
                 {/if}
             </div>
 
-            <!-- 聊天 API 协议 -->
+            <!-- API Key -->
             <div class="cr-provider-field">
-                <label class="cr-provider-field__label" for="pm-api-format">
-                    {t('modals.providerConfig.fields.apiFormat')}
+                <label class="cr-provider-field__label" for="pm-api-key">
+                    {t('modals.providerConfig.fields.apiKey')}
                 </label>
                 <p class="cr-provider-field__desc">
-                    {t('modals.providerConfig.fields.apiFormatDesc')}
+                    {t('modals.providerConfig.fields.apiKeyDesc')}
                 </p>
-                <Select
-                    id="pm-api-format"
-                    value={formApiFormat}
-                    options={apiFormatOptions}
+                <PasswordInput
+                    id="pm-api-key"
+                    value={formApiKey}
+                    placeholder={isAnthropic ? 'sk-ant-...' : 'sk-...'}
                     disabled={saving}
-                    onchange={handleApiFormatChange}
+                    showLabel={t('common.password.show')}
+                    hideLabel={t('common.password.hide')}
+                    onchange={(v) => { formApiKey = v; errors = { ...errors, apiKey: '' }; }}
                 />
-                {#if errors.apiFormat}
-                    <p class="cr-provider-field__error">{errors.apiFormat}</p>
+                {#if errors.apiKey}
+                    <p class="cr-provider-field__error">{errors.apiKey}</p>
                 {/if}
             </div>
 
-            <details class="cr-provider-disclosure cr-provider-shared-defaults" open={mode === 'add' || Boolean(errors.chatModel || errors.embedModel || errors.embeddingDimension || errors.reasoning || errors.maxTokens)}>
+            <details class="cr-provider-disclosure cr-provider-shared-defaults" open={mode === 'add' || Boolean(errors.chatModel || errors.embedModel || errors.embeddingDimension || errors.reasoning || errors.maxTokens || errors.temperature || errors.sampling)}>
                 <summary>{t('settings.product.sharedDefaults')}</summary>
                 <p class="cr-provider-field__desc">{t('settings.product.sharedHint')}</p>
             {#if formApiFormat !== 'disabled'}
@@ -461,9 +489,10 @@
             </details>
 
             {#if formApiFormat !== 'disabled'}
-            <details class="cr-provider-disclosure" open={Boolean(errors.reasoning || errors.maxTokens)}>
+            <details class="cr-provider-disclosure" open={Boolean(errors.reasoning || errors.maxTokens || errors.temperature || errors.sampling)}>
                 <summary>{t('settings.product.modelDefaults')}</summary>
                 <p class="cr-provider-field__desc">{t('settings.redesign.providerAdvancedDesc')}</p>
+            {#if webSearchSupported}
             <div class="cr-provider-field cr-provider-field--row">
                 <div>
                     <span class="cr-provider-field__label" id="pm-web-search-label">
@@ -480,35 +509,62 @@
                     onchange={(v) => { formEnableWebSearch = v; }}
                 />
             </div>
+            {/if}
 
+            {#if isAnthropic}
+                <p class="cr-provider-field__desc">{t('modals.providerConfig.fields.anthropicSamplingHint')}</p>
+            {/if}
             <div class="cr-provider-field cr-provider-field--row">
                 <span class="cr-provider-field__label">{t('taskModels.fields.temperature')}</span>
-                <Toggle checked={formTemperatureSupported} disabled={saving} ariaLabel={t('taskModels.fields.temperature')} onchange={(v) => { formTemperatureSupported = v; }} />
-                {#if formTemperatureSupported}<TextInput value={String(formTemperature)} onchange={(v) => { const n = Number(v); if (Number.isFinite(n) && n >= 0 && n <= 2) formTemperature = n; }} widthClass="cr-input-sm" />{/if}
+                <Toggle checked={formTemperatureSupported} disabled={saving} ariaLabel={t('taskModels.fields.temperature')} onchange={(v) => { formTemperatureSupported = v; errors = { ...errors, temperature: '', sampling: '' }; }} />
+                {#if formTemperatureSupported}<TextInput value={String(formTemperature)} onchange={(v) => { const n = Number(v); if (Number.isFinite(n) && n >= 0 && n <= (isAnthropic ? 1 : 2)) { formTemperature = n; errors = { ...errors, temperature: '' }; } }} widthClass="cr-input-sm" />{/if}
+                {#if errors.temperature}<p class="cr-provider-field__error">{errors.temperature}</p>{/if}
             </div>
             <div class="cr-provider-field cr-provider-field--row">
                 <span class="cr-provider-field__label">{t('taskModels.fields.topP')}</span>
-                <Toggle checked={formTopPSupported} disabled={saving} ariaLabel={t('taskModels.fields.topP')} onchange={(v) => { formTopPSupported = v; }} />
+                <Toggle checked={formTopPSupported} disabled={saving} ariaLabel={t('taskModels.fields.topP')} onchange={(v) => { formTopPSupported = v; errors = { ...errors, sampling: '' }; }} />
                 {#if formTopPSupported}<TextInput value={String(formTopP)} onchange={(v) => { const n = Number(v); if (Number.isFinite(n) && n >= 0 && n <= 1) formTopP = n; }} widthClass="cr-input-sm" />{/if}
+                {#if errors.sampling}<p class="cr-provider-field__error">{errors.sampling}</p>{/if}
             </div>
             <div class="cr-provider-field cr-provider-field--row">
                 <span class="cr-provider-field__label">{t('taskModels.fields.reasoningEffort')}</span>
-                <Toggle checked={formReasoningSupported} disabled={saving} ariaLabel={t('taskModels.fields.reasoningEffort')} onchange={(v) => { formReasoningSupported = v; }} />
+                <Toggle checked={formReasoningSupported} disabled={saving} ariaLabel={t('taskModels.fields.reasoningEffort')} onchange={(v) => { formReasoningSupported = v; errors = { ...errors, reasoning: '', sampling: '' }; }} />
                 {#if formApiFormat === 'gemini-generative-language'}
                     <TextInput value={formThinkingLevel} placeholder="thinking level" onchange={(v) => { formThinkingLevel = v; }} widthClass="cr-input-sm" />
                 {:else if formReasoningSupported}
-                    <TextInput value={formReasoningEffort} placeholder="effort" onchange={(v) => { formReasoningEffort = v; }} widthClass="cr-input-sm" />
+                    <TextInput value={formReasoningEffort} placeholder={isAnthropic ? 'low / medium / high / max' : 'effort'} onchange={(v) => { formReasoningEffort = v; errors = { ...errors, sampling: '' }; }} widthClass="cr-input-sm" />
                 {/if}
                 {#if errors.reasoning}<p class="cr-provider-field__error">{errors.reasoning}</p>{/if}
             </div>
-            {#if responsesOnlyEnabled}
+            {#if isAnthropic && formReasoningSupported}
+            <div class="cr-provider-field">
+                <label class="cr-provider-field__label" for="pm-thinking-budget">
+                    {t('taskModels.fields.thinkingBudget')}
+                </label>
+                <p class="cr-provider-field__desc">
+                    {t('modals.providerConfig.fields.thinkingBudgetDesc')}
+                </p>
+                <TextInput
+                    id="pm-thinking-budget"
+                    value={formThinkingBudget}
+                    placeholder="1024+"
+                    invalid={Boolean(errors.reasoning)}
+                    onchange={(v) => { formThinkingBudget = v; errors = { ...errors, reasoning: '', maxTokens: '', sampling: '' }; }}
+                    widthClass="cr-input-sm"
+                    disabled={saving}
+                />
+            </div>
+            {/if}
+            {#if promptCachingSupported}
             <div class="cr-provider-field cr-provider-field--row">
                 <div><span class="cr-provider-field__label">{t('taskModels.fields.promptCaching')}</span><p class="cr-provider-field__desc">{t('taskModels.fields.promptCachingDesc')}</p></div>
                 <Toggle checked={formPromptCaching} disabled={saving} ariaLabel={t('taskModels.fields.promptCaching')} onchange={(v) => { formPromptCaching = v; }} />
-                {#if formPromptCaching}
+                {#if responsesOnlyEnabled && formPromptCaching}
                     <Select value={formPromptCacheMode} options={[{ value: 'implicit', label: t('taskModels.fields.promptCacheImplicit') }, { value: 'explicit', label: t('taskModels.fields.promptCacheExplicit') }]} disabled={saving} onchange={(value) => { formPromptCacheMode = value as 'implicit' | 'explicit'; }} />
                 {/if}
             </div>
+            {/if}
+            {#if responsesOnlyEnabled}
             <div class="cr-provider-field cr-provider-field--row">
                 <span class="cr-provider-field__label">{t('taskModels.fields.responseContinuation')}</span>
                 <Toggle checked={formResponseContinuation} disabled={saving} ariaLabel={t('taskModels.fields.responseContinuation')} onchange={(v) => { formResponseContinuation = v; }} />

@@ -189,11 +189,11 @@ export function buildTaskChatRequest(
     // With explicit prompt caching that prevents the accumulated stage context
     // from becoming part of the growing cacheable prefix.
     previousResponseId: serverContinuation ? conversation?.previousResponseId : undefined,
-    promptCacheKey: modelSnapshot.capabilities?.promptCaching
+    promptCacheKey: modelSnapshot.capabilities?.promptCaching && modelSnapshot.providerSnapshot?.apiFormat !== "anthropic-messages"
       ? buildPromptCacheKey(modelSnapshot.providerId, modelSnapshot.model, modelSnapshot.providerSnapshot?.apiFormat, modelSnapshot.providerSnapshot?.baseUrl)
       : undefined,
-    promptCacheMode: modelSnapshot.capabilities?.promptCaching ? (modelSnapshot.capabilities.promptCacheMode ?? "implicit") : undefined,
-    promptCacheTtl: modelSnapshot.capabilities?.promptCaching ? modelSnapshot.capabilities.promptCacheTtl : undefined,
+    promptCacheMode: modelSnapshot.capabilities?.promptCaching && modelSnapshot.providerSnapshot?.apiFormat !== "anthropic-messages" ? (modelSnapshot.capabilities.promptCacheMode ?? "implicit") : undefined,
+    promptCacheTtl: modelSnapshot.capabilities?.promptCaching && modelSnapshot.providerSnapshot?.apiFormat !== "anthropic-messages" ? modelSnapshot.capabilities.promptCacheTtl : undefined,
   };
 
   if (!serverContinuation && modelSnapshot.providerSnapshot?.apiFormat === "openai-responses"

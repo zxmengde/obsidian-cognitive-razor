@@ -98,6 +98,41 @@ describe('task parameter presentation', () => {
         expect(describeTaskParameter('temperature', settings.taskModels.write, resolveTaskModelSnapshot(settings, 'write')))
             .toMatchObject({ value: 0.7, source: 'provider' });
     });
+
+    it('reports Anthropic Messages sampling, budget, and thinking diagnostics accurately', () => {
+        const settings = fixture();
+        settings.providers.research.apiFormat = 'anthropic-messages';
+        settings.providers.research.defaultChatModel = 'claude-sonnet-4-5';
+        settings.providers.research.capabilities = { temperature: true, topP: true, reasoning: true, promptCaching: true };
+        settings.providers.research.parameters = { temperature: 0.7, topP: 0.9, maxTokens: 4096 };
+
+        // Both temperature and topP enabled without thinking -> conflict
+        let resolved = resolveTaskModelSnapshot(settings, 'write');
+        expect(resolved.capabilities.promptCaching).toBe(true);
+        expect(describeTaskParameter('temperature', settings.taskModels.write, resolved))
+            .toMatchObject({ value: 0.7, protocolIssue: 'anthropicSamplingConflict' });
+
+        // Temperature > 1 -> range issue
+        settings.providers.research.capabilities.topP = false;
+        settings.providers.research.parameters.temperature = 1.4;
+        resolved = resolveTaskModelSnapshot(settings, 'write');
+        expect(describeTaskParameter('temperature', settings.taskModels.write, resolved))
+            .toMatchObject({ value: 1.4, protocolIssue: 'anthropicTemperatureRange' });
+
+        // thinkingBudget < 1024 -> budget min; >= maxTokens -> maxTokensTooSmall; thinking suppresses sampling
+        settings.providers.research.parameters.temperature = 0.7;
+        settings.providers.research.parameters.thinkingBudget = 512;
+        resolved = resolveTaskModelSnapshot(settings, 'write');
+        expect(describeTaskParameter('thinkingBudget', settings.taskModels.write, resolved))
+            .toMatchObject({ value: 512, protocolIssue: 'anthropicBudgetMin' });
+        expect(describeTaskParameter('temperature', settings.taskModels.write, resolved))
+            .toMatchObject({ value: undefined, samplingSuppressed: true });
+
+        settings.providers.research.parameters.thinkingBudget = 4096;
+        resolved = resolveTaskModelSnapshot(settings, 'write');
+        expect(describeTaskParameter('maxTokens', settings.taskModels.write, resolved))
+            .toMatchObject({ value: 4096, protocolIssue: 'anthropicMaxTokensTooSmall' });
+    });
 });
 
 

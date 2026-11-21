@@ -6,6 +6,7 @@ import { createResponsesStreamCompletionTracker } from "./provider-stream-codec"
 export {
   aggregateProviderStream,
   createResponsesStreamCompletionTracker,
+  decodeProviderStream,
   hasProviderStreamFraming,
   readProviderStreamUsage,
   safeStreamResponseEvidence,
@@ -14,7 +15,8 @@ export {
 export type ProviderStreamProtocol =
   | "openai-chat-completions"
   | "openai-responses"
-  | "gemini-generative-language";
+  | "gemini-generative-language"
+  | "anthropic-messages";
 
 export type ProviderStreamTransport = "node-http" | "renderer-fetch";
 export const MAX_PROVIDER_STREAM_BYTES = 8 * 1024 * 1024;
@@ -113,7 +115,8 @@ export const requestProviderStream: ProviderStreamRequester = (input) =>
     let settled = false;
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     let abortHandler: (() => void) | undefined;
-    const chunks: Uint8Array[] = [];
+    // 增量 UTF-8 解码为片段数组，避免保留原始字节并在结束时二次拷贝和二次解码。
+    const decodedParts: string[] = [];
     let totalBytes = 0;
     const terminal = createResponsesStreamCompletionTracker(input.protocol);
     const streamDecoder = new TextDecoder();
@@ -177,14 +180,12 @@ export const requestProviderStream: ProviderStreamRequester = (input) =>
       return headers;
     };
 
-    const decodeBody = (): string => {
-      const bytes = new Uint8Array(totalBytes);
-      let offset = 0;
-      for (const chunk of chunks) {
-        bytes.set(chunk, offset);
-        offset += chunk.byteLength;
+    const joinDecodedBody = (flush: boolean): string => {
+      if (flush) {
+        const tail = streamDecoder.decode();
+        if (tail) decodedParts.push(tail);
       }
-      return new TextDecoder().decode(bytes);
+      return decodedParts.length === 1 ? decodedParts[0] : decodedParts.join("");
     };
 
     const handleResponse = (incoming: IncomingMessage): void => {
@@ -195,19 +196,18 @@ export const requestProviderStream: ProviderStreamRequester = (input) =>
       incoming.on("data", (chunk: Buffer | string) => {
         if (settled) return;
         armTimeout();
-        const bytes = typeof chunk === "string"
-          ? new TextEncoder().encode(chunk)
-          : Uint8Array.from(chunk);
-        totalBytes += bytes.byteLength;
+        const byteLength = typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.byteLength;
+        totalBytes += byteLength;
         if (totalBytes > MAX_PROVIDER_STREAM_BYTES) {
           settleReject(new ProviderStreamNetworkError("after-response", "STREAM_SIZE_LIMIT"));
           return;
         }
-        chunks.push(bytes);
-        const end = terminal?.(streamDecoder.decode(bytes, { stream: true }));
+        const text = typeof chunk === "string" ? chunk : streamDecoder.decode(chunk, { stream: true });
+        if (text) decodedParts.push(text);
+        const end = terminal?.(text);
         if (end !== undefined && (incoming.statusCode ?? 0) >= 200 && (incoming.statusCode ?? 0) < 300) {
           responseEnded = true;
-          settleResolve({ status: incoming.statusCode ?? 0, headers: toHeaders(incoming), body: decodeBody().slice(0, end) });
+          settleResolve({ status: incoming.statusCode ?? 0, headers: toHeaders(incoming), body: joinDecodedBody(false).slice(0, end) });
           incoming.destroy();
           request?.destroy();
         }
@@ -217,7 +217,7 @@ export const requestProviderStream: ProviderStreamRequester = (input) =>
         settleResolve({
           status: incoming.statusCode ?? 0,
           headers: toHeaders(incoming),
-          body: decodeBody(),
+          body: joinDecodedBody(true),
         });
       });
       incoming.once("aborted", () => failNetwork(new Error("Provider response was aborted")));

@@ -65,6 +65,7 @@ const API_FORMATS = new Set<ProviderApiFormat>([
   "openai-chat-completions",
   "openai-responses",
   "gemini-generative-language",
+  "anthropic-messages",
   "disabled",
 ]);
 const EMBEDDING_FORMATS = new Set<EmbeddingApiFormat>(["openai-embeddings", "disabled"]);

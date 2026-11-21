@@ -811,4 +811,53 @@ describe('display preferences do not change task execution', () => {
             expect(h.store.getSettings()).toEqual({ ...before, verifyReportPresentation: 'expanded', queueDefaultFilter: 'all', queuePageSize: 50 });
         } finally { await h.cleanup(); }
     });
+
+    it('configures an Anthropic Messages provider in ProviderModal with protocol-first order and persists capabilities', async () => {
+        const h = await harness();
+        try {
+            const addBtn = Array.from(h.target.querySelectorAll('button')).find(button => button.textContent?.includes('添加'))!;
+            addBtn.click(); ui.flushSync();
+            const modal = document.body.querySelector<HTMLElement>('[role="dialog"]')!;
+            const fieldIds = Array.from(modal.querySelectorAll<HTMLElement>('#pm-provider-id, #pm-api-format, #pm-base-url, #pm-api-key')).map(el => el.id);
+            expect(fieldIds).toEqual(['pm-provider-id', 'pm-api-format', 'pm-base-url', 'pm-api-key']);
+
+            const setVal = (selector: string, value: string) => {
+                const el = modal.querySelector<HTMLInputElement | HTMLSelectElement>(selector)!;
+                el.value = value;
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                ui.flushSync();
+            };
+            setVal('#pm-provider-id', 'claude');
+            setVal('#pm-api-format', 'anthropic-messages');
+            expect(modal.querySelector<HTMLInputElement>('#pm-base-url')?.placeholder).toBe('https://api.anthropic.com/v1');
+            expect(modal.querySelector<HTMLInputElement>('#pm-chat-model')?.placeholder).toBe('claude-sonnet-4-5');
+            setVal('#pm-base-url', 'http://127.0.0.1:18899');
+            setVal('#pm-chat-model', 'claude-sonnet-4-5');
+            setVal('#pm-embedding-api-format', 'disabled');
+
+            // Open advanced defaults and enable reasoning + prompt caching + web search.
+            const disclosures = Array.from(modal.querySelectorAll<HTMLDetailsElement>('.cr-provider-disclosure'));
+            disclosures.forEach(d => { d.open = true; });
+            ui.flushSync();
+            modal.querySelector<HTMLElement>('[role="switch"][aria-label="原生网络搜索"]')!.click();
+            modal.querySelector<HTMLElement>('[role="switch"][aria-label="推理强度"]')!.click();
+            modal.querySelector<HTMLElement>('[role="switch"][aria-label="提示词缓存优化"]')!.click();
+            ui.flushSync();
+            setVal('#pm-thinking-budget', '2048');
+            setVal('#pm-max-tokens', '8192');
+
+            const saveBtn = Array.from(modal.querySelectorAll('button')).find(button => button.textContent?.trim() === '保存')!;
+            saveBtn.click();
+            await h.settle();
+            const saved = h.store.getSettings().providers.claude;
+            expect(saved).toMatchObject({
+                apiFormat: 'anthropic-messages',
+                embeddingApiFormat: 'disabled',
+                defaultChatModel: 'claude-sonnet-4-5',
+                capabilities: { nativeWebSearch: true, reasoning: true, promptCaching: true, responseContinuation: false },
+                parameters: { thinkingBudget: 2048, maxTokens: 8192 },
+            });
+            expect(h.target.textContent).toContain('Anthropic Messages (Claude)');
+        } finally { await h.cleanup(); }
+    });
 });

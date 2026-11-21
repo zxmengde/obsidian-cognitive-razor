@@ -22,8 +22,16 @@ export function buildJsonSchemaResponseFormat(name: string, schema: object): Cha
  * An omitted effort remains omitted; only the documented exact ID has a known
  * reasoning default. Unknown gateway aliases keep the existing explicit rule.
  */
-export function suppressChatSampling(apiFormat: ProviderConfig["apiFormat"] | undefined, model: string, effort?: string): boolean {
+export function suppressChatSampling(
+  apiFormat: ProviderConfig["apiFormat"] | undefined,
+  model: string,
+  effort?: string,
+  thinkingBudget?: number,
+): boolean {
   if (apiFormat === "gemini-generative-language") return model === "gemini-4-argon";
+  if (apiFormat === "anthropic-messages") {
+    return thinkingBudget !== undefined || (effort !== undefined && effort !== "none");
+  }
   if (apiFormat !== "openai-responses" && apiFormat !== "openai-chat-completions") return false;
   return effort !== undefined ? effort !== "none" : model === "gpt-6.1-sol";
 }
@@ -57,10 +65,10 @@ export function validateChatParameters(
   request: ChatRequest,
   apiFormat: ProviderConfig["apiFormat"],
 ): Result<void> {
-  if (request.webSearch && apiFormat === "openai-chat-completions") return err("E101_INVALID_INPUT", "当前聊天协议不支持原生搜索，请选择 Responses 或 Gemini");
+  if (request.webSearch && apiFormat === "openai-chat-completions") return err("E101_INVALID_INPUT", "当前聊天协议不支持原生搜索，请选择 Responses、Gemini 或 Anthropic");
   if (request.promptCacheKey && apiFormat !== "openai-responses") return err("E101_INVALID_INPUT", "提示词缓存仅支持 OpenAI Responses 协议");
   if (request.previousResponseId && apiFormat !== "openai-responses") return err("E101_INVALID_INPUT", "Responses 续传仅支持 OpenAI Responses 协议");
-  if (request.capabilities?.promptCaching === true && apiFormat !== "openai-responses") return err("E101_INVALID_INPUT", "已启用提示词缓存，但所选协议不支持该能力");
+  if (request.capabilities?.promptCaching === true && apiFormat !== "openai-responses" && apiFormat !== "anthropic-messages") return err("E101_INVALID_INPUT", "已启用提示词缓存，但所选协议不支持该能力");
   if (request.capabilities?.responseContinuation === true && apiFormat !== "openai-responses") return err("E101_INVALID_INPUT", "已启用 Responses 续传，但所选协议不支持该能力");
   if (request.capabilities?.nativeWebSearch === true && apiFormat === "openai-chat-completions") return err("E101_INVALID_INPUT", "已启用原生搜索，但所选协议不支持该能力");
   // Exact documented model ID only; unknown gateway aliases keep their existing
@@ -68,11 +76,20 @@ export function validateChatParameters(
   if (unsupportedOpenAIReasoningEffort(apiFormat, request.model, request.reasoning_effort)) {
     return err("E101_INVALID_INPUT", `${request.model} 不支持推理强度 ${request.reasoning_effort}；请选择 low、medium、high、xhigh、max，或留空使用服务默认值`, { parameter: "reasoning_effort" });
   }
-  if (apiFormat !== "gemini-generative-language" && (request.thinkingLevel !== undefined || request.thinkingBudget !== undefined)) return err("E101_INVALID_INPUT", "thinkingLevel/thinkingBudget 仅适用于 Gemini");
+  if (apiFormat !== "gemini-generative-language" && request.thinkingLevel !== undefined) return err("E101_INVALID_INPUT", "thinkingLevel 仅适用于 Gemini");
+  if (apiFormat !== "gemini-generative-language" && apiFormat !== "anthropic-messages" && request.thinkingBudget !== undefined) return err("E101_INVALID_INPUT", "thinkingBudget 仅适用于 Gemini 或 Anthropic");
+  if (apiFormat === "anthropic-messages" && request.thinkingBudget !== undefined) {
+    if (!Number.isSafeInteger(request.thinkingBudget) || request.thinkingBudget < 1024) {
+      return err("E101_INVALID_INPUT", "Anthropic thinkingBudget 必须是大于等于 1024 的整数", { parameter: "thinkingBudget" });
+    }
+    if (request.maxTokens !== undefined && request.maxTokens <= request.thinkingBudget) {
+      return err("E101_INVALID_INPUT", "Anthropic maxTokens 必须大于 thinkingBudget", { parameter: "maxTokens" });
+    }
+  }
   if (apiFormat === "gemini-generative-language" && request.reasoning_effort !== undefined) return err("E101_INVALID_INPUT", "Gemini 请配置 thinkingLevel");
   if (request.promptCacheMode === "explicit" && apiFormat !== "openai-responses") return err("E101_INVALID_INPUT", "显式提示词缓存仅支持 OpenAI Responses 协议");
   if (request.promptCacheTtl !== undefined && apiFormat !== "openai-responses") return err("E101_INVALID_INPUT", "提示词缓存 TTL 仅支持 OpenAI Responses 协议");
-  const temperatureMax = 2;
+  const temperatureMax = apiFormat === "anthropic-messages" ? 1 : 2;
   const temperature = validateOptionalNumber(
     request.temperature,
     `${apiFormat} temperature`,
@@ -82,6 +99,10 @@ export function validateChatParameters(
   if (!temperature.ok) return temperature;
   const topP = validateOptionalNumber(request.topP, `${apiFormat} top_p`, 0, 1);
   if (!topP.ok) return topP;
+  const samplingSuppressed = suppressChatSampling(apiFormat, request.model, request.reasoning_effort, request.thinkingBudget);
+  if (apiFormat === "anthropic-messages" && !samplingSuppressed && request.temperature !== undefined && request.topP !== undefined) {
+    return err("E101_INVALID_INPUT", "Anthropic Messages 不能同时发送 temperature 和 top_p，请只启用其中一项", { parameter: "topP" });
+  }
   return ok(undefined);
 }
 

@@ -35,19 +35,40 @@ export function createRendererStreamRequester(
     let phase: ProviderStreamPhase = "before-response";
     let httpStatus: number | null = null;
     let responseContentType: RendererStreamObservation["responseContentType"] = "unknown";
-    let body = ""; let bytes = 0;
+    const bodyParts: string[] = [];
+    let joinedBody: string | undefined;
+    let detectedSse = false;
+    let lineCarry = "";
+    let bytes = 0;
+    const currentBody = (): string => joinedBody ?? (bodyParts.length === 1 ? bodyParts[0] : bodyParts.join(""));
+    const scanChunkForSse = (text: string): void => {
+      if (detectedSse || !text) return;
+      const probe = lineCarry + text;
+      if (/^\s*(?:data|event|id|retry):|^\s*:/m.test(probe)) {
+        detectedSse = true;
+        lineCarry = "";
+        return;
+      }
+      const lastBreak = Math.max(probe.lastIndexOf("\n"), probe.lastIndexOf("\r"));
+      lineCarry = lastBreak >= 0 ? probe.slice(lastBreak + 1, lastBreak + 33) : probe.slice(0, 32);
+    };
     const observe = (stage: RendererStreamObservation["stage"], error?: Error) => {
       if (!limits.onEvidence) return;
       try {
-      let framing: RendererStreamObservation["framing"] = "unknown";
-      if (/^\s*(?:data|event|id|retry):|^\s*:/m.test(body)) framing = "SSE";
-      else if (stage === "completed") { try { JSON.parse(body); framing = "JSON"; } catch { /* Unknown framing stays unknown. */ } }
+      let framing: RendererStreamObservation["framing"] = detectedSse ? "SSE" : "unknown";
+      if (!detectedSse && stage === "completed") {
+        const bodyText = currentBody();
+        const trimmed = bodyText.trimStart();
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+          try { JSON.parse(bodyText); framing = "JSON"; } catch { /* Unknown framing stays unknown. */ }
+        }
+      }
       const value: RendererStreamObservation = {
         stage, phase, httpStatus, responseContentType, framing, elapsedMs: Date.now() - startedAt,
         diagnostics: { chunkCount, byteCount: bytes, firstResponseMs: httpStatus === null ? null : firstResponseMs, firstChunkMs, chunkSpanMs: firstChunkMs === null ? 0 : lastChunkMs - firstChunkMs, maxChunkGapMs },
         ...(error instanceof RendererStreamTimeoutError ? { timeoutKind: error.timeoutKind } : {}),
         ...(stage === "failed" && input.protocol && httpStatus !== null && httpStatus >= 200 && httpStatus < 300 && framing === "SSE"
-          ? { observedUsage: readProviderStreamUsage(input.protocol, body) } : {}),
+          ? { observedUsage: readProviderStreamUsage(input.protocol, currentBody()) } : {}),
       };
       limits.onEvidence(value);
       } catch { /* Observation cannot change timeout, bytes, completion or retry semantics. */ }
@@ -115,12 +136,15 @@ export function createRendererStreamRequester(
           if (bytes > (limits.maxBytes ?? MAX_PROVIDER_STREAM_BYTES)) { fail(new ProviderStreamNetworkError(phase, "STREAM_SIZE_LIMIT")); return; }
           resetIdle();
           const text = decoder.decode(part.value, { stream: true });
-          body += text;
+          if (text) {
+            bodyParts.push(text);
+            scanChunkForSse(text);
+          }
           observe("progress");
           const end = terminal?.(text);
           if (end !== undefined && response.status >= 200 && response.status < 300) {
             terminalReached = true;
-            body = body.slice(0, end);
+            joinedBody = currentBody().slice(0, end);
             void reader.cancel().catch(() => undefined);
             break;
           }
@@ -128,7 +152,15 @@ export function createRendererStreamRequester(
         if (settled) return;
         // A terminal boundary already ends in a complete UTF-8 frame.
         // Otherwise preserve the ordinary EOF decoder flush.
-        if (!terminalReached) body += decoder.decode();
+        if (!terminalReached) {
+          const tail = decoder.decode();
+          if (tail) {
+            bodyParts.push(tail);
+            scanChunkForSse(tail);
+          }
+          joinedBody = currentBody();
+        }
+        const body = joinedBody ?? "";
         const headers: Record<string, string> = {};
         response.headers.forEach((value, key) => { headers[key] = value; });
         settled = true; cleanup(); observe("completed");

@@ -75,7 +75,9 @@
             : config.apiFormat === 'openai-responses'
                 ? 'openaiResponses'
                 : config.apiFormat === 'gemini-generative-language'
-                        ? 'geminiGenerativeLanguage'
+                    ? 'geminiGenerativeLanguage'
+                    : config.apiFormat === 'anthropic-messages'
+                        ? 'anthropicMessages'
                         : 'openaiChatCompletions'}`)
     );
 

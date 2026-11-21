@@ -7,7 +7,7 @@ import type {
 } from "../types";
 import type { ProviderStreamProtocol } from "./provider-streaming";
 
-export type ProviderAuthScheme = "bearer" | "gemini";
+export type ProviderAuthScheme = "bearer" | "gemini" | "anthropic";
 
 /** Resolved native-search policy passed to protocols that support it. */
 export interface ProtocolWebSearchOptions {

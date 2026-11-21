@@ -2,7 +2,7 @@
 
 ## 请求边界
 
-协议配置约束见[服务与执行](REQUIREMENTS.md#服务与执行)。Chat Completions、Responses 与 Gemini 使用不同路由和请求字段；服务端支持某一路由，不表示其他协议路由也存在。模型名、搜索工具和思考参数必须被当前渠道接受。
+协议配置约束见[服务与执行](REQUIREMENTS.md#服务与执行)。Chat Completions、Responses、Gemini 与 Anthropic Messages 使用不同路由、认证头和请求字段；服务端支持某一路由，不表示其他协议路由也存在。模型名、搜索工具、结构化输出和思考参数必须被当前渠道接受。
 
 插件可通过 Node HTTP 或 renderer fetch 保持流式连接，等待完整结果后一次性进入业务处理。选择在请求前固定，不因传输失败静默重发到另一通道。非流式使用宿主请求能力。
 

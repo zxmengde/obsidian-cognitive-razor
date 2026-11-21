@@ -96,4 +96,17 @@ describe("Verify issues panel", () => {
     expect(target.textContent).toContain("报告已被修改，请重试。");
     await ui.unmount(instance);
   });
+
+  it("skips reading non-CR notes when metadataCache indicates no CR frontmatter", async () => {
+    const f = fixture();
+    const metadataCache = { getFileCache: vi.fn(() => ({ frontmatter: { title: "Plain note" } })) };
+    const context = { ...f.context, app: { ...f.context.app, metadataCache } };
+    const target = document.createElement("div");
+    const instance = ui.mount(ui.PanelHost, { target, props: { context, activeFile: f.file } });
+    await settle();
+    expect(metadataCache.getFileCache).toHaveBeenCalledWith(f.file);
+    expect(f.vault.cachedRead).not.toHaveBeenCalled();
+    expect(target.querySelector(".cr-verify-issues")).toBeNull();
+    await ui.unmount(instance);
+  });
 });

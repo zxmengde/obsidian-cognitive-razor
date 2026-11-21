@@ -18,7 +18,8 @@ import type { SettingsStore } from "../data/settings-store";
 import { normalizeVector, dotProduct } from "./vector-math";
 
 const VALID_CR_TYPES: ReadonlySet<string> = new Set(CR_TYPES);
-const REBUILD_YIELD_INTERVAL = 1_000;
+const REBUILD_YIELD_CHECK_STRIDE = 2_048;
+const REBUILD_TIME_SLICE_MS = 32;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -191,7 +192,9 @@ export class DuplicateManager {
         .filter((pair) => pair.status === "dismissed")
         .map((pair) => pair.id),
     );
-    const vectorsResult = await this.vectorIndex.getVectorsByType(type);
+    const vectorsResult = this.vectorIndex.getReadonlyVectorsByType
+      ? await this.vectorIndex.getReadonlyVectorsByType(type)
+      : await this.vectorIndex.getVectorsByType(type);
     if (!vectorsResult.ok) return vectorsResult as Result<number>;
     if (this.disposed) return err("E310_INVALID_STATE", "重复管理器已停止");
 
@@ -383,20 +386,23 @@ export class DuplicateManager {
     const nextPairs: DuplicatePair[] = [];
     const threshold = this.similarityThreshold;
     let comparisons = 0;
+    let sliceStart = Date.now();
 
     for (const type of CR_TYPES) {
       if (this.disposed) {
         return err("E310_INVALID_STATE", "重复管理器已停止");
       }
-      const vectorsResult = await this.vectorIndex.getVectorsByType(type);
+      const vectorsResult = this.vectorIndex.getReadonlyVectorsByType
+        ? await this.vectorIndex.getReadonlyVectorsByType(type)
+        : await this.vectorIndex.getVectorsByType(type);
       if (!vectorsResult.ok) return vectorsResult as Result<number>;
       const vectors = vectorsResult.value;
       for (let first = 0; first < vectors.length; first += 1) {
+        const left = vectors[first];
         for (let second = first + 1; second < vectors.length; second += 1) {
           if (this.disposed) {
             return err("E310_INVALID_STATE", "重复管理器已停止");
           }
-          const left = vectors[first];
           const right = vectors[second];
           const similarity = Math.min(1, Math.max(-1, dotProduct(left.embedding, right.embedding)));
           if (similarity >= threshold) {
@@ -411,8 +417,10 @@ export class DuplicateManager {
             });
           }
           comparisons += 1;
-          if (comparisons % REBUILD_YIELD_INTERVAL === 0) {
+          // 按实际时间片让出主线程，避免 Windows 下每千次空等 timer 分辨率开销。
+          if ((comparisons & (REBUILD_YIELD_CHECK_STRIDE - 1)) === 0 && Date.now() - sliceStart >= REBUILD_TIME_SLICE_MS) {
             await new Promise<void>((resolve) => setTimeout(resolve, 0));
+            sliceStart = Date.now();
           }
         }
       }

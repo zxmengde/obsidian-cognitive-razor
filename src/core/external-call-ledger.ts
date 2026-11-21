@@ -125,7 +125,9 @@ class LedgerHandle implements ExternalCallHandle {
     const allowedIssues: readonly TokenUsageIssue[] = ["invalid-usage", "invalid-cache-details", "cache-exceeds-input", "counts-exceed-total"];
     const required = this.record.protocol === "gemini-generative-language"
       ? TOKEN_USAGE_FIELDS.filter((field) => field !== "cacheWriteTokens")
-      : this.record.protocol === "openai-embeddings" ? ["tokensUsed", "inputTokens"] as const : TOKEN_USAGE_FIELDS;
+      : this.record.protocol === "anthropic-messages"
+        ? ["tokensUsed", "inputTokens", "outputTokens"] as const
+        : this.record.protocol === "openai-embeddings" ? ["tokensUsed", "inputTokens"] as const : TOKEN_USAGE_FIELDS;
     // Replace cumulative usage; never add SSE snapshots together. Whitelisting
     // prevents arbitrary response content from entering the session ledger.
     this.record.usage = normalizeTokenUsage(usage, required,

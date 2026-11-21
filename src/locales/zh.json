@@ -457,7 +457,11 @@
         "unsupportedEffort": "gpt-6.1-sol 不支持 none/minimal，当前配置会在发送前拒绝请求。请选择 low、medium、high、xhigh、max，或「不发送」使用服务默认值。",
         "geminiOnly": "此值仅适用于 Gemini，当前协议会在发送前拒绝请求。已配置的值会保留，可选择「不发送」。",
         "effortNotGemini": "Gemini 不接受此推理参数，会在发送前拒绝请求。请使用 Thinking level / budget，或将此项改为「不发送」。",
-        "thinkingConflict": "Thinking level 与 budget 不能同时发送；请选择其中一项，另一项设为「不发送」。"
+        "thinkingConflict": "Thinking level 与 budget 不能同时发送；请选择其中一项，另一项设为「不发送」。",
+        "anthropicSamplingConflict": "Anthropic Messages 不能同时发送 temperature 和 top_p，请在发送前将其中一项设为「不发送」。",
+        "anthropicTemperatureRange": "Anthropic Messages 的 temperature 必须在 0–1 之间，当前配置会在发送前拒绝请求。",
+        "anthropicBudgetMin": "Anthropic Thinking budget 必须是不小于 1024 的整数，当前配置会在发送前拒绝请求。",
+        "anthropicMaxTokensTooSmall": "Anthropic 最大输出 token 数必须大于 Thinking budget，当前配置会在发送前拒绝请求。"
       },
       "modelUnavailable": "尚未配置模型，当前无法发起此任务请求",
       "resolvedOnly": "仅为解析值；服务或模型未就绪"
@@ -656,11 +660,13 @@
         "apiKey": "API Key",
         "apiKeyDesc": "官方服务通常必填；不需要鉴权的自定义或本地端点可留空。密钥存储在 Obsidian 本地配置文件中，未加密。",
         "endpoint": "API 端点",
-        "endpointDesc": "可填写服务根地址或带版本的 Base URL。根地址按所选协议补全：OpenAI 用 /v1，Gemini 用 /v1beta。显式路径保持不变，切换协议后请核对路径。",
+        "endpointDesc": "可填写服务根地址或带版本的 Base URL。根地址按所选协议补全：OpenAI 与 Anthropic 用 /v1，Gemini 用 /v1beta。显式路径保持不变，切换协议后请核对路径。",
         "apiFormat": "聊天 API 协议",
-        "apiFormatDesc": "请求严格使用所选协议，不根据模型名称自动猜测。",
+        "apiFormatDesc": "请求严格使用所选协议，不根据模型名称自动猜测。先选协议可自动匹配端点与可用能力。",
         "webSearch": "原生网络搜索",
-        "webSearchDesc": "在 Write 与 Verify 中向 Responses 或 Gemini 提供服务商原生搜索工具；Define 与 Tag 不联网。Chat Completions 不支持此通用工具。",
+        "webSearchDesc": "在 Write 与 Verify 中向 Responses、Gemini 或 Anthropic 提供服务商原生搜索工具；Define 与 Tag 不联网。Chat Completions 不支持此通用工具。",
+        "thinkingBudgetDesc": "可选，Anthropic 手动扩展思考预算（至少 1024 tokens，且须小于最大输出 Tokens）；留空时若填写推理强度则使用自适应思考。",
+        "anthropicSamplingHint": "Anthropic Messages 的 Temperature 范围为 0–1，且不能与 Top P 同时启用；启用思考时两者自动省略。",
         "chatModel": "聊天模型",
         "chatModelDesc": "生成类任务留空时使用的默认模型",
         "embeddingApiFormat": "嵌入 API",
@@ -672,6 +678,7 @@
         "openaiChatCompletions": "OpenAI Chat Completions",
         "openaiResponses": "OpenAI Responses",
         "geminiGenerativeLanguage": "Gemini Generative Language API",
+        "anthropicMessages": "Anthropic Messages (Claude)",
         "disabled": "禁用聊天（仅嵌入）"
       },
       "embeddingApiFormats": {
@@ -686,6 +693,10 @@
         "embedModelRequired": "启用嵌入 API 时必须填写默认嵌入模型",
         "capabilityRequired": "必须至少启用聊天或嵌入能力",
         "thinkingExclusive": "Thinking level 与 thinking budget 不能同时填写，请只设置其中一项",
+        "anthropicSamplingConflict": "Anthropic Messages 不能同时启用 Temperature 与 Top P",
+        "anthropicTemperatureRange": "Anthropic Messages 的 Temperature 必须在 0 到 1 之间",
+        "anthropicBudgetMin": "Anthropic Thinking budget 必须是不小于 1024 的整数",
+        "anthropicMaxTokensTooSmall": "最大输出 Tokens 必须大于 Thinking budget",
         "saveFailed": "保存失败",
         "invalidUrlProtocol": "URL 必须以 http:// 或 https:// 开头",
         "invalidUrl": "URL 格式无效"
@@ -745,7 +756,7 @@
       "enabled": "启用",
       "disabled": "禁用",
       "nativeWebSearch": "原生搜索",
-      "promptCaching": "Responses 缓存优化",
+      "promptCaching": "提示词缓存优化",
       "promptCacheImplicit": "服务端默认缓存策略",
       "promptCacheExplicit": "显式缓存断点（需上游支持）",
       "responseContinuation": "Responses 续传",

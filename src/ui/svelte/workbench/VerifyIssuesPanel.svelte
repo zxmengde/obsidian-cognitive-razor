@@ -37,6 +37,13 @@
         notice = null;
         const refresh = async () => {
             if (!file || file.extension !== 'md') return;
+            // 非 CR 笔记跳过全文读取；metadataCache 未就绪（null/undefined）时保守读取。
+            const fileCache = ctx.app.metadataCache?.getFileCache?.(file);
+            if (fileCache && !fileCache.frontmatter?.cruid && !fileCache.frontmatter?.verify_status) {
+                content = '';
+                report = null;
+                return;
+            }
             try {
                 const text = await ctx.app.vault.cachedRead(file);
                 if (disposed) return;

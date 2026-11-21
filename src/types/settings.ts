@@ -18,6 +18,7 @@ export type ProviderApiFormat =
     | "openai-chat-completions"
     | "openai-responses"
     | "gemini-generative-language"
+    | "anthropic-messages"
     | "disabled";
 
 export interface ProviderConfig {

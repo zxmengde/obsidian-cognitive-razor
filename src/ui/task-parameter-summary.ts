@@ -19,7 +19,7 @@ export interface TaskParameterSummary {
     omitted: boolean;
     unsupported: boolean;
     samplingSuppressed: boolean;
-    protocolIssue?: 'geminiOnly' | 'effortNotGemini' | 'thinkingConflict' | 'unsupportedEffort';
+    protocolIssue?: 'geminiOnly' | 'effortNotGemini' | 'thinkingConflict' | 'unsupportedEffort' | 'anthropicSamplingConflict' | 'anthropicTemperatureRange' | 'anthropicBudgetMin' | 'anthropicMaxTokensTooSmall';
 }
 
 export function taskParameterInputs(
@@ -51,13 +51,18 @@ export function describeTaskParameter(
         : key === 'reasoning_effort' || key === 'thinkingLevel' || key === 'thinkingBudget' ? 'reasoning' : undefined;
     const unsupported = capability !== undefined && !resolved.capabilities[capability];
     const samplingSuppressed = (key === 'temperature' || key === 'topP') && configuredValue !== undefined && !omitted
-        && suppressChatSampling(format, resolved.model, resolved.reasoningEffort);
+        && suppressChatSampling(format, resolved.model, resolved.reasoningEffort, resolved.thinkingBudget);
     let protocolIssue: TaskParameterSummary['protocolIssue'];
     if (value !== undefined && format) {
         if (key === 'reasoning_effort' && unsupportedOpenAIReasoningEffort(format, resolved.model, resolved.reasoningEffort)) protocolIssue = 'unsupportedEffort';
-        else if ((key === 'thinkingLevel' || key === 'thinkingBudget') && format !== 'gemini-generative-language') protocolIssue = 'geminiOnly';
+        else if (key === 'thinkingLevel' && format !== 'gemini-generative-language') protocolIssue = 'geminiOnly';
+        else if (key === 'thinkingBudget' && format !== 'gemini-generative-language' && format !== 'anthropic-messages') protocolIssue = 'geminiOnly';
         else if (key === 'reasoning_effort' && format === 'gemini-generative-language') protocolIssue = 'effortNotGemini';
-        else if ((key === 'thinkingLevel' || key === 'thinkingBudget') && resolved.thinkingLevel !== undefined && resolved.thinkingBudget !== undefined) protocolIssue = 'thinkingConflict';
+        else if (format === 'gemini-generative-language' && (key === 'thinkingLevel' || key === 'thinkingBudget') && resolved.thinkingLevel !== undefined && resolved.thinkingBudget !== undefined) protocolIssue = 'thinkingConflict';
+        else if (format === 'anthropic-messages' && key === 'temperature' && typeof value === 'number' && value > 1) protocolIssue = 'anthropicTemperatureRange';
+        else if (format === 'anthropic-messages' && (key === 'temperature' || key === 'topP') && resolved.temperature !== undefined && resolved.topP !== undefined) protocolIssue = 'anthropicSamplingConflict';
+        else if (format === 'anthropic-messages' && key === 'thinkingBudget' && typeof value === 'number' && value < 1024) protocolIssue = 'anthropicBudgetMin';
+        else if (format === 'anthropic-messages' && (key === 'maxTokens' || key === 'thinkingBudget') && resolved.maxTokens !== undefined && resolved.thinkingBudget !== undefined && resolved.maxTokens <= resolved.thinkingBudget) protocolIssue = 'anthropicMaxTokensTooSmall';
     }
     return {
         value, configuredValue, omitted, unsupported, samplingSuppressed, protocolIssue,

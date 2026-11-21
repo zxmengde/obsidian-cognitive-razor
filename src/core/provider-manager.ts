@@ -49,6 +49,7 @@ import {
 } from "./openai-chat-adapter";
 import { OPENAI_RESPONSES_ADAPTER } from "./openai-responses-adapter";
 import { GEMINI_GENERATIVE_LANGUAGE_ADAPTER } from "./gemini-generative-language-adapter";
+import { ANTHROPIC_MESSAGES_ADAPTER } from "./anthropic-messages-adapter";
 import type {
   ProtocolAdapterMetadata,
   ProtocolWebSearchOptions,
@@ -100,6 +101,17 @@ const CHAT_PROTOCOL_DISPATCH: Record<Exclude<ProviderApiFormat, "disabled">, Cha
     buildUrl: (baseUrl, model) => buildProviderApiUrl(baseUrl, GEMINI_GENERATIVE_LANGUAGE_ADAPTER.apiFormat, GEMINI_GENERATIVE_LANGUAGE_ADAPTER.buildRequestPath(model)),
     buildBody: (request, webSearch) => {
       const plan = GEMINI_GENERATIVE_LANGUAGE_ADAPTER.buildRequestPlan(request, webSearch);
+      return { body: plan.body, contentCount: plan.contentCount };
+    },
+  },
+  "anthropic-messages": {
+    adapter: ANTHROPIC_MESSAGES_ADAPTER,
+    requestLabel: "Anthropic Messages 请求",
+    logMessage: "发送 Anthropic Messages 请求",
+    requiresNonEmptyContent: true,
+    buildUrl: (baseUrl) => buildProviderApiUrl(baseUrl, ANTHROPIC_MESSAGES_ADAPTER.apiFormat, ANTHROPIC_MESSAGES_ADAPTER.requestPath),
+    buildBody: (request, webSearch) => {
+      const plan = ANTHROPIC_MESSAGES_ADAPTER.buildRequestPlan(request, webSearch);
       return { body: plan.body, contentCount: plan.contentCount };
     },
   },

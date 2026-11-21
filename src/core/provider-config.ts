@@ -13,6 +13,7 @@ const DEFAULT_VERSION_PATH: Record<ProviderEndpointFormat, string> = {
   "openai-chat-completions": "/v1",
   "openai-responses": "/v1",
   "gemini-generative-language": "/v1beta",
+  "anthropic-messages": "/v1",
   "openai-embeddings": "/v1",
 };
 

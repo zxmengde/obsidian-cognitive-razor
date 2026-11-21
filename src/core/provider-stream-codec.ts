@@ -10,7 +10,12 @@ export function safeStreamResponseEvidence(response: ProviderStreamResponse, tra
   const responseContentType = ["text/event-stream", "application/json", "application/x-ndjson"].includes(rawType) ? rawType : "unknown";
   let framing: "SSE" | "JSON" | "unknown" = "unknown";
   if (/^(?:data|event|id|retry):/m.test(response.body)) framing = "SSE";
-  else { try { JSON.parse(response.body); framing = "JSON"; } catch { /* Unknown framing stays unknown. */ } }
+  else {
+    const trimmed = response.body.trimStart();
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+      try { JSON.parse(response.body); framing = "JSON"; } catch { /* Unknown framing stays unknown. */ }
+    }
+  }
   const finite = (value: unknown): number | null => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
   return {
     event: "STREAM_RESPONSE_EVIDENCE", transport, responseContentType, framing,
@@ -28,15 +33,18 @@ export function hasProviderStreamFraming(
 ): boolean {
   // Some relays retain an SSE MIME type even when returning one complete
   // protocol envelope. Do not feed its message into the delta aggregator.
-  try {
-    const payload = asRecord(JSON.parse(body));
-    if (payload && (
-      (Array.isArray(payload.choices) && payload.choices.some((choice) => asRecord(choice)?.message !== undefined))
-      || Array.isArray(payload.candidates)
-      || Array.isArray(payload.output)
-      || typeof payload.output_text === "string"
-    )) return false;
-  } catch { /* Actual framed events continue through the stream parser. */ }
+  if (body.trimStart().startsWith("{")) {
+    try {
+      const payload = asRecord(JSON.parse(body));
+      if (payload && (
+        (Array.isArray(payload.choices) && payload.choices.some((choice) => asRecord(choice)?.message !== undefined))
+        || Array.isArray(payload.candidates)
+        || Array.isArray(payload.output)
+        || typeof payload.output_text === "string"
+        || (payload.type === "message" && Array.isArray(payload.content))
+      )) return false;
+    } catch { /* Actual framed events continue through the stream parser. */ }
+  }
   const contentType = (Object.entries(headers).find(([key]) => key.toLowerCase() === "content-type")?.[1] ?? "").toLowerCase();
   if (contentType.includes("text/event-stream") || contentType.includes("ndjson")) {
     return true;
@@ -81,11 +89,15 @@ function streamFailed(protocol: string, eventType: string, data: Record<string, 
   const suffix = providerCode ? `，上游代码 ${providerCode}` : "";
   const errorCode = providerCode === "invalid_request" || providerCode === "invalid_request_error"
     ? "E205_PROVIDER_REQUEST_INVALID"
-    : providerCode === "server_error" || providerCode === "service_unavailable" || providerCode === "internal_error"
-      ? "E204_PROVIDER_ERROR"
-      : "E208_PROVIDER_STREAM_FAILED";
-  // E204 is retryable via RetryHandler; only non-retryable codes promise no auto-retry.
-  const retryNote = errorCode === "E204_PROVIDER_ERROR" ? "" : "；未自动重试";
+    : providerCode === "authentication_error" || providerCode === "permission_error"
+      ? "E203_INVALID_API_KEY"
+      : providerCode === "rate_limit_error"
+        ? "E202_RATE_LIMITED"
+        : providerCode === "server_error" || providerCode === "service_unavailable" || providerCode === "internal_error" || providerCode === "overloaded_error" || providerCode === "api_error"
+          ? "E204_PROVIDER_ERROR"
+          : "E208_PROVIDER_STREAM_FAILED";
+  // E202/E204 are retryable via RetryHandler; only non-retryable codes promise no auto-retry.
+  const retryNote = errorCode === "E204_PROVIDER_ERROR" || errorCode === "E202_RATE_LIMITED" ? "" : "；未自动重试";
   return err(
     errorCode,
     `${protocol} 流式请求明确失败（事件 ${eventType}${suffix}）${retryNote}`,
@@ -108,20 +120,41 @@ function parseJsonEvent(raw: string): Result<unknown> {
   }
 }
 
+/** 逐行扫描原始文本，避免全量正则替换与 split 产生多份大字符串拷贝。 */
+function forEachLine(body: string, visitor: (line: string) => Result<void>): Result<void> {
+  const length = body.length;
+  let start = 0;
+  while (start <= length) {
+    let end = start;
+    while (end < length) {
+      const code = body.charCodeAt(end);
+      if (code === 10 || code === 13) break;
+      end++;
+    }
+    const line = body.slice(start, end);
+    const status = visitor(line);
+    if (!status.ok) return status;
+    if (end >= length) break;
+    start = body.charCodeAt(end) === 13 && body.charCodeAt(end + 1) === 10 ? end + 2 : end + 1;
+  }
+  return ok(undefined);
+}
+
 function parseSseEvents(body: string, onEvent?: (event: StreamEvent) => void): Result<StreamEvent[]> {
-  const lines = body.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
-  const hasSseFields = lines.some((line) => /^(?:data|event|id|retry):/.test(line));
+  const hasSseFields = body.startsWith("data:") || body.startsWith("event:") || /^(?:data|event|id|retry):/m.test(body);
   if (!hasSseFields) {
     const events: StreamEvent[] = [];
-    for (const line of lines) {
+    const scanned = forEachLine(body, (line) => {
       const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith(":")) continue;
+      if (!trimmed || trimmed.startsWith(":")) return ok(undefined);
       const parsed = parseJsonEvent(trimmed);
       if (!parsed.ok) return parsed;
       const event = { data: parsed.value };
       events.push(event);
       onEvent?.(event);
-    }
+      return ok(undefined);
+    });
+    if (!scanned.ok) return scanned;
     return events.length > 0 ? ok(events) : streamUnsupported("Provider 没有返回流式事件");
   }
 
@@ -133,7 +166,8 @@ function parseSseEvents(body: string, onEvent?: (event: StreamEvent) => void): R
       eventName = undefined;
       return ok(undefined);
     }
-    const parsed = parseJsonEvent(dataLines.join("\n"));
+    const raw = dataLines.length === 1 ? dataLines[0] : dataLines.join("\n");
+    const parsed = parseJsonEvent(raw);
     if (!parsed.ok) return parsed;
     const event = { name: eventName, data: parsed.value };
     events.push(event);
@@ -143,38 +177,35 @@ function parseSseEvents(body: string, onEvent?: (event: StreamEvent) => void): R
     return ok(undefined);
   };
 
-  for (const line of lines) {
-    if (line === "") {
-      const result = flush();
-      if (!result.ok) return result;
-      continue;
-    }
-    if (line.startsWith(":")) continue;
+  const scanned = forEachLine(body, (line) => {
+    if (line === "") return flush();
+    if (line.startsWith(":")) return ok(undefined);
     if (line.startsWith("event:")) {
       if (dataLines.length > 0) {
         const result = flush();
         if (!result.ok) return result;
       }
       eventName = line.slice("event:".length).trim() || undefined;
-      continue;
+      return ok(undefined);
     }
     if (line.startsWith("data:")) {
       // Some relays omit the blank line between JSON events. Flush only when
       // the accumulated data is already a complete JSON value, preserving
       // legitimate multi-line SSE payloads.
       if (dataLines.length > 0) {
-        const candidate = dataLines.join("\n").trim();
+        const candidate = (dataLines.length === 1 ? dataLines[0] : dataLines.join("\n")).trim();
         if (candidate && parseJsonEvent(candidate).ok) {
           const result = flush();
           if (!result.ok) return result;
         }
       }
       dataLines.push(line.slice("data:".length).trimStart());
-      continue;
+      return ok(undefined);
     }
-    if (line.startsWith("id:") || line.startsWith("retry:")) continue;
+    if (line.startsWith("id:") || line.startsWith("retry:")) return ok(undefined);
     return streamUnsupported("Provider 流式事件包含未知 SSE 字段");
-  }
+  });
+  if (!scanned.ok) return scanned;
 
   const result = flush();
   if (!result.ok) return result;
@@ -185,7 +216,7 @@ function parseSseEvents(body: string, onEvent?: (event: StreamEvent) => void): R
  * Only transport completion changes; aggregation still decides success/error.
  * Return the decoded-text boundary so a partial trailer cannot corrupt it. */
 export function createResponsesStreamCompletionTracker(protocol?: ProviderStreamProtocol): ((chunk: string) => number | undefined) | undefined {
-  if (protocol !== "openai-responses") return undefined;
+  if (protocol !== "openai-responses" && protocol !== "anthropic-messages") return undefined;
   let line = "", lines: string[] = [], offset = 0, skipLf = false;
   return (chunk) => {
     for (let index = 0; index < chunk.length; index++) {
@@ -201,6 +232,9 @@ export function createResponsesStreamCompletionTracker(protocol?: ProviderStream
       if (parsed.ok && parsed.value.some(event => {
         const data = asRecord(event.data);
         const type = typeof data?.type === "string" ? data.type : event.name;
+        if (protocol === "anthropic-messages") {
+          return type === "message_stop" || type === "error";
+        }
         return type === "response.completed" || type === "response.done" || type === "response.incomplete" || type === "response.failed" || type === "error";
       })) return offset;
     }
@@ -223,7 +257,7 @@ function textFromDelta(value: unknown, depth = 0): string {
 }
 
 function aggregateOpenAIChat(events: StreamEvent[]): Result<unknown> {
-  let content = "";
+  const contentParts: string[] = [];
   let model: unknown;
   let cacheOptions: unknown;
   let finishReason: string | undefined;
@@ -249,7 +283,7 @@ function aggregateOpenAIChat(events: StreamEvent[]): Result<unknown> {
     const delta = asRecord(choice?.delta);
     const deltaText = textFromDelta(delta?.content);
     if (deltaText) {
-      content += deltaText;
+      contentParts.push(deltaText);
     }
     if (typeof choice?.finish_reason === "string") {
       finishReason = choice.finish_reason;
@@ -260,7 +294,7 @@ function aggregateOpenAIChat(events: StreamEvent[]): Result<unknown> {
     return streamUncertain("Chat Completions 流式响应缺少结束事件");
   }
   const response: Record<string, unknown> = {
-    choices: [{ message: { content }, finish_reason: finishReason }],
+    choices: [{ message: { content: contentParts.join("") }, finish_reason: finishReason }],
   };
   if (usage) response.usage = usage;
   if (model !== undefined) response.model = model;
@@ -556,6 +590,187 @@ function aggregateGemini(events: StreamEvent[]): Result<unknown> {
   return ok(response);
 }
 
+function aggregateAnthropicMessages(events: StreamEvent[]): Result<unknown> {
+  let id: string | undefined;
+  let model: unknown;
+  let stopReason: string | null | undefined;
+  let usage: Record<string, unknown> | undefined;
+  let sawStop = false;
+  interface BlockState {
+    base: Record<string, unknown>;
+    textParts: string[];
+    thinkingParts: string[];
+    signatureParts: string[];
+    inputJsonParts: string[];
+    citations: unknown[];
+  }
+  const blocks = new Map<number, BlockState>();
+  const getOrCreateBlock = (index: number, initial?: Record<string, unknown>): BlockState => {
+    let state = blocks.get(index);
+    if (!state) {
+      const base: Record<string, unknown> = initial ? { ...initial } : { type: "text" };
+      const initialText = typeof base.text === "string" && base.text ? [base.text] : [];
+      const initialThinking = typeof base.thinking === "string" && base.thinking ? [base.thinking] : [];
+      const initialCitations = Array.isArray(base.citations) ? [...base.citations] : [];
+      state = {
+        base,
+        textParts: initialText,
+        thinkingParts: initialThinking,
+        signatureParts: [],
+        inputJsonParts: [],
+        citations: initialCitations,
+      };
+      blocks.set(index, state);
+    }
+    return state;
+  };
+
+  for (const event of events) {
+    if (event.data === "[DONE]") continue;
+    const data = asRecord(event.data);
+    if (!data) return streamUnsupported("Anthropic Messages 流式事件不是对象");
+    const type = typeof data.type === "string" ? data.type : event.name;
+    switch (type) {
+      case "error":
+        return streamFailed("Anthropic Messages", "error", data);
+      case "ping":
+      case "content_block_stop":
+        break;
+      case "message_start": {
+        const message = asRecord(data.message);
+        if (message) {
+          if (typeof message.id === "string") id = message.id;
+          if (message.model !== undefined) model = message.model;
+          if (typeof message.stop_reason === "string" || message.stop_reason === null) stopReason = message.stop_reason;
+          const startUsage = asRecord(message.usage);
+          if (startUsage) usage = { ...(usage ?? {}), ...startUsage };
+        }
+        break;
+      }
+      case "content_block_start": {
+        const index = typeof data.index === "number" && Number.isSafeInteger(data.index) ? data.index : blocks.size;
+        const block = asRecord(data.content_block);
+        if (block) getOrCreateBlock(index, block);
+        break;
+      }
+      case "content_block_delta": {
+        const index = typeof data.index === "number" && Number.isSafeInteger(data.index) ? data.index : 0;
+        const delta = asRecord(data.delta);
+        if (!delta) break;
+        const state = getOrCreateBlock(index);
+        if (delta.type === "text_delta" && typeof delta.text === "string") {
+          state.textParts.push(delta.text);
+        } else if (delta.type === "thinking_delta" && typeof delta.thinking === "string") {
+          state.thinkingParts.push(delta.thinking);
+        } else if (delta.type === "signature_delta" && typeof delta.signature === "string") {
+          state.signatureParts.push(delta.signature);
+        } else if (delta.type === "input_json_delta" && typeof delta.partial_json === "string") {
+          state.inputJsonParts.push(delta.partial_json);
+        } else if (delta.type === "citations_delta" && delta.citation !== undefined) {
+          state.citations.push(delta.citation);
+        }
+        break;
+      }
+      case "message_delta": {
+        const delta = asRecord(data.delta);
+        if (delta && (typeof delta.stop_reason === "string" || delta.stop_reason === null)) {
+          stopReason = delta.stop_reason;
+        }
+        const deltaUsage = asRecord(data.usage);
+        if (deltaUsage) usage = { ...(usage ?? {}), ...deltaUsage };
+        break;
+      }
+      case "message_stop":
+        sawStop = true;
+        break;
+      default:
+        break;
+    }
+  }
+
+  if (!sawStop && !stopReason) {
+    return streamUncertain("Anthropic Messages 流式响应缺少结束事件");
+  }
+
+  const content = [...blocks.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([, state]) => {
+      const block: Record<string, unknown> = { ...state.base };
+      if (block.type === "text") {
+        block.text = state.textParts.join("");
+        if (state.citations.length > 0) block.citations = state.citations;
+      } else if (block.type === "thinking") {
+        if (state.thinkingParts.length > 0) block.thinking = state.thinkingParts.join("");
+        if (state.signatureParts.length > 0) block.signature = state.signatureParts.join("");
+      } else if (state.inputJsonParts.length > 0) {
+        const rawJson = state.inputJsonParts.join("");
+        try { block.input = JSON.parse(rawJson); } catch { /* Keep base input if partial JSON is incomplete. */ }
+      }
+      return block;
+    });
+
+  const response: Record<string, unknown> = {
+    type: "message",
+    role: "assistant",
+    content,
+    ...(id ? { id } : {}),
+    ...(model !== undefined ? { model } : {}),
+    ...(stopReason !== undefined ? { stop_reason: stopReason } : {}),
+    ...(usage ? { usage } : {}),
+  };
+  return ok(response);
+}
+
+function aggregateEvents(protocol: ProviderStreamProtocol, events: StreamEvent[]): Result<unknown> {
+  switch (protocol) {
+    case "openai-chat-completions":
+      return aggregateOpenAIChat(events);
+    case "openai-responses":
+      return aggregateOpenAIResponses(events);
+    case "gemini-generative-language":
+      return aggregateGemini(events);
+    case "anthropic-messages":
+      return aggregateAnthropicMessages(events);
+  }
+}
+
+function createUsageObserver(protocol: ProviderStreamProtocol): {
+  observe: (event: StreamEvent) => void;
+  result: () => ProviderTokenUsage;
+} {
+  let reported: Record<string, unknown> | undefined;
+  const observe = (event: StreamEvent): void => {
+    const data = asRecord(event.data);
+    if (!data) return;
+    const envelope = protocol === "openai-responses"
+      ? asRecord(data.response) ?? data
+      : protocol === "anthropic-messages"
+        ? asRecord(data.message) ?? data
+        : data;
+    const key = protocol === "gemini-generative-language" ? "usageMetadata" : "usage";
+    const value = envelope[key];
+    if (value === null || value === undefined) return;
+    const previous = asRecord(reported?.[key]);
+    const next = asRecord(value);
+    // Gemini 与 Anthropic 在多帧中分别报告输入/输出或累计字段，浅合并以保留完整统计。
+    const mergeShallow = (protocol === "gemini-generative-language" || protocol === "anthropic-messages") && previous && next;
+    reported = { [key]: mergeShallow ? { ...previous, ...next } : value };
+  };
+  return { observe, result: () => readProviderTokenUsage(protocol, reported) };
+}
+
+/** Single-pass SSE decode returning both observed usage and aggregated envelope. */
+export function decodeProviderStream(
+  protocol: ProviderStreamProtocol,
+  body: string,
+): { aggregate: Result<unknown>; observedUsage: ProviderTokenUsage } {
+  const usageObserver = createUsageObserver(protocol);
+  const events = parseSseEvents(body, usageObserver.observe);
+  const observedUsage = usageObserver.result();
+  if (!events.ok) return { aggregate: events, observedUsage };
+  return { aggregate: aggregateEvents(protocol, events.value), observedUsage };
+}
+
 /** Aggregate one complete stream while preserving each protocol's response shape. */
 export function aggregateProviderStream(
   protocol: ProviderStreamProtocol,
@@ -563,14 +778,7 @@ export function aggregateProviderStream(
 ): Result<unknown> {
   const events = parseSseEvents(body);
   if (!events.ok) return events;
-  switch (protocol) {
-    case "openai-chat-completions":
-      return aggregateOpenAIChat(events.value);
-    case "openai-responses":
-      return aggregateOpenAIResponses(events.value);
-    case "gemini-generative-language":
-      return aggregateGemini(events.value);
-  }
+  return aggregateEvents(protocol, events.value);
 }
 
 /** Read accounting even when a later stream terminal/answer validation fails.
@@ -578,21 +786,9 @@ export function aggregateProviderStream(
  * does not affect the stream's existing success, error, or retry classification.
  */
 export function readProviderStreamUsage(protocol: ProviderStreamProtocol, body: string): ProviderTokenUsage {
-  let reported: Record<string, unknown> | undefined;
+  const usageObserver = createUsageObserver(protocol);
   // Observe successfully decoded events even if a later frame is malformed.
   // The authoritative aggregation still returns its original error unchanged.
-  parseSseEvents(body, (event) => {
-    const data = asRecord(event.data);
-    if (!data) return;
-    const envelope = protocol === "openai-responses" ? asRecord(data.response) ?? data : data;
-    const key = protocol === "gemini-generative-language" ? "usageMetadata" : "usage";
-    const value = envelope[key];
-    if (value === null || value === undefined) return;
-    // Gemini reports metadata in multiple chunks; match its existing shallow
-    // aggregation while replacing individual cumulative numeric counts.
-    const previous = asRecord(reported?.[key]);
-    const next = asRecord(value);
-    reported = { [key]: protocol === "gemini-generative-language" && previous && next ? { ...previous, ...next } : value };
-  });
-  return readProviderTokenUsage(protocol, reported);
+  parseSseEvents(body, usageObserver.observe);
+  return usageObserver.result();
 }

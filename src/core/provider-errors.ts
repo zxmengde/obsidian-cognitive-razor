@@ -107,6 +107,15 @@ export function mapHttpError(status: number, responseText: string, apiKey?: stri
     return err("E202_RATE_LIMITED", "请求频率超限，请稍后重试", { status, rawResponse: rawDetail });
   }
 
+  // Anthropic 服务过载 (529)：请求未被模型执行，可按退避策略重试。
+  if (status === 529) {
+    return err("E204_PROVIDER_ERROR", "Provider 服务过载 (529)，请稍后重试", {
+      status,
+      rawResponse: rawDetail,
+      ...(providerType ? { providerType } : {}),
+    });
+  }
+
   // A 408 does not prove that a generation was never accepted upstream.
   // Keep the request in the same explicit-confirmation bucket as network
   // timeouts so an automatic retry cannot duplicate a billable operation.
@@ -135,7 +144,7 @@ export function mapHttpError(status: number, responseText: string, apiKey?: stri
 
   // 服务端已经明确拒绝的请求不会因原样重发而恢复。
   if (status >= 400 && status < 500) {
-    const schemaUnsupported = /json[_ -]?schema|response[_ -]?schema|response[_ -]?format|text\.format/i.test(`${providerParam ?? ""} ${rawDetail}`)
+    const schemaUnsupported = /json[_ -]?schema|response[_ -]?schema|response[_ -]?format|text\.format|output_config/i.test(`${providerParam ?? ""} ${rawDetail}`)
       && /not supported|unsupported|does not support|not available|不支持/i.test(rawDetail);
     if (schemaUnsupported) {
       return err("E205_PROVIDER_REQUEST_INVALID", "所选模型或接口不支持 JSON Schema，请更换支持该格式的模型或接口；未自动降级或重试", { status, rawResponse: rawDetail, providerMessage: rawDetail });

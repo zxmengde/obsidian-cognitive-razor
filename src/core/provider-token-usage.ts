@@ -65,6 +65,29 @@ export function readProviderTokenUsage(protocol: string, raw: unknown): Provider
   if (protocol === "openai-embeddings") return normalizeTokenUsage({
     tokensUsed: usage?.total_tokens, inputTokens: usage?.prompt_tokens,
   }, ["tokensUsed", "inputTokens"], issues);
+  if (protocol === "anthropic-messages") {
+    const rawInput = usage?.input_tokens;
+    const rawOutput = usage?.output_tokens;
+    const rawCacheRead = usage?.cache_read_input_tokens;
+    const rawCacheWrite = usage?.cache_creation_input_tokens;
+    const invalid: TokenUsageField[] = [];
+    if (supplied(rawInput) && !isTokenCount(rawInput)) invalid.push("inputTokens");
+    if (supplied(rawOutput) && !isTokenCount(rawOutput)) invalid.push("outputTokens");
+    if (supplied(rawCacheRead) && !isTokenCount(rawCacheRead)) invalid.push("cacheReadTokens");
+    if (supplied(rawCacheWrite) && !isTokenCount(rawCacheWrite)) invalid.push("cacheWriteTokens");
+    // Anthropic 的 input_tokens 仅包含未命中缓存的输入；折算为总输入 token 以统一口径。
+    const validCacheRead = isTokenCount(rawCacheRead) ? rawCacheRead : 0;
+    const validCacheWrite = isTokenCount(rawCacheWrite) ? rawCacheWrite : 0;
+    const totalInput = isTokenCount(rawInput) ? rawInput + validCacheRead + validCacheWrite : undefined;
+    const totalTokens = totalInput !== undefined && isTokenCount(rawOutput) ? totalInput + rawOutput : undefined;
+    return normalizeTokenUsage({
+      tokensUsed: totalTokens,
+      inputTokens: totalInput,
+      outputTokens: isTokenCount(rawOutput) ? rawOutput : undefined,
+      cacheReadTokens: isTokenCount(rawCacheRead) ? rawCacheRead : undefined,
+      cacheWriteTokens: isTokenCount(rawCacheWrite) ? rawCacheWrite : undefined,
+    }, ["tokensUsed", "inputTokens", "outputTokens"], issues, invalid);
+  }
   if (protocol !== "openai-responses" && protocol !== "openai-chat-completions") return { status: "unreported" };
   const chatDetails = asRecord(usage?.prompt_tokens_details);
   const nativeDetails = asRecord(usage?.input_tokens_details);

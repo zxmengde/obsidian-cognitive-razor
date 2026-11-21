@@ -6,7 +6,7 @@ import type { ProtocolAdapterMetadata, ProviderAuthScheme } from "./chat-protoco
 import { ProviderAbortError, ProviderTimeoutError, type ProviderTransport } from "./provider-transport";
 import { ProviderStreamAbortError, ProviderStreamNetworkError, ProviderStreamTimeoutError } from "./provider-streaming";
 import type { ProviderStreamProtocol, ProviderStreamTransport } from "./provider-streaming";
-import { aggregateProviderStream, hasProviderStreamFraming, readProviderStreamUsage, safeStreamResponseEvidence } from "./provider-stream-codec";
+import { decodeProviderStream, hasProviderStreamFraming, safeStreamResponseEvidence } from "./provider-stream-codec";
 import { applyProviderTokenUsage, readProviderTokenUsage } from "./provider-token-usage";
 import { parseOpenAIEmbedResponse } from "./provider-response-parsers";
 import { mapHttpError, sanitizeProviderErrorDetail, sanitizeUrl } from "./provider-errors";
@@ -26,6 +26,8 @@ function buildAuthHeaders(apiKey: string, authScheme: ProviderAuthScheme): Recor
   switch (authScheme) {
     case "gemini":
       return { "x-goog-api-key": apiKey };
+    case "anthropic":
+      return { "x-api-key": apiKey };
     default:
       return { Authorization: `Bearer ${apiKey}` };
   }
@@ -54,7 +56,7 @@ export class ProviderRequestExecutor {
     streamTransport: ProviderStreamTransport = "node-http",
   ): Promise<Result<ChatResponse>> {
     return useStreaming
-      ? this.executeStreamRequest(url, body, apiKey, signal, adapter.streamProtocol, adapter.parseResponse, {}, adapter.authScheme, requestLabel, callContext, streamTransport)
+      ? this.executeStreamRequest(url, body, apiKey, signal, adapter.streamProtocol, adapter.parseResponse, adapter.extraHeaders ?? {}, adapter.authScheme, requestLabel, callContext, streamTransport)
       : this.executeJsonRequest(url, body, apiKey, signal, adapter.parseResponse, adapter.extraHeaders ?? {}, adapter.authScheme, callContext);
   }
 
@@ -246,9 +248,8 @@ export class ProviderRequestExecutor {
           return err("E207_PROVIDER_RESPONSE_UNSUPPORTED", "Provider 未返回可解析的流式事件或完整响应");
         }
       }
-      const observedUsage = readProviderStreamUsage(protocol, response.body);
+      const { aggregate, observedUsage } = decodeProviderStream(protocol, response.body);
       attempt.recordUsage(observedUsage);
-      const aggregate = aggregateProviderStream(protocol, response.body);
       if (!aggregate.ok) {
         attempt.finish(aggregate.error.code === "E206_PROVIDER_REQUEST_UNCERTAIN" ? "uncertain" : "known-failure", aggregate.error.code);
         return aggregate;

@@ -436,7 +436,13 @@ export class TaskQueue {
     return [...this.tasks.values()].some((task) => (task.state === "pending" || task.state === "running" || this.retryingTasks.has(task.id)) && task.filePath?.toLocaleLowerCase() === normalized);
   }
 
-  getSnapshot(): QueueSnapshot { return clone(this.getOrCreateSnapshot()); }
+  getSnapshot(): QueueSnapshot {
+    const snap = this.getOrCreateSnapshot();
+    return {
+      status: { ...snap.status },
+      tasks: snap.tasks.map((task) => this.shallowCopyTask(task)),
+    };
+  }
   getTask(taskId: string): TaskRecord | undefined { const task = this.tasks.get(taskId); return task ? this.displayTask(task) : undefined; }
 
   subscribe(listener: QueueEventListener): () => void {
@@ -763,14 +769,38 @@ export class TaskQueue {
     this.publishEvent({ type: "task-failed", taskId: task.id });
   }
 
+  /** 仅浅拷贝任务外层字段与 error；payload/result 在队列内不可变，避免大正文重复 JSON 克隆。 */
+  private shallowCopyTask(task: TaskRecord): TaskRecord {
+    return {
+      ...task,
+      ...(task.error ? { error: { ...task.error } } : {}),
+    };
+  }
+
   private displayTask(task: TaskRecord): TaskRecord {
     const pending = this.pendingLocalSaves.get(task.id);
-    const visible = clone(task);
-    if (visible.result) delete visible.result.responsesOutput;
-    if ("conversation" in visible.payload && visible.payload.conversation) delete visible.payload.conversation.responsesOutputHistory;
+    const hasOpaqueResult = !!task.result && "responsesOutput" in task.result;
+    const hasOpaqueHistory = "conversation" in task.payload && !!task.payload.conversation && "responsesOutputHistory" in task.payload.conversation;
+    const result = hasOpaqueResult
+      ? (({ responsesOutput: _opaque, ...rest }) => rest)(task.result!)
+      : task.result;
+    const payload = hasOpaqueHistory
+      ? {
+          ...task.payload,
+          conversation: (({ responsesOutputHistory: _opaque, ...rest }) => rest)(
+            (task.payload as { conversation: Record<string, unknown> }).conversation,
+          ),
+        } as TaskRecord["payload"]
+      : task.payload;
     // Internal results remain intact for a local commit retry; public task
     // views and events never expose opaque continuation state.
-    return pending && task.state === "running" ? { ...visible, state: "failed", localSavePending: true, error: clone(pending.error) } : visible;
+    const visible = {
+      ...task,
+      payload,
+      ...(result !== undefined ? { result } : {}),
+      ...(task.error ? { error: { ...task.error } } : {}),
+    } as TaskRecord;
+    return pending && task.state === "running" ? { ...visible, state: "failed", localSavePending: true, error: { ...pending.error } } : visible;
   }
 
   private createRuntimeTask(intent: NewTaskRecord): TaskRecord {
@@ -900,7 +930,10 @@ export class TaskQueue {
   }
 
   private captureState(): { tasks: Map<string, TaskRecord>; paused: boolean; nextQueueOrder: number } {
-    return { tasks: new Map([...this.tasks].map(([id, task]) => [id, clone(task)])), paused: this.paused, nextQueueOrder: this.nextQueueOrder };
+    // 队列变更只修改任务顶层状态字段，不原地改写 payload 或 result；浅拷贝即可完整回滚。
+    const tasks = new Map<string, TaskRecord>();
+    for (const [id, task] of this.tasks) tasks.set(id, this.shallowCopyTask(task));
+    return { tasks, paused: this.paused, nextQueueOrder: this.nextQueueOrder };
   }
 
   private restoreState(state: ReturnType<TaskQueue["captureState"]>): void {
@@ -925,7 +958,7 @@ export class TaskQueue {
   }
 
   private toPersistedTask(task: TaskRecord): PersistedTaskRecord {
-    return { id: task.id, workflowId: task.workflowId ?? "", nodeId: task.nodeId, stageId: task.stageId, state: task.state, queueOrder: task.queueOrder ?? 1, noteTitle: task.noteTitle, filePath: task.filePath, conceptType: task.conceptType, createdAt: task.createdAt, updatedAt: task.updatedAt, startedAt: task.startedAt, finishedAt: task.finishedAt, attempt: task.attempt, error: task.error ? clone(task.error) : undefined, ...(task.resultPendingCommit ? { resultPendingCommit: true } : {}) };
+    return { id: task.id, workflowId: task.workflowId ?? "", nodeId: task.nodeId, stageId: task.stageId, state: task.state, queueOrder: task.queueOrder ?? 1, noteTitle: task.noteTitle, filePath: task.filePath, conceptType: task.conceptType, createdAt: task.createdAt, updatedAt: task.updatedAt, startedAt: task.startedAt, finishedAt: task.finishedAt, attempt: task.attempt, error: task.error ? { ...task.error } : undefined, ...(task.resultPendingCommit ? { resultPendingCommit: true } : {}) };
   }
 
   private nextPendingTask(): TaskRecord | undefined { return [...this.tasks.values()].filter((task) => task.state === "pending").sort(compareQueueOrder)[0]; }

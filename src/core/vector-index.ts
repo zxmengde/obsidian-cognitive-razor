@@ -14,13 +14,21 @@ import type { FileStorage } from "../data/file-storage";
 import type { CruidCache } from "./cruid-cache";
 import { dotProduct, normalizeVector } from "./vector-math";
 
+/** 内部只读缓存形态：使用连续 Float64Array 保留双精度相似度契约，同时消除数组复制与装箱开销，磁盘格式不变。 */
+export interface ReadonlyConceptVector {
+  readonly id: string;
+  readonly type: CRType;
+  readonly embedding: Float64Array;
+  readonly metadata: Readonly<ConceptVector["metadata"]>;
+}
+
 interface TypeBucket {
-  vectors: ConceptVector[];
+  vectors: ReadonlyConceptVector[];
   lastAccessedAt: number;
 }
 
 interface LoadedBucket {
-  vectors: ConceptVector[];
+  vectors: ReadonlyConceptVector[];
   invalidIds: string[];
 }
 
@@ -32,7 +40,7 @@ const MISSING_FILE_CODES = new Set(["E301_FILE_NOT_FOUND", "E311_NOT_FOUND"]);
 const DISCARDABLE_VECTOR_CODES = new Set([...MISSING_FILE_CODES, "E101_INVALID_INPUT"]);
 
 type VectorReadOutcome =
-  | { id: string; vector: ConceptVector }
+  | { id: string; vector: ReadonlyConceptVector }
   | { id: string; invalidReason: string }
   | { id: string; error: Err["error"] };
 
@@ -63,7 +71,7 @@ export interface VectorCleanupSummary {
  */
 export class VectorIndex {
   private readonly buckets = new Map<CRType, TypeBucket>();
-  private readonly recentVectors = new Map<string, ConceptVector>();
+  private readonly recentVectors = new Map<string, ReadonlyConceptVector>();
   private readonly activeReads = new Set<Promise<unknown>>();
 
   private indexMeta: VectorIndexMeta | null = null;
@@ -202,7 +210,18 @@ export class VectorIndex {
       if (!bucketResult.ok) {
         return bucketResult as Result<ConceptVector[]>;
       }
-      return ok(bucketResult.value.vectors.map((vector) => this.cloneVector(vector)));
+      return ok(bucketResult.value.vectors.map((vector) => this.toConceptVector(vector)));
+    });
+  }
+
+  /** 只读访问类型桶缓存，避免重复检测在遍历时逐条复制向量数组。 */
+  getReadonlyVectorsByType(type: CRType): Promise<Result<readonly ReadonlyConceptVector[]>> {
+    return this.trackRead("读取只读向量桶", async () => {
+      const bucketResult = await this.ensureBucketLoaded(type);
+      if (!bucketResult.ok) {
+        return bucketResult as Result<readonly ReadonlyConceptVector[]>;
+      }
+      return ok(bucketResult.value.vectors);
     });
   }
 
@@ -242,33 +261,45 @@ export class VectorIndex {
       const staleEntries: VectorIndexIssue[] = [];
       const invalidEntries: VectorIndexIssue[] = [];
 
-      for (const [uid, concept] of Object.entries(meta.concepts)) {
+      const registeredEntries = Object.entries(meta.concepts);
+      const toRead: Array<{ uid: string; concept: VectorIndexMeta["concepts"][string] }> = [];
+      for (const [uid, concept] of registeredEntries) {
         const noteMissing = !!this.cruidCache && !this.cruidCache.has(uid);
         if (noteMissing) {
           staleEntries.push({ uid, type: concept.type, reason: "note-missing" });
         }
         const key = this.vectorKey(concept.type, uid);
-        const physical = physicalByKey.get(key);
-        if (!physical) {
+        if (!physicalByKey.has(key)) {
           missingEntries.push({ uid, type: concept.type, reason: "missing-file" });
           continue;
         }
-        const vector = await this.fileStorage.readVectorFile(concept.type, uid);
-        if (!vector.ok) {
-          if (!DISCARDABLE_VECTOR_CODES.has(vector.error.code)) return vector as Result<VectorIndexMaintenanceReport>;
-          invalidEntries.push({
-            uid,
-            type: concept.type,
-            reason: "invalid-file",
-          });
-          continue;
-        }
-        if (!this.isVectorCompatible(vector.value) || concept.sourceHash !== vector.value.metadata.sourceHash) {
-          invalidEntries.push({
-            uid,
-            type: concept.type,
-            reason: "incompatible-file",
-          });
+        toRead.push({ uid, concept });
+      }
+
+      for (let offset = 0; offset < toRead.length; offset += VECTOR_READ_BATCH_SIZE) {
+        if (this.disposed) return this.stopped();
+        const batch = toRead.slice(offset, offset + VECTOR_READ_BATCH_SIZE);
+        const results = await Promise.all(batch.map(async (item) => ({
+          item,
+          vector: await this.fileStorage.readVectorFile(item.concept.type, item.uid),
+        })));
+        for (const { item, vector } of results) {
+          if (!vector.ok) {
+            if (!DISCARDABLE_VECTOR_CODES.has(vector.error.code)) return vector as Result<VectorIndexMaintenanceReport>;
+            invalidEntries.push({
+              uid: item.uid,
+              type: item.concept.type,
+              reason: "invalid-file",
+            });
+            continue;
+          }
+          if (!this.isVectorCompatible(vector.value) || item.concept.sourceHash !== vector.value.metadata.sourceHash) {
+            invalidEntries.push({
+              uid: item.uid,
+              type: item.concept.type,
+              reason: "incompatible-file",
+            });
+          }
         }
       }
 
@@ -511,14 +542,19 @@ export class VectorIndex {
     }
 
     const previousByTarget = new Map<string, ConceptVector>();
-    for (const entry of entries) {
-      const previousType = currentMeta.concepts[entry.uid]?.type;
-      if (previousType !== entry.type) continue;
-      const previousResult = await this.fileStorage.readVectorFile(entry.type, entry.uid);
-      if (previousResult.ok) {
-        previousByTarget.set(this.vectorKey(entry.type, entry.uid), previousResult.value);
-      } else if (!DISCARDABLE_VECTOR_CODES.has(previousResult.error.code)) {
-        return previousResult as Result<number>;
+    const sameTypeEntries = entries.filter((entry) => currentMeta.concepts[entry.uid]?.type === entry.type);
+    for (let offset = 0; offset < sameTypeEntries.length; offset += VECTOR_READ_BATCH_SIZE) {
+      const batch = sameTypeEntries.slice(offset, offset + VECTOR_READ_BATCH_SIZE);
+      const results = await Promise.all(batch.map(async (entry) => ({
+        entry,
+        previousResult: await this.fileStorage.readVectorFile(entry.type, entry.uid),
+      })));
+      for (const { entry, previousResult } of results) {
+        if (previousResult.ok) {
+          previousByTarget.set(this.vectorKey(entry.type, entry.uid), previousResult.value);
+        } else if (!DISCARDABLE_VECTOR_CODES.has(previousResult.error.code)) {
+          return previousResult as Result<number>;
+        }
       }
     }
 
@@ -558,7 +594,7 @@ export class VectorIndex {
     this.contentVersion++;
     this.buckets.clear();
     this.recentVectors.clear();
-    for (const vector of vectors) this.setRecentVector(vector.id, vector);
+    for (const vector of vectors) this.setRecentVector(vector.id, this.toCachedVector(vector));
 
     const retainedTargets = new Set(vectors.map((vector) => this.vectorKey(vector.type, vector.id)));
     const obsolete = Object.entries(currentMeta.concepts)
@@ -634,8 +670,8 @@ export class VectorIndex {
       return bucketResult as Result<SearchResult[]>;
     }
 
-    const query = normalizeVector(embedding);
-    const matches: Array<{ vector: ConceptVector; similarity: number }> = [];
+    const query = Float64Array.from(normalizeVector(embedding));
+    const matches: Array<{ vector: ReadonlyConceptVector; similarity: number }> = [];
     for (const vector of bucketResult.value.vectors) {
       if (this.cruidCache && !this.cruidCache.has(vector.id)) continue;
       const similarity = dotProduct(query, vector.embedding);
@@ -732,7 +768,7 @@ export class VectorIndex {
 
     const entries = Object.entries(meta.concepts)
       .filter(([uid, concept]) => concept.type === type && (!this.cruidCache || this.cruidCache.has(uid)));
-    const vectors: ConceptVector[] = [];
+    const vectors: ReadonlyConceptVector[] = [];
     const invalidIds: string[] = [];
     const failures: Array<{ id: string; reason: string }> = [];
 
@@ -755,7 +791,7 @@ export class VectorIndex {
         if (!this.isVectorCompatible(readResult.value)) {
           return { id, invalidReason: "向量模型或维度与当前索引不一致" };
         }
-        return { id, vector: readResult.value };
+        return { id, vector: this.toCachedVector(readResult.value) };
       }));
 
       for (const result of results) {
@@ -963,7 +999,7 @@ export class VectorIndex {
     return ok(undefined);
   }
 
-  private isVectorCompatible(vector: ConceptVector): boolean {
+  private isVectorCompatible(vector: ConceptVector | ReadonlyConceptVector): boolean {
     return this.dimension !== undefined && vector.embedding.length === this.dimension &&
       vector.metadata.dimensions === this.dimension &&
       vector.metadata.embeddingModel === this.model &&
@@ -978,7 +1014,8 @@ export class VectorIndex {
   }
 
   private commitVectorToCaches(vector: ConceptVector, previousType?: CRType): void {
-    this.setRecentVector(vector.id, vector);
+    const cached = this.toCachedVector(vector);
+    this.setRecentVector(vector.id, cached);
     if (previousType && previousType !== vector.type) {
       this.buckets.delete(previousType);
     }
@@ -988,9 +1025,9 @@ export class VectorIndex {
     }
     const existingIndex = bucket.vectors.findIndex((candidate) => candidate.id === vector.id);
     if (existingIndex >= 0) {
-      bucket.vectors[existingIndex] = vector;
+      bucket.vectors[existingIndex] = cached;
     } else {
-      bucket.vectors.push(vector);
+      bucket.vectors.push(cached);
     }
     bucket.lastAccessedAt = Date.now();
   }
@@ -1075,7 +1112,7 @@ export class VectorIndex {
     }
   }
 
-  private setRecentVector(uid: string, vector: ConceptVector): void {
+  private setRecentVector(uid: string, vector: ReadonlyConceptVector): void {
     if (this.recentVectors.has(uid)) {
       this.recentVectors.delete(uid);
     } else if (this.recentVectors.size >= MAX_RECENT_VECTORS) {
@@ -1087,10 +1124,20 @@ export class VectorIndex {
     this.recentVectors.set(uid, vector);
   }
 
-  private cloneVector(vector: ConceptVector): ConceptVector {
+  private toCachedVector(vector: ConceptVector): ReadonlyConceptVector {
     return {
-      ...vector,
-      embedding: [...vector.embedding],
+      id: vector.id,
+      type: vector.type,
+      embedding: Float64Array.from(vector.embedding),
+      metadata: { ...vector.metadata },
+    };
+  }
+
+  private toConceptVector(vector: ReadonlyConceptVector): ConceptVector {
+    return {
+      id: vector.id,
+      type: vector.type,
+      embedding: Array.from(vector.embedding),
       metadata: { ...vector.metadata },
     };
   }

@@ -11,9 +11,11 @@ export function resolveTaskModelSnapshot(settings: PluginSettings, taskType: Tas
     ...provider?.capabilities,
     ...task.capabilities,
   };
-  // 缓存路由与响应 ID 续接只用于 Responses；Gemini 由服务端提供默认隐式缓存。
+  // 响应 ID 续接只用于 Responses；提示词缓存支持 Responses 与 Anthropic Messages。
   if (provider && provider.apiFormat !== "openai-responses") {
-    capabilities.promptCaching = false;
+    if (provider.apiFormat !== "anthropic-messages") {
+      capabilities.promptCaching = false;
+    }
     capabilities.responseContinuation = false;
   }
   const parameters: ModelParameters = { ...(provider?.parameters ?? {}) };
@@ -24,7 +26,8 @@ export function resolveTaskModelSnapshot(settings: PluginSettings, taskType: Tas
   }
   const model = task.model.trim() || (taskType === "index" ? provider?.defaultEmbedModel : provider?.defaultChatModel)?.trim() || "";
   const reasoningEffort = capabilities.reasoning ? parameters.reasoning_effort : undefined;
-  const samplingSuppressed = taskType !== "index" && suppressChatSampling(provider?.apiFormat, model, reasoningEffort);
+  const thinkingBudget = provider?.apiFormat === "gemini-generative-language" ? undefined : (capabilities.reasoning ? parameters.thinkingBudget : undefined);
+  const samplingSuppressed = taskType !== "index" && suppressChatSampling(provider?.apiFormat, model, reasoningEffort, thinkingBudget);
   return {
     providerId,
     providerSnapshot: provider ? JSON.parse(JSON.stringify(provider)) : undefined,
@@ -36,7 +39,7 @@ export function resolveTaskModelSnapshot(settings: PluginSettings, taskType: Tas
     reasoningEffort,
     // Gemini 用 thinkingLevel 控制思考，不受 reasoning 开关限制。思考预算留在设置里，不进入请求。
     thinkingLevel: provider?.apiFormat === "gemini-generative-language" || capabilities.reasoning ? parameters.thinkingLevel : undefined,
-    thinkingBudget: provider?.apiFormat === "gemini-generative-language" ? undefined : (capabilities.reasoning ? parameters.thinkingBudget : undefined),
+    thinkingBudget,
     maxTokens: parameters.maxTokens,
     embeddingDimension: taskType === "index" ? parameters.embeddingDimension : undefined,
   };

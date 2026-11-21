@@ -74,6 +74,9 @@
         if (activeApiFormat === 'gemini-generative-language') {
             keys.push('thinkingLevel');
             if (resolveParameterValue(parameterInputs('reasoning_effort')) !== undefined || config.parameters?.reasoning_effort === null) keys.push('reasoning_effort');
+        } else if (activeApiFormat === 'anthropic-messages') {
+            keys.push('reasoning_effort', 'thinkingBudget');
+            if (resolveParameterValue(parameterInputs('thinkingLevel')) !== undefined || config.parameters?.thinkingLevel === null) keys.push('thinkingLevel');
         } else {
             keys.push('reasoning_effort');
             for (const key of ['thinkingLevel', 'thinkingBudget'] as const) {
@@ -85,8 +88,8 @@
     });
     let capabilityKeys = $derived.by((): BooleanCapability[] => [
         ...(taskType === 'write' || taskType === 'verify' ? ['nativeWebSearch' as const] : []),
-        // 缓存与续传仅 OpenAI Responses 协议支持
-        ...(activeApiFormat === 'openai-responses' ? ['promptCaching' as const] : []),
+        // 提示词缓存支持 OpenAI Responses 与 Anthropic Messages；续传仅支持 Responses。
+        ...(activeApiFormat === 'openai-responses' || activeApiFormat === 'anthropic-messages' ? ['promptCaching' as const] : []),
         ...(activeApiFormat === 'openai-responses' && taskType !== 'cards' ? ['responseContinuation' as const] : []),
     ]);
     let providerOptions = $derived.by(() => {

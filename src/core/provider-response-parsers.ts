@@ -474,3 +474,133 @@ function isValidCitationRange(
     && (endIndex as number) > (startIndex as number)
     && (endIndex as number) <= content.length;
 }
+
+interface AnthropicCitation {
+  type?: string;
+  url?: string;
+  title?: string;
+}
+
+interface AnthropicContentBlock {
+  type?: string;
+  text?: unknown;
+  name?: string;
+  citations?: AnthropicCitation[];
+}
+
+interface AnthropicMessagesResponse {
+  id?: string;
+  type?: string;
+  role?: string;
+  model?: string;
+  content?: AnthropicContentBlock[];
+  stop_reason?: string | null;
+  error?: { type?: string; message?: string };
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+    server_tool_use?: { web_search_requests?: number };
+  };
+}
+
+const ANTHROPIC_FINISH_REASONS: ReadonlySet<string | undefined> = new Set([
+  undefined, "stop", "length", "refusal",
+]);
+
+function normalizeAnthropicStopReason(reason?: string | null): string | undefined {
+  switch (reason) {
+    case undefined:
+    case null:
+      return undefined;
+    case "end_turn":
+    case "stop_sequence":
+      return "stop";
+    case "max_tokens":
+    case "model_context_window_exceeded":
+      return "length";
+    case "refusal":
+      return "refusal";
+    default:
+      return reason.toLowerCase();
+  }
+}
+
+export function parseAnthropicMessagesResponse(raw: unknown): Result<ChatResponse> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return err("E207_PROVIDER_RESPONSE_UNSUPPORTED", "Anthropic Messages 返回非对象响应");
+  }
+  const data = raw as AnthropicMessagesResponse;
+  if (data.type === "error" || asRecord(data.error)) {
+    const providerCode = typeof data.error?.type === "string" ? data.error.type : "unknown";
+    return err("E207_PROVIDER_RESPONSE_UNSUPPORTED", `Anthropic Messages 返回错误: ${providerCode}`, { providerCode });
+  }
+  if (!Array.isArray(data.content)) {
+    return err("E207_PROVIDER_RESPONSE_UNSUPPORTED", "Anthropic Messages 返回格式异常：缺少 content 数组");
+  }
+  if (data.content.some((block) => asRecord(block)?.type === "tool_use")) {
+    return err("E207_PROVIDER_RESPONSE_UNSUPPORTED", "Anthropic Messages 返回了插件未处理的客户端工具调用");
+  }
+
+  const finishReason = normalizeAnthropicStopReason(data.stop_reason);
+  if (!ANTHROPIC_FINISH_REASONS.has(finishReason)) {
+    return err("E207_PROVIDER_RESPONSE_UNSUPPORTED", `Anthropic Messages 返回了插件未处理的停止原因: ${data.stop_reason}`, {
+      stopReason: data.stop_reason,
+    });
+  }
+
+  const chunks: string[] = [];
+  const citations: UrlCitation[] = [];
+  let offset = 0;
+  let webSearchUsed = false;
+  for (const block of data.content) {
+    const record = asRecord(block);
+    if (!record) continue;
+    if (record.type === "web_search_tool_result" || (record.type === "server_tool_use" && record.name === "web_search")) {
+      webSearchUsed = true;
+      continue;
+    }
+    if (record.type !== "text" || typeof record.text !== "string") continue;
+    const blockStart = offset;
+    const blockText = record.text;
+    chunks.push(blockText);
+    offset += blockText.length;
+    if (Array.isArray(record.citations)) {
+      for (const rawCitation of record.citations) {
+        const citation = asRecord(rawCitation);
+        if (!citation || citation.type !== "web_search_result_location") continue;
+        const url = normalizeExternalHttpUrl(typeof citation.url === "string" ? citation.url : undefined);
+        if (!url) continue;
+        webSearchUsed = true;
+        const title = typeof citation.title === "string" && citation.title.trim() ? citation.title.trim() : undefined;
+        citations.push({
+          url,
+          ...(title ? { title } : {}),
+          ...(blockText.length > 0 ? { startIndex: blockStart, endIndex: offset } : {}),
+        });
+      }
+    }
+  }
+
+  const serverToolUse = asRecord(data.usage?.server_tool_use);
+  if (typeof serverToolUse?.web_search_requests === "number" && serverToolUse.web_search_requests > 0) {
+    webSearchUsed = true;
+  }
+
+  const content = chunks.join("");
+  const validFinish = validateChatFinishReason(finishReason);
+  if (!validFinish.ok) return validFinish as Result<ChatResponse>;
+  if (!content && !mayHaveEmptyContent(finishReason)) {
+    return err("E207_PROVIDER_RESPONSE_UNSUPPORTED", "API 返回格式异常：Anthropic Messages 没有可见文本");
+  }
+
+  return ok(withProviderTokenUsage({
+    ...reportedMetadata(raw),
+    content,
+    ...(typeof data.id === "string" ? { responseId: data.id } : {}),
+    ...(citations.length > 0 ? { citations } : {}),
+    webSearchUsed,
+    finishReason,
+  }, "anthropic-messages", raw));
+}

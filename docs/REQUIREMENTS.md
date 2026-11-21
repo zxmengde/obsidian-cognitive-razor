@@ -52,7 +52,7 @@ Define 等待期间显示已用时间并提供取消；取消立即中止请求�
 
 ## 服务与执行
 
-聊天支持 OpenAI Chat Completions、OpenAI Responses 和 Gemini Generate Content，嵌入使用 OpenAI Embeddings。任务留空的服务与模型继承默认配置；嵌入任务继承嵌入模型。搜索、思考参数、缓存与续接按协议及配置启用，只声明服务实际支持的能力。
+聊天支持 OpenAI Chat Completions、OpenAI Responses、Gemini Generate Content 和 Anthropic Messages，嵌入使用 OpenAI Embeddings。任务留空的服务与模型继承默认配置；嵌入任务继承嵌入模型。搜索、思考参数、缓存与续接按协议及配置启用，只声明服务实际支持的能力。
 
 服务协议由用户显式配置，不依模型名称猜测协议。任务参数只有继承、具体覆盖、明确省略三种状态，分别用缺省值、具体值和 null 表示。保留显式选择的服务；服务不可用时给出错误，不静默改用其他服务。
 
