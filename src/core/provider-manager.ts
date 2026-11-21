@@ -154,7 +154,7 @@ export class ProviderManager implements ModelGateway {
   /** 调用聊天 API */
   async chat(request: ChatRequest, signal?: AbortSignal): Promise<Result<ChatResponse>> {
     if (this.disposed) {
-      return err("E310_INVALID_STATE", "Provider 服务已停止");
+      return err("E310_INVALID_STATE", "服务管理器已停止");
     }
     const startTime = Date.now();
     
@@ -166,7 +166,7 @@ export class ProviderManager implements ModelGateway {
     const providerConfig = configResult.value;
     const apiFormat = providerConfig.apiFormat;
     if (apiFormat === "disabled") {
-      return err("E401_PROVIDER_NOT_CONFIGURED", `Provider ${request.providerId} 未启用聊天 API`);
+      return err("E401_PROVIDER_NOT_CONFIGURED", `服务 ${request.providerId} 未启用聊天 API`);
     }
     const parameterResult = validateChatParameters(request, apiFormat);
     if (!parameterResult.ok) {
@@ -187,7 +187,7 @@ export class ProviderManager implements ModelGateway {
   /** 调用嵌入 API */
   async embed(request: EmbedRequest, signal?: AbortSignal): Promise<Result<EmbedResponse>> {
     if (this.disposed) {
-      return err("E310_INVALID_STATE", "Provider 服务已停止");
+      return err("E310_INVALID_STATE", "服务管理器已停止");
     }
     const startTime = Date.now();
     
@@ -199,7 +199,7 @@ export class ProviderManager implements ModelGateway {
     const providerConfig = configResult.value;
 
     if (providerConfig.embeddingApiFormat !== "openai-embeddings") {
-      return err("E401_PROVIDER_NOT_CONFIGURED", `Provider ${request.providerId} 未启用 Embeddings API`, {
+      return err("E401_PROVIDER_NOT_CONFIGURED", `服务 ${request.providerId} 未启用 Embeddings API`, {
         providerId: request.providerId,
         embeddingApiFormat: providerConfig.embeddingApiFormat,
       });
@@ -247,7 +247,7 @@ export class ProviderManager implements ModelGateway {
     );
 
     if (this.disposed) {
-      return err("E310_INVALID_STATE", "Provider 服务已停止");
+      return err("E310_INVALID_STATE", "服务管理器已停止");
     }
 
     const elapsedTime = Date.now() - startTime;
@@ -278,7 +278,7 @@ export class ProviderManager implements ModelGateway {
   /** 调用批量嵌入 API（OpenAI 标准 input: string[]） */
   async embedBatch(request: EmbedBatchRequest, signal?: AbortSignal): Promise<Result<EmbedBatchResponse>> {
     if (this.disposed) {
-      return err("E310_INVALID_STATE", "Provider 服务已停止");
+      return err("E310_INVALID_STATE", "服务管理器已停止");
     }
     if (request.inputs.length === 0) {
       return ok({ embeddings: [] });
@@ -290,7 +290,7 @@ export class ProviderManager implements ModelGateway {
     }
     const providerConfig = configResult.value;
     if (providerConfig.embeddingApiFormat !== "openai-embeddings") {
-      return err("E401_PROVIDER_NOT_CONFIGURED", `Provider ${request.providerId} 未启用 Embeddings API`, {
+      return err("E401_PROVIDER_NOT_CONFIGURED", `服务 ${request.providerId} 未启用 Embeddings API`, {
         providerId: request.providerId,
         embeddingApiFormat: providerConfig.embeddingApiFormat,
       });
@@ -322,7 +322,7 @@ export class ProviderManager implements ModelGateway {
     );
 
     if (this.disposed) {
-      return err("E310_INVALID_STATE", "Provider 服务已停止");
+      return err("E310_INVALID_STATE", "服务管理器已停止");
     }
 
     const elapsedTime = Date.now() - startTime;
@@ -355,7 +355,7 @@ export class ProviderManager implements ModelGateway {
     signal?: AbortSignal,
   ): Promise<Result<ProviderCapabilities>> {
     if (this.disposed) {
-      return err("E310_INVALID_STATE", "Provider 服务已停止");
+      return err("E310_INVALID_STATE", "服务管理器已停止");
     }
     if (signal?.aborted) {
       return err("E310_INVALID_STATE", "连接测试已取消", signal.reason);
@@ -387,7 +387,7 @@ export class ProviderManager implements ModelGateway {
     const embeddingEnabled = (request.taskType === undefined || request.taskType === "index")
       && providerConfig.embeddingApiFormat === "openai-embeddings";
     if (!chatEnabled && !embeddingEnabled) {
-      return err("E401_PROVIDER_NOT_CONFIGURED", "Provider 未启用聊天或嵌入能力");
+      return err("E401_PROVIDER_NOT_CONFIGURED", "服务未启用聊天或嵌入能力");
     }
 
     let chat = false;
@@ -400,7 +400,7 @@ export class ProviderManager implements ModelGateway {
     if (chatEnabled) {
       const chatResult = await this.probeChat(providerConfig, signal, request.providerId, request.attemptReason, request.taskConfig);
       if (this.disposed) {
-        return err("E310_INVALID_STATE", "Provider 服务已停止");
+        return err("E310_INVALID_STATE", "服务管理器已停止");
       }
       if (signal?.aborted) {
         return err("E310_INVALID_STATE", "连接测试已取消", signal.reason);
@@ -408,7 +408,7 @@ export class ProviderManager implements ModelGateway {
       chat = chatResult.ok;
       if (chatResult.ok && request.taskConfig?.capabilities.nativeWebSearch && chatResult.value.webSearchUsed !== true) {
         chat = false;
-        chatError = { code: "E101_INVALID_INPUT", message: "任务配置要求原生搜索，但 Provider 未返回实际搜索证据" };
+        chatError = { code: "E101_INVALID_INPUT", message: "任务配置要求原生搜索，但服务未返回实际搜索证据" };
         firstFailure = { code: chatError.code, message: chatError.message };
       }
       if (!chatResult.ok) {
@@ -425,7 +425,7 @@ export class ProviderManager implements ModelGateway {
       };
       const embedResult = await this.probeEmbedding(providerConfig, signal, request.providerId, request.attemptReason, indexSnapshot);
       if (this.disposed) {
-        return err("E310_INVALID_STATE", "Provider 服务已停止");
+        return err("E310_INVALID_STATE", "服务管理器已停止");
       }
       if (signal?.aborted) {
         return err("E310_INVALID_STATE", "连接测试已取消", signal.reason);
@@ -467,11 +467,11 @@ export class ProviderManager implements ModelGateway {
   ): Promise<Result<ChatResponse>> {
     const model = taskConfig?.model.trim() || config.defaultChatModel.trim();
     if (!model) {
-      return err("E101_INVALID_INPUT", "Provider 未设置默认聊天模型");
+      return err("E101_INVALID_INPUT", "服务未设置默认聊天模型");
     }
     const format = config.apiFormat;
     if (format === "disabled") {
-      return err("E401_PROVIDER_NOT_CONFIGURED", "Provider 未启用聊天 API");
+      return err("E401_PROVIDER_NOT_CONFIGURED", "服务未启用聊天 API");
     }
     // Service-only probes must use the edited Provider defaults, not unrelated
     // persisted task overrides or a hard-coded parameter-free request.
@@ -517,7 +517,7 @@ export class ProviderManager implements ModelGateway {
     const model = (taskConfig?.model ?? config.defaultEmbedModel).trim();
     const dimensions = taskConfig ? taskConfig.embeddingDimension : config.parameters?.embeddingDimension;
     if (!model) {
-      return err("E101_INVALID_INPUT", taskConfig ? "Index 任务没有配置嵌入模型" : "Provider 未设置默认嵌入模型");
+      return err("E101_INVALID_INPUT", taskConfig ? "Index 任务没有配置嵌入模型" : "服务未设置默认嵌入模型");
     }
     if (dimensions !== undefined && (!Number.isSafeInteger(dimensions) || dimensions <= 0)) {
       return err("E101_INVALID_INPUT", "嵌入测试维度必须是正整数");
@@ -585,7 +585,7 @@ export class ProviderManager implements ModelGateway {
     body: Record<string, unknown>,
   ): Result<ChatResponse> {
     if (this.disposed) {
-      return err("E310_INVALID_STATE", "Provider 服务已停止");
+      return err("E310_INVALID_STATE", "服务管理器已停止");
     }
     const elapsedTime = Date.now() - startTime;
     if (result.ok) {

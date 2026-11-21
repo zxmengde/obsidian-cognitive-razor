@@ -47,18 +47,18 @@ export function resolveAvailableProvider(
   providerId: string,
 ): Result<ProviderConfig> {
   if (!providerId.trim()) {
-    return err("E401_PROVIDER_NOT_CONFIGURED", "请先配置 Provider");
+    return err("E401_PROVIDER_NOT_CONFIGURED", "请先配置服务");
   }
 
   const provider = settings.providers[providerId];
   if (!provider) {
-    return err("E401_PROVIDER_NOT_CONFIGURED", `Provider 不存在: ${providerId}`);
+    return err("E401_PROVIDER_NOT_CONFIGURED", `服务不存在: ${providerId}`);
   }
   if (!provider.enabled) {
-    return err("E401_PROVIDER_NOT_CONFIGURED", `Provider 已禁用: ${providerId}`);
+    return err("E401_PROVIDER_NOT_CONFIGURED", `服务已禁用: ${providerId}`);
   }
   if (!provider.apiKey.trim() && !provider.baseUrl?.trim()) {
-    return err("E401_PROVIDER_NOT_CONFIGURED", `Provider API Key 未配置: ${providerId}`);
+    return err("E401_PROVIDER_NOT_CONFIGURED", `服务的 API Key 未配置: ${providerId}`);
   }
 
   return ok(provider);

@@ -182,7 +182,7 @@
 
 <section class="cr-duplicates-section">
     <button class="cr-duplicates-heading" type="button" aria-expanded={!collapsed} onclick={() => collapsed = !collapsed}>
-        <strong>{t.workbench.product.similarNotes}</strong>
+        <span class="cr-section-title">{t.workbench.product.similarNotes}</span>
         <span>{!displaySettings.enableSemanticIndexing ? t.workbench.product.indexDisabled : !displaySettings.enableDuplicateDetection ? t.workbench.product.duplicatesDisabled : pairs.length > 0 ? ctx.i18n.format('workbench.product.similarCount', {count: pairs.length}) : t.workbench.product.noSimilar} {pairs.length > 0 ? '›' : ''}</span>
     </button>
     {#if !collapsed}
@@ -227,8 +227,7 @@
 
 <style>
     .cr-duplicates-heading { display: flex; justify-content: space-between; align-items: baseline; gap: var(--cr-space-3); width: 100%; text-align: left; padding: 0; height: auto; border: 0; box-shadow: none; background: none; color: var(--cr-text-normal); }
-    .cr-duplicates-heading strong { font-size: var(--cr-font-base); font-weight: 600; }
-    .cr-duplicates-heading span { font-size: var(--cr-font-xs); color: var(--cr-text-muted); }
+    .cr-duplicates-heading span:not(.cr-section-title) { font-size: var(--cr-font-xs); color: var(--cr-text-muted); }
     .cr-duplicates-empty { color: var(--cr-text-muted); font-size: var(--cr-font-xs); margin-top: var(--cr-space-3); }
     .cr-dup-list {
         display: flex;

@@ -139,7 +139,7 @@ describe("SettingsApplication", () => {
 
     await expect(application.testProvider({ providerId: "provider-1" })).resolves.toEqual({
       ok: false,
-      error: { code: "E500_INTERNAL_ERROR", message: "Provider 测试失败", details: expect.any(Object) },
+      error: { code: "E500_INTERNAL_ERROR", message: "服务测试失败", details: expect.any(Object) },
     });
   });
 

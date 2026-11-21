@@ -27,6 +27,6 @@
 
 记录应用版本、插件版本、协议、模型与测试数据。分别标明单元测试、离线传输截获、真实宿主加载及真实模型业务链路。仅加载插件不能证明生成质量或全部交互已通过。
 
-工作台根节点为 `.cr-workbench-root`，队列为 `.cr-queue-section`，任务行为 `.cr-task-item`，设置为 `.cr-settings-root`。设置可能位于独立窗口，主窗口查不到节点时先核对窗口。
+工作台根节点为 `.cr-workbench-root`，队列为 `.cr-queue-section`，任务行为 `.cr-task-item`，设置为原生设置页，服务组为 `.cr-services`、服务行为 `.cr-service-row`，Svelte 子页面为 `.cr-setting-page`。设置可能位于独立窗口（`app.setting.win`），主窗口查不到节点时先核对窗口；`dev:screenshot` 只拍主窗口。
 
 测试结束检查新增错误、任务数和实际文件结果；恢复筛选及草稿等界面状态。测试材料与交付清理见[开发约定](../AGENTS.md)，报告中只保留必要证据。

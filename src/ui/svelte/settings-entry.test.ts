@@ -4,41 +4,31 @@ import sveltePlugin from 'esbuild-svelte';
 import sveltePreprocess from 'svelte-preprocess';
 import { compile } from 'svelte/compiler';
 import { I18n } from '../../core/i18n';
-import { DEFAULT_SETTINGS, SettingsStore } from '../../data/settings-store';
-import { SettingsApplication } from '../../app/settings-application';
-import type {
-  onSettingsSection as OnSettingsSection,
-  requestSettingsSection as RequestSettingsSection,
-  takeSettingsSection as TakeSettingsSection,
-  clearSettingsSection as ClearSettingsSection,
-} from '../settings-intent';
+import { DEFAULT_SETTINGS } from '../../data/settings-store';
+import {
+  cloneDefaults,
+  createSettingsEnvironment,
+  findRow,
+  loadSettingsBundle,
+  type SettingsBundle,
+  type SettingsEnvironment,
+} from './settings-test-support';
 
-let ui: {
+/** 工作台的未配置提示位于工作台组件内；这里单独打包，避免工作台改动拖垮设置页测试。 */
+let workbench: {
   mount: (component: unknown, options: { target: HTMLElement; props: Record<string, unknown> }) => object;
   unmount: (instance: object) => Promise<void>;
   flushSync: () => void;
-  SettingsRoot: unknown;
   CreateHost: unknown;
-  // The settings view is bundled separately, so the intent channel must come
-  // from that same bundle or the mounted view never sees the request.
-  intent: {
-    requestSettingsSection: typeof RequestSettingsSection;
-    takeSettingsSection: typeof TakeSettingsSection;
-    onSettingsSection: typeof OnSettingsSection;
-    clearSettingsSection: typeof ClearSettingsSection;
-  };
 };
 
-let requestSettingsSection: typeof RequestSettingsSection;
-let takeSettingsSection: typeof TakeSettingsSection;
-let onSettingsSection: typeof OnSettingsSection;
-let clearSettingsSection: typeof ClearSettingsSection;
+let bundle: SettingsBundle;
 
 beforeAll(async () => {
-  Object.defineProperty(HTMLElement.prototype, 'empty', { configurable: true, value() { this.replaceChildren(); } });
+  bundle = await loadSettingsBundle();
   const result = await build({
-    stdin: { contents: 'export { mount, unmount, flushSync } from "svelte"; export { default as SettingsRoot } from "./src/ui/svelte/settings/SettingsRoot.svelte"; export { default as CreateHost } from "create-entry-host"; export * as intent from "./src/ui/settings-intent";', resolveDir: process.cwd() },
-    bundle: true, write: false, format: 'iife', globalName: 'SettingsEntryUI',
+    stdin: { contents: 'export { mount, unmount, flushSync } from "svelte"; export { default as CreateHost } from "create-entry-host";', resolveDir: process.cwd() },
+    bundle: true, write: false, format: 'iife', globalName: 'CreateEntryUI',
     conditions: ['svelte', 'browser'], mainFields: ['svelte', 'browser', 'module', 'main'],
     alias: { obsidian: './__mocks__/obsidian.ts', '@': './src' },
     plugins: [{ name: 'create-entry-host', setup(builder) {
@@ -49,110 +39,127 @@ beforeAll(async () => {
       ).js.code }));
     } }, sveltePlugin({ preprocess: sveltePreprocess(), compilerOptions: { css: 'injected' } })],
   });
-  ui = new Function(`${result.outputFiles[0].text}; return SettingsEntryUI;`)();
-  ({ requestSettingsSection, takeSettingsSection, onSettingsSection, clearSettingsSection } = ui.intent);
+  workbench = new Function(`${result.outputFiles[0].text}; return CreateEntryUI;`)();
 });
-afterAll(() => { Reflect.deleteProperty(HTMLElement.prototype, 'empty'); });
-beforeEach(() => { clearSettingsSection(); });
 
-async function settingsHarness({ withProvider = true }: { withProvider?: boolean } = {}) {
-  const settings = structuredClone(DEFAULT_SETTINGS);
-  if (withProvider) {
-    settings.providers.daily = { apiKey: '', enabled: true, apiFormat: 'openai-chat-completions', embeddingApiFormat: 'openai-embeddings', defaultChatModel: 'chat-main', defaultEmbedModel: 'embed-main' };
-    settings.defaultProviderId = 'daily';
-  }
-  const store = new SettingsStore({ loadData: async () => settings, saveData: async () => undefined } as never);
-  await store.loadSettings();
-  const probe = vi.fn(async () => ({ ok: true as const, value: { chat: true, embedding: true } }));
-  const application = new SettingsApplication({
-    settingsStore: store,
-    providerProbe: { probe } as never,
-    ensureSemanticIndex: vi.fn(async () => ({}) as never),
-    resetRuntimeData: vi.fn(async () => ({ ok: true as const, value: undefined })),
-  });
-  const target = document.body.appendChild(document.createElement('div'));
-  const navigate = vi.fn(() => { target.scrollTop = 0; });
-  const instance = ui.mount(ui.SettingsRoot, { target, props: { app: {}, i18n: new I18n(), settingsApplication: application, onTabNavigate: navigate } });
-  ui.flushSync();
-  return {
-    target, probe, navigate,
-    cleanup: async () => { await ui.unmount(instance); application.dispose(); target.remove(); },
-  };
+beforeEach(() => { bundle.intent.clearSettingsSection(); });
+
+afterAll(() => { document.body.replaceChildren(); });
+
+function withDailyService() {
+  const settings = cloneDefaults();
+  settings.providers.daily = { apiKey: '', enabled: true, apiFormat: 'openai-chat-completions', embeddingApiFormat: 'openai-embeddings', defaultChatModel: 'chat-main', defaultEmbedModel: 'embed-main' };
+  settings.defaultProviderId = 'daily';
+  return settings;
 }
 
-describe('connection test as a primary settings action', () => {
-  it('offers the connection test on the card and runs it from there', async () => {
-    const h = await settingsHarness();
-    const i18n = new I18n();
-    try {
-      const card = Array.from(h.target.querySelectorAll<HTMLElement>('.cr-provider-card')).find(el => el.querySelector('.cr-provider-card__name')?.textContent?.includes('daily'))!;
-      const action = card.querySelector<HTMLButtonElement>('.cr-provider-card__actions button')!;
-      expect(action.textContent?.trim()).toBe(i18n.t('settings.provider.testConnection'));
-      // The promoted button must not need the "⋯" menu to be opened first.
-      expect(card.querySelector<HTMLDetailsElement>('.cr-provider-extra')!.open).toBe(false);
-      action.click();
-      await vi.waitFor(() => expect(h.probe).toHaveBeenCalledOnce());
-      expect((h.probe.mock.calls[0] as unknown as [unknown])[0]).toMatchObject({ providerId: 'daily' });
-      await vi.waitFor(() => { ui.flushSync(); expect(card.querySelector('.cr-provider-probe-status')).not.toBeNull(); });
-    } finally { await h.cleanup(); }
+async function withEnv(run: (env: SettingsEnvironment) => Promise<void>, settings = withDailyService()) {
+  const env = await createSettingsEnvironment({ settings });
+  try {
+    await run(env);
+  } finally {
+    document.body.querySelectorAll('.modal-container').forEach((modal) => modal.remove());
+    await env.cleanup();
+  }
+}
+
+describe('connection test as a service row action', () => {
+  it('offers the connection test on the row and runs it from there', async () => {
+    await withEnv(async (env) => {
+      const i18n = new I18n();
+      const row = findRow(env.tab.containerEl, 'daily');
+      const testButton = row.querySelector<HTMLButtonElement>('button[aria-label="测试连接 daily"]')!;
+      expect(testButton.textContent).toBe(i18n.t('settings.native.testService'));
+      // 连接测试直接在行上，不需要先打开「更多操作」菜单。
+      expect(env.bundle.obs.shownMenus).toHaveLength(0);
+
+      testButton.click();
+      expect(testButton.textContent).toBe(i18n.t('settings.native.testing'));
+      expect(testButton.disabled).toBe(true);
+      await vi.waitFor(() => expect(env.probe).toHaveBeenCalledOnce());
+      expect((env.probe.mock.calls[0] as unknown as [unknown])[0]).toMatchObject({ providerId: 'daily' });
+      await vi.waitFor(() => {
+        env.bundle.flushSync();
+        expect(row.querySelector('.cr-service-probe .cr-provider-probe-status')).not.toBeNull();
+      });
+      expect(testButton.textContent).toBe(i18n.t('settings.native.testService'));
+      expect(testButton.disabled).toBe(false);
+    });
   });
 
-  it('keeps the temporary-parameter probe inside the menu', async () => {
-    const h = await settingsHarness();
-    try {
-      const card = Array.from(h.target.querySelectorAll<HTMLElement>('.cr-provider-card')).find(el => el.querySelector('.cr-provider-card__name')?.textContent?.includes('daily'))!;
-      expect(card.querySelector('.cr-provider-card__actions')?.querySelector('[aria-label*="临时"]')).toBeNull();
-      expect(card.querySelector('.cr-provider-card__actions')?.textContent).not.toContain('临时使用此连接');
-      card.querySelector<HTMLDetailsElement>('.cr-provider-extra')!.querySelector('summary')!.click();
-      ui.flushSync();
-      expect(card.querySelector('.cr-provider-link')).not.toBeNull();
-      expect(h.probe).not.toHaveBeenCalled();
-    } finally { await h.cleanup(); }
+  it('keeps the temporary-parameter probe inside the more-actions menu', async () => {
+    await withEnv(async (env) => {
+      const i18n = new I18n();
+      const row = findRow(env.tab.containerEl, 'daily');
+      expect(row.textContent).not.toContain(i18n.t('settings.redesign.testUsingProvider'));
+
+      row.querySelector<HTMLElement>('[aria-label="更多操作 daily"]')!.click();
+      const menu = env.bundle.obs.shownMenus.at(-1)!;
+      // 默认服务不显示「设为默认」；删除由原生列表的删除按钮提供，不在菜单里。
+      expect(menu.items.map((item) => item.title)).toEqual([i18n.t('settings.native.disable'), i18n.t('settings.native.taskProbe')]);
+      expect(env.probe).not.toHaveBeenCalled();
+
+      menu.items.find((item) => item.title === i18n.t('settings.native.taskProbe'))!.trigger();
+      const modal = document.body.querySelector<HTMLElement>('.modal-container')!;
+      expect(modal.querySelector('.modal-title')?.textContent).toBe(i18n.format('settings.native.taskProbeTitle', { id: 'daily' }));
+      // 打开弹窗只是选择参数，不发起请求。
+      expect(env.probe).not.toHaveBeenCalled();
+
+      const run = Array.from(modal.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent === i18n.t('settings.native.taskProbeRun'))!;
+      run.click();
+      await vi.waitFor(() => expect(env.probe).toHaveBeenCalledOnce());
+      expect((env.probe.mock.calls[0] as unknown as [unknown])[0]).toMatchObject({ providerId: 'daily', taskType: 'write' });
+      await vi.waitFor(() => {
+        env.bundle.flushSync();
+        expect(modal.querySelector('.cr-task-probe-result .cr-provider-probe-status')).not.toBeNull();
+      });
+      // 临时测试不改变保存的任务配置。
+      expect(env.store.getSettings().taskModels.write.providerId).toBe('');
+      expect(env.save).not.toHaveBeenCalled();
+    });
   });
 });
 
 describe('settings section intent', () => {
   it('delivers a pending request once and live requests to mounted listeners', () => {
+    const { intent } = bundle;
     const seen: string[] = [];
-    requestSettingsSection('connections');
-    expect(takeSettingsSection()).toBe('connections');
-    expect(takeSettingsSection()).toBeUndefined();
-    const stop = onSettingsSection((section) => seen.push(section));
-    requestSettingsSection('connections');
+    intent.requestSettingsSection('connections');
+    expect(intent.takeSettingsSection()).toBe('connections');
+    expect(intent.takeSettingsSection()).toBeUndefined();
+    const stop = intent.onSettingsSection((section) => seen.push(section));
+    intent.requestSettingsSection('connections');
     expect(seen).toEqual(['connections']);
-    expect(takeSettingsSection()).toBeUndefined();
+    expect(intent.takeSettingsSection()).toBeUndefined();
     stop();
-    requestSettingsSection('connections');
+    intent.requestSettingsSection('connections');
     expect(seen).toEqual(['connections']);
-    expect(takeSettingsSection()).toBe('connections');
+    expect(intent.takeSettingsSection()).toBe('connections');
   });
 
-  it('lands on the connections section when the workbench hint opens settings', async () => {
-    const h = await settingsHarness({ withProvider: false });
-    try {
-      requestSettingsSection('connections');
-      // No connection is configured yet, so the section has no list to focus;
-      // the landing spot must still be reachable through the add button.
+  it('lands on the add-service button when the workbench hint opens settings without services', async () => {
+    await withEnv(async (env) => {
+      const i18n = new I18n();
+      bundle.intent.requestSettingsSection('connections');
+      // 还没有服务时没有可测试的行，落点是添加按钮。
       await vi.waitFor(() => {
-        ui.flushSync();
-        expect(document.activeElement?.closest('#cr-settings-connections')).not.toBeNull();
+        env.bundle.flushSync();
+        expect(document.activeElement?.closest('.cr-services')).not.toBeNull();
       });
       expect(document.activeElement?.tagName).toBe('BUTTON');
-      expect(h.target.querySelector('[role="tabpanel"]')?.id).toBe('cr-settings-panel-providers');
-      expect(h.navigate).toHaveBeenCalled();
-    } finally { await h.cleanup(); }
+      expect(document.activeElement?.textContent).toBe(i18n.t('settings.native.addService'));
+    }, cloneDefaults());
   });
 
-  it('focuses the promoted connection test when a connection exists', async () => {
-    const h = await settingsHarness();
-    try {
-      requestSettingsSection('connections');
+  it('focuses the connection test of the first service when a connection exists', async () => {
+    await withEnv(async (env) => {
+      bundle.intent.requestSettingsSection('connections');
       await vi.waitFor(() => {
-        ui.flushSync();
-        expect(document.activeElement?.closest('#cr-settings-connections')).not.toBeNull();
+        env.bundle.flushSync();
+        expect(document.activeElement?.closest('.cr-services')).not.toBeNull();
       });
-      expect(document.activeElement?.closest('.cr-settings-section')?.id).toBe('cr-settings-connections');
-    } finally { await h.cleanup(); }
+      expect(document.activeElement?.getAttribute('aria-label')).toBe('测试连接 daily');
+    });
   });
 });
 
@@ -161,7 +168,7 @@ describe('unconfigured workbench hint', () => {
     const i18n = new I18n();
     const onOpenSettings = vi.fn();
     const target = document.body.appendChild(document.createElement('div'));
-    const instance = ui.mount(ui.CreateHost, { target, props: {
+    const instance = workbench.mount(workbench.CreateHost, { target, props: {
       onOpenSettings,
       context: {
         i18n, app: { metadataCache: { on: () => ({}), offref() {}, getFileCache: () => null }, vault: { on: () => ({}), offref() {} } },
@@ -170,13 +177,13 @@ describe('unconfigured workbench hint', () => {
       },
     } });
     try {
-      ui.flushSync();
+      workbench.flushSync();
       const hint = target.querySelector<HTMLButtonElement>('.cr-create-help--action')!;
       expect(hint.tagName).toBe('BUTTON');
       expect(hint.textContent).toContain(i18n.messages.workbench.product.notConfigured);
       expect(hint.textContent).toContain(i18n.messages.workbench.product.openSettings);
       hint.click();
       expect(onOpenSettings).toHaveBeenCalledOnce();
-    } finally { await ui.unmount(instance); target.remove(); }
+    } finally { await workbench.unmount(instance); target.remove(); }
   });
 });

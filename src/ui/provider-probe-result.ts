@@ -58,7 +58,7 @@ export function toProviderProbeReadModel(
 
 export function failedProviderProbe(config: ProviderConfig): ProviderProbeReadModel {
   return toProviderProbeReadModel(
-    { ok: false, error: { code: "E500_INTERNAL_ERROR", message: "Provider 测试失败" } },
+    { ok: false, error: { code: "E500_INTERNAL_ERROR", message: "服务测试失败" } },
     config,
   );
 }

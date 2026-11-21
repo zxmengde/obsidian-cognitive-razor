@@ -1,863 +1,908 @@
 import * as obsidian from "obsidian";
+import { readFileSync } from "node:fs";
+import { afterAll, describe, expect, it, vi } from "vitest";
+import type { SettingDefinitionGroup, SettingDefinitionItem } from "obsidian";
+import type { SemanticIndexPort } from "../../app/settings-application";
+import { I18n } from "../../core/i18n";
 import { ProviderManager } from "../../core/provider-manager";
 import { buildTaskChatRequest } from "../../core/task-execution-support";
 import { resolveTaskModelSnapshot } from "../../core/task-model-resolver";
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { build } from 'esbuild';
-import sveltePlugin from 'esbuild-svelte';
-import sveltePreprocess from 'svelte-preprocess';
-import { compile } from 'svelte/compiler';
-import { readFileSync } from 'node:fs';
-import { I18n } from '../../core/i18n';
-import { DEFAULT_SETTINGS, SettingsStore } from '../../data/settings-store';
-import { SettingsApplication, type SemanticIndexPort } from '../../app/settings-application';
-import { taskSettingsSummary } from '../settings-summaries';
+import { DEFAULT_SETTINGS, SettingsStore } from "../../data/settings-store";
+import type { PluginSettings } from "../../types";
+import { taskSettingsSummary } from "../settings-summaries";
+import {
+  cloneDefaults,
+  closeSettingsPage,
+  createSettingsEnvironment,
+  findButton,
+  findRow,
+  hostTab,
+  openSettingsPage,
+  settle,
+  type SettingsBundle,
+  type SettingsEnvironment,
+} from "./settings-test-support";
 
-let ui: {
-    mount: (component: unknown, options: { target: HTMLElement; props: Record<string, unknown> }) => object;
-    unmount: (instance: object) => Promise<void>;
-    flushSync: () => void;
-    SettingsRoot: unknown;
-    QueueHost: unknown;
-};
-beforeAll(async () => {
-    Object.defineProperty(HTMLElement.prototype, "empty", { configurable: true, value() { this.replaceChildren(); } });
-    const result = await build({
-        stdin: { contents: 'export { mount, unmount, flushSync } from "svelte"; export { default as SettingsRoot } from "./src/ui/svelte/settings/SettingsRoot.svelte"; export { default as QueueHost } from "queue-display-test-host";', resolveDir: process.cwd() },
-        bundle: true, write: false, format: 'iife', globalName: 'SettingsTestUI',
-        conditions: ['svelte', 'browser'], mainFields: ['svelte', 'browser', 'module', 'main'],
-        alias: { obsidian: './__mocks__/obsidian.ts', '@': './src' },
-        plugins: [{ name: 'queue-display-test-host', setup(builder) {
-            builder.onResolve({ filter: /^queue-display-test-host$/ }, ({ path }) => ({ path, namespace: 'test-host' }));
-            builder.onLoad({ filter: /.*/, namespace: 'test-host' }, () => ({ resolveDir: process.cwd(), contents: compile('<script>import Queue from "./src/ui/svelte/workbench/QueueSection.svelte"; import { setWorkbenchContext } from "./src/ui/bridge/context"; let {context, tasks, status} = $props(); setWorkbenchContext(context);</script><Queue {tasks} {status} />', { filename: 'QueueHost.svelte', css: 'injected' }).js.code }));
-        } }, sveltePlugin({ preprocess: sveltePreprocess(), compilerOptions: { css: 'injected' } })],
-    });
-    ui = new Function(`${result.outputFiles[0].text}; return SettingsTestUI;`)();
-});
-afterAll(() => { document.body.replaceChildren(); Reflect.deleteProperty(HTMLElement.prototype, "empty"); });
+const i18n = new I18n();
+/** 原生设置行文字：「服务」「任务模型」等设置页 key。 */
+const N = (key: string) => i18n.t(`settings.native.${key}`);
+const LOC = (key: string) => i18n.t(`settings.locations.${key}`);
+const TASK_NAMES = ["定义", "标记", "撰写", "核查", "合并", "记忆卡片", "语义索引"];
 
-async function harness(failSave = false, saveDelay?: () => Promise<void>, expandOverrides = true) {
-    const settings = structuredClone(DEFAULT_SETTINGS);
-    settings.providers.daily = { apiKey: '', enabled: true, apiFormat: 'openai-chat-completions', embeddingApiFormat: 'openai-embeddings', defaultChatModel: 'chat-main', defaultEmbedModel: 'embed-main', parameters: { temperature: 0.7 }, capabilities: { temperature: true } };
-    settings.providers.research = { ...settings.providers.daily, defaultChatModel: 'reasoning-model' };
-    settings.defaultProviderId = 'daily';
-    settings.taskModels.write = { providerId: 'research', model: 'reasoning-model', parameters: { topP: 0.9, maxTokens: null } };
-    settings.enableSemanticIndexing = true;
-    settings.enableDuplicateDetection = true;
-    const save = vi.fn(async () => { await saveDelay?.(); if (failSave) { failSave = false; throw new Error('synthetic disk failure'); } });
-    const store = new SettingsStore({ loadData: async () => settings, saveData: save } as never);
-    await store.loadSettings();
-    const probe = vi.fn(async () => ({ ok: true as const, value: { chat: true, embedding: true } }));
-    const maintenance = {
-        scanSemanticIndex: vi.fn(async () => ({ ok: true as const, value: { eligible: 3, indexed: 2, missing: 1, missingNotes: [{ cruid: 'missing-one', name: '缺失笔记', path: 'C/缺失.md', type: 'entity', status: 'draft' }] } })),
-        inspectVectorFiles: vi.fn(async () => ({ ok: true as const, value: { indexedEntries: 2, physicalFiles: 3, orphanFiles: [{ path: 'vectors/orphan.json', mtime: 1, size: 1 }], missingEntries: [], staleEntries: [], invalidEntries: [] } })),
-        cleanupOrphanedVectorFiles: vi.fn(async () => ({ ok: true as const, value: { deleted: 1, skipped: 0, failed: 0 } })),
-        embedMissingSemanticIndex: vi.fn(async () => ({ ok: true as const, value: { eligible: 3, indexed: 1, skipped: 0, failed: 0 } })),
-        embedOneSemanticIndex: vi.fn(async () => ({ ok: true as const, value: { indexed: 1, failed: 0 } })),
-        rebuildSemanticIndex: vi.fn(async () => ({ ok: true as const, value: { indexed: 3, skipped: 0, failed: 0 } })),
-        rebuildDuplicatePairs: vi.fn(async () => ({ ok: true as const, value: 2 })),
-        cancelSemanticIndexRebuild: vi.fn(),
-    };
-    const ensure = vi.fn(async () => maintenance as unknown as SemanticIndexPort);
-    const reset = vi.fn(async () => ({ ok: true as const, value: undefined }));
-    const application = new SettingsApplication({ settingsStore: store, providerProbe: { probe } as never, ensureSemanticIndex: ensure, resetRuntimeData: reset });
-    const target = document.body.appendChild(document.createElement('div'));
-    const navigate = vi.fn(() => { target.scrollTop = 0; });
-    const instance = ui.mount(ui.SettingsRoot, { target, props: { app: {}, i18n: new I18n(), settingsApplication: application, onTabNavigate: navigate } });
-    ui.flushSync();
-    if (expandOverrides) {
-        target.querySelector<HTMLButtonElement>('[aria-label="按任务单独调整（进阶）"]')!.click();
-        ui.flushSync();
-    }
-    const button = (label: string) => {
-        const result = Array.from(target.querySelectorAll<HTMLElement>('button, [role="button"]')).find(el => el.textContent?.trim().replace(/\s*›$/, '') === label);
-        if (!result) throw new Error(`Missing button: ${label}`);
-        return result;
-    };
-    const click = (label: string) => { button(label).click(); ui.flushSync(); };
-    const settle = async () => { await new Promise(resolve => setTimeout(resolve, 0)); ui.flushSync(); };
-    const openTask = async (task: string) => {
-        target.querySelector<HTMLButtonElement>(`#cr-task-trigger-${task}`)!.click();
-        await settle();
-        return target.querySelector<HTMLElement>('.cr-task-detail-view:not([hidden])')!;
-    };
-    const back = async () => {
-        target.querySelector<HTMLButtonElement>('.cr-task-detail-view:not([hidden]) [aria-label="返回 AI 与模型"]')!.click();
-        await settle();
-    };
-    return { target, application, store, save, probe, ensure, reset, maintenance, click, button, settle, navigate,
-        openTask, back,
-        cleanup: async () => { await ui.unmount(instance); application.dispose(); target.remove(); } };
+/** 基础夹具：一个默认服务、一个单独设置写作任务的服务。 */
+function baseSettings(): PluginSettings {
+  const settings = cloneDefaults();
+  settings.providers.daily = {
+    apiKey: "", enabled: true, apiFormat: "openai-chat-completions", embeddingApiFormat: "openai-embeddings",
+    defaultChatModel: "chat-main", defaultEmbedModel: "embed-main", parameters: { temperature: 0.7 }, capabilities: { temperature: true },
+  };
+  settings.providers.research = { ...settings.providers.daily, defaultChatModel: "reasoning-model" };
+  settings.defaultProviderId = "daily";
+  settings.taskModels.write = { providerId: "research", model: "reasoning-model", parameters: { topP: 0.9, maxTokens: null } };
+  settings.enableSemanticIndexing = true;
+  settings.enableDuplicateDetection = true;
+  return settings;
 }
 
-describe('approved settings information architecture', () => {
-    it('has no provider output-mode choice or per-task output override', async () => {
-        const h = await harness();
-        try {
-            for (const taskType of ['define', 'tag', 'write', 'verify']) {
-                const task = await h.openTask(taskType);
-                expect(task.querySelector(`#tmc-${taskType}-structured`)).toBeNull();
-                expect(task.textContent).not.toContain('结构化输出');
-                await h.back();
-            }
-            const modalSource = readFileSync('src/ui/svelte/modals/ProviderModal.svelte', 'utf8');
-            expect(modalSource).not.toContain('pm-structured-output');
-            expect(modalSource).not.toContain('formStructuredOutput');
-            expect(h.save).not.toHaveBeenCalled(); expect(h.probe).not.toHaveBeenCalled();
-        } finally { await h.cleanup(); }
-    });
-    it('propagates real UI edits through persisted settings and reload into the actual request payload', async () => {
-        const h = await harness();
-        const request = vi.spyOn(obsidian, 'requestUrl').mockResolvedValue({ status: 200, text: '', json: { choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] } } as never);
-        try {
-            const task = await h.openTask('write');
-            const change = async (selector: string, value: string) => {
-                const input = task.querySelector<HTMLInputElement | HTMLSelectElement>(selector)!;
-                input.value = value; input.dispatchEvent(new Event('change', { bubbles: true })); await h.settle();
-            };
-            await change('#tmc-write-provider', 'daily');
-            await change('#tmc-write-model', 'ui-selected-model');
-            task.querySelector<HTMLDetailsElement>('.cr-task-model-card__advanced')!.querySelector('summary')!.click(); ui.flushSync();
-            await change('#tmc-write-temp-mode', 'set'); await change('#tmc-write-temp', '0.25');
-            await change('#tmc-write-max-tokens-mode', 'set'); await change('#tmc-write-max-tokens', '512');
-            const saved = (h.save.mock.calls.at(-1) as unknown as [typeof DEFAULT_SETTINGS])[0];
-            const reloaded = new SettingsStore({ loadData: async () => structuredClone(saved), saveData: vi.fn() } as never);
-            expect((await reloaded.loadSettings()).ok).toBe(true);
-            expect(reloaded.getSettings()).toEqual(h.store.getSettings());
-            const manager = new ProviderManager(reloaded, { debug() {}, info() {}, warn() {}, error() {} });
-            try {
-                expect((await manager.chat(buildTaskChatRequest('write', '<system_instructions>policy</system_instructions>synthetic input', resolveTaskModelSnapshot(reloaded.getSettings(), 'write')))).ok).toBe(true);
-                const body = JSON.parse((request.mock.calls[0][0] as { body: string }).body);
-                expect(body).toMatchObject({ model: 'ui-selected-model', temperature: 0.25, max_tokens: 512 });
-            } finally { manager.dispose(); }
-            expect(h.probe).not.toHaveBeenCalled();
-        } finally { request.mockRestore(); await h.cleanup(); }
-    });
+/** 语义索引替身：与 SemanticIndexPort 的调用一一对应，结果形状与真实返回一致。 */
+function fakeIndex() {
+  return {
+    scanSemanticIndex: vi.fn(async () => ({ ok: true as const, value: { eligible: 3, indexed: 2, missing: 1, missingNotes: [{ cruid: "missing-one", name: "缺失笔记", path: "C/缺失.md", type: "entity", status: "draft" }] } })),
+    inspectVectorFiles: vi.fn(async () => ({ ok: true as const, value: { indexedEntries: 2, physicalFiles: 3, orphanFiles: [{ path: "vectors/orphan.json", mtime: 1, size: 1 }], missingEntries: [], staleEntries: [], invalidEntries: [] } })),
+    cleanupOrphanedVectorFiles: vi.fn(async () => ({ ok: true as const, value: { deleted: 1, skipped: 0, failed: 0 } })),
+    embedMissingSemanticIndex: vi.fn(async () => ({ ok: true as const, value: { eligible: 3, indexed: 1, skipped: 0, failed: 0 } })),
+    embedOneSemanticIndex: vi.fn(async () => ({ ok: true as const, value: { indexed: 1, failed: 0 } })),
+    rebuildSemanticIndex: vi.fn(async () => ({ ok: true as const, value: { indexed: 3, skipped: 0, failed: 0 } })),
+    rebuildDuplicatePairs: vi.fn(async () => ({ ok: true as const, value: 2 })),
+    cancelSemanticIndexRebuild: vi.fn(),
+  };
+}
 
-    it('keeps connection actions folded and preserves temporary forced-provider probes without editing tasks', async () => {
-        const h = await harness();
-        try {
-            const card = Array.from(h.target.querySelectorAll<HTMLElement>('.cr-provider-card')).find(el => el.querySelector('.cr-provider-card__name')?.textContent?.includes('daily'))!;
-            const menu = card.querySelector<HTMLDetailsElement>('.cr-provider-extra')!;
-            expect(menu.open).toBe(false);
-            expect(h.target.querySelector<HTMLSelectElement>('[aria-label="默认 Provider"] option[value="daily"]')?.textContent).toContain('daily · chat-main');
-            const before = structuredClone(h.store.getSettings().taskModels);
-            menu.querySelector('summary')!.click(); ui.flushSync();
-            card.querySelector<HTMLButtonElement>('.cr-provider-link')!.click(); ui.flushSync();
-            const mode = card.querySelector<HTMLSelectElement>('[aria-label="测试范围"]')!;
-            mode.value = 'temporary'; mode.dispatchEvent(new Event('change', { bubbles: true })); ui.flushSync();
-            card.querySelector<HTMLButtonElement>('.cr-provider-test button')!.click(); await h.settle();
-            expect((h.probe.mock.calls[0] as unknown as [unknown])[0]).toMatchObject({ providerId: 'daily', taskType: 'write', taskConfig: { providerId: 'daily', model: 'reasoning-model' } });
-            expect(card.querySelector('.cr-provider-probe-status__target')?.textContent).toContain('临时使用此连接');
-            expect(h.store.getSettings().taskModels).toEqual(before); expect(h.save).not.toHaveBeenCalled();
-        } finally { await h.cleanup(); }
-    });
-    it('retains location preview and original configuration after save failure, then retries once', async () => {
-        const h = await harness(true);
-        try {
-            h.click('笔记与卡片'); h.target.querySelector<HTMLButtonElement>('#cr-locations-edit')!.click(); ui.flushSync();
-            const input = h.target.querySelector<HTMLInputElement>('[aria-label="知识库根目录"]')!;
-            input.value = 'New/Root'; input.dispatchEvent(new Event('change', { bubbles: true })); ui.flushSync();
-            h.click('预览变化'); h.click('确认并保存位置'); await h.settle();
-            expect(h.store.getSettings().cardsSourceRoot).toBe(DEFAULT_SETTINGS.cardsSourceRoot);
-            expect(h.target.querySelector('.cr-location-preview')).toBeTruthy();
-            expect(h.target.querySelector('.cr-location-editor [role="alert"]')).toBeTruthy();
-            h.click('确认并保存位置'); await h.settle();
-            expect(h.store.getSettings().cardsSourceRoot).toBe('New/Root'); expect(h.save).toHaveBeenCalledTimes(2);
-        } finally { await h.cleanup(); }
-    });
-    it('tests the actual index task snapshot and invalidates the displayed result after edits', async () => {
-        const h = await harness();
-        try {
-            await h.store.updateTaskModel('index', { providerId: 'research', model: 'actual-embed', parameters: { embeddingDimension: 256 } }); await h.settle();
-            const task = await h.openTask('index');
-            const button = task.querySelector<HTMLButtonElement>('.cr-task-details__probe button')!;
-            button.click(); await h.settle();
-            expect(h.probe).toHaveBeenCalledOnce();
-            expect((h.probe.mock.calls[0] as unknown as [unknown])[0]).toMatchObject({ providerId: 'research', taskType: 'index', taskConfig: { providerId: 'research', model: 'actual-embed', embeddingDimension: 256 } });
-            expect(task.querySelector('.cr-provider-probe-status__target')?.textContent?.replace(/\s+/g, ' ')).toContain('research · actual-embed · 请求维度: 256');
-            expect(task.querySelector('.cr-provider-probe-status__capabilities')?.textContent).toContain(new I18n().t('settings.provider.probe.status.disabled'));
-            await h.store.updateTaskModel('index', { model: 'changed-embed' }); await h.settle();
-            expect(task.querySelector('.cr-provider-probe-status')).toBeNull();
-            h.probe.mockResolvedValueOnce({ ok: false, error: { code: 'E211_MODEL_SCHEMA_VIOLATION', message: 'Synthetic' } } as never);
-            button.click(); await h.settle();
-            expect(task.querySelector('.cr-provider-probe-status__target')?.textContent).toContain('changed-embed');
-            expect(task.querySelector('.cr-provider-probe-status')?.textContent).toContain(new I18n().t('settings.redesign.testOutcomes.failed'));
-        } finally { await h.cleanup(); }
-    });
-    it('makes model inheritance explicit and never persists an empty specified draft', async () => {
-        const h = await harness();
-        try {
-            const cards = await h.openTask('cards');
-            const mode = cards.querySelector<HTMLSelectElement>('#tmc-cards-model-mode')!;
-            expect(mode.value).toBe('inherit'); expect(cards.querySelector('#tmc-cards-model')).toBeNull();
-            mode.value = 'specified'; mode.dispatchEvent(new Event('change', { bubbles: true })); await h.settle();
-            expect(h.store.getSettings().taskModels.cards.model).toBe('chat-main');
-            const model = cards.querySelector<HTMLInputElement>('#tmc-cards-model')!;
-            model.value = ''; model.dispatchEvent(new Event('change', { bubbles: true })); await h.settle();
-            expect(h.store.getSettings().taskModels.cards.model).toBe('chat-main'); expect(cards.querySelector('[role="alert"]')).toBeTruthy();
-            await h.back(); await h.openTask('cards'); expect(model.value).toBe('');
-            mode.value = 'inherit'; mode.dispatchEvent(new Event('change', { bubbles: true })); await h.settle();
-            expect(h.store.getSettings().taskModels.cards.model).toBe(''); expect(h.probe).not.toHaveBeenCalled();
-        } finally { await h.cleanup(); }
-    });
-    it('leaves seven custom custom paths intact until conversion is previewed and confirmed', async () => {
-        const h = await harness();
-        try {
-            const custom = { directoryScheme: { domain: 'Old/A', issue: 'Old/B', theory: 'Different/C', entity: 'D', mechanism: 'E' }, cardsSourceRoot: 'Original', cardsTargetRoot: 'Decks' };
-            await h.store.updateSettings(custom); await h.settle(); h.save.mockClear();
-            h.click('笔记与卡片'); expect(h.target.querySelector('.cr-location-heading')?.textContent).toContain('自定义位置');
-            expect(h.target.querySelector('.cr-location-example')).toBeNull();
-            expect(h.target.querySelector('.cr-workflow-tab')?.textContent).toContain('机制笔记目录不在卡片来源范围内');
-            expect(h.store.getSettings()).toMatchObject(custom);
-            h.target.querySelector<HTMLButtonElement>('#cr-locations-edit')!.click(); ui.flushSync();
-            expect(h.target.querySelector<HTMLInputElement>('[aria-label="领域"]')?.value).toBe('Old/A');
-            const mode = h.target.querySelector<HTMLSelectElement>('.cr-location-editor select')!;
-            mode.value = 'unified'; mode.dispatchEvent(new Event('change', { bubbles: true })); ui.flushSync();
-            h.click('预览变化'); expect(h.target.querySelectorAll('.cr-location-change')).toHaveLength(7);
-            expect(h.store.getSettings()).toMatchObject(custom); expect(h.save).not.toHaveBeenCalled();
-            h.click('确认并保存位置'); await h.settle();
-            expect(h.store.getSettings().directoryScheme.domain).toBe('Original/1-领域');
-            expect(h.store.getSettings().cardsTargetRoot).toBe('Decks'); expect(h.save).toHaveBeenCalledOnce();
-            expect(h.target.querySelector('.cr-location-example')?.textContent).toContain('Original/5-机制/笔记.md → Decks/5-机制/笔记-decks.md');
-            expect(h.probe).not.toHaveBeenCalled(); expect(h.ensure).not.toHaveBeenCalled();
-        } finally { await h.cleanup(); }
-    });
-    it.each(['', 'x', 'prefix-test-only-suffix'])('shows only configuration status for a saved credential (%s)', async (key) => {
-        const h = await harness();
-        try {
-            expect((await h.store.updateProvider('daily', { apiKey: key })).ok).toBe(true); await h.settle();
-            const card = Array.from(h.target.querySelectorAll<HTMLElement>('.cr-provider-card')).find(el => el.querySelector('.cr-provider-card__name')?.textContent?.includes('daily'))!;
-            const details = card.querySelector<HTMLDetailsElement>('details')!; details.open = true;
-            const value = Array.from(details.querySelectorAll('dt')).find(el => el.textContent === 'API Key')!.nextElementSibling!;
-            expect(value.textContent).toBe(key ? '已配置' : '未配置'); expect(value.innerHTML).not.toContain('••••');
-            expect(value.getAttribute('title')).toBeNull(); expect(value.getAttribute('data-key')).toBeNull();
-            expect(h.store.getSettings().providers.daily.apiKey).toBe(key); expect(h.probe).not.toHaveBeenCalled();
-        } finally { await h.cleanup(); }
-    });
-    it('keeps task inheritance visible while override controls are opt-in and preserves existing assignments', async () => {
-        const h = await harness(false, undefined, false);
-        try {
-            const before = structuredClone(h.store.getSettings());
-            expect(h.target.querySelectorAll('.cr-task-summary')).toHaveLength(3);
-            expect(h.target.querySelector('.cr-other-task-summary')?.textContent).toContain('定义、标记、撰写、核查、合并');
-            expect(h.target.querySelector('#cr-task-trigger-cards')?.textContent).toContain('daily · chat-main');
-            expect(h.target.querySelectorAll('[id^="cr-task-trigger-"]')).toHaveLength(3);
-            expect(h.target.textContent).toContain('沿用默认');
-            expect(h.target.querySelector('[aria-label="按任务单独调整（进阶）"]')?.textContent).toContain('4 项沿用默认');
-            h.target.querySelector<HTMLButtonElement>('[aria-label="按任务单独调整（进阶）"]')!.click(); ui.flushSync();
-            expect(h.target.querySelectorAll('[id^="cr-task-trigger-"]')).toHaveLength(7);
-            await h.openTask('write'); await h.back();
-            expect(document.activeElement?.id).toBe('cr-task-trigger-write');
-            h.target.querySelector<HTMLButtonElement>('[aria-label="按任务单独调整（进阶）"]')!.click(); ui.flushSync();
-            expect(h.target.querySelectorAll('[id^="cr-task-trigger-"]')).toHaveLength(3);
-            expect(h.store.getSettings()).toEqual(before);
-            expect(h.save).not.toHaveBeenCalled(); expect(h.probe).not.toHaveBeenCalled();
-        } finally { await h.cleanup(); }
-    });
+type Harness = Awaited<ReturnType<typeof harness>>;
 
-    it('warns when existing services have no default without silently choosing or clearing overrides', async () => {
-        const h = await harness(false, undefined, false);
-        try {
-            await h.application.updateSettings({ defaultProviderId: '' }); await h.settle();
-            expect(h.target.textContent).toContain('已有可用服务，但尚未选择默认服务');
-            expect(h.target.querySelector('[role="status"]')).not.toBeNull();
-            expect(h.store.getSettings().defaultProviderId).toBe('');
-            expect(h.store.getSettings().taskModels.write.providerId).toBe('research');
-            await h.application.updateSettings({ defaultProviderId: 'daily' }); await h.settle();
-            expect(h.target.textContent).not.toContain('已有可用服务，但尚未选择默认服务');
-            expect(h.probe).not.toHaveBeenCalled();
-        } finally { await h.cleanup(); }
-    });
+async function harness(options: { settings?: PluginSettings; failFirstSave?: boolean; saveDelay?: () => Promise<void>; index?: ReturnType<typeof fakeIndex> } = {}) {
+  const index = options.index ?? fakeIndex();
+  const env: SettingsEnvironment = await createSettingsEnvironment({
+    settings: options.settings ?? baseSettings(),
+    semanticIndex: index as unknown as SemanticIndexPort,
+    failFirstSave: options.failFirstSave,
+    saveDelay: options.saveDelay,
+  });
+  const mounted: Array<() => Promise<void>> = [];
+  let finished = false;
+  return {
+    ...env,
+    index,
+    /** 在设置页之外挂载 Svelte 组件（任务页、位置编辑、弹窗等），并与设置页共享上下文。 */
+    mount(component: SettingsBundle["TaskDetails"], props: Record<string, unknown>): HTMLElement {
+      const target = document.body.appendChild(document.createElement("div"));
+      const { destroy } = env.bundle.mountSvelteComponent(target, component, props, env.context());
+      mounted.push(async () => { await destroy(); target.remove(); });
+      env.bundle.flushSync();
+      return target;
+    },
+    settle: () => settle(env.bundle),
+    flush: () => env.bundle.flushSync(),
+    /** 点击顶层行的入口，打开子页并返回其容器。 */
+    openPage: (name: string) => openSettingsPage(env, name),
+    closePage: () => closeSettingsPage(env),
+    cleanup: async () => {
+      if (finished) return;
+      finished = true;
+      for (const unmount of mounted.splice(0).reverse()) await unmount();
+      document.querySelectorAll('[role="dialog"], .modal-container').forEach((node) => node.remove());
+      await env.cleanup();
+    },
+  };
+}
 
-    it('keeps unavailable inherited tasks individually visible and exposes all seven adjustments', async () => {
-        const h = await harness(false, undefined, false);
-        try {
-            await h.store.updateProvider('daily', { enabled: false }); await h.settle();
-            expect(h.target.querySelector('.cr-inherited-summary')).toBeNull();
-            expect(h.target.querySelectorAll('.cr-task-summary')).toHaveLength(7);
-            expect(h.target.querySelector('#cr-task-trigger-cards')?.textContent).toContain('服务已禁用');
-            h.target.querySelector<HTMLButtonElement>('[aria-label="按任务单独调整（进阶）"]')!.click(); ui.flushSync();
-            expect(h.target.querySelector('#cr-task-trigger-index')?.textContent).toContain('embed-main');
-            await h.openTask('cards'); await h.back();
-            expect(document.activeElement?.id).toBe('cr-task-trigger-cards');
-            expect(h.target.querySelectorAll('[id^="cr-task-trigger-"]')).toHaveLength(7);
-            expect(h.probe).not.toHaveBeenCalled();
-        } finally { await h.cleanup(); }
-    });
+/** 在已打开的页面容器中点击某一行的入口，返回新打开的子页容器。 */
+async function openNested(h: Harness, container: HTMLElement, name: string): Promise<HTMLElement> {
+  const row = findRow(container, name);
+  row.querySelector<HTMLElement>('[role="button"]')!.click();
+  await h.settle();
+  const opened = hostTab(h).openedPage;
+  if (!opened) throw new Error(`Nested page did not open: ${name}`);
+  return opened.containerEl;
+}
 
-    it('starts without example providers and resolves ordinary tasks from a single default without replacing overrides', () => {
-        const settings = structuredClone(DEFAULT_SETTINGS);
-        expect(settings.providers).toEqual({}); expect(settings.defaultProviderId).toBe('');
-        settings.defaultProviderId = 'one';
-        settings.providers.one = { enabled: true, apiKey: '', apiFormat: 'openai-chat-completions', embeddingApiFormat: 'openai-embeddings', defaultChatModel: 'chat', defaultEmbedModel: 'embed' };
-        for (const task of ['define', 'tag', 'write', 'verify', 'merge'] as const) {
-            expect(taskSettingsSummary(settings, task)).toMatchObject({ source: 'inherited', resolved: { providerId: 'one', model: 'chat' } });
-        }
-        expect(taskSettingsSummary(settings, 'index').resolved.model).toBe('embed');
-        settings.taskModels.define.providerId = 'old-assignment';
-        expect(taskSettingsSummary(settings, 'define')).toMatchObject({ source: 'customized', issue: 'unconfigured', resolved: { providerId: 'old-assignment' } });
-        settings.taskModels.cards = { providerId: 'one', model: 'chat' };
-        expect(taskSettingsSummary(settings, 'cards')).toMatchObject({ source: 'customized', issue: undefined, resolved: { providerId: 'one', model: 'chat' } });
-        expect(Object.keys(settings.providers)).toEqual(['one']);
-    });
+function setField(element: HTMLInputElement | HTMLSelectElement, value: string, event: "change" | "input" = "change"): void {
+  element.value = value;
+  element.dispatchEvent(new Event(event, { bubbles: true }));
+}
 
-    it('keeps its title and text tabs distinct from host heading and button defaults', async () => {
-        // Cascade regression only: happy-dom does not verify browser geometry.
-        // Use the host rules reported by real-host QA, not its full theme.
-        const style = document.head.appendChild(document.createElement('style'));
-        style.textContent = `
-            .vertical-tab-content h1 { display: none; }
-            .vertical-tab-content h2 { padding: 0 16px; }
-            .vertical-tab-content h1, .vertical-tab-content h3 { padding: 0 16px; }
-            button:not(.clickable-icon) { box-shadow: var(--input-shadow); }
-            .cr-scope { --font-ui-medium: 16px; --size-4-4: 16px; --input-shadow: 0 0 0 1px black; }
-            ${readFileSync('styles.css', 'utf8')}
-        `;
-        const h = await harness();
-        h.target.classList.add('vertical-tab-content', 'cr-scope');
-        try {
-            const title = h.target.querySelector<HTMLElement>('.cr-settings-title')!;
-            expect(title.textContent).toBe('Cognitive Razor');
-            expect(getComputedStyle(title).display).toBe('block');
-            expect(getComputedStyle(title).paddingLeft).toBe('0px');
-            expect(getComputedStyle(title).paddingRight).toBe('0px');
-            expect(getComputedStyle(h.target.querySelector<HTMLElement>('.cr-settings-content')!).paddingLeft).toBe('0px');
-            expect(getComputedStyle(h.target.querySelector<HTMLElement>('[role="tablist"]')!).position).not.toBe('sticky');
-            expect(h.button('编辑').tagName).toBe('BUTTON');
-            expect(getComputedStyle(h.button('编辑')).boxShadow).toBe('none');
-            for (const tab of Array.from(h.target.querySelectorAll<HTMLElement>('[role="tab"]'))) {
-                const css = getComputedStyle(tab);
-                expect(css.flexGrow).toBe('0');
-                expect(css.boxShadow).toBe('none');
-                expect(css.height).toBe('auto');
-                expect(css.borderRadius).toBe('0px');
-            }
-            // A preceding header must not cause extra top padding on section 1.
-            for (const label of ['AI 与模型', '笔记与卡片', '维护与备份']) {
-                h.click(label);
-                const section = h.target.querySelector<HTMLElement>('.cr-settings-section')!;
-                expect(getComputedStyle(section).paddingTop).toBe('0px');
-                // 标签页已由选中的标签命名，页内不再重复同名标题。
-                expect(h.target.querySelector('.cr-settings-page-heading h2')).toBeNull();
-                for (const heading of Array.from(h.target.querySelectorAll<HTMLElement>('.cr-settings-section h3, .cr-settings-danger h3'))) {
-                    expect(getComputedStyle(heading).paddingLeft).toBe('0px');
-                    expect(getComputedStyle(heading).paddingRight).toBe('0px');
-                }
-            }
-            expect(getComputedStyle(h.target.querySelector<HTMLElement>('.cr-settings-danger .cr-btn-danger')!).backgroundColor).toBe('transparent');
-            expect(h.save).not.toHaveBeenCalled(); expect(h.probe).not.toHaveBeenCalled();
-        } finally { await h.cleanup(); style.remove(); }
-    });
-    it('resets host scroll after switching panels but not after editing a setting', async () => {
-        const h = await harness();
-        try {
-            h.target.scrollTop = 640;
-            h.click('维护与备份'); await h.settle();
-            expect(h.target.querySelector('[role="tabpanel"]')?.id).toBe('cr-settings-panel-backup');
-            expect(h.target.scrollTop).toBe(0);
-            expect(h.navigate).toHaveBeenCalledOnce();
-            h.target.scrollTop = 320;
-            h.click('笔记与卡片'); await h.settle();
-            expect(h.target.scrollTop).toBe(0);
-            expect(h.navigate).toHaveBeenCalledTimes(2);
-            h.target.scrollTop = 120;
-            h.target.querySelector<HTMLButtonElement>('#cr-locations-edit')!.click(); ui.flushSync();
-            const rootInput = h.target.querySelector<HTMLInputElement>('[aria-label="知识库根目录"]')!;
-            rootInput.value = 'Example/cards-source';
-            rootInput.dispatchEvent(new Event('change', { bubbles: true })); await h.settle();
-            expect(h.target.scrollTop).toBe(120);
-            expect(h.navigate).toHaveBeenCalledTimes(2);
-            expect(h.store.getSettings().cardsSourceRoot).toBe(DEFAULT_SETTINGS.cardsSourceRoot);
-            expect(h.save).not.toHaveBeenCalled();
-            h.click('预览变化'); h.click('确认并保存位置'); await h.settle();
-            expect(h.store.getSettings().cardsSourceRoot).toBe('Example/cards-source');
-            expect(h.save).toHaveBeenCalledOnce();
-            expect(h.probe).not.toHaveBeenCalled(); expect(h.ensure).not.toHaveBeenCalled();
-        } finally { await h.cleanup(); }
-    });
-    it('previews all seven location fields before an atomic save and cancels without writes', async () => {
-        const h = await harness();
-        try {
-            h.click('笔记与卡片');
-            expect(h.target.querySelectorAll('.cr-location-paths dd')).toHaveLength(5);
-            const open = () => { h.target.querySelector<HTMLButtonElement>('#cr-locations-edit')!.click(); ui.flushSync(); };
-            open();
-            expect(h.target.querySelectorAll('.cr-location-editor input')).toHaveLength(7);
-            const root = h.target.querySelector<HTMLInputElement>('[aria-label="知识库根目录"]')!;
-            root.value = 'Example/Knowledge'; root.dispatchEvent(new Event('change', { bubbles: true })); await h.settle();
-            h.click('预览变化');
-            expect(h.target.querySelectorAll('.cr-location-change')).toHaveLength(7);
-            expect(h.target.querySelector('.cr-location-preview')?.textContent).toContain('Example/Knowledge/1-领域');
-            expect(h.store.getSettings().cardsSourceRoot).toBe(DEFAULT_SETTINGS.cardsSourceRoot);
-            expect(h.save).not.toHaveBeenCalled();
-            h.click('取消');
-            expect(h.target.querySelector('.cr-location-editor')).toBeNull(); expect(h.save).not.toHaveBeenCalled();
-            open(); const input = h.target.querySelector<HTMLInputElement>('[aria-label="知识库根目录"]')!;
-            input.value = 'Example/Knowledge'; input.dispatchEvent(new Event('change', { bubbles: true })); ui.flushSync();
-            h.click('预览变化'); h.click('确认并保存位置'); await h.settle();
-            expect(h.store.getSettings().directoryScheme.domain).toBe('Example/Knowledge/1-领域');
-            expect(h.store.getSettings().cardsSourceRoot).toBe('Example/Knowledge');
-            expect(h.target.querySelector('.cr-location-editor')).toBeNull();
-            expect(h.save).toHaveBeenCalledOnce(); expect(h.probe).not.toHaveBeenCalled(); expect(h.ensure).not.toHaveBeenCalled();
-        } finally { await h.cleanup(); }
-    });
-    it('shows slider numbers once while preserving unit conversion, range edits and clamping', async () => {
-        const h = await harness();
-        const locale = new I18n();
-        try {
-            h.click('维护与备份');
-            h.click(locale.t('settings.redesign.execution'));
-            const timeout = h.target.querySelector<HTMLInputElement>(`input[type="number"][aria-label="${locale.t('settings.advanced.queue.taskTimeout')}"]`)!;
-            const slider = timeout.closest('.cr-slider')!;
-            expect(slider.querySelector('.cr-slider__unit')?.textContent).toBe(locale.t('common.units.seconds'));
-            expect(timeout.value).toBe(String(h.store.getSettings().taskTimeoutMs / 1000));
-            timeout.value = '90';
-            timeout.dispatchEvent(new Event('change', { bubbles: true })); await h.settle();
-            expect(h.store.getSettings().taskTimeoutMs).toBe(90000);
-            expect(slider.querySelector<HTMLInputElement>('input[type="range"]')?.value).toBe('90');
+function rowNames(root: ParentNode): string[] {
+  return Array.from(root.querySelectorAll<HTMLElement>(".setting-item"))
+    .map((row) => row.querySelector(":scope > .setting-item-info > .setting-item-name")?.firstChild?.textContent?.trim() ?? "");
+}
 
-            const concurrency = h.target.querySelector<HTMLInputElement>(`input[type="number"][aria-label="${locale.t('settings.concurrency.name')}"]`)!;
-            const concurrencySlider = concurrency.closest('.cr-slider')!;
-            expect(concurrencySlider.querySelector('.cr-slider__unit')).toBeNull();
-            concurrency.value = '99';
-            concurrency.dispatchEvent(new Event('change', { bubbles: true })); await h.settle();
-            expect(h.store.getSettings().concurrency).toBe(10);
-            const range = concurrencySlider.querySelector<HTMLInputElement>('input[type="range"]')!;
-            range.value = '3';
-            range.dispatchEvent(new Event('change', { bubbles: true })); await h.settle();
-            expect(h.store.getSettings().concurrency).toBe(3);
-            expect(concurrency.value).toBe('3');
-            expect(h.save).toHaveBeenCalledTimes(3);
-            expect(h.probe).not.toHaveBeenCalled(); expect(h.ensure).not.toHaveBeenCalled();
-        } finally { await h.cleanup(); }
-    });
-    it('persists both 3600-second timeout controls as milliseconds across settings reload', async () => {
-        const h = await harness();
-        const locale = new I18n();
-        try {
-            h.click('维护与备份');
-            h.click(locale.t('settings.redesign.execution'));
-            for (const label of ['taskTimeout', 'networkTimeout']) {
-                const input = h.target.querySelector<HTMLInputElement>(`input[type="number"][aria-label="${locale.t(`settings.advanced.queue.${label}`)}"]`)!;
-                input.value = '3600';
-                input.dispatchEvent(new Event('change', { bubbles: true }));
-                await h.settle();
-                expect(input.value).toBe('3600');
-            }
-            const saved = (h.save.mock.lastCall as unknown as [typeof DEFAULT_SETTINGS])[0];
-            const reloaded = new SettingsStore({ loadData: async () => saved, saveData: async () => undefined } as never);
-            expect((await reloaded.loadSettings()).ok).toBe(true);
-            expect(reloaded.getSettings()).toMatchObject({ taskTimeoutMs: 3_600_000, providerTimeoutMs: 3_600_000 });
-            expect(h.save).toHaveBeenCalledTimes(2);
-        } finally { await h.cleanup(); }
-    });
-    it('opts only compact switch controls into inline rows and preserves their changes', async () => {
-        const h = await harness();
-        const locale = new I18n();
-        try {
-            h.click('笔记与卡片');
-            const switches = Array.from(h.target.querySelectorAll<HTMLElement>('[role="switch"]'));
-            expect(switches).toHaveLength(3);
-            for (const control of switches) {
-                expect(control.closest('.cr-setting-item')?.classList.contains('cr-setting-item--inline-control')).toBe(true);
-            }
-            for (const control of Array.from(h.target.querySelectorAll('input'))) {
-                expect(control.closest('.cr-setting-item')?.classList.contains('cr-setting-item--inline-control')).toBe(false);
-            }
-            const autoVerify = switches.find(control => control.getAttribute('aria-label')?.startsWith(locale.t('settings.product.autoVerify')))!;
-            autoVerify.click(); await h.settle();
-            expect(h.store.getSettings().enableAutoVerify).toBe(true);
-            expect(autoVerify.getAttribute('aria-checked')).toBe('true');
-            h.click('维护与备份');
-            h.click(locale.t('settings.redesign.execution'));
-            const keepalive = h.target.querySelector<HTMLElement>('[role="switch"]')!;
-            expect(keepalive.closest('.cr-setting-item')?.classList.contains('cr-setting-item--inline-control')).toBe(true);
-            const previous = h.store.getSettings().enableStreamingKeepalive;
-            keepalive.click(); await h.settle();
-            expect(h.store.getSettings().enableStreamingKeepalive).toBe(!previous);
-            expect(h.save).toHaveBeenCalledTimes(2);
-        } finally { await h.cleanup(); }
-    });
-    it('keeps generation rows compact and folds threshold and API explanations with display options', async () => {
-        const h = await harness();
-        const locale = new I18n();
-        try {
-            h.click('笔记与卡片');
-            const workflow = h.target.querySelector<HTMLElement>('.cr-workflow-tab')!;
-            const generation = Array.from(workflow.querySelectorAll<HTMLElement>('.cr-settings-section')).find(section => section.querySelector('h3')?.textContent === locale.t('settings.product.generation'))!;
-            const rows = Array.from(generation.querySelectorAll<HTMLElement>('.cr-setting-item'));
-            expect(rows).toHaveLength(3);
-            expect(rows.map(row => row.querySelector('.cr-setting-item__name')?.textContent)).toEqual(['创建后自动核查', '语义索引', '发现相似笔记']);
-            expect(rows.map(row => row.querySelector('.cr-feature-status')?.textContent)).toEqual(['关闭', '开启', '开启']);
-            expect(generation.querySelector('.cr-setting-item__desc')).toBeNull();
-            expect(generation.querySelector('.cr-slider')).toBeNull();
-            const auto = rows[0].querySelector<HTMLElement>('[role="switch"]')!;
-            expect(auto.getAttribute('aria-label')).toContain(locale.t('settings.redesign.autoVerifyCost'));
-            expect(auto.closest('[title]')?.getAttribute('title')).toBe(locale.t('settings.redesign.autoVerifyCost'));
-            const options = workflow.querySelector<HTMLDetailsElement>('.cr-settings-disclosure')!;
-            expect(options.open).toBe(false);
-            expect(options.querySelector('.cr-feature-explanations')?.textContent).toContain(locale.t('settings.redesign.autoVerifyCost'));
-            expect(options.querySelector('.cr-feature-explanations')?.textContent).toContain(locale.t('settings.advanced.semanticIndexing.enabledDesc'));
-            options.querySelector('summary')!.click(); ui.flushSync();
-            expect(options.open).toBe(true);
-            const threshold = options.querySelector<HTMLInputElement>(`input[type="number"][aria-label="${locale.t('settings.similarityThreshold.name')}"]`)!;
-            threshold.value = '0.82'; threshold.dispatchEvent(new Event('change', { bubbles: true })); await h.settle();
-            expect(h.store.getSettings().similarityThreshold).toBe(0.82);
-            auto.click(); await h.settle();
-            expect(rows[0].querySelector('.cr-feature-status')?.textContent).toBe('开启');
-            rows[1].querySelector<HTMLElement>('[role="switch"]')!.click(); await h.settle();
-            expect(rows[1].querySelector('.cr-feature-status')?.textContent).toBe('关闭');
-            expect(rows[2].querySelector('.cr-feature-status')?.textContent).toBe('需先开启索引');
-            expect(rows[2].querySelector('[role="switch"]')?.getAttribute('aria-disabled')).toBe('true');
-            expect(h.store.getSettings().enableDuplicateDetection).toBe(true);
-            expect(options.querySelector('.cr-slider')).toBeNull();
-            rows[1].querySelector<HTMLElement>('[role="switch"]')!.click(); await h.settle();
-            expect(rows[2].querySelector('.cr-feature-status')?.textContent).toBe('开启');
-            expect(options.querySelector<HTMLInputElement>(`input[type="number"][aria-label="${locale.t('settings.similarityThreshold.name')}"]`)?.value).toBe('0.82');
-            rows[2].querySelector<HTMLElement>('[role="switch"]')!.click(); await h.settle();
-            expect(h.store.getSettings().enableDuplicateDetection).toBe(false);
-            expect(rows[2].querySelector('.cr-feature-status')?.textContent).toBe('关闭');
-            options.querySelector('summary')!.click(); ui.flushSync();
-            expect(options.open).toBe(false);
-            expect(h.probe).not.toHaveBeenCalled(); expect(h.ensure).not.toHaveBeenCalled();
-        } finally { await h.cleanup(); }
-    });
-    it('shows transport only within enabled streaming advanced controls and persists explicit selection', async () => {
-        const h = await harness(); const locale = new I18n();
-        try {
-            h.click('维护与备份'); h.click(locale.t('settings.redesign.execution'));
-            const selector = 'select[aria-label="' + locale.t('settings.advanced.queue.streamingTransport') + '"]';
-            expect(h.target.querySelector(selector)).toBeNull();
-            h.target.querySelector<HTMLElement>('[role="switch"]')!.click(); await h.settle();
-            const select = h.target.querySelector<HTMLSelectElement>(selector)!;
-            expect(select.value).toBe('node-http'); select.value = 'renderer-fetch'; select.dispatchEvent(new Event('change', { bubbles: true })); await h.settle();
-            expect(h.store.getSettings().streamingTransport).toBe('renderer-fetch');
-            h.target.querySelector<HTMLElement>('[role="switch"]')!.click(); await h.settle();
-            expect(h.target.querySelector(selector)).toBeNull(); expect(h.store.getSettings().streamingTransport).toBe('renderer-fetch');
-        } finally { await h.cleanup(); }
-    });
-    it('opens a dedicated task page and returns focus to its overview row without writes or probes', async () => {
-        const h = await harness();
-        try {
-            expect(h.target.querySelectorAll('.cr-task-summary')).toHaveLength(7);
-            expect(h.target.querySelector('.cr-task-model-card')).toBeNull();
-            h.target.querySelector<HTMLButtonElement>('#cr-task-trigger-write')!.click(); await h.settle();
-            expect(h.target.querySelectorAll('.cr-task-model-card')).toHaveLength(1);
-            expect(h.target.querySelector('.cr-providers-tab')).toBeNull();
-            expect(h.target.querySelectorAll('.cr-task-summary')).toHaveLength(0);
-            expect(h.target.querySelector('.cr-task-details__breadcrumb')?.textContent).toContain('AI 与模型');
-            expect(h.target.querySelector('.cr-task-details')?.textContent).toContain('只调整这一个任务');
-            expect(document.activeElement?.id).toBe('cr-task-detail-heading-write');
-            expect(h.target.querySelector<HTMLDetailsElement>('.cr-task-model-card details')!.open).toBe(false);
-            h.target.querySelector<HTMLButtonElement>('[aria-label="返回 AI 与模型"]')!.click(); await h.settle();
-            expect(h.target.querySelectorAll('.cr-task-summary')).toHaveLength(7);
-            expect(document.activeElement?.id).toBe('cr-task-trigger-write');
-            h.target.querySelector<HTMLButtonElement>('#cr-task-trigger-define')!.click(); ui.flushSync();
-            expect(h.target.querySelectorAll('.cr-task-detail-view:not([hidden]) .cr-task-model-card')).toHaveLength(1);
-            expect(h.target.querySelector('#tmc-write-model')?.closest('.cr-task-detail-view')?.hasAttribute('hidden')).toBe(true);
-            h.click('笔记与卡片');
-            expect(h.target.querySelector('#cr-locations-edit')).toBeTruthy();
-            expect(h.target.querySelector('.cr-location-paths')?.textContent).toContain(DEFAULT_SETTINGS.cardsSourceRoot);
-            h.target.querySelector<HTMLDetailsElement>('details')!.open = true;
-            h.click('维护与备份');
-            expect(h.target.textContent).toContain('Markdown 笔记会保留');
-            expect(h.target.textContent).toContain('正文和卡片不在备份中');
-            expect(h.target.textContent).toContain('成功重置后目前没有一键恢复入口');
-            expect(h.target.textContent).toContain('不要单独恢复队列或工作流');
-            expect(h.target.textContent).toContain('settings.json 可能包含 API Key');
-            expect(h.save).not.toHaveBeenCalled(); expect(h.probe).not.toHaveBeenCalled(); expect(h.ensure).not.toHaveBeenCalled();
-        } finally { await h.cleanup(); }
-    });
-    it('keeps cards and index editing exclusively on AI and models', async () => {
-        const h = await harness();
-        try {
-            h.click('笔记与卡片'); await h.settle();
-            expect(h.target.querySelectorAll('[id^="cr-task-trigger-"]')).toHaveLength(0);
-            expect(h.target.querySelectorAll('.cr-task-model-card')).toHaveLength(0);
-            expect(h.target.querySelector('.cr-workflow-tab')?.textContent).not.toContain('卡片使用模型');
-            h.click('AI 与模型'); await h.openTask('cards');
-            expect(document.activeElement?.id).toBe('cr-task-detail-heading-cards');
-            expect(h.target.querySelectorAll('.cr-task-model-card')).toHaveLength(1);
-            expect(h.target.textContent).toContain('跟随当前默认服务');
-            expect(h.target.querySelector<HTMLSelectElement>('#tmc-cards-model-mode')?.value).toBe('inherit');
-            expect(h.target.querySelector('#tmc-cards-model')).toBeNull();
-            expect(h.save).not.toHaveBeenCalled();
-        } finally { await h.cleanup(); }
-    });
-    it('retains each task draft, validation error and disclosure across back and tab navigation', async () => {
-        const h = await harness();
-        try {
-            const write = await h.openTask('write');
-            const advanced = write.querySelector<HTMLDetailsElement>('.cr-task-model-card__advanced')!;
-            advanced.querySelector('summary')!.click(); ui.flushSync();
-            const mode = write.querySelector<HTMLSelectElement>('#tmc-write-max-tokens-mode')!;
-            mode.value = 'set'; mode.dispatchEvent(new Event('change', { bubbles: true })); ui.flushSync();
-            const number = write.querySelector<HTMLInputElement>('#tmc-write-max-tokens')!;
-            number.value = '0'; number.dispatchEvent(new Event('change', { bubbles: true })); ui.flushSync();
-            expect(write.querySelector('[role="alert"]')).toBeTruthy();
-            const model = write.querySelector<HTMLInputElement>('#tmc-write-model')!;
-            model.value = 'uncommitted-model'; model.dispatchEvent(new Event('input', { bubbles: true }));
-            await h.back();
-            expect(write.hidden).toBe(true);
-            const cards = await h.openTask('cards');
-            expect(cards.querySelector<HTMLInputElement>('#tmc-cards-model')).toBeNull();
-            expect(cards.querySelector<HTMLSelectElement>('#tmc-cards-model-mode')?.value).toBe('inherit');
-            expect(cards.querySelector<HTMLSelectElement>('#tmc-cards-provider')?.value).toBe('');
-            expect(cards.querySelector('[role="alert"]')).toBeNull();
-            h.click('维护与备份'); await h.settle();
-            expect(h.target.querySelector('.cr-task-detail-view:not([hidden])')).toBeNull();
-            h.click('AI 与模型'); await h.settle();
-            const resumed = await h.openTask('write');
-            expect(resumed).toBe(write);
-            expect(advanced.open).toBe(true);
-            expect(model.value).toBe('uncommitted-model');
-            expect(number.value).toBe('0');
-            expect(mode.value).toBe('set');
-            expect(write.querySelector('[role="alert"]')).toBeTruthy();
-            expect(h.store.getSettings().taskModels.write.model).toBe('reasoning-model');
-            expect(h.store.getSettings().taskModels.write.parameters?.maxTokens).toBeNull();
-            expect(h.store.getSettings().taskModels.cards.providerId).toBe('');
-            expect(h.save).not.toHaveBeenCalled(); expect(h.probe).not.toHaveBeenCalled(); expect(h.ensure).not.toHaveBeenCalled();
-        } finally { await h.cleanup(); }
-    });
-    it('lets only the latest navigation scroll or focus after repeated clicks and rapid tab changes', async () => {
-        const h = await harness();
-        try {
-            const trigger = h.target.querySelector<HTMLButtonElement>('#cr-task-trigger-write')!;
-            trigger.click(); trigger.click(); ui.flushSync();
-            const maintenance = h.button('维护与备份'); maintenance.focus();
-            h.click('维护与备份'); await h.settle();
-            expect(document.activeElement).toBe(maintenance);
-            expect(h.target.querySelector('.cr-task-detail-view:not([hidden])')).toBeNull();
-            expect(h.navigate).toHaveBeenCalledOnce();
+/** Svelte 按钮的文字带前导空格，比较前去掉空白。 */
+function hasButton(root: ParentNode, label: string): boolean {
+  return Array.from(root.querySelectorAll<HTMLButtonElement>("button")).some((button) => button.textContent?.trim() === label);
+}
 
-            h.click('AI 与模型'); await h.settle();
-            h.target.querySelector<HTMLButtonElement>('#cr-task-trigger-write')!.click(); ui.flushSync();
-            h.target.querySelector<HTMLButtonElement>('.cr-task-detail-view:not([hidden]) .cr-task-details__back')!.click(); ui.flushSync();
-            h.target.querySelector<HTMLButtonElement>('#cr-task-trigger-cards')!.click(); await h.settle();
-            expect(document.activeElement?.id).toBe('cr-task-detail-heading-cards');
-            expect(h.target.querySelectorAll('.cr-task-detail-view:not([hidden])')).toHaveLength(1);
-            expect(h.target.querySelectorAll('#tmc-write-model')).toHaveLength(1);
-            expect(h.target.querySelectorAll('#tmc-cards-model-mode')).toHaveLength(1);
-            expect(h.target.querySelectorAll('#tmc-cards-model')).toHaveLength(0);
-            // A retained, hidden editor cannot take over the current route.
-            h.target.querySelector<HTMLInputElement>('#tmc-write-model')!.closest('.cr-task-detail-view')!.querySelector<HTMLButtonElement>('.cr-task-details__back')!.click();
-            await h.settle();
-            expect(document.activeElement?.id).toBe('cr-task-detail-heading-cards');
-            await h.back();
-            expect(document.activeElement?.id).toBe('cr-task-trigger-cards');
-            expect(h.save).not.toHaveBeenCalled(); expect(h.probe).not.toHaveBeenCalled();
-        } finally { await h.cleanup(); }
-    });
-    it('does not scroll or steal focus after the settings root is unmounted during navigation', async () => {
-        const h = await harness();
-        const outside = document.body.appendChild(document.createElement('button'));
-        try {
-            h.target.querySelector<HTMLButtonElement>('#cr-task-trigger-write')!.click();
-            outside.focus();
-            await h.cleanup();
-            await h.settle();
-            expect(document.activeElement).toBe(outside);
-            expect(h.navigate).not.toHaveBeenCalled();
-        } finally { outside.remove(); }
-    });
-    it('retains in-flight task saves and failed-save retry across detail and tab navigation', async () => {
-        let release!: () => void;
-        const gate = new Promise<void>(resolve => { release = resolve; });
-        const h = await harness(true, () => gate);
-        try {
-            const write = await h.openTask('write');
-            const model = write.querySelector<HTMLInputElement>('#tmc-write-model')!;
-            model.value = 'changed-model';
-            model.dispatchEvent(new Event('change', { bubbles: true })); ui.flushSync();
-            expect(h.application.getSaveState().status).toBe('saving');
-            expect(h.target.querySelector('.cr-settings-header .cr-settings-save-state[role="status"]')).toBeTruthy();
-            await h.back();
-            h.click('维护与备份'); await h.settle();
-            release(); await h.settle();
-            expect(h.application.getSaveState().status).toBe('save-failed');
-            expect(h.target.querySelector('.cr-settings-save-state[role="alert"]')).toBeTruthy();
-            expect(h.target.querySelector('.cr-settings-header .cr-settings-save-state[role="alert"] button')?.textContent?.trim()).toBe('重试');
-            h.click('AI 与模型'); await h.settle();
-            await h.openTask('write');
-            expect(model.value).toBe('changed-model');
-            h.click('重试'); await h.settle();
-            expect(h.application.getSaveState().status).toBe('saved');
-            expect(h.target.querySelector('.cr-settings-header .cr-settings-save-state[role="status"]')?.textContent?.trim()).toBe('已保存');
-            expect(h.store.getSettings().taskModels.write.model).toBe('changed-model');
-            expect(h.store.getSettings().taskModels.cards.model).toBe('');
-            expect(h.save).toHaveBeenCalledTimes(2);
-            expect(h.probe).not.toHaveBeenCalled();
-        } finally { release(); await h.cleanup(); }
-    });
-    it('reveals only the repair corresponding to an explicit inspection and keeps cleanup confirmation', async () => {
-        const h = await harness();
-        try {
-            h.click('维护与备份');
-            const locale = new I18n();
-            expect(h.target.textContent).not.toContain(locale.t('settings.advanced.semanticIndexing.embedMissing'));
-            h.click(locale.t('settings.advanced.semanticIndexing.scanMissing')); await h.settle();
-            expect(h.maintenance.scanSemanticIndex).toHaveBeenCalledOnce();
-            expect(h.target.textContent).toContain(locale.t('settings.advanced.semanticIndexing.embedMissing'));
-            expect(h.maintenance.embedMissingSemanticIndex).not.toHaveBeenCalled();
-            h.click(locale.t('settings.advanced.semanticIndexing.scanVectorFiles')); await h.settle();
-            h.click(locale.t('settings.advanced.semanticIndexing.cleanupVectorFiles'));
-            expect(h.target.querySelector('[role="dialog"]')).toBeTruthy();
-            expect(h.maintenance.cleanupOrphanedVectorFiles).not.toHaveBeenCalled();
-            h.click('取消');
-            expect(h.target.querySelector('[role="dialog"]')).toBeNull();
-            h.click(locale.t('settings.advanced.semanticIndexing.cleanupVectorFiles'));
-            h.click(locale.t('settings.advanced.semanticIndexing.cleanupVectorFilesConfirm')); await h.settle();
-            expect(h.maintenance.cleanupOrphanedVectorFiles).toHaveBeenCalledWith([{ path: 'vectors/orphan.json', mtime: 1, size: 1 }]);
-            expect(h.maintenance.rebuildSemanticIndex).not.toHaveBeenCalled();
-        } finally { await h.cleanup(); }
-    });
-    it('retains failed-save feedback across navigation and retries the same mutation', async () => {
-        const h = await harness(true);
-        try {
-            const select = h.target.querySelector<HTMLSelectElement>('[aria-label="默认 Provider"]')!;
-            select.value = 'research'; select.dispatchEvent(new Event('change', { bubbles: true })); await h.settle();
-            expect(h.application.getSaveState().status).toBe('save-failed');
-            h.click('维护与备份'); expect(h.target.querySelector('[role="alert"]')).toBeTruthy();
-            h.click('重试'); await h.settle();
-            expect(h.application.getSaveState().status).toBe('saved');
-            expect(h.store.getSettings().defaultProviderId).toBe('research');
-            expect(h.save).toHaveBeenCalledTimes(2);
-        } finally { await h.cleanup(); }
-    });
-    it('opens and cancels provider editing without persisting or probing', async () => {
-        const h = await harness();
-        try {
-            h.click('编辑');
-            expect(h.target.querySelector('#pm-chat-model')).toBeTruthy();
-            expect(h.target.querySelector<HTMLDetailsElement>('.cr-provider-disclosure:last-of-type')?.open).toBe(false);
-            h.click('取消');
-            expect(h.target.querySelector('[role="dialog"]')).toBeNull();
-            expect(h.save).not.toHaveBeenCalled(); expect(h.probe).not.toHaveBeenCalled();
-        } finally { await h.cleanup(); }
-    });
-    it('navigates tabs with Arrow/Home/End and retains a single tab stop', async () => {
-        const h = await harness();
-        try {
-            const first = h.target.querySelector<HTMLButtonElement>('[role="tab"]')!;
-            first.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true })); ui.flushSync();
-            expect(h.target.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.trim()).toBe('维护与备份');
-            expect(h.target.querySelectorAll('[role="tab"][tabindex="0"]')).toHaveLength(1);
-            h.target.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true })); ui.flushSync();
-            expect(h.target.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.trim()).toBe('AI 与模型');
-        } finally { await h.cleanup(); }
-    });
+function hasRow(root: ParentNode, name: string): boolean {
+  return rowNames(root).includes(name);
+}
+
+function displayValue(row: HTMLElement): string | null | undefined {
+  return row.querySelector(".cr-mock-display-value")?.textContent;
+}
+
+function checkbox(row: HTMLElement): HTMLInputElement {
+  return row.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+}
+
+function toggle(row: HTMLElement): void {
+  const box = checkbox(row);
+  box.checked = !box.checked;
+  box.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function slider(row: HTMLElement): HTMLInputElement {
+  return row.querySelector<HTMLInputElement>('input[type="range"]')!;
+}
+
+function sliderChange(row: HTMLElement, value: number): void {
+  const input = slider(row);
+  input.value = String(value);
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+afterAll(async () => {
+  document.body.replaceChildren();
 });
 
-describe('read-only task summary', () => {
-    it('resolves inheritance for Cards and preserves disabled assignments', () => {
-        const settings = structuredClone(DEFAULT_SETTINGS);
-        settings.defaultProviderId = 'daily';
-        settings.providers.daily = { enabled: true, apiKey: '', apiFormat: 'openai-chat-completions', embeddingApiFormat: 'openai-embeddings', defaultChatModel: 'chat', defaultEmbedModel: 'embed' };
-        const before = structuredClone(settings);
-        expect(taskSettingsSummary(settings, 'define')).toMatchObject({ source: 'inherited', resolved: { providerId: 'daily', model: 'chat' } });
-        expect(taskSettingsSummary(settings, 'index').resolved.model).toBe('embed');
-        expect(taskSettingsSummary(settings, 'cards')).toMatchObject({ source: 'inherited', issue: undefined, resolved: { providerId: 'daily', model: 'chat' } });
-        expect(settings).toEqual(before);
-        settings.providers.daily.enabled = false;
-        expect(taskSettingsSummary(settings, 'define').issue).toBe('disabled');
-        settings.taskModels.write.parameters = { topP: null };
-        expect(taskSettingsSummary(settings, 'write').source).toBe('customized');
-    });
+describe("approved settings information architecture", () => {
+  it("has no provider output-mode choice or per-task output override", async () => {
+    const h = await harness();
+    try {
+      for (const taskType of ["define", "tag", "write", "verify"] as const) {
+        const task = h.mount(h.bundle.TaskDetails, { taskType });
+        expect(task.querySelector(`#tmc-${taskType}-structured`)).toBeNull();
+        expect(task.textContent).not.toContain("结构化输出");
+      }
+      const modalSource = readFileSync("src/ui/svelte/modals/ProviderModal.svelte", "utf8");
+      expect(modalSource).not.toContain("pm-structured-output");
+      expect(modalSource).not.toContain("formStructuredOutput");
+      expect(h.save).not.toHaveBeenCalled();
+      expect(h.probe).not.toHaveBeenCalled();
+    } finally { await h.cleanup(); }
+  });
+
+  it("propagates real UI edits through persisted settings and reload into the actual request payload", async () => {
+    const h = await harness();
+    const request = vi.spyOn(obsidian, "requestUrl").mockResolvedValue({ status: 200, text: "", json: { choices: [{ message: { content: "ok" }, finish_reason: "stop" }] } } as never);
+    try {
+      const task = h.mount(h.bundle.TaskDetails, { taskType: "write" });
+      const change = async (selector: string, value: string) => {
+        setField(task.querySelector<HTMLInputElement | HTMLSelectElement>(selector)!, value);
+        await h.settle();
+      };
+      await change("#tmc-write-provider", "daily");
+      await change("#tmc-write-model", "ui-selected-model");
+      task.querySelector<HTMLDetailsElement>(".cr-task-model-card__advanced")!.querySelector("summary")!.click();
+      h.flush();
+      await change("#tmc-write-temp-mode", "set");
+      await change("#tmc-write-temp", "0.25");
+      await change("#tmc-write-max-tokens-mode", "set");
+      await change("#tmc-write-max-tokens", "512");
+
+      const saved = (h.save.mock.calls.at(-1) as unknown as [PluginSettings])[0];
+      const reloaded = new SettingsStore({ loadData: async () => structuredClone(saved), saveData: vi.fn() } as never);
+      expect((await reloaded.loadSettings()).ok).toBe(true);
+      expect(reloaded.getSettings()).toEqual(h.store.getSettings());
+      const manager = new ProviderManager(reloaded, { debug() {}, info() {}, warn() {}, error() {} });
+      try {
+        expect((await manager.chat(buildTaskChatRequest("write", "<system_instructions>policy</system_instructions>synthetic input", resolveTaskModelSnapshot(reloaded.getSettings(), "write")))).ok).toBe(true);
+        const body = JSON.parse((request.mock.calls[0][0] as { body: string }).body);
+        expect(body).toMatchObject({ model: "ui-selected-model", temperature: 0.25, max_tokens: 512 });
+      } finally { manager.dispose(); }
+      expect(h.probe).not.toHaveBeenCalled();
+    } finally { request.mockRestore(); await h.cleanup(); }
+  });
+
+  it("runs the forced-service probe with the write task parameters and saves nothing", async () => {
+    const h = await harness();
+    try {
+      const before = structuredClone(h.store.getSettings().taskModels);
+      const result = await h.bundle.probeServiceWithTask(h.application, "daily", "write", "initial");
+      expect((h.probe.mock.calls[0] as unknown as [unknown])[0]).toMatchObject({ providerId: "daily", taskType: "write", taskConfig: { providerId: "daily", model: "reasoning-model" } });
+      expect(result?.target).toMatchObject({ scope: "write", providerId: "daily", model: "reasoning-model", temporaryProvider: true });
+      expect(h.store.getSettings().taskModels).toEqual(before);
+      expect(h.save).not.toHaveBeenCalled();
+    } finally { await h.cleanup(); }
+  });
+
+  it("retains location preview and original configuration after save failure, then retries once", async () => {
+    const h = await harness({ failFirstSave: true });
+    try {
+      const editor = h.mount(h.bundle.LocationsEditor, {});
+      findButton(editor, LOC("edit")).click(); h.flush();
+      setField(editor.querySelector<HTMLInputElement>("#cr-location-root")!, "New/Root", "input");
+      h.flush();
+      findButton(editor, LOC("preview")).click(); h.flush();
+      findButton(editor, LOC("save")).click(); await h.settle();
+      expect(h.store.getSettings().cardsSourceRoot).toBe(DEFAULT_SETTINGS.cardsSourceRoot);
+      expect(editor.querySelector(".cr-locations__preview")).toBeTruthy();
+      expect(editor.querySelector('[role="alert"]')?.textContent).toBe(LOC("saveFailed"));
+
+      findButton(editor, LOC("save")).click(); await h.settle();
+      expect(h.store.getSettings().cardsSourceRoot).toBe("New/Root");
+      expect(h.save).toHaveBeenCalledTimes(2);
+    } finally { await h.cleanup(); }
+  });
+
+  it("tests the actual index task snapshot and invalidates the displayed result after edits", async () => {
+    const h = await harness();
+    try {
+      await h.application.updateTaskModel("index", { providerId: "research", model: "actual-embed", parameters: { embeddingDimension: 256 } });
+      await h.settle();
+      const task = h.mount(h.bundle.TaskDetails, { taskType: "index" });
+      const button = task.querySelector<HTMLButtonElement>(".cr-task-details__probe button")!;
+      button.click(); await h.settle();
+      expect(h.probe).toHaveBeenCalledOnce();
+      expect((h.probe.mock.calls[0] as unknown as [unknown])[0]).toMatchObject({ providerId: "research", taskType: "index", taskConfig: { providerId: "research", model: "actual-embed", embeddingDimension: 256 } });
+      expect(task.querySelector(".cr-provider-probe-status__target")?.textContent?.replace(/\s+/g, " ")).toContain("research · actual-embed · 请求维度: 256");
+      expect(task.querySelector(".cr-provider-probe-status__capabilities")?.textContent).toContain(i18n.t("settings.provider.probe.status.disabled"));
+
+      await h.application.updateTaskModel("index", { model: "changed-embed" }); await h.settle();
+      expect(task.querySelector(".cr-provider-probe-status")).toBeNull();
+
+      h.probe.mockResolvedValueOnce({ ok: false, error: { code: "E211_MODEL_SCHEMA_VIOLATION", message: "Synthetic" } } as never);
+      button.click(); await h.settle();
+      expect(task.querySelector(".cr-provider-probe-status__target")?.textContent).toContain("changed-embed");
+      expect(task.querySelector(".cr-provider-probe-status")?.textContent).toContain(i18n.t("settings.redesign.testOutcomes.failed"));
+    } finally { await h.cleanup(); }
+  });
+
+  it("drops a service probe result once the service configuration changes", async () => {
+    const h = await harness();
+    try {
+      const row = () => findRow(h.tab.containerEl, "daily");
+      row().querySelector<HTMLButtonElement>('button[aria-label="测试连接 daily"]')!.click();
+      await vi.waitFor(() => {
+        h.flush();
+        expect(row().querySelector(".cr-service-probe .cr-provider-probe-status")).not.toBeNull();
+      });
+      await h.application.updateProvider("daily", { defaultChatModel: "changed-chat" });
+      await h.settle();
+      expect(row().querySelector(".cr-service-probe .cr-provider-probe-status")).toBeNull();
+    } finally { await h.cleanup(); }
+  });
+
+  it("makes model inheritance explicit and never persists an empty specified draft", async () => {
+    const h = await harness();
+    try {
+      const cards = h.mount(h.bundle.TaskDetails, { taskType: "cards" });
+      const mode = cards.querySelector<HTMLSelectElement>("#tmc-cards-model-mode")!;
+      expect(mode.value).toBe("inherit");
+      expect(cards.querySelector("#tmc-cards-model")).toBeNull();
+
+      setField(mode, "specified"); await h.settle();
+      expect(h.store.getSettings().taskModels.cards.model).toBe("chat-main");
+
+      const model = cards.querySelector<HTMLInputElement>("#tmc-cards-model")!;
+      setField(model, ""); await h.settle();
+      expect(h.store.getSettings().taskModels.cards.model).toBe("chat-main");
+      expect(cards.querySelector('[role="alert"]')).toBeTruthy();
+
+      setField(mode, "inherit"); await h.settle();
+      expect(h.store.getSettings().taskModels.cards.model).toBe("");
+      expect(h.probe).not.toHaveBeenCalled();
+    } finally { await h.cleanup(); }
+  });
+
+  it("leaves seven custom paths intact until conversion is previewed and confirmed", async () => {
+    const h = await harness();
+    try {
+      const custom = { directoryScheme: { domain: "Old/A", issue: "Old/B", theory: "Different/C", entity: "D", mechanism: "E" }, cardsSourceRoot: "Original", cardsTargetRoot: "Decks" };
+      await h.application.updateSettings(custom); await h.settle();
+      h.save.mockClear();
+
+      const editor = h.mount(h.bundle.LocationsEditor, {});
+      expect(editor.textContent).toContain(LOC("custom"));
+      expect(editor.textContent).toContain(LOC("outsideExample"));
+      expect(h.store.getSettings()).toMatchObject(custom);
+
+      findButton(editor, LOC("edit")).click(); h.flush();
+      expect(editor.querySelector<HTMLInputElement>("#cr-location-domain")?.value).toBe("Old/A");
+      setField(editor.querySelector<HTMLSelectElement>("#cr-location-mode")!, "unified"); h.flush();
+      findButton(editor, LOC("preview")).click(); h.flush();
+      expect(editor.querySelectorAll(".cr-locations__preview .setting-item")).toHaveLength(7);
+      expect(h.store.getSettings()).toMatchObject(custom);
+      expect(h.save).not.toHaveBeenCalled();
+
+      findButton(editor, LOC("save")).click(); await h.settle();
+      expect(h.store.getSettings().directoryScheme.domain).toBe("Original/1-领域");
+      expect(h.store.getSettings().cardsTargetRoot).toBe("Decks");
+      expect(h.save).toHaveBeenCalledOnce();
+      expect(editor.textContent).toContain("Original/5-机制/笔记.md → Decks/5-机制/笔记-decks.md");
+      expect(h.probe).not.toHaveBeenCalled();
+      expect(h.ensure).not.toHaveBeenCalled();
+    } finally { await h.cleanup(); }
+  });
+
+  it.each(["", "x", "prefix-test-only-suffix"])("never shows the saved credential in the service list (%s)", async (key) => {
+    const h = await harness();
+    try {
+      expect((await h.application.updateProvider("daily", { apiKey: key })).ok).toBe(true);
+      await h.settle();
+      const row = findRow(h.tab.containerEl, "daily");
+      expect(row.querySelector("input")).toBeNull();
+      expect(row.innerHTML).not.toContain("••••");
+      if (key.length > 3) expect(row.textContent).not.toContain(key);
+      expect(h.store.getSettings().providers.daily.apiKey).toBe(key);
+      expect(h.probe).not.toHaveBeenCalled();
+    } finally { await h.cleanup(); }
+  });
+
+  it("lists all seven tasks as pages with their resolved values, without opening any editor", async () => {
+    const h = await harness();
+    try {
+      const before = structuredClone(h.store.getSettings());
+      const models = await h.openPage(N("taskModels"));
+      const rows = Array.from(models.querySelectorAll<HTMLElement>(".setting-item"));
+      expect(rows.map((row) => row.querySelector(":scope > .setting-item-info > .setting-item-name")?.firstChild?.textContent)).toEqual(TASK_NAMES);
+      const valueOf = (name: string) => displayValue(findRow(models, name));
+      expect(valueOf("定义")).toBe("daily · chat-main");
+      expect(valueOf("撰写")).toBe("research · reasoning-model");
+      expect(valueOf("记忆卡片")).toBe("daily · chat-main");
+      expect(findRow(models, "撰写").dataset.status).toBeUndefined();
+      expect(findRow(h.tab.containerEl, N("taskModels")).querySelector(".cr-mock-display-value")?.textContent).toBe("1 项单独设置");
+      expect(h.store.getSettings()).toEqual(before);
+      expect(h.save).not.toHaveBeenCalled();
+      expect(h.probe).not.toHaveBeenCalled();
+      await h.closePage();
+    } finally { await h.cleanup(); }
+  });
+
+  it("warns about a missing default only on the task-model entry and shows inheriting tasks as waiting", async () => {
+    const settings = baseSettings();
+    settings.defaultProviderId = "";
+    const h = await harness({ settings });
+    try {
+      const defaultRow = findRow(h.tab.containerEl, N("defaultService"));
+      expect(defaultRow.textContent).toContain(N("defaultServiceMissing"));
+      expect(findRow(h.tab.containerEl, N("taskModels")).dataset.status).toBe("warning");
+      expect(h.tab.containerEl.querySelectorAll('[data-status="warning"]')).toHaveLength(1);
+      expect(h.store.getSettings().defaultProviderId).toBe("");
+      expect(h.store.getSettings().taskModels.write.providerId).toBe("research");
+
+      const models = await h.openPage(N("taskModels"));
+      expect(displayValue(findRow(models, "定义"))).toBe(N("taskWaitingDefault"));
+      expect(findRow(models, "定义").dataset.status).toBeUndefined();
+      expect(displayValue(findRow(models, "撰写"))).toBe("research · reasoning-model");
+      await h.closePage();
+
+      await h.application.updateSettings({ defaultProviderId: "daily" });
+      await h.settle();
+      expect(findRow(h.tab.containerEl, N("defaultService")).textContent).not.toContain(N("defaultServiceMissing"));
+      expect(findRow(h.tab.containerEl, N("taskModels")).dataset.status).toBeUndefined();
+      expect(h.probe).not.toHaveBeenCalled();
+    } finally { await h.cleanup(); }
+  });
+
+  it("builds the default-service warning into the definitions output itself", async () => {
+    const settings = baseSettings();
+    settings.defaultProviderId = "";
+    const h = await harness({ settings });
+    try {
+      const definitions = h.bundle.buildSettingDefinitions({
+        i18n,
+        settingsApplication: h.application,
+        maintenance: new h.bundle.MaintenanceController(h.application, i18n),
+        mount: () => () => undefined,
+        sveltePage: () => { throw new Error("not opened"); },
+        openServiceEditor: () => undefined,
+        openTaskProbe: () => undefined,
+        openServiceMenu: () => undefined,
+        confirm: async () => false,
+        onRuntimeChange: () => () => undefined,
+        serviceProbes: new Map(),
+        exportSettings: () => undefined,
+        pickSettingsFile: async () => undefined,
+      } as never);
+      // 默认服务行的说明直接来自构建结果，而不是渲染后才拼出的文字。
+      const models = definitions.find((item): item is SettingDefinitionGroup => "heading" in item && item.heading === N("models"));
+      const defaultService = models?.items?.[0] as SettingDefinitionItem & { desc?: string };
+      expect(defaultService.desc).toContain(N("defaultServiceMissing"));
+      expect(JSON.stringify(definitions)).not.toContain("[object");
+    } finally { await h.cleanup(); }
+  });
+
+  it("keeps unavailable inherited tasks individually visible and shows the one first-screen warning", async () => {
+    const h = await harness();
+    try {
+      await h.application.updateProvider("daily", { enabled: false });
+      await h.settle();
+      expect(h.tab.containerEl.querySelectorAll('[data-status="warning"]')).toHaveLength(1);
+      expect(findRow(h.tab.containerEl, N("taskModels")).dataset.status).toBe("warning");
+
+      const models = await h.openPage(N("taskModels"));
+      expect(models.querySelectorAll(".setting-item")).toHaveLength(7);
+      expect(findRow(models, "记忆卡片").textContent).toContain(i18n.t("settings.redesign.disabled"));
+      expect(findRow(models, "记忆卡片").dataset.status).toBe("warning");
+      expect(displayValue(findRow(models, "语义索引"))).toContain("embed-main");
+      expect(findRow(models, "撰写").dataset.status).toBeUndefined();
+      await h.closePage();
+      expect(h.probe).not.toHaveBeenCalled();
+    } finally { await h.cleanup(); }
+  });
+
+  it("starts without example providers and resolves ordinary tasks from a single default without replacing overrides", () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    expect(settings.providers).toEqual({}); expect(settings.defaultProviderId).toBe("");
+    settings.defaultProviderId = "one";
+    settings.providers.one = { enabled: true, apiKey: "", apiFormat: "openai-chat-completions", embeddingApiFormat: "openai-embeddings", defaultChatModel: "chat", defaultEmbedModel: "embed" };
+    for (const task of ["define", "tag", "write", "verify", "merge"] as const) {
+      expect(taskSettingsSummary(settings, task)).toMatchObject({ source: "inherited", resolved: { providerId: "one", model: "chat" } });
+    }
+    expect(taskSettingsSummary(settings, "index").resolved.model).toBe("embed");
+    settings.taskModels.define.providerId = "old-assignment";
+    expect(taskSettingsSummary(settings, "define")).toMatchObject({ source: "customized", issue: "unconfigured", resolved: { providerId: "old-assignment" } });
+    settings.taskModels.cards = { providerId: "one", model: "chat" };
+    expect(taskSettingsSummary(settings, "cards")).toMatchObject({ source: "customized", issue: undefined, resolved: { providerId: "one", model: "chat" } });
+    expect(Object.keys(settings.providers)).toEqual(["one"]);
+  });
+
+  it("previews all seven location fields before an atomic save and cancels without writes", async () => {
+    const h = await harness();
+    try {
+      const editor = h.mount(h.bundle.LocationsEditor, {});
+      expect(editor.querySelectorAll(".cr-locations__path")).toHaveLength(5);
+      findButton(editor, LOC("edit")).click(); h.flush();
+      expect(editor.querySelectorAll('input[type="text"]')).toHaveLength(7);
+
+      setField(editor.querySelector<HTMLInputElement>("#cr-location-root")!, "Example/Knowledge", "input");
+      findButton(editor, LOC("preview")).click(); h.flush();
+      expect(editor.querySelectorAll(".cr-locations__preview .setting-item")).toHaveLength(7);
+      expect(editor.querySelector(".cr-locations__preview")?.textContent).toContain("Example/Knowledge/1-领域");
+      expect(h.store.getSettings().cardsSourceRoot).toBe(DEFAULT_SETTINGS.cardsSourceRoot);
+      expect(h.save).not.toHaveBeenCalled();
+
+      findButton(editor, LOC("cancel")).click(); h.flush();
+      expect(editor.querySelector(".cr-locations__preview")).toBeNull();
+      expect(editor.querySelector("#cr-location-root")).toBeNull();
+      expect(h.save).not.toHaveBeenCalled();
+
+      findButton(editor, LOC("edit")).click(); h.flush();
+      setField(editor.querySelector<HTMLInputElement>("#cr-location-root")!, "Example/Knowledge", "input");
+      findButton(editor, LOC("preview")).click(); h.flush();
+      findButton(editor, LOC("save")).click(); await h.settle();
+      expect(h.store.getSettings().directoryScheme.domain).toBe("Example/Knowledge/1-领域");
+      expect(h.store.getSettings().cardsSourceRoot).toBe("Example/Knowledge");
+      expect(editor.querySelector("#cr-locations-edit")).toBeTruthy();
+      expect(h.save).toHaveBeenCalledOnce();
+      expect(h.probe).not.toHaveBeenCalled();
+      expect(h.ensure).not.toHaveBeenCalled();
+    } finally { await h.cleanup(); }
+  });
+
+  it("writes slider values through the seconds conversion and reads them back", async () => {
+    const h = await harness();
+    try {
+      const execution = await h.openPage(i18n.t("settings.redesign.execution"));
+      const timeout = findRow(execution, i18n.t("settings.advanced.queue.taskTimeout"));
+      expect(slider(timeout).min).toBe("30");
+      expect(slider(timeout).max).toBe("3600");
+      expect(slider(timeout).value).toBe(String(h.store.getSettings().taskTimeoutMs / 1000));
+
+      sliderChange(timeout, 90); await h.settle();
+      expect(h.store.getSettings().taskTimeoutMs).toBe(90000);
+      expect(slider(findRow(execution, i18n.t("settings.advanced.queue.taskTimeout"))).value).toBe("90");
+
+      sliderChange(findRow(execution, i18n.t("settings.concurrency.name")), 3); await h.settle();
+      expect(h.store.getSettings().concurrency).toBe(3);
+      expect(h.save).toHaveBeenCalledTimes(2);
+      expect(h.probe).not.toHaveBeenCalled();
+      expect(h.ensure).not.toHaveBeenCalled();
+    } finally { await h.cleanup(); }
+  });
+
+  it("persists both 3600-second timeout controls as milliseconds across settings reload", async () => {
+    const h = await harness();
+    try {
+      const execution = await h.openPage(i18n.t("settings.redesign.execution"));
+      for (const key of ["taskTimeout", "networkTimeout"] as const) {
+        const label = i18n.t(`settings.advanced.queue.${key}`);
+        sliderChange(findRow(execution, label), 3600); await h.settle();
+        expect(slider(findRow(execution, label)).value).toBe("3600");
+      }
+      const saved = (h.save.mock.lastCall as unknown as [PluginSettings])[0];
+      const reloaded = new SettingsStore({ loadData: async () => saved, saveData: async () => undefined } as never);
+      expect((await reloaded.loadSettings()).ok).toBe(true);
+      expect(reloaded.getSettings()).toMatchObject({ taskTimeoutMs: 3_600_000, providerTimeoutMs: 3_600_000 });
+      expect(h.save).toHaveBeenCalledTimes(2);
+
+      // 直接经标签页的控件接口往返，与原生控件读写的路径相同。
+      await h.tab.setControlValue("taskTimeoutSeconds", 1800); await h.settle();
+      expect(h.tab.getControlValue("taskTimeoutSeconds")).toBe(1800);
+      expect(h.store.getSettings().taskTimeoutMs).toBe(1_800_000);
+      await h.tab.setControlValue("queuePageSize", "100"); await h.settle();
+      expect(h.store.getSettings().queuePageSize).toBe(100);
+      expect(h.tab.getControlValue("queuePageSize")).toBe("100");
+    } finally { await h.cleanup(); }
+  });
+
+  it("persists toggle changes made through the native switches", async () => {
+    const h = await harness();
+    try {
+      const before = h.store.getSettings().enableAutoVerify;
+      toggle(findRow(h.tab.containerEl, i18n.t("settings.product.autoVerify")));
+      await h.settle();
+      expect(h.store.getSettings().enableAutoVerify).toBe(!before);
+      expect(checkbox(findRow(h.tab.containerEl, i18n.t("settings.product.autoVerify"))).checked).toBe(!before);
+
+      const execution = await h.openPage(i18n.t("settings.redesign.execution"));
+      const keepalive = i18n.t("settings.advanced.queue.streamingKeepalive");
+      const previous = h.store.getSettings().enableStreamingKeepalive;
+      toggle(findRow(execution, keepalive)); await h.settle();
+      expect(h.store.getSettings().enableStreamingKeepalive).toBe(!previous);
+      expect(h.save).toHaveBeenCalledTimes(2);
+    } finally { await h.cleanup(); }
+  });
+
+  it("disables dependent generation settings and shows the threshold only when both features are on", async () => {
+    const h = await harness();
+    const autoVerify = i18n.t("settings.product.autoVerify");
+    const semantic = i18n.t("settings.product.semanticIndex");
+    const related = i18n.t("settings.product.relatedNotes");
+    const threshold = i18n.t("settings.similarityThreshold.name");
+    try {
+      expect(rowNames(h.tab.containerEl)).toEqual(expect.arrayContaining([autoVerify, semantic, related, threshold]));
+      expect(checkbox(findRow(h.tab.containerEl, related)).disabled).toBe(false);
+
+      toggle(findRow(h.tab.containerEl, semantic)); await h.settle();
+      expect(h.store.getSettings().enableSemanticIndexing).toBe(false);
+      expect(checkbox(findRow(h.tab.containerEl, related)).disabled).toBe(true);
+      expect(hasRow(h.tab.containerEl, threshold)).toBe(false);
+
+      toggle(findRow(h.tab.containerEl, semantic)); await h.settle();
+      expect(checkbox(findRow(h.tab.containerEl, related)).disabled).toBe(false);
+      sliderChange(findRow(h.tab.containerEl, threshold), 0.82); await h.settle();
+      expect(h.store.getSettings().similarityThreshold).toBe(0.82);
+
+      toggle(findRow(h.tab.containerEl, related)); await h.settle();
+      expect(h.store.getSettings().enableDuplicateDetection).toBe(false);
+      expect(hasRow(h.tab.containerEl, threshold)).toBe(false);
+      expect(h.probe).not.toHaveBeenCalled();
+      expect(h.ensure).not.toHaveBeenCalled();
+    } finally { await h.cleanup(); }
+  });
+
+  it("shows transport only within enabled streaming controls and persists the explicit selection", async () => {
+    const h = await harness();
+    const transportName = i18n.t("settings.advanced.queue.streamingTransport");
+    try {
+      const execution = await h.openPage(i18n.t("settings.redesign.execution"));
+      expect(hasRow(execution, transportName)).toBe(false);
+      toggle(findRow(execution, i18n.t("settings.advanced.queue.streamingKeepalive"))); await h.settle();
+      const select = findRow(execution, transportName).querySelector<HTMLSelectElement>("select")!;
+      expect(select.value).toBe("node-http");
+      setField(select, "renderer-fetch"); await h.settle();
+      expect(h.store.getSettings().streamingTransport).toBe("renderer-fetch");
+
+      toggle(findRow(execution, i18n.t("settings.advanced.queue.streamingKeepalive"))); await h.settle();
+      expect(hasRow(execution, transportName)).toBe(false);
+      expect(h.store.getSettings().streamingTransport).toBe("renderer-fetch");
+    } finally { await h.cleanup(); }
+  });
+
+  it("opens a dedicated task page with its single card and writes nothing", async () => {
+    const h = await harness();
+    try {
+      const models = await h.openPage(N("taskModels"));
+      const taskPage = await openNested(h, models, "撰写");
+      expect(taskPage.querySelectorAll(".cr-task-model-card")).toHaveLength(1);
+      expect(taskPage.textContent).toContain(i18n.t("settings.taskDetails.taskOnly"));
+      expect(taskPage.querySelector<HTMLDetailsElement>(".cr-task-model-card details")!.open).toBe(false);
+      expect(h.save).not.toHaveBeenCalled();
+      expect(h.probe).not.toHaveBeenCalled();
+      expect(h.ensure).not.toHaveBeenCalled();
+      await h.closePage();
+      expect(hostTab(h).openedPage).toBeUndefined();
+    } finally { await h.cleanup(); }
+  });
+
+  it("keeps cards and index editing exclusively on AI and models", async () => {
+    const h = await harness();
+    try {
+      const notesGroup = Array.from(h.tab.containerEl.querySelectorAll<HTMLElement>(".setting-group"))
+        .find((group) => group.querySelector(".setting-item-heading")?.textContent === N("notes"))!;
+      expect(rowNames(notesGroup)).toEqual([N("locations")]);
+      expect(notesGroup.querySelector(".cr-task-model-card")).toBeNull();
+
+      const models = await h.openPage(N("taskModels"));
+      const cards = await openNested(h, models, "记忆卡片");
+      expect(cards.querySelectorAll(".cr-task-model-card")).toHaveLength(1);
+      expect(cards.textContent).toContain(i18n.t("settings.taskDetails.defaultProviderHint"));
+      expect(cards.querySelector<HTMLSelectElement>("#tmc-cards-model-mode")?.value).toBe("inherit");
+      expect(cards.querySelector("#tmc-cards-model")).toBeNull();
+      expect(h.save).not.toHaveBeenCalled();
+    } finally { await h.cleanup(); }
+  });
+
+  it("rejects an invalid output limit in place without persisting it", async () => {
+    const h = await harness();
+    try {
+      const write = h.mount(h.bundle.TaskDetails, { taskType: "write" });
+      write.querySelector<HTMLDetailsElement>(".cr-task-model-card__advanced")!.querySelector("summary")!.click();
+      h.flush();
+      setField(write.querySelector<HTMLSelectElement>("#tmc-write-max-tokens-mode")!, "set"); h.flush();
+      setField(write.querySelector<HTMLInputElement>("#tmc-write-max-tokens")!, "0"); h.flush();
+      expect(write.querySelector('[role="alert"]')).toBeTruthy();
+      expect(h.store.getSettings().taskModels.write.model).toBe("reasoning-model");
+      expect(h.store.getSettings().taskModels.write.parameters?.maxTokens).toBeNull();
+      expect(h.save).not.toHaveBeenCalled();
+      expect(h.probe).not.toHaveBeenCalled();
+    } finally { await h.cleanup(); }
+  });
+
+  // 任务页在同一次设置会话内复用页面实例，离开时暂存组件，未保存草稿在返回后仍在。
+  it("keeps an uncommitted task draft when its page is left and reopened", async () => {
+    const h = await harness();
+    try {
+      const models = await h.openPage(N("taskModels"));
+      const write = await openNested(h, models, "撰写");
+      const model = write.querySelector<HTMLInputElement>("#tmc-write-model")!;
+      model.value = "uncommitted-model";
+      model.dispatchEvent(new Event("input", { bubbles: true }));
+      await h.closePage();
+      const reopenedModels = await h.openPage(N("taskModels"));
+      const reopened = await openNested(h, reopenedModels, "撰写");
+      expect(reopened.querySelector<HTMLInputElement>("#tmc-write-model")?.value).toBe("uncommitted-model");
+      expect(h.store.getSettings().taskModels.write.model).toBe("reasoning-model");
+    } finally { await h.cleanup(); }
+  });
+
+  it("does not move focus after the settings tab is disposed while a section intent is pending", async () => {
+    const h = await harness({ settings: cloneDefaults() });
+    const outside = document.body.appendChild(document.createElement("button"));
+    try {
+      outside.focus();
+      await h.cleanup();
+      h.bundle.intent.requestSettingsSection("connections");
+      await h.settle();
+      expect(document.activeElement).toBe(outside);
+    } finally {
+      h.bundle.intent.clearSettingsSection();
+      outside.remove();
+    }
+  });
+
+  it("retains in-flight task saves and retries a failed save from the save-failure row", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const h = await harness({ failFirstSave: true, saveDelay: () => gate });
+    try {
+      const models = await h.openPage(N("taskModels"));
+      const write = await openNested(h, models, "撰写");
+      const model = write.querySelector<HTMLInputElement>("#tmc-write-model")!;
+      setField(model, "changed-model"); h.flush();
+      expect(h.application.getSaveState().status).toBe("saving");
+      // 保存进行中，其它会改变状态的控件全部锁定。
+      await h.closePage();
+      expect(checkbox(findRow(h.tab.containerEl, i18n.t("settings.product.semanticIndex"))).disabled).toBe(true);
+
+      release();
+      await vi.waitFor(() => expect(h.application.getSaveState().status).toBe("save-failed"));
+      await h.settle();
+      const failure = findRow(h.tab.containerEl, i18n.t("settings.save.failed"));
+      findButton(failure, i18n.t("settings.save.retry")).click();
+      await vi.waitFor(() => expect(h.application.getSaveState().status).toBe("saved"));
+      expect(h.store.getSettings().taskModels.write.model).toBe("changed-model");
+      expect(h.store.getSettings().taskModels.cards.model).toBe("");
+      expect(h.save).toHaveBeenCalledTimes(2);
+      expect(h.probe).not.toHaveBeenCalled();
+    } finally { release(); await h.cleanup(); }
+  });
+
+  it("reveals only the repair matching an explicit inspection and keeps cleanup behind confirmation", async () => {
+    const h = await harness();
+    try {
+      const page = await h.openPage(N("maintenance"));
+      const scanMissing = i18n.t("settings.advanced.semanticIndexing.scanMissing");
+      const embedMissing = i18n.t("settings.advanced.semanticIndexing.embedMissing");
+      const scanVectors = i18n.t("settings.advanced.semanticIndexing.scanVectorFiles");
+      const cleanup = i18n.t("settings.advanced.semanticIndexing.cleanupVectorFiles");
+      expect(page.querySelector(".cr-maintenance-results")).toBeNull();
+      expect(hasButton(page, embedMissing)).toBe(false);
+
+      findButton(page, scanMissing).click(); await h.settle();
+      await vi.waitFor(() => { h.flush(); expect(hasButton(page, embedMissing)).toBe(true); });
+      expect(h.index.scanSemanticIndex).toHaveBeenCalledOnce();
+      expect(h.index.embedMissingSemanticIndex).not.toHaveBeenCalled();
+      expect(hasButton(page, cleanup)).toBe(false);
+
+      findButton(page, scanVectors).click(); await h.settle();
+      await vi.waitFor(() => { h.flush(); expect(hasButton(page, cleanup)).toBe(true); });
+      findButton(page, cleanup).click(); h.flush();
+      const dialog = document.querySelector<HTMLElement>(".modal-container");
+      expect(dialog).toBeTruthy();
+      expect(h.index.cleanupOrphanedVectorFiles).not.toHaveBeenCalled();
+      findButton(dialog!, i18n.t("common.cancel")).click(); h.flush();
+      expect(document.querySelector(".modal-container")).toBeNull();
+
+      findButton(page, cleanup).click(); h.flush();
+      findButton(document.querySelector<HTMLElement>(".modal-container")!, i18n.t("settings.advanced.semanticIndexing.cleanupVectorFilesConfirm")).click();
+      await vi.waitFor(() => expect(h.index.cleanupOrphanedVectorFiles).toHaveBeenCalledWith([{ path: "vectors/orphan.json", mtime: 1, size: 1 }]));
+      expect(h.index.rebuildSemanticIndex).not.toHaveBeenCalled();
+    } finally { await h.cleanup(); }
+  });
+
+  it("runs one maintenance action at a time and disables the others while it runs", async () => {
+    const index = fakeIndex();
+    const h = await harness({ index });
+    let releaseScan!: () => void;
+    try {
+      const page = await h.openPage(N("maintenance"));
+      index.inspectVectorFiles.mockImplementationOnce(() => new Promise((resolve) => {
+        releaseScan = () => resolve({ ok: true as const, value: { indexedEntries: 0, physicalFiles: 0, orphanFiles: [], missingEntries: [], staleEntries: [], invalidEntries: [] } } as never);
+      }));
+      findButton(page, i18n.t("settings.advanced.semanticIndexing.scanVectorFiles")).click();
+      // 检查向量文件要先经异步的语义索引获取，等替身真正被调用后再放行。
+      await vi.waitFor(() => expect(releaseScan).toBeDefined());
+      h.flush();
+      expect(findButton(page, i18n.t("settings.advanced.semanticIndexing.scanMissing")).disabled).toBe(true);
+      expect(findButton(page, i18n.t("settings.advanced.semanticIndexing.rebuildDuplicates")).disabled).toBe(true);
+
+      releaseScan(); await h.settle();
+      await vi.waitFor(() => { h.flush(); expect(findButton(page, i18n.t("settings.advanced.semanticIndexing.scanMissing")).disabled).toBe(false); });
+    } finally {
+      releaseScan?.();
+      await h.cleanup();
+    }
+  });
+
+  it("retains failed-save feedback across navigation and retries the same mutation", async () => {
+    const h = await harness({ failFirstSave: true });
+    try {
+      setField(findRow(h.tab.containerEl, N("defaultService")).querySelector<HTMLSelectElement>("select")!, "research"); await h.settle();
+      expect(h.application.getSaveState().status).toBe("save-failed");
+      expect(findRow(h.tab.containerEl, i18n.t("settings.save.failed"))).toBeTruthy();
+
+      const maintenance = await h.openPage(N("maintenance"));
+      expect(findRow(maintenance, i18n.t("settings.save.failed"))).toBeTruthy();
+      await h.closePage();
+
+      findButton(findRow(h.tab.containerEl, i18n.t("settings.save.failed")), i18n.t("settings.save.retry")).click();
+      await vi.waitFor(() => expect(h.application.getSaveState().status).toBe("saved"));
+      expect(h.store.getSettings().defaultProviderId).toBe("research");
+      expect(h.save).toHaveBeenCalledTimes(2);
+    } finally { await h.cleanup(); }
+  });
+
+  it("opens and cancels provider editing without persisting or probing", async () => {
+    const h = await harness();
+    try {
+      findRow(h.tab.containerEl, "daily").querySelector<HTMLElement>(`[aria-label="${N("editService")}"]`)!.click();
+      h.flush();
+      const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+      expect(dialog.querySelector("#pm-chat-model")).toBeTruthy();
+      expect(dialog.querySelector<HTMLDetailsElement>(".cr-provider-disclosure:last-of-type")?.open).toBe(false);
+      findButton(dialog, i18n.t("common.cancel")).click();
+      await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+      expect(h.save).not.toHaveBeenCalled();
+      expect(h.probe).not.toHaveBeenCalled();
+    } finally { await h.cleanup(); }
+  });
 });
 
+describe("read-only task summary", () => {
+  it("resolves inheritance for Cards and preserves disabled assignments", () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.defaultProviderId = "daily";
+    settings.providers.daily = { enabled: true, apiKey: "", apiFormat: "openai-chat-completions", embeddingApiFormat: "openai-embeddings", defaultChatModel: "chat", defaultEmbedModel: "embed" };
+    const before = structuredClone(settings);
+    expect(taskSettingsSummary(settings, "define")).toMatchObject({ source: "inherited", resolved: { providerId: "daily", model: "chat" } });
+    expect(taskSettingsSummary(settings, "index").resolved.model).toBe("embed");
+    expect(taskSettingsSummary(settings, "cards")).toMatchObject({ source: "inherited", issue: undefined, resolved: { providerId: "daily", model: "chat" } });
+    expect(settings).toEqual(before);
+    settings.providers.daily.enabled = false;
+    expect(taskSettingsSummary(settings, "define").issue).toBe("disabled");
+    settings.taskModels.write.parameters = { topP: null };
+    expect(taskSettingsSummary(settings, "write").source).toBe("customized");
+  });
+});
 
-describe('display preferences do not change task execution', () => {
-    it('paginates history, excludes folded history from selection and retains unresolved summary while filtering', async () => {
-        const h = await harness();
-        let queueInstance: object | undefined;
-        const target = document.body.appendChild(document.createElement('div'));
-        try {
-            await h.application.updateSettings({ queuePageSize: 25, queueDefaultFilter: 'all' });
-            const tasks = Array.from({ length: 63 }, (_, i) => ({ id: `task-${i}`, noteTitle: `任务 ${i}`, stageId: 'verify', state: i < 60 ? 'completed' : i < 62 ? 'failed' : 'interrupted', payload: {} }));
-            const props = { context: { i18n: new I18n(), settingsApplication: h.application, application: { queue: {} } }, tasks, status: { total: 63, pending: 0, running: 0, completed: 60, failed: 2, interrupted: 1, cancelled: 0, paused: false } };
-            queueInstance = ui.mount(ui.QueueHost, { target, props }); ui.flushSync();
-            expect(target.querySelectorAll('[role="listitem"]')).toHaveLength(3);
-            const selectAll = target.querySelector<HTMLInputElement>('.cr-queue-select-all input')!;
-            selectAll.checked = true; selectAll.dispatchEvent(new Event('change', { bubbles: true })); ui.flushSync();
-            expect(target.textContent).toContain('删除选中 (3)');
-            const history = target.querySelector<HTMLDetailsElement>('.cr-queue-history')!;
-            history.querySelector('summary')!.click(); ui.flushSync();
-            expect(target.querySelectorAll('[role="listitem"]')).toHaveLength(28);
-            selectAll.checked = true; selectAll.dispatchEvent(new Event('change', { bubbles: true })); ui.flushSync();
-            expect(target.textContent).toContain('删除选中 (63)');
-            const more = Array.from(target.querySelectorAll('button')).find(button => button.textContent?.includes('显示更多'))!;
-            more.click(); ui.flushSync(); expect(target.querySelectorAll('[role="listitem"]')).toHaveLength(53);
-            await h.application.updateSettings({ queuePageSize: 100, queueDefaultFilter: 'failed' }); ui.flushSync();
-            expect(target.querySelectorAll('[role="listitem"]')).toHaveLength(63);
-            await ui.unmount(queueInstance); queueInstance = ui.mount(ui.QueueHost, { target, props }); ui.flushSync();
-            expect(target.querySelectorAll('[role="listitem"]')).toHaveLength(2);
-            expect(target.textContent).toContain('需要处理 · 3 项');
-            const filter = target.querySelector<HTMLSelectElement>('.cr-queue-select-label select')!;
-            filter.value = 'active'; filter.dispatchEvent(new Event('change', { bubbles: true })); ui.flushSync();
-            expect(target.querySelectorAll('[role="listitem"]')).toHaveLength(0);
-            expect(target.textContent).toContain('需要处理 · 3 项');
-            expect(h.probe).not.toHaveBeenCalled(); expect(h.ensure).not.toHaveBeenCalled();
-        } finally { if (queueInstance) await ui.unmount(queueInstance); target.remove(); await h.cleanup(); }
-    });
-    it('can restore only the three display options without resetting models or directories', async () => {
-        const h = await harness();
-        try {
-            await h.application.updateSettings({ verifyReportPresentation: 'collapsed', queueDefaultFilter: 'failed', queuePageSize: 25 });
-            const before = h.store.getSettings();
-            h.click('笔记与卡片');
-            h.click('恢复这三项显示偏好的默认值'); await h.settle();
-            expect(h.store.getSettings()).toEqual({ ...before, verifyReportPresentation: 'expanded', queueDefaultFilter: 'all', queuePageSize: 50 });
-        } finally { await h.cleanup(); }
-    });
+describe("display preferences do not change task execution", () => {
+  it("paginates history, excludes folded history from selection and retains unresolved summary while filtering", async () => {
+    const h = await harness();
+    const target = document.body.appendChild(document.createElement("div"));
+    let queue: { destroy: () => Promise<void> } | undefined;
+    const mountQueue = (props: Record<string, unknown>) => {
+      queue = h.bundle.mountSvelteComponent(target, h.bundle.QueueHost, props);
+      h.flush();
+    };
+    try {
+      await h.application.updateSettings({ queuePageSize: 25, queueDefaultFilter: "all" });
+      const tasks = Array.from({ length: 63 }, (_, i) => ({ id: `task-${i}`, noteTitle: `任务 ${i}`, stageId: "verify", state: i < 60 ? "completed" : i < 62 ? "failed" : "interrupted", payload: {} }));
+      const props = { context: { i18n, settingsApplication: h.application, application: { queue: {} } }, tasks, status: { total: 63, pending: 0, running: 0, completed: 60, failed: 2, interrupted: 1, cancelled: 0, paused: false } };
+      mountQueue(props);
+      expect(target.querySelectorAll('[role="listitem"]')).toHaveLength(3);
+      const selectAll = target.querySelector<HTMLInputElement>(".cr-queue-select-all input")!;
+      selectAll.checked = true; selectAll.dispatchEvent(new Event("change", { bubbles: true })); h.flush();
+      expect(target.textContent).toContain("删除选中 (3)");
+      const history = target.querySelector<HTMLDetailsElement>(".cr-queue-history")!;
+      history.querySelector("summary")!.click(); h.flush();
+      expect(target.querySelectorAll('[role="listitem"]')).toHaveLength(28);
+      selectAll.checked = true; selectAll.dispatchEvent(new Event("change", { bubbles: true })); h.flush();
+      expect(target.textContent).toContain("删除选中 (63)");
+      const more = Array.from(target.querySelectorAll("button")).find((button) => button.textContent?.includes("显示更多"))!;
+      more.click(); h.flush();
+      expect(target.querySelectorAll('[role="listitem"]')).toHaveLength(53);
+      await h.application.updateSettings({ queuePageSize: 100, queueDefaultFilter: "failed" }); h.flush();
+      expect(target.querySelectorAll('[role="listitem"]')).toHaveLength(63);
+      await queue!.destroy(); mountQueue(props);
+      expect(target.querySelectorAll('[role="listitem"]')).toHaveLength(2);
+      expect(target.textContent).toContain("需要处理 · 3 项");
+      const filter = target.querySelector<HTMLSelectElement>(".cr-queue-select-label select")!;
+      filter.value = "active"; filter.dispatchEvent(new Event("change", { bubbles: true })); h.flush();
+      expect(target.querySelectorAll('[role="listitem"]')).toHaveLength(0);
+      expect(target.textContent).toContain("需要处理 · 3 项");
+      expect(h.probe).not.toHaveBeenCalled();
+      expect(h.ensure).not.toHaveBeenCalled();
+    } finally {
+      if (queue) await queue.destroy();
+      target.remove();
+      await h.cleanup();
+    }
+  });
 
-    it('configures an Anthropic Messages provider in ProviderModal with protocol-first order and persists capabilities', async () => {
-        const h = await harness();
-        try {
-            const addBtn = Array.from(h.target.querySelectorAll('button')).find(button => button.textContent?.includes('添加'))!;
-            addBtn.click(); ui.flushSync();
-            const modal = document.body.querySelector<HTMLElement>('[role="dialog"]')!;
-            const fieldIds = Array.from(modal.querySelectorAll<HTMLElement>('#pm-provider-id, #pm-api-format, #pm-base-url, #pm-api-key')).map(el => el.id);
-            expect(fieldIds).toEqual(['pm-provider-id', 'pm-api-format', 'pm-base-url', 'pm-api-key']);
+  it("restores only the three display options without resetting models or directories", async () => {
+    const h = await harness();
+    try {
+      await h.application.updateSettings({ verifyReportPresentation: "collapsed", queueDefaultFilter: "failed", queuePageSize: 25 });
+      const before = h.store.getSettings();
+      const row = findRow(h.tab.containerEl, N("resetDisplay"));
+      findButton(row, i18n.t("settings.displayPreferences.reset")).click();
+      await h.settle();
+      expect(h.store.getSettings()).toEqual({ ...before, verifyReportPresentation: "expanded", queueDefaultFilter: "all", queuePageSize: 50 });
+    } finally { await h.cleanup(); }
+  });
 
-            const setVal = (selector: string, value: string) => {
-                const el = modal.querySelector<HTMLInputElement | HTMLSelectElement>(selector)!;
-                el.value = value;
-                el.dispatchEvent(new Event('change', { bubbles: true }));
-                ui.flushSync();
-            };
-            setVal('#pm-provider-id', 'claude');
-            setVal('#pm-api-format', 'anthropic-messages');
-            expect(modal.querySelector<HTMLInputElement>('#pm-base-url')?.placeholder).toBe('https://api.anthropic.com/v1');
-            expect(modal.querySelector<HTMLInputElement>('#pm-chat-model')?.placeholder).toBe('claude-sonnet-4-5');
-            setVal('#pm-base-url', 'http://127.0.0.1:18899');
-            setVal('#pm-chat-model', 'claude-sonnet-4-5');
-            setVal('#pm-embedding-api-format', 'disabled');
+  it("configures an Anthropic Messages provider in ProviderModal with protocol-first order and persists capabilities", async () => {
+    const h = await harness();
+    try {
+      findButton(h.tab.containerEl, N("addService")).click(); h.flush();
+      const modal = document.body.querySelector<HTMLElement>('[role="dialog"]')!;
+      const fieldIds = Array.from(modal.querySelectorAll<HTMLElement>("#pm-provider-id, #pm-api-format, #pm-base-url, #pm-api-key")).map((el) => el.id);
+      expect(fieldIds).toEqual(["pm-provider-id", "pm-api-format", "pm-base-url", "pm-api-key"]);
 
-            // Open advanced defaults and enable reasoning + prompt caching + web search.
-            const disclosures = Array.from(modal.querySelectorAll<HTMLDetailsElement>('.cr-provider-disclosure'));
-            disclosures.forEach(d => { d.open = true; });
-            ui.flushSync();
-            modal.querySelector<HTMLElement>('[role="switch"][aria-label="原生网络搜索"]')!.click();
-            modal.querySelector<HTMLElement>('[role="switch"][aria-label="推理强度"]')!.click();
-            modal.querySelector<HTMLElement>('[role="switch"][aria-label="提示词缓存优化"]')!.click();
-            ui.flushSync();
-            setVal('#pm-thinking-budget', '2048');
-            setVal('#pm-max-tokens', '8192');
+      const setVal = (selector: string, value: string) => {
+        setField(modal.querySelector<HTMLInputElement | HTMLSelectElement>(selector)!, value);
+        h.flush();
+      };
+      setVal("#pm-provider-id", "claude");
+      setVal("#pm-api-format", "anthropic-messages");
+      expect(modal.querySelector<HTMLInputElement>("#pm-base-url")?.placeholder).toBe("https://api.anthropic.com/v1");
+      expect(modal.querySelector<HTMLInputElement>("#pm-chat-model")?.placeholder).toBe("claude-sonnet-4-5");
+      setVal("#pm-base-url", "http://127.0.0.1:18899");
+      setVal("#pm-chat-model", "claude-sonnet-4-5");
+      setVal("#pm-embedding-api-format", "disabled");
 
-            const saveBtn = Array.from(modal.querySelectorAll('button')).find(button => button.textContent?.trim() === '保存')!;
-            saveBtn.click();
-            await h.settle();
-            const saved = h.store.getSettings().providers.claude;
-            expect(saved).toMatchObject({
-                apiFormat: 'anthropic-messages',
-                embeddingApiFormat: 'disabled',
-                defaultChatModel: 'claude-sonnet-4-5',
-                capabilities: { nativeWebSearch: true, reasoning: true, promptCaching: true, responseContinuation: false },
-                parameters: { thinkingBudget: 2048, maxTokens: 8192 },
-            });
-            expect(h.target.textContent).toContain('Anthropic Messages (Claude)');
-        } finally { await h.cleanup(); }
-    });
+      // 展开高级默认值，启用原生网络搜索、推理与提示词缓存。
+      Array.from(modal.querySelectorAll<HTMLDetailsElement>(".cr-provider-disclosure")).forEach((d) => { d.open = true; });
+      h.flush();
+      modal.querySelector<HTMLElement>('[role="switch"][aria-label="原生网络搜索"]')!.click();
+      modal.querySelector<HTMLElement>('[role="switch"][aria-label="推理强度"]')!.click();
+      modal.querySelector<HTMLElement>('[role="switch"][aria-label="提示词缓存优化"]')!.click();
+      h.flush();
+      setVal("#pm-thinking-budget", "2048");
+      setVal("#pm-max-tokens", "8192");
+
+      Array.from(modal.querySelectorAll("button")).find((button) => button.textContent?.trim() === "保存")!.click();
+      await h.settle();
+      await vi.waitFor(() => expect(h.store.getSettings().providers.claude).toBeDefined());
+      expect(h.store.getSettings().providers.claude).toMatchObject({
+        apiFormat: "anthropic-messages",
+        embeddingApiFormat: "disabled",
+        defaultChatModel: "claude-sonnet-4-5",
+        capabilities: { nativeWebSearch: true, reasoning: true, promptCaching: true, responseContinuation: false },
+        parameters: { thinkingBudget: 2048, maxTokens: 8192 },
+      });
+      expect(findRow(h.tab.containerEl, "claude").textContent).toContain(i18n.t("modals.providerConfig.apiFormats.anthropicMessages"));
+    } finally { await h.cleanup(); }
+  });
 });

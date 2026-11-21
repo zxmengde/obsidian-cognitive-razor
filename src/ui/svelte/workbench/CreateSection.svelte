@@ -2,40 +2,25 @@
   CreateSection.svelte — 工作台创建区
 
   职责：
-  - 全宽搜索输入框（含清除/提交按钮、Enter 键触发 Define）
-  - Define 加载状态（按钮动画 + 输入框禁用）
+  - 全宽输入框（含清除按钮、Enter 键触发 Define）与识别按钮
+  - Define 等待计时与取消
   - Define 成功后显示类型置信度表格
-  - 常显输入区和当前笔记操作行（拓展、核查、卡片），无需切换模式
-  - 无活跃笔记或不适用时禁用对应按钮，保留原执行校验
+  - 区块标题右侧放设置入口；当前笔记的操作在 CurrentNoteSection
 
 -->
 <script lang="ts">
     import { taskSettingsSummary } from '../../settings-summaries';
-    import { extractFrontmatter } from '../../../core/frontmatter-utils';
-    import type { CachedMetadata, TFile } from 'obsidian';
     import { getWorkbenchContext } from '../../bridge/context';
     import Button from '../../components/Button.svelte';
     import Icon from '../../components/Icon.svelte';
-    import InlinePanel from '../../components/InlinePanel.svelte';
     import InlineAlert from '../../components/InlineAlert.svelte';
     import TypeTable from './TypeTable.svelte';
-    import ExpandPanel from './ExpandPanel.svelte';
     import type { DefinePreview, CRType } from '../../../types';
     import { confirmDefinePreview } from '../../../domain/concept';
     import { toSafeErrorFeedback, type UiFeedback } from '../../error-feedback';
-    import { showActionFeedback } from '../../feedback';
-    import { onWorkbenchFocus, onWorkbenchPanel, takeWorkbenchFocus, takeWorkbenchPanel, type WorkbenchPanelIntent } from '../../workbench-intent';
+    import { onWorkbenchFocus, takeWorkbenchFocus } from '../../workbench-intent';
 
-    /** 当前展开的面板类型 */
-    type ActivePanel = 'none' | 'expand';
-
-    let {
-        activeFile,
-        onOpenSettings,
-    }: {
-        activeFile: TFile | null;
-        onOpenSettings?: () => void;
-    } = $props();
+    let { onOpenSettings }: { onOpenSettings?: () => void } = $props();
 
     // 从 Context 获取服务
     const ctx = getWorkbenchContext();
@@ -59,72 +44,8 @@
     let defineElapsedSeconds = $state(0);
     let defineResult = $state<DefinePreview | null>(null);
     let feedback = $state<UiFeedback | null>(null);
-    let activePanel = $state<ActivePanel>('none');
-    let verifying = $state(false);
-    let generatingCards = $state(false);
-    let isCRNode = $state(false);
-    let noteGeneration = 0;
-    let mounted = true;
-    $effect(() => () => { mounted = false; noteGeneration++; });
     let defineAbortController: AbortController | undefined;
     $effect(() => () => defineAbortController?.abort('create panel unmounted'));
-    $effect(() => {
-        const file = activeFile;
-        let disposed = false;
-        let refreshSequence = 0;
-        noteGeneration++;
-        verifying = false;
-        generatingCards = false;
-        activePanel = 'none';
-        isCRNode = false;
-        // 只解析 frontmatter 段；正文编辑不改变它时直接沿用上次结论。
-        let lastFrontmatter: string | undefined;
-        const judge = (content: string, cache: CachedMetadata | null): void => {
-            const end = cache?.frontmatterPosition?.end.offset;
-            const head = end === undefined ? content : content.slice(0, end);
-            if (head === lastFrontmatter) return;
-            lastFrontmatter = head;
-            isCRNode = !!extractFrontmatter(head);
-        };
-        // 元数据缓存已确认没有 cruid 时，严格解析必然失败，不必读文件。
-        const lacksCruid = (cache: CachedMetadata | null): boolean =>
-            cache !== null && typeof cache.frontmatter?.cruid !== 'string';
-        const initial = async () => {
-            const sequence = ++refreshSequence;
-            if (!file || file.extension !== 'md') return;
-            const cache = ctx.app.metadataCache.getFileCache(file);
-            if (lacksCruid(cache)) return;
-            try {
-                const content = await ctx.app.vault.cachedRead(file);
-                if (!disposed && sequence === refreshSequence) judge(content, cache);
-            } catch { if (!disposed && sequence === refreshSequence) isCRNode = false; }
-        };
-        void initial();
-        // changed 事件自带解析后的正文与缓存，只在当前笔记重新解析后触发，不再读文件。
-        const event = ctx.app.metadataCache.on('changed', (changed, data, cache) => {
-            if (changed !== file || disposed) return;
-            refreshSequence++;
-            if (lacksCruid(cache)) { lastFrontmatter = undefined; isCRNode = false; return; }
-            judge(data, cache);
-        });
-        return () => { disposed = true; ctx.app.metadataCache.offref(event); };
-    });
-    // Task outcomes are announced once per workbench by the runtime, so this
-    // panel no longer subscribes on its own.
-    // A command asks for the expand panel before the view exists; honour that
-    // request once the note's frontmatter has been read.
-    let requestedPanel = $state<WorkbenchPanelIntent | undefined>(undefined);
-    $effect(() => {
-        if (requestedPanel === 'expand' && isCRNode) {
-            requestedPanel = undefined;
-            activePanel = 'expand';
-        }
-    });
-    $effect(() => onWorkbenchPanel((panel) => { requestedPanel = panel; }));
-    $effect(() => {
-        const pending = takeWorkbenchPanel();
-        if (pending) requestedPanel = pending;
-    });
     // Freshly opened view: the user came here to type, so the cursor starts in
     // the concept field. Restored leaves never request focus.
     let inputEl = $state<HTMLInputElement | undefined>(undefined);
@@ -138,19 +59,6 @@
 
     // 派生状态
     let hasInput = $derived(inputValue.trim().length > 0);
-    let isMarkdown = $derived(activeFile?.extension === 'md');
-    const actionUnavailable = $derived(!isMarkdown ? product.noNote : !isCRNode ? product.nonConcept : undefined);
-
-    /** 切换面板：再次点击同一按钮则收起 */
-    function togglePanel(panel: ActivePanel): void {
-        if (!isCRNode) return;
-        activePanel = activePanel === panel ? 'none' : panel;
-    }
-
-    /** 关闭当前面板 */
-    function closePanel(): void {
-        activePanel = 'none';
-    }
 
     /** 清空输入框和结果 */
     function clearInput(): void {
@@ -227,27 +135,6 @@
         }
     }
 
-    /** 触发 Verify 流程 */
-    async function handleVerify(): Promise<void> {
-        if (!activeFile || !isCRNode || verifying) return;
-        const filePath = activeFile.path;
-        const generation = noteGeneration;
-        verifying = true;
-        try {
-            const result = await application.verify.start(filePath);
-            if (!mounted) return;
-            if (result.ok) {
-                showActionFeedback({ level: 'success', message: t.workbench.notifications.verifyStarted }, filePath);
-            } else {
-                showActionFeedback(toSafeErrorFeedback(result.error, t.workbench.notifications.unknownFailure), filePath);
-            }
-        } catch (e) {
-            if (mounted) showActionFeedback(toSafeErrorFeedback(e, t.workbench.notifications.unknownFailure), filePath);
-        } finally {
-            if (generation === noteGeneration) verifying = false;
-        }
-    }
-
     /** 选择类型并创建（TypeTable 回调） */
     async function handleCreateType(type: CRType): Promise<void> {
         if (!defineResult || creating) return;
@@ -264,24 +151,15 @@
         } catch (error) { reportError(error, t.workbench.notifications.unknownFailure); }
         finally { creating = false; }
     }
-
-    async function handleCards(): Promise<void> {
-        if (!activeFile || !isCRNode || generatingCards) return;
-        const path = activeFile.path;
-        const generation = noteGeneration;
-        generatingCards = true;
-        try {
-            const result = await application.cards.start(path);
-            if (!mounted) return;
-            if (result.ok) showActionFeedback({ level: 'success', message: ctx.i18n.format("cards.queued", { path: result.value }) }, path);
-            else showActionFeedback(result.error.code === "E401_PROVIDER_NOT_CONFIGURED"
-                ? { level: 'error', message: t.cards.configureFirst } : toSafeErrorFeedback(result.error, t.cards.failed), path);
-        } catch (error) { if (mounted) showActionFeedback(toSafeErrorFeedback(error, t.cards.failed), path); }
-        finally { if (generation === noteGeneration) generatingCards = false; }
-    }
 </script>
 
 <div class="cr-create-section">
+    <div class="cr-section-header">
+        <h2 class="cr-section-title">{product.newConcept}</h2>
+        {#if onOpenSettings}
+            <button type="button" class="clickable-icon cr-section-icon" aria-label={product.settingsAria} title={product.settings} onclick={onOpenSettings}><Icon name="settings" size={16} /></button>
+        {/if}
+    </div>
     {#if !defineResult || editingInput}
         <div class="cr-search-row">
             <div class="cr-search-field">
@@ -317,17 +195,11 @@
         <TypeTable concept={defineResult} oncreate={handleCreateType} disabled={creating} />
     {/if}
     {#if feedback}<InlineAlert level={feedback.level} message={feedback.message} details={feedback.details} {detailsToggleLabels} />{/if}
-    <div class="cr-note-actions">
-        <button class="cr-btn-secondary cr-note-action" type="button" disabled={!isCRNode} aria-expanded={activePanel === 'expand'} title={actionUnavailable ?? product.expandDesc} onclick={() => togglePanel('expand')}>{product.expandTitle}</button>
-        <button class="cr-btn-secondary cr-note-action" type="button" disabled={!isCRNode || verifying} aria-busy={verifying ? 'true' : undefined} onclick={() => void handleVerify()} aria-label={t.workbench.buttons.verify} title={actionUnavailable ?? product.verifyDesc}>{#if verifying}<span class="cr-loading-spinner" aria-hidden="true"></span>{/if}{t.workbench.buttons.verify}</button>
-        <button class="cr-btn-secondary cr-note-action" type="button" disabled={!isCRNode || generatingCards} aria-busy={generatingCards ? 'true' : undefined} onclick={() => void handleCards()} aria-label={t.cards.generate} title={actionUnavailable ?? product.cardsDesc}>{#if generatingCards}<span class="cr-loading-spinner" aria-hidden="true"></span>{/if}{t.cards.generate}</button>
-    </div>
 </div>
-{#if isCRNode}<InlinePanel expanded={activePanel === 'expand'} onclose={closePanel}><ExpandPanel {activeFile} onclose={closePanel} /></InlinePanel>{/if}
 
 <style>
     .cr-create-section { min-width: 0; }
-    h2 { font-size: var(--cr-heading-workbench); line-height: 1.4; margin: 0; padding: 0; color: var(--cr-text-normal); overflow-wrap: anywhere; }
+    .cr-result-heading h2 { font-size: var(--cr-font-base); font-weight: 600; line-height: 1.4; margin: 0; padding: 0; color: var(--cr-text-normal); overflow-wrap: anywhere; }
     .cr-search-row { display: flex; flex-direction: column; gap: 10px; }
     .cr-search-field { position: relative; min-width: 0; }
     .cr-search-field :global(.cr-btn-ghost) { position: absolute; top: 50%; right: 8px; transform: translateY(-50%); }
@@ -348,6 +220,4 @@
     .cr-result-heading { display: flex; align-items: baseline; gap: 12px; justify-content: space-between; margin-bottom: var(--cr-space-4); }
     .cr-result-heading h2 { min-width: 0; }
     .cr-text-action { flex-shrink: 0; height: auto; padding: 0; border: 0; box-shadow: none; background: none; color: var(--cr-interactive-accent); font-size: var(--cr-font-xs); }
-    .cr-note-actions { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); align-items: stretch; gap: var(--cr-space-2); margin-top: var(--cr-space-3); }
-    .cr-note-action { width: 100%; min-width: 0; min-height: 32px; padding: 6px; box-sizing: border-box; border-radius: var(--cr-field-radius); font-size: var(--cr-font-sm); overflow-wrap: anywhere; }
 </style>

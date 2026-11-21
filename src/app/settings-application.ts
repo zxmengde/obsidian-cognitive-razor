@@ -298,7 +298,7 @@ export class SettingsApplication {
     try {
       return await this.deps.providerProbe.probe(request, signal);
     } catch (error) {
-      return toErr(error, "E500_INTERNAL_ERROR", "Provider 测试失败");
+      return toErr(error, "E500_INTERNAL_ERROR", "服务测试失败");
     }
   }
 

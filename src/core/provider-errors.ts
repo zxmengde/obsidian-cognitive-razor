@@ -109,7 +109,7 @@ export function mapHttpError(status: number, responseText: string, apiKey?: stri
 
   // Anthropic 服务过载 (529)：请求未被模型执行，可按退避策略重试。
   if (status === 529) {
-    return err("E204_PROVIDER_ERROR", "Provider 服务过载 (529)，请稍后重试", {
+    return err("E204_PROVIDER_ERROR", "服务过载 (529)，请稍后重试", {
       status,
       rawResponse: rawDetail,
       ...(providerType ? { providerType } : {}),
@@ -122,7 +122,7 @@ export function mapHttpError(status: number, responseText: string, apiKey?: stri
   if (status === 408) {
     return err(
       "E206_PROVIDER_REQUEST_UNCERTAIN",
-      "Provider 请求超时，结果未知；为避免重复计费未自动重试",
+      "服务请求超时，结果未知；为避免重复计费未自动重试",
       { status, kind: "upstream-http", rawResponse: rawDetail },
     );
   }
@@ -133,13 +133,13 @@ export function mapHttpError(status: number, responseText: string, apiKey?: stri
   if (status === 502 || status === 503 || status === 504 || status === 524) {
     return err(
       "E206_PROVIDER_REQUEST_UNCERTAIN",
-      `Provider/中转上游连接中断 (${status})，结果未知；为避免重复计费未自动重试`,
+      `服务或中转上游连接中断 (${status})，结果未知；为避免重复计费未自动重试`,
       { status, kind: "upstream-http", rawResponse: rawDetail },
     );
   }
 
   if (status >= 500) {
-    return err("E204_PROVIDER_ERROR", `Provider/中转上游错误 (${status})，请稍后重试`, { status, rawResponse: rawDetail });
+    return err("E204_PROVIDER_ERROR", `服务或中转上游错误 (${status})，请稍后重试`, { status, rawResponse: rawDetail });
   }
 
   // 服务端已经明确拒绝的请求不会因原样重发而恢复。

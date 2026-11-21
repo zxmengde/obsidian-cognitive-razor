@@ -21,6 +21,11 @@ export function setSettingsContext(context: SettingsContext): void {
   setContext(SETTINGS_CONTEXT, context);
 }
 
+/** 给不经 Svelte 父组件挂载的子树（原生设置页渲染回调）提供同一设置上下文。 */
+export function settingsContextMap(context: SettingsContext): Map<unknown, unknown> {
+  return new Map<unknown, unknown>([[SETTINGS_CONTEXT, context]]);
+}
+
 export function getSettingsContext(): SettingsContext {
   return getContext<SettingsContext>(SETTINGS_CONTEXT);
 }

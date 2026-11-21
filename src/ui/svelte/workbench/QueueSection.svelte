@@ -195,7 +195,7 @@
 
 <div class="cr-queue-section">
     <div class="cr-queue-status-bar">
-        <h2 class="cr-queue-title">{t.workbench.product.tasks}</h2>
+        <h2 class="cr-section-title cr-queue-title">{t.workbench.product.tasks}</h2>
         {#if status.paused || status.pending > 0 || status.running > 0}
             <Button variant="ghost" size="sm" disabled={actionRunning} onclick={handleTogglePause} ariaLabel={status.paused ? t.workbench.queueStatus.resumeQueue : t.workbench.queueStatus.pauseQueue}>{status.paused ? t.workbench.queueStatus.resumeQueue : t.workbench.queueStatus.pauseQueue}</Button>
         {/if}
@@ -284,7 +284,6 @@
 <style>
     .cr-queue-section { position: relative; min-width: 0; }
     .cr-queue-status-bar { display: flex; align-items: baseline; gap: var(--cr-space-3); margin-bottom: var(--cr-space-3); padding-right: 80px; }
-    .cr-queue-title { margin: 0; padding: 0; font-size: var(--cr-font-base); font-weight: 600; color: var(--cr-text-normal); }
     .cr-queue-status-bar :global(button) { padding: 0; font-size: var(--cr-font-xs); min-height: 0; }
     .cr-queue-uncertain-notice { margin: 0 0 var(--cr-space-4); color: var(--cr-status-warning); font-size: var(--cr-font-sm); }
     .cr-queue-history { margin-top: var(--cr-space-4); border-top: 1px solid var(--cr-border); }

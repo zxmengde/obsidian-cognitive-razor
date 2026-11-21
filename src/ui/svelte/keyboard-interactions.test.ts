@@ -33,7 +33,7 @@ beforeAll(async () => {
       builder.onLoad({ filter: /.*/, namespace: "test" }, ({ path }) => ({ resolveDir: process.cwd(), contents: compile(
         path === "task-model-host"
           ? '<script>import TaskModelCard from "./src/ui/svelte/settings/TaskModelCard.svelte"; import { resolveTaskModelSnapshot } from "./src/core/task-model-resolver"; let { store, i18n, update } = $props(); let settings = $state(store.getSettings()); const unsubscribe = store.subscribe(value => settings = value); $effect(() => () => unsubscribe());</script><TaskModelCard taskType="write" config={settings.taskModels.write} providers={settings.providers} defaultProviderId={settings.defaultProviderId} resolved={resolveTaskModelSnapshot(settings, "write")} isDefault={false} {i18n} onUpdate={update} onReset={() => {}} />'
-          : '<script>import Create from "./src/ui/svelte/workbench/CreateSection.svelte"; import { setWorkbenchContext } from "./src/ui/bridge/context"; let { context, activeFile = null } = $props(); setWorkbenchContext(context); export function setActiveFile(file) { activeFile = file; }</script><Create {activeFile} />',
+          : '<script>import Create from "./src/ui/svelte/workbench/CreateSection.svelte"; import Note from "./src/ui/svelte/workbench/CurrentNoteSection.svelte"; import { setWorkbenchContext } from "./src/ui/bridge/context"; let { context, activeFile = null } = $props(); setWorkbenchContext(context); export function setActiveFile(file) { activeFile = file; }</script><Create /><Note {activeFile} />',
         { filename: "TestHost.svelte", css: "injected" },
       ).js.code }));
     } }, sveltePlugin({ preprocess: sveltePreprocess(), compilerOptions: { css: "injected" } })],
@@ -124,7 +124,9 @@ describe("keyboard interaction safety", () => {
       const clearButton = target.querySelector<HTMLButtonElement>(`button[aria-label="${i18n.messages.workbench.createConcept.clear}"]`)!;
       expect(getComputedStyle(clearButton).position).toBe('absolute');
       expect(target.querySelector('[role="tablist"], [role="tab"], [role="tabpanel"]')).toBeNull();
-      expect(target.querySelector('.cr-create-heading, .cr-create-intro, .cr-current-note, .cr-create-help')).toBeNull();
+      expect(target.querySelector('.cr-create-heading, .cr-create-intro, .cr-create-help')).toBeNull();
+      // 当前笔记区独立成块，标明操作对象。
+      expect(target.querySelector('.cr-current-note__name')?.textContent).toBe('Synthetic');
       expect(target.textContent).not.toContain('想理解什么？');
       expect(target.textContent).not.toContain('输入一个概念，先看看适合如何整理。');
       expect(target.textContent).not.toContain('识别后由你选择类型，再创建笔记');
@@ -152,12 +154,14 @@ describe("keyboard interaction safety", () => {
       await vi.waitFor(() => { ui.flushSync(); expect(input.disabled).toBe(false); });
       expect(define).toHaveBeenCalledExactlyOnceWith('保留的概念', expect.any(AbortSignal));
       expect(input.value).toBe(' 保留的概念 ');
+      // 没有可操作的知识节点时不摆出禁用按钮，只给一行说明。
       (instance as { setActiveFile(file: unknown): void }).setActiveFile(null); ui.flushSync();
-      expect(target.querySelectorAll('.cr-note-actions button')).toHaveLength(3);
-      expect(Array.from(target.querySelectorAll<HTMLButtonElement>('.cr-note-actions button')).every(button => button.disabled)).toBe(true);
+      expect(target.querySelectorAll('.cr-note-actions button')).toHaveLength(0);
+      expect(target.querySelector('.cr-current-note .cr-section-hint')?.textContent).toBe(i18n.messages.workbench.product.noNoteHint);
       expect(input.value).toBe(' 保留的概念 ');
       (instance as { setActiveFile(file: unknown): void }).setActiveFile({ path: 'Image.png', extension: 'png' }); ui.flushSync();
-      expect(Array.from(target.querySelectorAll<HTMLButtonElement>('.cr-note-actions button')).every(button => button.disabled)).toBe(true);
+      expect(target.querySelectorAll('.cr-note-actions button')).toHaveLength(0);
+      expect(target.querySelector('.cr-current-note .cr-section-hint')?.textContent).toBe(i18n.messages.workbench.product.noNoteHint);
       expect(prepare).toHaveBeenCalledOnce(); expect(verify).toHaveBeenCalledOnce(); expect(cards).toHaveBeenCalledOnce(); expect(define).toHaveBeenCalledOnce();
       target.querySelector<HTMLButtonElement>(`button[aria-label="${i18n.messages.workbench.createConcept.clear}"]`)!.click(); ui.flushSync();
       expect(input.value).toBe(''); expect(submit.disabled).toBe(true);
@@ -182,6 +186,39 @@ describe("keyboard interaction safety", () => {
       expect(submit.disabled).toBe(true); submit.click();
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
       expect(define).not.toHaveBeenCalled();
+    } finally { await ui.unmount(instance); target.remove(); }
+  });
+
+  it.each([
+    { name: 'no service at all', withService: false, hint: false },
+    { name: 'define works but cards has a broken override', withService: true, hint: true },
+  ])('disables note actions whose task has no usable model ($name)', async ({ withService, hint }) => {
+    const target = document.body.appendChild(document.createElement('div'));
+    const i18n = new I18n();
+    const verify = vi.fn(); const cards = vi.fn();
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    if (withService) {
+      settings.providers.svc = { apiKey: '', baseUrl: 'http://127.0.0.1:9/v1', apiFormat: 'openai-chat-completions', embeddingApiFormat: 'openai-embeddings', defaultChatModel: 'chat', defaultEmbedModel: 'embed', enabled: true };
+      settings.defaultProviderId = 'svc';
+      settings.taskModels.cards = { ...settings.taskModels.cards, providerId: 'missing' };
+    }
+    const instance = ui.mount(ui.CreateHost, { target, props: { activeFile: { path: 'Gate.md', basename: 'Gate', extension: 'md' }, context: {
+      i18n, app: { metadataCache: { on: () => ({}), offref() {}, getFileCache: () => null }, vault: { on: () => ({}), offref() {}, cachedRead: async () => generateMarkdownContent(generateFrontmatter({ cruid: 'gate', type: 'entity', name: 'Gate' }), '') } },
+      application: { verify: { start: verify }, cards: { start: cards }, queue: { subscribe: () => () => undefined } },
+      settingsApplication: { getSettings: () => settings, subscribeSettings: () => () => undefined },
+    } } });
+    try {
+      ui.flushSync(); await Promise.resolve(); ui.flushSync();
+      const [expand, verifyButton, cardsButton] = Array.from(target.querySelectorAll<HTMLButtonElement>('.cr-note-action'));
+      // 拓展只打开面板，不直接请求模型，保持可用。
+      expect(expand.disabled).toBe(false);
+      expect(verifyButton.disabled).toBe(!withService);
+      expect(cardsButton.disabled).toBe(true);
+      expect(cardsButton.title).toBe(i18n.messages.workbench.product.noteActionsUnavailable);
+      cardsButton.click(); expect(cards).not.toHaveBeenCalled();
+      // 识别概念不可用时创建区已给出提示，当前笔记区不重复。
+      const hints = Array.from(target.querySelectorAll('.cr-current-note .cr-section-hint'), (el) => el.textContent ?? '');
+      expect(hints.some((text) => text.includes(i18n.messages.workbench.product.noteActionsUnavailable))).toBe(hint);
     } finally { await ui.unmount(instance); target.remove(); }
   });
 
@@ -427,9 +464,9 @@ describe("card generation entry", () => {
       reads[0](crContent('old'));
       await Promise.resolve(); ui.flushSync();
       expect(disabled()).toBe(true);
-      for (const button of Array.from(target.querySelectorAll<HTMLButtonElement>('.cr-note-action'))) {
-        expect(button.title).toContain('不是概念笔记'); button.click();
-      }
+      // 普通笔记不提供操作按钮，只说明原因。
+      expect(target.querySelectorAll('.cr-note-action')).toHaveLength(0);
+      expect(target.querySelector('.cr-current-note .cr-section-hint')?.textContent).toBe(new I18n().messages.workbench.product.notNodeHint);
       expect(actions.verify.start).not.toHaveBeenCalled();
       expect(actions.cards.start).not.toHaveBeenCalled();
       expect(actions.expand.prepare).not.toHaveBeenCalled();
@@ -440,7 +477,8 @@ describe("card generation entry", () => {
       expect(Array.from(target.querySelectorAll<HTMLButtonElement>('.cr-note-action')).every(button => !button.disabled)).toBe(true);
       changed(file, `${latest}\n更多正文`, crCache(latest)); ui.flushSync();
       expect(disabled()).toBe(false);
-      expect(cachedRead).toHaveBeenCalledTimes(1);
+      // 节点判定只读一次；另一次来自确认为知识节点后挂载的核查问题列表。
+      expect(cachedRead).toHaveBeenCalledTimes(2);
     } finally { await ui.unmount(instance); target.remove(); }
   });
 
@@ -556,18 +594,22 @@ describe("card generation entry", () => {
     try {
       ui.flushSync(); await Promise.resolve(); ui.flushSync();
       const cardButtons = Array.from(target.querySelectorAll("button")).filter((button) => button.textContent?.includes("生成记忆卡片"));
-      expect(cardButtons).toHaveLength(1);
-      const cardButton = cardButtons[0];
-      expect(cardButton.closest('[hidden]')).toBeNull();
-      expect(cardButton.disabled).toBe(!isNode);
+      // 知识节点只有一个卡片入口；普通笔记不出现该入口，只说明原因。
+      expect(cardButtons).toHaveLength(isNode ? 1 : 0);
       expect(target.querySelector('[role="tablist"]')).toBeNull();
       expect(target.textContent).not.toContain("重建当前笔记向量");
       if (isNode) {
+        const cardButton = cardButtons[0];
+        expect(cardButton.closest('[hidden]')).toBeNull();
+        expect(cardButton.disabled).toBe(false);
         cardButton.click();
         expect(start).toHaveBeenCalledWith("C-知识库/测试.md");
         await vi.waitFor(() => expect(ui.noticeMessages.some(notice => notice.message.includes("D-习题库/测试-decks.md"))).toBe(true));
         expect(target.querySelector('[role="alert"]')).toBeNull();
-      } else { cardButton.click(); expect(start).not.toHaveBeenCalled(); expect(cardButton.title).toContain('不是概念笔记'); }
+      } else {
+        expect(start).not.toHaveBeenCalled();
+        expect(target.querySelector('.cr-current-note .cr-section-hint')?.textContent).toBe(new I18n().messages.workbench.product.notNodeHint);
+      }
     } finally { await ui.unmount(instance); target.remove(); }
   });
 });

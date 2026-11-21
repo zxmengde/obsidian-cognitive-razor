@@ -82,6 +82,7 @@ describe("current UI architecture", () => {
   it("keeps Workbench feedback projected and sends note actions through one Notice service", () => {
     const files = [
       "src/ui/svelte/workbench/CreateSection.svelte",
+      "src/ui/svelte/workbench/CurrentNoteSection.svelte",
       "src/ui/svelte/workbench/DuplicatesSection.svelte",
       "src/ui/svelte/workbench/ExpandPanel.svelte",
       "src/ui/svelte/workbench/QueueSection.svelte",
@@ -94,7 +95,8 @@ describe("current UI architecture", () => {
       expect(source).not.toContain("[${");
     }
     expect(read("src/ui/svelte/workbench/CreateSection.svelte")).not.toContain("cr-search-btn");
-    expect(read("src/ui/svelte/workbench/CreateSection.svelte")).toContain("showActionFeedback");
+    // 笔记操作（核查、卡片）在「当前笔记」区，经同一 Notice 服务反馈。
+    expect(read("src/ui/svelte/workbench/CurrentNoteSection.svelte")).toContain("showActionFeedback");
     expect(read("src/ui/svelte/workbench/ExpandPanel.svelte")).toContain("showActionFeedback");
     expect(read("src/ui/svelte/workbench/ExpandPanel.svelte")).not.toContain("InlineAlert");
     expect(read("src/ui/svelte/workbench/ExpandPanel.svelte")).not.toContain("cr-link-btn");
@@ -151,32 +153,47 @@ describe("current UI architecture", () => {
     expect(bridge).not.toContain("createRecoveryStore");
   });
 
-  it("exposes missing-vector maintenance controls in settings", () => {
-    const source = read("src/ui/svelte/settings/MaintenanceTab.svelte");
-    expect(source).toContain("scanSemanticIndex");
-    expect(source).toContain("embedMissingSemanticIndex");
-    expect(source).toContain("embedOneSemanticIndex");
-    expect(source).toContain("rebuildSemanticIndex");
-    expect(source).toContain("inspectVectorFiles");
-    expect(source).toContain("cleanupOrphanedVectorFiles");
-    expect(source).toContain("cleanupVectorFilesConfirm");
+  it("exposes missing-vector and vector-file maintenance controls in settings", () => {
+    const controller = read("src/ui/settings/maintenance-controller.ts");
+    const definitions = read("src/ui/settings/settings-definitions.ts");
+    const results = read("src/ui/svelte/settings/MaintenanceResults.svelte");
+    expect(controller).toContain("this.settingsApplication.scanSemanticIndex()");
+    expect(controller).toContain("this.settingsApplication.embedMissingSemanticIndex()");
+    expect(controller).toContain("this.settingsApplication.embedOneSemanticIndex(cruid)");
+    expect(controller).toContain("this.settingsApplication.inspectVectorFiles()");
+    expect(controller).toContain("this.settingsApplication.cleanupOrphanedVectorFiles(report.orphanFiles)");
+    expect(definitions).toContain("maintenance.scanSemanticIndex()");
+    expect(definitions).toContain("maintenance.scanVectorFiles()");
+    expect(definitions).toContain("app.rebuildSemanticIndex()");
+    expect(results).toContain("controller.embedMissing()");
+    expect(results).toContain("controller.embedOne(note.cruid)");
+    expect(definitions).toContain("settings.advanced.semanticIndexing.cleanupVectorFilesConfirm");
   });
 
   it("keeps single-note vector maintenance in settings and cards in the workbench", () => {
-    const source = read("src/ui/svelte/workbench/CreateSection.svelte");
+    const source = read("src/ui/svelte/workbench/CurrentNoteSection.svelte");
     expect(source).not.toContain("rebuildCurrentNote");
     expect(source).toContain("application.cards.start");
-    expect(read("src/ui/svelte/settings/MaintenanceTab.svelte")).toContain("rebuildSpecifiedNote");
+    expect(read("src/ui/settings/settings-definitions.ts")).toContain("maintenance.rebuildSpecifiedNote(notePath)");
   });
 
-  it("keeps host/runtime access outside Svelte settings and workbench code", () => {
+  it("keeps host/runtime access outside settings and workbench code", () => {
     const workbench = read("src/ui/svelte/workbench-view.ts");
-    const settings = read("src/ui/svelte/settings/WorkflowTab.svelte");
     const context = read("src/ui/bridge/context.ts");
+    const settingsFiles = [
+      "src/ui/svelte/settings-tab.ts",
+      "src/ui/settings/settings-definitions.ts",
+      "src/ui/settings/maintenance-controller.ts",
+      "src/ui/settings/service-probes.ts",
+      "src/ui/settings/task-probe-modal.ts",
+      "src/ui/settings/svelte-setting-page.ts",
+    ];
 
     expect(workbench).not.toContain("PluginRuntime");
-    expect(settings).not.toContain("PluginRuntime");
-    expect(settings).not.toContain("ensureRuntime");
+    for (const file of settingsFiles) {
+      expect(read(file), file).not.toContain("PluginRuntime");
+      expect(read(file), file).not.toContain("ensureRuntime");
+    }
     expect(context).not.toContain("CognitiveRazorPlugin");
   });
 
@@ -212,14 +229,17 @@ describe("current UI architecture", () => {
 
   it("keeps scoped UI styles on the centralized token mapping", () => {
     for (const file of collectSvelteSources("src/ui")) {
-      const source = read(file);
-      expect(source, file).not.toMatch(/var\(--[^)]*,/);
-      expect(source, file).not.toMatch(/(?<![A-Za-z0-9_])#[0-9a-fA-F]{3,8}(?![A-Za-z0-9_])|rgba?\(/);
+      expect(read(file), file).not.toMatch(/(?<![A-Za-z0-9_])#[0-9a-fA-F]{3,8}(?![A-Za-z0-9_])|rgba?\(/);
     }
+    expect(read("styles.css")).toContain("--cr-bg-cover: var(--background-modifier-cover);");
+  });
 
-    expect(read("styles.css")).toContain(
-      "--cr-bg-cover: var(--background-modifier-cover);",
-    );
+  // 已知违例：LocationsEditor.svelte 的 .mod-warning 写成 var(--text-warning, var(--cr-status-warning))，带了回退值。
+  // 去掉回退、直接使用 var(--cr-status-warning) 后，把此处改为普通 it。
+  it("keeps fallback values out of var() in scoped UI styles", () => {
+    for (const file of collectSvelteSources("src/ui")) {
+      expect(read(file), file).not.toMatch(/var\(--[^)]*,/);
+    }
   });
 
   it("defines every plugin-owned visual token used by production components", () => {
@@ -229,10 +249,10 @@ describe("current UI architecture", () => {
     expect([...used].filter(token => !defined.has(token))).toEqual([]);
     expect(read("styles.css")).toContain("--cr-overlay-warning-10:");
     expect(read("styles.css")).toContain(".cr-scope .cr-btn-primary { font-weight: 600; }");
-    const defaultSelectRule = read("styles.css").match(/\.cr-scope \.cr-settings-root \.cr-providers-tab > \.cr-settings-section:first-of-type > select \{([^}]+)\}/)?.[1];
-    expect(defaultSelectRule).toContain("background-color: var(--cr-bg-field)");
-    expect(defaultSelectRule).not.toMatch(/(?:^|;)\s*background\s*:/);
-
+    // 原生设置页不再自绘下拉框：select 规则不得用 background 简写覆盖宿主背景。
+    const selectBodies = [...read("styles.css").matchAll(/\.cr-scope[^{}]*\bselect\b[^{}]*\{([^}]+)\}/g)].map(match => match[1]);
+    expect(selectBodies.length).toBeGreaterThan(0);
+    for (const body of selectBodies) expect(body).not.toMatch(/(?:^|;)\s*background\s*:/);
   });
 
   it("keeps user-visible UI copy in the locale source", () => {
@@ -323,70 +343,63 @@ describe("current UI architecture", () => {
   });
 
   it("tests provider connections without starting the vault runtime", () => {
-    const source = read("src/ui/svelte/settings/ProvidersTab.svelte");
-    const card = read("src/ui/svelte/settings/ProviderCard.svelte");
+    const probes = read("src/ui/settings/service-probes.ts");
+    const definitions = read("src/ui/settings/settings-definitions.ts");
+    const tab = read("src/ui/svelte/settings-tab.ts");
     const modal = read("src/ui/svelte/modals/ProviderModal.svelte");
 
-    expect(source).toContain("ctx.settingsApplication.testProvider");
-    expect(source).toContain("toProviderProbeReadModel");
-    expect(card).toContain("ProviderProbeStatus");
+    expect(probes).toContain("settingsApplication.testProvider(request, signal)");
+    expect(probes).toContain("toProviderProbeReadModel");
+    expect(definitions).toContain("ProviderProbeStatus");
+    expect(definitions).toContain('run("manual-retry")');
     expect(modal).toContain("ProviderProbeStatus");
-    expect(card).toContain("manual-retry");
     expect(modal).toContain("manual-retry");
-    expect(source).not.toContain("checkProviderConnection");
-    expect(source).not.toContain("ensureRuntime()");
-    expect(source).not.toContain("showSuccess");
-    expect(source).not.toContain("showError");
-    expect(card).not.toContain("chatError");
     expect(modal).not.toContain("chatError");
+    for (const source of [probes, definitions, tab]) {
+      expect(source).not.toContain("checkProviderConnection");
+      expect(source).not.toContain("ensureRuntime()");
+      expect(source).not.toContain("showSuccess");
+      expect(source).not.toContain("showError");
+    }
   });
 
-  it("organizes settings around providers, workflow, and backup", () => {
-    const source = read("src/ui/svelte/settings/SettingsRoot.svelte");
-
-    expect(source).toContain("'providers' | 'workflow' | 'backup'");
-    expect(source).toContain("<ProvidersTab onConfigureTask={configureTask} {overridesOpen}");
-    expect(source).toContain("<TaskDetails taskType={task}");
-    expect(read("src/ui/svelte/settings/ProvidersTab.svelte")).not.toContain("<TaskModelCard");
-    expect(source).toContain("<WorkflowTab />");
-    expect(source).toContain("<MaintenanceTab />");
-    expect(read("src/ui/svelte/settings/MaintenanceTab.svelte")).toContain("<BackupTab />");
-    expect(existsSync("src/ui/svelte/settings/DataTab.svelte")).toBe(false);
-    expect(existsSync("src/ui/svelte/settings/AdvancedTab.svelte")).toBe(false);
-    expect(existsSync("src/ui/svelte/settings/GeneralTab.svelte")).toBe(false);
-    expect(existsSync("src/ui/svelte/settings/SystemTab.svelte")).toBe(false);
+  it("organizes settings in the native section order and removes the old tab components", () => {
+    // 源文件可能是 CRLF 换行，比较前统一成 LF，避免多行锚点因换行符失配。
+    const definitions = read("src/ui/settings/settings-definitions.ts").replace(/\r\n/g, "\n");
+    const start = definitions.indexOf("  return [\n    saveFailed,");
+    expect(start).toBeGreaterThan(-1);
+    const block = definitions.slice(start);
+    let cursor = 0;
+    for (const token of ["services,", 'heading: n("models")', 'heading: n("notes")', "generation,", "display,", 'heading: n("advanced")']) {
+      const index = block.indexOf(token, cursor);
+      expect(index, token).toBeGreaterThan(-1);
+      cursor = index;
+    }
+    expect(definitions).toContain("host.sveltePage(title, TaskDetails, () => ({ taskType }), `task:${taskType}`)");
+    expect(definitions).toContain('host.sveltePage(n("locations"), LocationsEditor, () => ({}))');
+    for (const file of [
+      "BackupTab", "MaintenanceTab", "ProviderCard", "ProvidersTab", "SettingItem",
+      "SettingsNav", "SettingsRoot", "SettingsSection", "WorkflowTab",
+      "DataTab", "AdvancedTab", "GeneralTab", "SystemTab",
+    ]) {
+      expect(existsSync(`src/ui/svelte/settings/${file}.svelte`), file).toBe(false);
+    }
   });
 
-  it("keeps ordinary settings save feedback in the shared in-place read model", () => {
-    const root = read("src/ui/svelte/settings/SettingsRoot.svelte");
-    const providers = read("src/ui/svelte/settings/ProvidersTab.svelte");
-    const workflow = read("src/ui/svelte/settings/WorkflowTab.svelte");
-    const backup = read("src/ui/svelte/settings/BackupTab.svelte");
-    const section = read("src/ui/svelte/settings/SettingsSection.svelte");
+  it("keeps ordinary settings save feedback in the native read model", () => {
+    const tab = read("src/ui/svelte/settings-tab.ts");
+    const definitions = read("src/ui/settings/settings-definitions.ts");
 
-    expect(root).toContain("settingsApplication.subscribeSaveState");
-    expect(root).toContain("settings.save.saved");
-    expect(root).toContain("settingsApplication.retryLastSave()");
-    expect(root).toContain("<Button");
-    expect(providers).not.toContain("reportSettingsSaveResult");
-    expect(providers).not.toContain("notices.providerAdded");
-    expect(workflow).not.toContain("reportSettingsSaveResult");
-    expect(backup).not.toContain("reportSettingsSaveResult");
-    expect(backup).not.toContain("showSuccess");
-    expect(backup).not.toContain("showError");
-    expect(providers).toContain("<SettingsSection");
-    expect(workflow).toContain("<SettingsSection");
-    expect(backup).toContain("<SettingsSection");
-    expect(section).toContain("cr-settings-section__header");
-    expect(providers).not.toContain("cr-settings-group");
-    expect(workflow).not.toContain("cr-settings-section h3");
-    expect(providers).not.toContain("class=\"cr-btn-");
-    expect(read("src/ui/svelte/settings/ProviderCard.svelte")).not.toContain("class=\"cr-btn-");
-    expect(read("src/ui/svelte/settings/TaskModelCard.svelte")).not.toContain("class=\"cr-btn-");
-    expect(workflow).not.toContain("settingsStore.updateSettings");
-    expect(providers).not.toContain("settingsStore");
-    expect(workflow).not.toContain("settingsStore");
-    expect(root).not.toContain("settingsStore");
+    expect(tab).toContain("settingsApplication.subscribeSaveState");
+    expect(definitions).toContain('visible: () => app.getSaveState().status === "save-failed"');
+    expect(definitions).toContain("app.retryLastSave()");
+    expect(definitions).toContain('t("settings.save.failed")');
+    for (const source of [tab, definitions]) {
+      expect(source).not.toContain("reportSettingsSaveResult");
+      expect(source).not.toContain("showSuccess");
+      expect(source).not.toContain("showError");
+      expect(source).not.toContain("settingsStore.updateSettings");
+    }
     expect(existsSync("src/ui/settings-save.ts")).toBe(false);
     expect(existsSync("src/ui/settings-save.test.ts")).toBe(false);
   });
@@ -415,15 +428,11 @@ describe("current UI architecture", () => {
 
   it("uses the shared settings token system", () => {
     const files = [
-      "src/ui/svelte/settings/BackupTab.svelte",
-      "src/ui/svelte/settings/ProviderCard.svelte",
+      "src/ui/svelte/settings/LocationsEditor.svelte",
+      "src/ui/svelte/settings/MaintenanceResults.svelte",
       "src/ui/svelte/settings/ProviderProbeStatus.svelte",
-      "src/ui/svelte/settings/ProvidersTab.svelte",
-      "src/ui/svelte/settings/SettingItem.svelte",
-      "src/ui/svelte/settings/SettingsNav.svelte",
-      "src/ui/svelte/settings/SettingsSection.svelte",
+      "src/ui/svelte/settings/TaskDetails.svelte",
       "src/ui/svelte/settings/TaskModelCard.svelte",
-      "src/ui/svelte/settings/WorkflowTab.svelte",
     ];
     for (const file of files) {
       expect(read(file)).not.toMatch(/var\(--cr-[^)]*,/);
@@ -478,40 +487,41 @@ describe("current UI architecture", () => {
   });
 
   it("separates everyday indexing settings from maintenance without a second search service", () => {
-    const workflow = read("src/ui/svelte/settings/WorkflowTab.svelte");
-    const source = read("src/ui/svelte/settings/MaintenanceTab.svelte");
+    const definitions = read("src/ui/settings/settings-definitions.ts");
+    const controller = read("src/ui/settings/maintenance-controller.ts");
+    const results = read("src/ui/svelte/settings/MaintenanceResults.svelte");
+    const tab = read("src/ui/svelte/settings-tab.ts");
 
-    expect(source).toContain("settings.enableSemanticIndexing");
-    expect(source).toContain("settings.enableDuplicateDetection");
-    expect(source).toContain("settingsApplication.rebuildSemanticIndex");
-    expect(source).toContain("settingsApplication.cancelSemanticIndexRebuild()");
-    expect(source).toContain("subscribeSemanticIndexRebuildState");
-    expect(source).toContain("rebuildState.status");
-    expect(source).not.toContain("plugin.ensureRuntime()");
-    expect(source).not.toContain("viewActive");
-    expect(source).toContain("rebuildDuplicateFailed");
-    expect(source).toContain("<ConfirmModal");
-    expect(source).not.toContain("groundingSearch");
-    expect(source).toContain("value={settings.taskTimeoutMs / 1000}");
-    expect(source).toContain("taskTimeoutMs: value * 1000");
-    expect(source).toContain("ariaLabel=");
+    expect(definitions).toContain('key: "enableSemanticIndexing"');
+    expect(definitions).toContain('key: "enableDuplicateDetection"');
+    expect(definitions).toContain("app.rebuildSemanticIndex()");
+    expect(definitions).toContain("app.cancelSemanticIndexRebuild()");
+    expect(definitions).toContain("app.getSemanticIndexRebuildState()");
+    expect(definitions).toContain("host.confirm(");
+    expect(results).toContain("rebuildDuplicateFailed");
+    expect(controller).toContain("this.settingsApplication.getSemanticIndexRebuildState().status");
+    expect(tab).toContain("subscribeSemanticIndexRebuildState");
+    expect(tab).toContain("this.settingsApplication.cancelSemanticIndexRebuild()");
+    expect(definitions).not.toContain("plugin.ensureRuntime()");
+    expect(definitions).not.toContain("viewActive");
+    expect(definitions).not.toContain("groundingSearch");
+    expect(definitions).not.toContain("...settings.directoryScheme");
     expect(read("src/ui/svelte/settings/LocationsEditor.svelte")).toContain("settingsApplication.updateSettings(candidate)");
-    expect(workflow).not.toContain("rebuildSemanticIndex()");
-    expect(source).not.toContain("...settings.directoryScheme");
+    expect(tab).toContain("settings.taskTimeoutMs / 1000");
+    expect(tab).toContain("taskTimeoutMs: Number(value) * 1000");
   });
 
   it("shows unavailable task assignments and uses user-scale provider controls", () => {
-    const providers = read("src/ui/svelte/settings/ProvidersTab.svelte");
-    const workflow = read("src/ui/svelte/settings/MaintenanceTab.svelte");
+    const tab = read("src/ui/svelte/settings-tab.ts");
+    const definitions = read("src/ui/settings/settings-definitions.ts");
     const taskModel = read("src/ui/svelte/settings/TaskModelCard.svelte");
 
-    expect(workflow).toContain("settings.providerTimeoutMs / 1000");
-    expect(workflow).toContain("providerTimeoutMs: value * 1000");
-    expect(workflow).toContain("settings.providerMaxAttempts");
-    expect(workflow).toContain("settings.enableStreamingKeepalive");
-    expect(workflow).toContain("enableStreamingKeepalive: value");
-    expect(providers).not.toContain("settings.providerTimeoutMs / 1000");
-    expect(providers).toContain("providerUnavailable");
+    expect(tab).toContain("settings.providerTimeoutMs / 1000");
+    expect(tab).toContain("providerTimeoutMs: Number(value) * 1000");
+    expect(definitions).toContain("VIRTUAL_CONTROL_KEYS.providerTimeoutSeconds");
+    expect(definitions).toContain("settings.advanced.queue.providerMaxAttempts");
+    expect(definitions).toContain('key: "enableStreamingKeepalive"');
+    expect(definitions).toContain("warning: Boolean(summary.issue) && !waitingDefault");
     expect(taskModel).toContain("providerUnavailable");
     expect(taskModel).toContain("aria-label={parameterLabel(key)}");
     expect(taskModel).toContain("aria-describedby={`${parameterId(key)}-desc");
@@ -536,8 +546,8 @@ describe("current UI architecture", () => {
 
   it("prevents stale expand loads and stale nested settings snapshots", () => {
     const expand = read("src/ui/svelte/workbench/ExpandPanel.svelte");
-    const providers = read("src/ui/svelte/settings/ProvidersTab.svelte");
-    const workflowSettings = read("src/ui/svelte/settings/WorkflowTab.svelte");
+    const tab = read("src/ui/svelte/settings-tab.ts");
+    const definitions = read("src/ui/settings/settings-definitions.ts");
 
     expect(expand).toContain("loadGeneration");
     expect(expand).toContain("generation !== loadGeneration");
@@ -546,19 +556,20 @@ describe("current UI architecture", () => {
     expect(expand).not.toContain("replaceSelection(getCreatableIndices(result.value))");
     expect(expand).toContain("String(selected.size)");
     expect(read("src/ui/svelte/settings/TaskDetails.svelte")).toContain("settingsApplication.updateTaskModel(type, partial)");
-    expect(workflowSettings).not.toContain("<TaskModelCard");
-    expect(providers).toContain("ctx.settingsApplication.updateProvider(id, config)");
-    expect(providers).not.toContain("sanitizeTaskModelsForProvider");
+    expect(definitions).not.toContain("TaskModelCard");
+    expect(tab).toContain("settingsApplication.updateProvider(nextId, config)");
+    expect(tab + definitions).not.toContain("sanitizeTaskModelsForProvider");
   });
 
   it("guards user-triggered async actions against duplicate submission", () => {
     const create = read("src/ui/svelte/workbench/CreateSection.svelte");
+    const note = read("src/ui/svelte/workbench/CurrentNoteSection.svelte");
     const duplicates = read("src/ui/svelte/workbench/DuplicatesSection.svelte");
     const duplicateItem = read("src/ui/svelte/workbench/DuplicateItem.svelte");
 
-    expect(create).toContain("if (!activeFile || !isCRNode || verifying) return");
-    expect(create).toContain("disabled={!isCRNode || verifying}");
-    expect(create).toContain("{#if verifying}");
+    expect(note).toContain("if (!activeFile || !isCRNode || verifying || verifyUnavailable) return");
+    expect(note).toContain("disabled={!isCRNode || verifying || verifyUnavailable}");
+    expect(note).toContain("{#if verifying}");
     expect(create).toContain("defineAbortController?.abort('create panel unmounted')");
     expect(create).toContain("application.create.define(inputValue.trim(), controller.signal)");
     expect(duplicates).toContain("dismissingIds.has(pair.id)");

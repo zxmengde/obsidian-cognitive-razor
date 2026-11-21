@@ -1059,7 +1059,7 @@ describe("ProviderManager", () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error.message).toContain("Provider/中转上游错误 (500)");
+      expect(result.error.message).toContain("服务或中转上游错误 (500)");
       expect(result.error.details).toMatchObject({ status: 500, providerAttempts: 1 });
     }
     expect(requestUrl).toHaveBeenCalledTimes(1);

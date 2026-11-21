@@ -8,7 +8,7 @@
     import ProviderProbeStatus from './ProviderProbeStatus.svelte';
     import { toProviderProbeReadModel, type ProviderProbeReadModel } from '../../provider-probe-result';
 
-    let { taskType, onBack }: { taskType: TaskType; onBack: () => void } = $props();
+    let { taskType }: { taskType: TaskType } = $props();
     const { i18n, settingsApplication } = getSettingsContext();
     let settings = $state<PluginSettings>(settingsApplication.getSettings());
     const unsubscribe = settingsApplication.subscribeSettings(value => settings = value);
@@ -40,18 +40,9 @@
     }
 </script>
 
-<section class="cr-task-details" aria-labelledby={`cr-task-detail-heading-${taskType}`}>
-    <nav class="cr-task-details__breadcrumb" aria-label={i18n.t('settings.taskDetails.breadcrumb')}>
-        <button class="cr-task-details__back" aria-label={i18n.t('settings.taskDetails.backToOverview')} onclick={onBack}>
-            {i18n.t('settings.tabs.providers')}
-        </button>
-        <span aria-hidden="true">/</span>
-        <span aria-current="page">{i18n.t(`settings.redesign.tasks.${taskType}`)}</span>
-    </nav>
-    <header class="cr-settings-page-heading">
-        <h2 id={`cr-task-detail-heading-${taskType}`} tabindex="-1">{i18n.t(`settings.redesign.tasks.${taskType}`)}</h2>
-        <p>{i18n.t('settings.taskDetails.taskOnly')}</p>
-    </header>
+<!-- 原生子页面的标题栏已给出任务名与返回导航，这里只放页内说明与编辑区。 -->
+<section class="cr-task-details" aria-label={i18n.t(`settings.redesign.tasks.${taskType}`)}>
+    <p class="setting-item-description cr-task-details__intro">{i18n.t('settings.taskDetails.taskOnly')}</p>
     <TaskModelCard {taskType} config={settings.taskModels[taskType]}
         providers={settings.providers} defaultProviderId={settings.defaultProviderId}
         resolved={summary.resolved} isDefault={settingsApplication.isTaskModelDefault(taskType)} {i18n}
@@ -66,9 +57,7 @@
 </section>
 
 <style>
-    .cr-task-details__probe { padding-top: var(--cr-space-5); border-top: 1px solid var(--cr-border); margin-top: var(--cr-space-5); }
     .cr-task-details { min-width: 0; }
-    .cr-task-details__breadcrumb { display: flex; align-items: center; flex-wrap: wrap; gap: var(--cr-space-2); margin-bottom: var(--cr-space-5); color: var(--cr-text-muted); font-size: var(--cr-font-sm); }
-    .cr-task-details__back { padding: 0; height: auto; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: var(--cr-interactive-accent); font: inherit; cursor: pointer; }
-    .cr-task-details__back:hover { text-decoration: underline; }
+    .cr-task-details__intro { margin: 0 0 var(--cr-space-4); }
+    .cr-task-details__probe { padding-top: var(--cr-space-5); border-top: 1px solid var(--cr-border); margin-top: var(--cr-space-5); }
 </style>

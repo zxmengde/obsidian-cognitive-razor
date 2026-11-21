@@ -1,16 +1,17 @@
+<!--
+  保存位置子页面。查看 → 编辑草稿 → 预览全部变化 → 确认保存；未确认前不写任何设置。
+  标记沿用 Obsidian 原生设置行的类名，外观与宿主一致。
+-->
 <script lang="ts">
-    import { untrack } from 'svelte';
+    import { onDestroy, untrack } from 'svelte';
     import { getSettingsContext } from '../../bridge/context';
     import { CR_TYPES, type PluginSettings } from '../../../types';
     import { locationCandidate, locationChanges, locationDraft, unifiedLocationDraft, type LocationSettings } from '../../settings-locations';
-    import SettingsSection from './SettingsSection.svelte';
-    import TextInput from '../../components/TextInput.svelte';
-    import Select from '../../components/Select.svelte';
-    import Button from '../../components/Button.svelte';
-    import InlineAlert from '../../components/InlineAlert.svelte';
 
-    let { settings }: { settings: PluginSettings } = $props();
     const { i18n, settingsApplication } = getSettingsContext();
+    let settings = $state<PluginSettings>(settingsApplication.getSettings());
+    onDestroy(settingsApplication.subscribeSettings(value => settings = value));
+
     let editing = $state(false);
     let saving = $state(false);
     let draft = $state(untrack(() => locationDraft(settings)));
@@ -21,11 +22,11 @@
     let exampleEligible = $derived(settings.directoryScheme.mechanism.startsWith(`${settings.cardsSourceRoot}/`));
     let exampleSuffix = $derived(exampleEligible ? settings.directoryScheme.mechanism.slice(settings.cardsSourceRoot.length + 1) + '/' : '');
     const text = (key: string) => i18n.t(`settings.locations.${key}`);
-    const detailsToggleLabels = { expand: i18n.t('common.details.expand'), collapse: i18n.t('common.details.collapse') };
 
     function openEditor() {
         if (saving) return;
-        draft = locationDraft(settings); baseline = { directoryScheme: { ...settings.directoryScheme }, cardsSourceRoot: settings.cardsSourceRoot, cardsTargetRoot: settings.cardsTargetRoot };
+        draft = locationDraft(settings);
+        baseline = { directoryScheme: { ...settings.directoryScheme }, cardsSourceRoot: settings.cardsSourceRoot, cardsTargetRoot: settings.cardsTargetRoot };
         candidate = undefined; feedback = ''; editing = true;
     }
     function setMode(mode: string) {
@@ -46,55 +47,101 @@
             else feedback = text('saveFailed');
         } catch { feedback = text('saveFailed'); } finally { saving = false; }
     }
+    const changeLabel = (key: string) => CR_TYPES.some(type => type === key)
+        ? i18n.t(`crTypes.${key}`) : text(key === 'cardsSourceRoot' ? 'source' : 'destination');
 </script>
 
-<SettingsSection title={text('title')}>
-    {#snippet actions()}<button id="cr-locations-edit" class="cr-location-edit" type="button" disabled={saving} onclick={openEditor}>{text('edit')} ›</button>{/snippet}
+<div class="cr-locations">
     {#if !editing}
-        <div class="cr-location-heading"><strong>{text('knowledge')}</strong><span>{current.mode === 'unified' ? settings.cardsSourceRoot : text('custom')}</span></div>
-        <p class="cr-settings-hint">{text(current.mode === 'unified' ? 'unifiedHint' : 'customHint')}</p>
-        <dl class="cr-location-paths">{#each CR_TYPES as type (type)}<dt>{i18n.t(`crTypes.${type}`)}</dt><dd>{settings.directoryScheme[type]}{#if !settings.directoryScheme[type].startsWith(`${settings.cardsSourceRoot}/`)}<span class="cr-location-outside">{text('outside')}</span>{/if}</dd>{/each}</dl>
-        {#if current.mode === 'custom'}<div class="cr-location-source"><strong>{text('source')}</strong><span>{settings.cardsSourceRoot}</span></div>{/if}
-        <div class="cr-location-destination"><strong>{text('destination')}</strong><p>{settings.cardsTargetRoot}</p></div>
-        {#if exampleEligible}<div class="cr-location-example"><strong>{text('example')}</strong><p>{settings.cardsSourceRoot}/{exampleSuffix}{text('exampleNote')}.md → {settings.cardsTargetRoot}/{exampleSuffix}{text('exampleNote')}-decks.md</p></div>{:else}<p class="cr-location-outside">{text('outsideExample')}</p>{/if}
-        <p class="cr-settings-hint">{text('warning')}</p>
-    {:else}
-        <div class="cr-location-editor">
-            <p class="cr-settings-hint">{text('editHint')}</p>
-            {#if feedback}<InlineAlert level="error" message={feedback} {detailsToggleLabels} />{/if}
-            {#if candidate && baseline}
-                <div class="cr-location-preview" role="region" aria-label={text('preview')}>
-                    <p>{text('previewHint')}</p>
-                    {#each locationChanges(baseline, candidate) as change (change.key)}
-                        <div class="cr-location-change"><strong>{CR_TYPES.some(type => type === change.key) ? i18n.t(`crTypes.${change.key}`) : text(change.key === 'cardsSourceRoot' ? 'source' : 'destination')}</strong><span>{text('before')} · {change.before}</span><span>{text('after')} · {change.after}</span></div>
-                    {/each}
+        <div class="setting-item">
+            <div class="setting-item-info">
+                <div class="setting-item-name">{text('knowledge')}</div>
+                <div class="setting-item-description">{current.mode === 'unified' ? `${settings.cardsSourceRoot} · ${text('unifiedHint')}` : `${text('custom')} · ${text('customHint')}`}</div>
+            </div>
+            <div class="setting-item-control"><button id="cr-locations-edit" type="button" disabled={saving} onclick={openEditor}>{text('edit')}</button></div>
+        </div>
+        {#each CR_TYPES as type (type)}
+            <div class="setting-item cr-locations__path">
+                <div class="setting-item-info">
+                    <div class="setting-item-name">{i18n.t(`crTypes.${type}`)}</div>
+                    <div class="setting-item-description">{settings.directoryScheme[type]}</div>
+                    {#if !settings.directoryScheme[type].startsWith(`${settings.cardsSourceRoot}/`)}<div class="setting-item-description mod-warning">{text('outside')}</div>{/if}
                 </div>
-                <div class="cr-location-actions"><Button variant="secondary" disabled={saving} onclick={() => candidate = undefined}>{i18n.t('common.edit')}</Button><Button loading={saving} onclick={() => void save()}>{text('save')}</Button><Button variant="ghost" disabled={saving} onclick={() => editing = false}>{text('cancel')}</Button></div>
-            {:else}
-                <label>{text('mode')}<Select value={draft.mode} options={[{value:'unified',label:text('unified')},{value:'custom',label:text('custom')}]} onchange={setMode} /></label>
-                <label>{text(draft.mode === 'unified' ? 'root' : 'source')}<TextInput value={draft.knowledgeRoot} ariaLabel={text(draft.mode === 'unified' ? 'root' : 'source')} onchange={value => draft.knowledgeRoot = value} /></label>
-                {#each CR_TYPES as type (type)}<label>{i18n.t(`crTypes.${type}`)}<TextInput value={draft.directories[type]} ariaLabel={i18n.t(`crTypes.${type}`)} onchange={value => draft.directories[type] = value} /></label>{/each}
-                <label>{text('destination')}<TextInput value={draft.destination} ariaLabel={text('destination')} onchange={value => draft.destination = value} /></label>
-                <div class="cr-location-actions"><Button onclick={preview}>{text('preview')}</Button><Button variant="ghost" onclick={() => editing = false}>{text('cancel')}</Button></div>
-            {/if}
+            </div>
+        {/each}
+        {#if current.mode === 'custom'}
+            <div class="setting-item"><div class="setting-item-info"><div class="setting-item-name">{text('source')}</div><div class="setting-item-description">{settings.cardsSourceRoot}</div></div></div>
+        {/if}
+        <div class="setting-item">
+            <div class="setting-item-info">
+                <div class="setting-item-name">{text('destination')}</div>
+                <div class="setting-item-description">{settings.cardsTargetRoot}</div>
+                {#if exampleEligible}
+                    <div class="setting-item-description">{text('example')}：{settings.cardsSourceRoot}/{exampleSuffix}{text('exampleNote')}.md → {settings.cardsTargetRoot}/{exampleSuffix}{text('exampleNote')}-decks.md</div>
+                {:else}
+                    <div class="setting-item-description mod-warning">{text('outsideExample')}</div>
+                {/if}
+            </div>
+        </div>
+        <p class="setting-item-description cr-locations__note">{text('warning')}</p>
+    {:else if candidate && baseline}
+        <div class="cr-locations__preview" role="region" aria-label={text('preview')}>
+            <p class="setting-item-description">{text('previewHint')}</p>
+            {#each locationChanges(baseline, candidate) as change (change.key)}
+                <div class="setting-item">
+                    <div class="setting-item-info">
+                        <div class="setting-item-name">{changeLabel(change.key)}</div>
+                        <div class="setting-item-description">{text('before')} · {change.before}</div>
+                        <div class="setting-item-description" class:cr-locations__changed={change.before !== change.after}>{text('after')} · {change.after}</div>
+                    </div>
+                </div>
+            {/each}
+            {#if feedback}<p class="mod-warning" role="alert">{feedback}</p>{/if}
+            <div class="cr-locations__actions">
+                <button type="button" disabled={saving} onclick={() => editing = false}>{text('cancel')}</button>
+                <button type="button" disabled={saving} onclick={() => candidate = undefined}>{i18n.t('common.edit')}</button>
+                <button type="button" class="mod-cta" disabled={saving} aria-busy={saving} onclick={() => void save()}>{text('save')}</button>
+            </div>
+        </div>
+    {:else}
+        <p class="setting-item-description">{text('editHint')}</p>
+        {#if feedback}<p class="mod-warning" role="alert">{feedback}</p>{/if}
+        <div class="setting-item">
+            <div class="setting-item-info"><label class="setting-item-name" for="cr-location-mode">{text('mode')}</label></div>
+            <div class="setting-item-control">
+                <select id="cr-location-mode" class="dropdown" value={draft.mode} onchange={(event) => setMode(event.currentTarget.value)}>
+                    <option value="unified">{text('unified')}</option>
+                    <option value="custom">{text('custom')}</option>
+                </select>
+            </div>
+        </div>
+        <div class="setting-item">
+            <div class="setting-item-info"><label class="setting-item-name" for="cr-location-root">{text(draft.mode === 'unified' ? 'root' : 'source')}</label></div>
+            <div class="setting-item-control"><input id="cr-location-root" type="text" spellcheck="false" value={draft.knowledgeRoot} oninput={(event) => draft.knowledgeRoot = event.currentTarget.value} /></div>
+        </div>
+        {#each CR_TYPES as type (type)}
+            <div class="setting-item">
+                <div class="setting-item-info"><label class="setting-item-name" for={`cr-location-${type}`}>{i18n.t(`crTypes.${type}`)}</label></div>
+                <div class="setting-item-control"><input id={`cr-location-${type}`} type="text" spellcheck="false" value={draft.directories[type]} oninput={(event) => draft.directories[type] = event.currentTarget.value} /></div>
+            </div>
+        {/each}
+        <div class="setting-item">
+            <div class="setting-item-info"><label class="setting-item-name" for="cr-location-destination">{text('destination')}</label></div>
+            <div class="setting-item-control"><input id="cr-location-destination" type="text" spellcheck="false" value={draft.destination} oninput={(event) => draft.destination = event.currentTarget.value} /></div>
+        </div>
+        <div class="cr-locations__actions">
+            <button type="button" onclick={() => editing = false}>{text('cancel')}</button>
+            <button type="button" class="mod-cta" onclick={preview}>{text('preview')}</button>
         </div>
     {/if}
-</SettingsSection>
+</div>
 
 <style>
-    .cr-location-outside { display: block; color: var(--cr-status-warning); font-size: var(--cr-font-xs); margin-top: var(--cr-space-1); }
-    .cr-location-edit { height: auto; padding: 0; border: 0; box-shadow: none; background: transparent; color: var(--cr-interactive-accent); font: inherit; font-size: var(--cr-font-xs); }
-    .cr-location-heading, .cr-location-source { display: flex; justify-content: space-between; gap: var(--cr-space-3); flex-wrap: wrap; }
-    .cr-location-heading span { color: var(--cr-interactive-accent); }
-    .cr-location-paths { display: grid; grid-template-columns: minmax(70px, 1fr) minmax(0, 5fr); gap: var(--cr-space-2) var(--cr-space-4); color: var(--cr-text-muted); font-size: var(--cr-font-sm); margin: var(--cr-space-4) 0; }
-    .cr-location-paths dd { margin: 0; overflow-wrap: anywhere; }
-    .cr-location-destination { border-top: 1px solid var(--cr-border); padding-top: var(--cr-space-5); margin-top: var(--cr-space-4); }
-    .cr-location-destination p { color: var(--cr-text-muted); }
-    .cr-location-example { background: var(--cr-bg-secondary); padding: var(--cr-space-3); border-radius: var(--cr-field-radius); margin: var(--cr-space-4) 0; }
-    .cr-location-example strong { color: var(--cr-interactive-accent); font-weight: 500; }
-    .cr-location-example p { color: var(--cr-text-muted); font-size: var(--cr-font-sm); overflow-wrap: anywhere; margin-bottom: 0; }
-    .cr-location-editor label { display: flex; flex-direction: column; gap: var(--cr-space-2); margin: var(--cr-space-3) 0; color: var(--cr-text-muted); }
-    .cr-location-actions { display: flex; flex-wrap: wrap; gap: var(--cr-space-2); margin-top: var(--cr-space-4); }
-    .cr-location-change { display: flex; flex-direction: column; gap: var(--cr-space-1); padding: var(--cr-space-3) 0; border-bottom: 1px solid var(--cr-border); overflow-wrap: anywhere; }
-    .cr-location-change span { color: var(--cr-text-muted); font-size: var(--cr-font-sm); }
+    .cr-locations { min-width: 0; }
+    .cr-locations .setting-item-description { overflow-wrap: anywhere; }
+    .cr-locations__note { margin: var(--cr-space-4) 0 0; }
+    .cr-locations__changed { color: var(--text-normal); }
+    .cr-locations__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--cr-space-2); padding-top: var(--cr-space-4); }
+    .cr-locations .setting-item-control input[type="text"] { min-width: 14em; }
+    .mod-warning { color: var(--cr-status-warning); }
 </style>

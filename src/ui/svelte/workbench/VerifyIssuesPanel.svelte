@@ -118,7 +118,7 @@
 {#if report}
     <div class="cr-verify-issues" role="region" aria-label={t.title}>
         <div class="cr-verify-issues-head">
-            <h2>{t.title}</h2>
+            <h3>{t.title}</h3>
             {#if total > 0}<span>{ctx.i18n.format('workbench.verifyIssues.progress', { done: String(done), total: String(total) })}</span>{/if}
             {#if report.verifiedAt}<span>{ctx.i18n.format('workbench.verifyIssues.verifiedAt', { time: report.verifiedAt })}</span>{/if}
         </div>
@@ -150,9 +150,9 @@
 {/if}
 
 <style>
-    .cr-verify-issues { margin-top: var(--cr-space-6); display: flex; flex-direction: column; gap: var(--cr-space-2); }
+    .cr-verify-issues { margin-top: var(--cr-space-4); display: flex; flex-direction: column; gap: var(--cr-space-2); }
     .cr-verify-issues-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--cr-space-1) var(--cr-space-3); }
-    .cr-verify-issues-head h2 { margin: 0; font-size: var(--cr-font-base); font-weight: 600; }
+    .cr-verify-issues-head h3 { margin: 0; font-size: var(--cr-font-sm); font-weight: 500; color: var(--cr-text-normal); }
     .cr-verify-issues-head span { color: var(--cr-text-muted); font-size: var(--cr-font-xs); }
     .cr-verify-issue-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
     .cr-verify-issue-list li { display: grid; grid-template-columns: auto minmax(0,1fr); align-items: start; gap: var(--cr-space-2); padding: var(--cr-space-1) 0; }

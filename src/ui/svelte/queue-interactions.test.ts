@@ -247,13 +247,14 @@ describe("queue user actions with synthetic application responses", () => {
     // Source-level responsive contract; geometry still requires real host QA.
     const list = readFileSync('src/ui/svelte/workbench/QueueTaskList.svelte', 'utf8');
     const management = readFileSync('src/ui/svelte/workbench/QueueManagementPanel.svelte', 'utf8');
-    const create = readFileSync('src/ui/svelte/workbench/CreateSection.svelte', 'utf8');
+    // 笔记操作行已移到「当前笔记」区。
+    const create = readFileSync('src/ui/svelte/workbench/CurrentNoteSection.svelte', 'utf8');
     expect(list).toContain('@container cr-workbench (max-width: 620px)');
     expect(management).toContain('.cr-queue-toolbar { display: grid; grid-template-columns: repeat(2, minmax(0,1fr));');
     expect(management).toContain('grid-template-columns: auto minmax(0,1fr);');
     expect(management).toContain('width: 100%; min-width: 0; min-height: 28px; max-width: 100%;');
-    expect(create).toContain('.cr-note-actions { display: grid; grid-template-columns: repeat(3, minmax(0,1fr));');
-    expect(create).toContain('.cr-note-action { width: 100%; min-width: 0; min-height: 32px;');
+    expect(create).toContain('.cr-note-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));');
+    expect(create).toContain('width: 100%; min-width: 0; min-height: 32px;');
     expect(create).not.toContain('cr-note-action-description');
     expect(list).toContain('grid-template-columns: minmax(0,1fr) auto;');
     expect(list).toContain('flex-wrap: wrap;');

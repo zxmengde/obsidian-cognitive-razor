@@ -13,7 +13,7 @@
     import CreateSection from './CreateSection.svelte';
     import QueueSection from './QueueSection.svelte';
     import DuplicatesSection from './DuplicatesSection.svelte';
-    import VerifyIssuesPanel from './VerifyIssuesPanel.svelte';
+    import CurrentNoteSection from './CurrentNoteSection.svelte';
 
     let {
         app,
@@ -48,11 +48,14 @@
     });
 </script>
 
+<!-- 视图标签已命名工作台，不再重复大标题；设置入口在第一区标题右侧。
+     顺序：新建概念 → 当前笔记（操作对象明确）→ 任务 → 相似笔记。 -->
 <div class="cr-workbench-root">
-    <header class="cr-workbench-heading"><h1>{t.workbench.product.title}</h1>{#if onOpenSettings}<button type="button" onclick={onOpenSettings}>{t.workbench.product.settings}</button>{/if}</header>
-    <section class="cr-section" aria-label={t.workbench.sections.create}>
-        <CreateSection activeFile={activeFileStore.file} {onOpenSettings} />
-        <VerifyIssuesPanel activeFile={activeFileStore.file} />
+    <section class="cr-section" aria-label={t.workbench.product.newConcept}>
+        <CreateSection {onOpenSettings} />
+    </section>
+    <section class="cr-section" aria-label={t.workbench.product.currentNote}>
+        <CurrentNoteSection activeFile={activeFileStore.file} {onOpenSettings} />
     </section>
     <section class="cr-section" aria-label={t.workbench.product.tasks}>
         <QueueSection status={queueStore.status} tasks={queueStore.tasks} />
@@ -72,9 +75,6 @@
         gap: 0;
     }
 
-    .cr-workbench-heading { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: var(--cr-space-4); }
-    .cr-workbench-heading h1 { display: block; margin: 0; padding: 0; font-size: var(--cr-heading-workbench); font-weight: 600; line-height: 1.3; }
-    .cr-workbench-heading button { padding: 0; height: auto; border: 0; box-shadow: none; background: none; color: var(--cr-text-muted); font-size: var(--cr-font-xs); }
     .cr-section { width: 100%; min-width: 0; }
     .cr-section + .cr-section { border-top: 1px solid var(--cr-border); padding-top: var(--cr-space-5); margin-top: var(--cr-space-5); }
 </style>
