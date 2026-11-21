@@ -147,6 +147,22 @@ export interface EmbedResponse {
     tokensUsed?: number;
 }
 
+/** 批量嵌入请求 */
+export interface EmbedBatchRequest {
+    providerId: string;
+    providerSnapshot?: import("./settings").ProviderConfig;
+    model: string;
+    inputs: string[];
+    dimensions?: number;
+    attemptReason?: ProviderAttemptReason;
+}
+
+/** 批量嵌入响应 */
+export interface EmbedBatchResponse {
+    embeddings: number[][];
+    tokensUsed?: number;
+}
+
 // ============================================================================
 // 默认端点
 // ============================================================================

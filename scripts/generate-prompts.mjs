@@ -49,10 +49,10 @@ export function renderCapturedRequest(id, fixture, body) {
     else if (value?.parts) text(`${label}.parts`, value.parts);
     else if (value !== undefined) sections.push(`### ${label}\n\n\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\``);
   }
-  for (const field of ["instructions", "messages", "input", "systemInstruction", "contents"]) {
+  for (const field of ["instructions", "system", "messages", "input", "systemInstruction", "contents"]) {
     if (body[field] !== undefined) text(field, body[field]);
   }
-  const controls = Object.fromEntries(Object.entries(body).filter(([key]) => !["instructions", "messages", "input", "systemInstruction", "contents"].includes(key)));
+  const controls = Object.fromEntries(Object.entries(body).filter(([key]) => !["instructions", "system", "messages", "input", "systemInstruction", "contents"].includes(key)));
   return `# ${id} — 生产发送边界的离线截获\n\n${fixture}\n\n未发送网络请求；没有模型回答、缓存命中或服务端续接验证。认证信息省略。\n\n${sections.join("\n\n")}\n\n### Schema、工具和其它实际请求字段\n\n\`\`\`json\n${JSON.stringify(controls, null, 2)}\n\`\`\`\n\n原始请求正文：[api-payload-${id}.json](api-payload-${id}.json)\n`;
 }
 

@@ -34,7 +34,7 @@ export type {
     ProviderCapabilities, EmbeddingApiFormat,
     ChatRequest, ChatResponse, ChatResponseFormat, UrlCitation,
     WebSearchPurpose, ReasoningEffort, ProviderAttemptReason,
-    EmbedRequest, EmbedResponse,
+    EmbedRequest, EmbedResponse, EmbedBatchRequest, EmbedBatchResponse,
 } from "./provider";
 export { DEFAULT_ENDPOINTS } from "./provider";
 

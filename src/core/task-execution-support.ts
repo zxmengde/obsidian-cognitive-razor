@@ -140,7 +140,8 @@ export function buildTaskChatRequest(
   attemptReason?: ProviderAttemptReason,
   conversation?: ConversationContinuation,
 ): ChatRequest {
-  const serverContinuation = modelSnapshot.capabilities?.responseContinuation === true &&
+  // 核查统一独立于写作对话，不继承写作历史或 previous_response_id（与 Gemini 核查路径对齐）。
+  const serverContinuation = taskType !== "verify" && modelSnapshot.capabilities?.responseContinuation === true &&
     modelSnapshot.capabilities.promptCaching !== true && !!conversation?.previousResponseId;
   const request: ChatRequest = {
     providerId: modelSnapshot.providerId,
@@ -162,10 +163,9 @@ export function buildTaskChatRequest(
         );
         if (geminiWrite) return geminiWrite;
       }
-      // Verify changes roles and output format: its audit rules must replace
-      // Write's JSON system instructions. Keep the conversation as context.
-      // Gemini 核查不接写作 contents。接上会把写作规则和阶段草稿发给核查模型。
-      const includeHistory = !serverContinuation && !(gemini && taskType === "verify");
+      // Verify 替换了 system 指令与输出格式，继续附带 Write 历史既无法命中前缀缓存，
+      // 又会重复发送原始阶段 JSON 并引入自我辩护偏误，因此所有协议统一对齐 Gemini，独立执行核查。
+      const includeHistory = !serverContinuation && taskType !== "verify";
       const stableSystem = !serverContinuation && taskType !== "verify" && conversation?.systemPrompt
         ? { role: "system" as const, content: conversation.systemPrompt }
         : system;
@@ -196,7 +196,7 @@ export function buildTaskChatRequest(
     promptCacheTtl: modelSnapshot.capabilities?.promptCaching && modelSnapshot.providerSnapshot?.apiFormat !== "anthropic-messages" ? modelSnapshot.capabilities.promptCacheTtl : undefined,
   };
 
-  if (!serverContinuation && modelSnapshot.providerSnapshot?.apiFormat === "openai-responses"
+  if (!serverContinuation && taskType !== "verify" && modelSnapshot.providerSnapshot?.apiFormat === "openai-responses"
     && canReplayConversation(conversation, modelSnapshot)) {
     const currentUser = [...request.messages].reverse().find(message => message.role === "user");
     if (currentUser) request.responsesInput = buildResponsesReplayInput(conversation?.history, conversation?.responsesOutputHistory, currentUser.content);

@@ -14,6 +14,8 @@ function renderedPrompt(path: string): string {
     "{{BASE_KNOWLEDGE_POLICY}}": readPrompt("base/knowledge-policy.md"),
     "{{BASE_OUTPUT_FORMAT}}": readPrompt("base/output-format.md"),
     "{{BASE_WRITE_POLICY}}": readPrompt("base/write-policy.md"),
+    "{{BASE_HOLISTIC_RULES}}": readPrompt("base/holistic-rules.md"),
+    "{{BASE_HIERARCHY_RULES}}": readPrompt("base/hierarchy-rules.md"),
   };
   return Object.entries(baseComponents).reduce(
     (prompt, [placeholder, component]) => prompt.split(placeholder).join(component),
@@ -134,9 +136,13 @@ describe("生产提示词契约", () => {
       const prompt = renderedPrompt(path);
       expect(prompt).toContain("只输出符合本次 API Schema 的 JSON 对象");
       expect(prompt).toContain("必填不授权编造");
+      expect(prompt).toContain("禁用 `\\(`、`\\)`、`\\[`、`\\]`");
       expect(prompt).not.toContain("PHASE_SCHEMA");
       expect(prompt).not.toContain("<phase_schema>");
     }
+    const cards = renderedPrompt("base/operations/cards.md");
+    expect(cards).toContain("不得用外层代码围栏包裹输出");
+    expect(cards).toContain("不得使用 `\\(`、`\\)`、`\\[`、`\\]` 作为公式定界符");
   });
 
   it("叙事阶段把不适用和材料不足分成两种写法", () => {

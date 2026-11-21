@@ -2138,3 +2138,61 @@ it.each(["openai-responses", "openai-chat-completions"] as const)("logs configur
   expect(vi.mocked(logger.info).mock.calls.find((call) => call[2]?.event === "API_RESPONSE")?.[2]).toMatchObject({ configuredTemperature: 0.2, configuredTopP: 0.9, sentTemperature: "not-sent", sentTopP: "not-sent" });
   expect(requestUrl).toHaveBeenCalledOnce(); manager.dispose();
 });
+
+it("sends search-triggering prompt for nativeWebSearch probe and supports embedBatch", async () => {
+  vi.mocked(requestUrl).mockReset();
+  vi.mocked(requestUrl)
+    .mockResolvedValueOnce({
+      status: 200,
+      text: "",
+      json: {
+        id: "msg_probe",
+        model: "claude-sonnet-4-5",
+        stop_reason: "end_turn",
+        content: [
+          { type: "server_tool_use", name: "web_search", input: { query: "example.com" } },
+          { type: "text", text: "{\"ok\":true}" },
+        ],
+        usage: { input_tokens: 10, output_tokens: 5 },
+      },
+    } as never)
+    .mockResolvedValueOnce({
+      status: 200,
+      text: "",
+      json: {
+        data: [
+          { index: 1, embedding: [0.3, 0.4] },
+          { index: 0, embedding: [0.1, 0.2] },
+        ],
+        usage: { total_tokens: 8 },
+      },
+    } as never);
+  const manager = new ProviderManager(createSettingsStore({
+    provider: {
+      apiFormat: "anthropic-messages",
+      embeddingApiFormat: "openai-embeddings",
+      defaultChatModel: "claude-sonnet-4-5",
+      defaultEmbedModel: "text-embedding-3-small",
+      capabilities: { nativeWebSearch: true, promptCaching: false },
+    },
+  }), createLogger());
+  const probeResult = await manager.probe({
+    providerId: "provider-1",
+    taskType: "write",
+    taskConfig: {
+      providerId: "provider-1",
+      model: "claude-sonnet-4-5",
+      capabilities: { temperature: false, topP: false, reasoning: false, nativeWebSearch: true, promptCaching: false, responseContinuation: false },
+    },
+  });
+  expect(probeResult).toMatchObject({ ok: true, value: { chat: true } });
+  const probeBody = JSON.parse((vi.mocked(requestUrl).mock.calls[0][0] as { body: string }).body);
+  expect(JSON.stringify(probeBody)).toContain("web search");
+  const batchResult = await manager.embedBatch({
+    providerId: "provider-1",
+    model: "text-embedding-3-small",
+    inputs: ["first note", "second note"],
+  });
+  expect(batchResult).toEqual({ ok: true, value: { embeddings: [[0.1, 0.2], [0.3, 0.4]], tokensUsed: 8 } });
+  manager.dispose();
+});

@@ -13,6 +13,8 @@ import type {
   ChatResponse,
   EmbedRequest,
   EmbedResponse,
+  EmbedBatchRequest,
+  EmbedBatchResponse,
   ProviderApiFormat,
   ProviderCapabilities,
   ProviderConfig,
@@ -273,6 +275,80 @@ export class ProviderManager implements ModelGateway {
     return result;
   }
 
+  /** 调用批量嵌入 API（OpenAI 标准 input: string[]） */
+  async embedBatch(request: EmbedBatchRequest, signal?: AbortSignal): Promise<Result<EmbedBatchResponse>> {
+    if (this.disposed) {
+      return err("E310_INVALID_STATE", "Provider 服务已停止");
+    }
+    if (request.inputs.length === 0) {
+      return ok({ embeddings: [] });
+    }
+    const startTime = Date.now();
+    const configResult = request.providerSnapshot ? ok(request.providerSnapshot) : resolveAvailableProvider(this.settingsStore.getSettings(), request.providerId);
+    if (!configResult.ok) {
+      return configResult;
+    }
+    const providerConfig = configResult.value;
+    if (providerConfig.embeddingApiFormat !== "openai-embeddings") {
+      return err("E401_PROVIDER_NOT_CONFIGURED", `Provider ${request.providerId} 未启用 Embeddings API`, {
+        providerId: request.providerId,
+        embeddingApiFormat: providerConfig.embeddingApiFormat,
+      });
+    }
+
+    const baseUrl = providerConfig.baseUrl || DEFAULT_ENDPOINTS["openai-chat-completions"];
+    const url = buildProviderApiUrl(baseUrl, "openai-embeddings", "embeddings");
+    const requestBody: Record<string, unknown> = {
+      model: request.model,
+      input: request.inputs,
+    };
+    if (request.dimensions && request.dimensions > 0) {
+      requestBody.dimensions = request.dimensions;
+    }
+
+    const result = await this.executeWithProviderRetry(
+      (reason) => this.requestExecutor.executeEmbedBatchRequest(
+        url,
+        requestBody,
+        request.inputs.length,
+        providerConfig.apiKey,
+        signal,
+        this.callContext("embedding", request.providerId, request.model, "openai-embeddings", "embedding:batch", reason),
+      ),
+      request.providerId,
+      "批量嵌入请求",
+      signal,
+      request.attemptReason,
+    );
+
+    if (this.disposed) {
+      return err("E310_INVALID_STATE", "Provider 服务已停止");
+    }
+
+    const elapsedTime = Date.now() - startTime;
+    if (result.ok) {
+      this.logger.info("ProviderManager", "批量嵌入请求成功", {
+        event: "API_RESPONSE",
+        providerId: request.providerId,
+        model: request.model,
+        batchSize: request.inputs.length,
+        tokensUsed: result.value.tokensUsed,
+        dimension: result.value.embeddings[0]?.length,
+        elapsedTime,
+      });
+    } else {
+      this.logger.warn("ProviderManager", "批量嵌入请求失败", {
+        event: "API_ERROR",
+        providerId: request.providerId,
+        model: request.model,
+        batchSize: request.inputs.length,
+        errorCode: result.error.code,
+        elapsedTime,
+      });
+    }
+    return result;
+  }
+
   /** Probe configured capabilities through the same gateway used by tasks. */
   async probe(
     request: ProviderProbeRequest,
@@ -405,8 +481,11 @@ export class ProviderManager implements ModelGateway {
       providers: { [providerId]: config },
       taskModels: { ...settings.taskModels, define: { providerId, model: "" } },
     }, "define");
+    const probePrompt = effective.capabilities.nativeWebSearch
+      ? "<system_instructions>Use the web search tool once to look up example.com, then return only the requested short JSON object.</system_instructions>\nSearch example.com and return {\"ok\":true}."
+      : "<system_instructions>Return only the requested short JSON object.</system_instructions>\nReturn {\"ok\":true}.";
     const probeRequest = buildTaskChatRequest("define",
-      "<system_instructions>Return only the requested short JSON object.</system_instructions>\nReturn {\"ok\":true}.",
+      probePrompt,
       effective, { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"], additionalProperties: false },
       "provider-probe", attemptReason);
     probeRequest.model = model;

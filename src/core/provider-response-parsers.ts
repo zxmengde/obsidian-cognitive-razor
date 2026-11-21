@@ -1,5 +1,5 @@
 import { err, ok } from "../types";
-import type { ChatResponse, EmbedResponse, Result, UrlCitation } from "../types";
+import type { ChatResponse, EmbedBatchResponse, EmbedResponse, Result, UrlCitation } from "../types";
 import { readResponsesReplayOutput, replayVisibleText } from "../utils/responses-replay";
 import { normalizeExternalHttpUrl } from "./url-utils";
 import { readProviderTokenUsage, tokenUsageCounts, withProviderTokenUsage } from "./provider-token-usage";
@@ -18,7 +18,7 @@ interface OpenAIChatResponse {
 }
 
 interface OpenAIEmbedResponse {
-  data: Array<{ embedding: number[] }>;
+  data: Array<{ index?: number; embedding: number[] }>;
   usage?: { prompt_tokens: number; total_tokens: number };
 }
 
@@ -295,6 +295,40 @@ export function parseOpenAIEmbedResponse(raw: unknown): Result<EmbedResponse> {
   }
   const { tokensUsed } = tokenUsageCounts(readProviderTokenUsage("openai-embeddings", raw));
   return ok({ embedding: first.embedding, ...(tokensUsed !== undefined ? { tokensUsed } : {}) });
+}
+
+export function parseOpenAIEmbedBatchResponse(raw: unknown, expectedCount: number): Result<EmbedBatchResponse> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return err("E207_PROVIDER_RESPONSE_UNSUPPORTED", "Embeddings 批量返回非对象响应");
+  }
+  const data = raw as OpenAIEmbedResponse;
+  if (!Array.isArray(data.data) || data.data.length !== expectedCount) {
+    return err("E207_PROVIDER_RESPONSE_UNSUPPORTED", "Embeddings 批量返回数量与请求不一致");
+  }
+  const ordered: Array<number[] | undefined> = new Array<number[] | undefined>(expectedCount);
+  const hasCompleteIndices = data.data.every(
+    (item) => item !== null && typeof item === "object" && typeof item.index === "number" && Number.isInteger(item.index) && item.index >= 0 && item.index < expectedCount,
+  );
+  for (let i = 0; i < data.data.length; i += 1) {
+    const item = data.data[i];
+    if (!item || !Array.isArray(item.embedding) || item.embedding.length === 0
+      || !Array.from(item.embedding).every((value) => typeof value === "number" && Number.isFinite(value))) {
+      return err("E207_PROVIDER_RESPONSE_UNSUPPORTED", "Embeddings 批量返回格式异常：embedding 必须是非空有限数值数组");
+    }
+    const targetIndex = hasCompleteIndices ? (item.index as number) : i;
+    if (ordered[targetIndex] !== undefined) {
+      return err("E207_PROVIDER_RESPONSE_UNSUPPORTED", "Embeddings 批量返回存在重复索引");
+    }
+    ordered[targetIndex] = item.embedding;
+  }
+  if (ordered.some((entry) => entry === undefined)) {
+    return err("E207_PROVIDER_RESPONSE_UNSUPPORTED", "Embeddings 批量返回索引不完整");
+  }
+  const { tokensUsed } = tokenUsageCounts(readProviderTokenUsage("openai-embeddings", raw));
+  return ok({
+    embeddings: ordered as number[][],
+    ...(tokensUsed !== undefined ? { tokensUsed } : {}),
+  });
 }
 
 function normalizeGeminiFinishReason(reason?: string): string | undefined {

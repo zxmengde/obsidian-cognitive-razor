@@ -49,10 +49,10 @@ describe("VerifyTaskExecutor", () => {
     expect(request.messages[0].role).toBe("system");
     expect(request.messages[0].content).toContain("输出 Markdown 问题列表");
     expect(request.messages[0].content).not.toContain("<output_schema>");
-    if (promptCaching) expect(request.messages.slice(1, 3)).toEqual(history);
-    else expect(request.messages).toHaveLength(2);
+    // 所有协议统一对齐 Gemini：Verify 独立核查，不附带 Write 历史与 previous_response_id。
+    expect(request.messages).toHaveLength(2);
     expect(request.response_format).toBeUndefined();
-    expect(request.previousResponseId).toBe(promptCaching ? undefined : "resp_write");
+    expect(request.previousResponseId).toBeUndefined();
     if (promptCaching) expect(request.promptCacheKey).toBeTruthy();
     else expect(request.promptCacheKey).toBeUndefined();
     expect(request.webSearch).toEqual({ purpose: "verify" });
@@ -66,7 +66,7 @@ describe("VerifyTaskExecutor", () => {
     expect(effectiveInstructions).toContain("不得使用 `\\(`、`\\)`、`\\[`、`\\]` 作为公式定界符");
     expect(effectiveInstructions).not.toContain("<output_schema>");
     expect(body.text).toBeUndefined();
-    expect(body.previous_response_id).toBe(promptCaching ? undefined : "resp_write");
+    expect(body.previous_response_id).toBeUndefined();
   });
 
   it("supplies real snapshot metadata through a user-customized Verify template without rewriting it", async () => {
@@ -111,5 +111,49 @@ describe("VerifyTaskExecutor", () => {
         nativeWebSearch: false, promptCaching: false, responseContinuation: false,
       } },
     })).toMatchObject({ ok: true, value: { reportText: "结论成立 [来源](https://example.test/source)。后续说明。" } });
+  });
+
+  it("preserves Write source package without Write history and silently repairs LaTeX delimiters", async () => {
+    const logger: ILogger = { debug() {}, info() {}, warn() {}, error() {} };
+    const chat = vi.fn(async (_request: ChatRequest) => ok({
+      content: "公式 \\( E = mc^2 \\) 成立。\n\\[ S_{21} = \\frac{a}{b} \\]",
+      finishReason: "stop",
+    }));
+    const executor = new VerifyTaskExecutor({
+      providerManager: { chat } as unknown as ModelGateway,
+      promptManager: {
+        build: () => "<system_instructions>核查</system_instructions>\n<context_slots>正文</context_slots>\n<task_instruction>审查</task_instruction>",
+      } as unknown as PromptManager,
+      responsePipeline: new ResponsePipeline(new Validator()),
+      logger,
+    });
+    const task: TaskRecord<"verify"> = {
+      id: "verify-sources", nodeId: "note", stageId: "verify", state: "running", createdAt: 0, updatedAt: 0, attempt: 1,
+      payload: {
+        filePath: "note.md", currentContent: "笔记正文", noteType: "entity",
+        conversation: {
+          providerId: "p", model: "claude-sonnet-4-5", apiFormat: "anthropic-messages", endpoint: "anthropic-messages|https://api.anthropic.com/v1",
+          promptVersion: PROMPT_VERSION, responseContinuationEnabled: false, promptCachingEnabled: true,
+          history: [{ role: "user", content: "WRITE_TURN" }, { role: "assistant", content: "{\"definition\":\"DRAFT\"}" }],
+          sources: { items: [{ url: "https://evidence.example/paper", title: "原始论文" }] },
+        },
+      },
+    };
+    const result = await executor.execute(task, new AbortController().signal, {
+      attemptReason: "initial",
+      modelSnapshot: {
+        providerId: "p", model: "claude-sonnet-4-5",
+        providerSnapshot: { apiKey: "k", apiFormat: "anthropic-messages", baseUrl: "https://api.anthropic.com/v1", embeddingApiFormat: "disabled", defaultChatModel: "claude-sonnet-4-5", defaultEmbedModel: "", enabled: true },
+        capabilities: { temperature: false, topP: false, reasoning: false, nativeWebSearch: false, promptCaching: true, responseContinuation: false },
+      },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.reportText).toBe("公式 $E = mc^2$ 成立。\n$$\nS_{21} = \\frac{a}{b}\n$$");
+    }
+    const sent = chat.mock.calls[0][0];
+    expect(sent.messages).toHaveLength(2);
+    expect(sent.messages[1].content).toContain("https://evidence.example/paper");
+    expect(sent.messages[1].content).not.toContain("WRITE_TURN");
   });
 });

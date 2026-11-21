@@ -38,7 +38,12 @@ describe("cards executor", () => {
     const f = await setup("## 部分结果\n不能追加", reason);
     expect((await f.executor.execute(f.task, new AbortController().signal, f.context)).ok).toBe(false);
   });
-  it.each(["", "{\"cards\":[]}", "[]", "<!doctype html><html>error</html>", "```markdown\n## q\na\n```"])("rejects empty or clearly non-Markdown output: %s", async (content) => {
+  it("silently unwraps an outer Markdown fence and repairs LaTeX delimiters", async () => {
+    const f = await setup("```markdown\n## 什么是阻抗\n由 \\( Z = R + jX \\) 给出。\n```");
+    const result = await f.executor.execute(f.task, new AbortController().signal, f.context);
+    expect(result).toEqual({ ok: true, value: { markdown: "## 什么是阻抗\n由 $Z = R + jX$ 给出。", targetPath: "b.md" } });
+  });
+  it.each(["", "{\"cards\":[]}", "[]", "<!doctype html><html>error</html>", "```json\n{\"cards\":[]}\n```", "```markdown\n## 未闭合"])("rejects empty or clearly non-Markdown output: %s", async (content) => {
     const f = await setup(content);
     expect((await f.executor.execute(f.task, new AbortController().signal, f.context)).ok).toBe(false);
   });

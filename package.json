@@ -17,6 +17,7 @@
 		"prompts:generate": "node scripts/generate-prompts.mjs",
 		"version": "node version-bump.mjs && git add manifest.json versions.json",
 		"prepare-release": "npm run build",
+		"sync:vault": "node scripts/sync-vault.mjs",
 		"lint": "eslint src main.ts --ext .ts,.svelte"
 	},
 	"keywords": [

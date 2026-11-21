@@ -1,4 +1,4 @@
 <output_schema>
 只输出符合本次 API Schema 的 JSON 对象。
-正文保留 Markdown 分段。公式采用 LaTeX；行内公式使用单个美元符号定界，独立公式使用双美元符号定界。独立公式的起止定界符各独占一行。
+正文保留 Markdown 分段。公式用 LaTeX：行内用 $，独立用各独占一行的 $$，禁用 `\(`、`\)`、`\[`、`\]`。
 </output_schema>

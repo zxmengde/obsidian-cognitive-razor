@@ -629,4 +629,29 @@ describe('audit rebuild commit boundary',()=>{
     expect(h.replaceAll).not.toHaveBeenCalled();
     expect(result.ok).toBe(false);
   });
+
+  it('uses embedBatch when supported and silently falls back to single embed on batch protocol rejection', async () => {
+    const contents: Record<string, string> = {};
+    for (let i = 0; i < 20; i += 1) contents[`notes/n${i}.md`] = note(`n${i}`);
+    const h = createHarness(contents);
+    const embedBatch = vi.fn(async (req: { inputs: string[] }) => ok({
+      embeddings: req.inputs.map((_, idx) => [idx + 1, 0, 0]),
+      tokensUsed: req.inputs.length,
+    }));
+    (h.service as unknown as { deps: { providerManager: { embedBatch?: typeof embedBatch } } }).deps.providerManager.embedBatch = embedBatch;
+    const batchOk = await h.service.rebuild();
+    expect(batchOk).toMatchObject({ ok: true, value: { indexed: 20, reused: 0, skipped: 0 } });
+    // 20 篇按每批 16 篇应仅发出 2 次批量嵌入请求，不调用单条 embed。
+    expect(embedBatch).toHaveBeenCalledTimes(2);
+    expect(h.embed).not.toHaveBeenCalled();
+
+    // 模拟不兼容数组输入的中转返回 E205：自动静默降级为单条嵌入，且后续批次不再重复试探批量接口。
+    const h2 = createHarness(contents);
+    const rejectBatch = vi.fn(async () => err('E205_PROVIDER_REQUEST_INVALID', 'batch array unsupported'));
+    (h2.service as unknown as { deps: { providerManager: { embedBatch?: typeof rejectBatch } } }).deps.providerManager.embedBatch = rejectBatch;
+    const fallbackOk = await h2.service.rebuild();
+    expect(fallbackOk).toMatchObject({ ok: true, value: { indexed: 20, reused: 0, skipped: 0 } });
+    expect(rejectBatch).toHaveBeenCalledTimes(1);
+    expect(h2.embed).toHaveBeenCalledTimes(20);
+  });
 });

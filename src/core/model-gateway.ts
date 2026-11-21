@@ -3,6 +3,8 @@ import type {
   ChatResponse,
   EmbedRequest,
   EmbedResponse,
+  EmbedBatchRequest,
+  EmbedBatchResponse,
   ProviderAttemptReason,
   ProviderCapabilities,
   ProviderConfig,
@@ -34,4 +36,5 @@ export interface ProviderProbeGateway {
 export interface ModelGateway extends ProviderProbeGateway {
   chat(request: ChatRequest, signal?: AbortSignal): Promise<Result<ChatResponse>>;
   embed(request: EmbedRequest, signal?: AbortSignal): Promise<Result<EmbedResponse>>;
+  embedBatch?(request: EmbedBatchRequest, signal?: AbortSignal): Promise<Result<EmbedBatchResponse>>;
 }

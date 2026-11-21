@@ -1,5 +1,5 @@
 import { err } from "../types";
-import type { ChatResponse, EmbedResponse, ILogger, Result } from "../types";
+import type { ChatResponse, EmbedBatchResponse, EmbedResponse, ILogger, Result } from "../types";
 import type { SettingsStore } from "../data/settings-store";
 import type { ExternalCallKind, ExternalCallLedger, AttemptReason } from "./external-call-ledger";
 import type { ProtocolAdapterMetadata, ProviderAuthScheme } from "./chat-protocol-adapter";
@@ -8,7 +8,7 @@ import { ProviderStreamAbortError, ProviderStreamNetworkError, ProviderStreamTim
 import type { ProviderStreamProtocol, ProviderStreamTransport } from "./provider-streaming";
 import { decodeProviderStream, hasProviderStreamFraming, safeStreamResponseEvidence } from "./provider-stream-codec";
 import { applyProviderTokenUsage, readProviderTokenUsage } from "./provider-token-usage";
-import { parseOpenAIEmbedResponse } from "./provider-response-parsers";
+import { parseOpenAIEmbedBatchResponse, parseOpenAIEmbedResponse } from "./provider-response-parsers";
 import { mapHttpError, sanitizeProviderErrorDetail, sanitizeUrl } from "./provider-errors";
 
 export interface ProviderCallContext {
@@ -69,6 +69,27 @@ export class ProviderRequestExecutor {
     callContext?: ProviderCallContext,
   ): Promise<Result<EmbedResponse>> {
     return this.executeJsonRequest(url, body, apiKey, signal, parseOpenAIEmbedResponse, {}, "bearer", callContext);
+  }
+
+  /** 执行批量嵌入请求（单次，不含重试逻辑） */
+  async executeEmbedBatchRequest(
+    url: string,
+    body: object,
+    expectedCount: number,
+    apiKey: string,
+    signal?: AbortSignal,
+    callContext?: ProviderCallContext,
+  ): Promise<Result<EmbedBatchResponse>> {
+    return this.executeJsonRequest(
+      url,
+      body,
+      apiKey,
+      signal,
+      (raw) => parseOpenAIEmbedBatchResponse(raw, expectedCount),
+      {},
+      "bearer",
+      callContext,
+    );
   }
 
   /** 使用 Obsidian requestUrl 绕过桌面端 CORS 限制。 */

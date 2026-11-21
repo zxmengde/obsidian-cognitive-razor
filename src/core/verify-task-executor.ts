@@ -7,7 +7,8 @@ import type {
   SourcePackage,
 } from "../types";
 import type { ModelGateway } from "./model-gateway";
-import type { PromptManager } from "./prompt-manager";
+import { insertContextBeforeTask, type PromptManager } from "./prompt-manager";
+import { repairLatexText } from "./latex-repair";
 import { buildVerifyMetaContext } from "./verify-metadata";
 import { stripVerifyReport } from "./semantic-index-text";
 import { ResponsePipeline } from "./response-pipeline";
@@ -18,9 +19,6 @@ import {
   buildSourcePackage,
   formatSourcePackage,
   insertPositionedCitationLinks,
-  isInvalidResponseContinuationError,
-  canUseContinuation,
-  canReplayConversation,
 } from "./task-execution-support";
 
 export interface VerifyTaskExecutorDependencies {
@@ -77,23 +75,13 @@ export class VerifyTaskExecutor {
     signal: AbortSignal,
     context: TaskExecutionContext,
   ): Promise<Result<{ reportText: string; responseId?: string; promptUser?: string; responseContent?: string; systemPrompt?: string; sourcePackage?: SourcePackage }>> {
+    // Verify 统一不继承 Write 对话历史；若前序写作沉淀了来源清单，仅附带来源包供核查参考。
     const continuation = task.payload.conversation;
-    const canContinue = canUseContinuation(continuation, context.modelSnapshot);
-    const canReplay = canReplayConversation(continuation, context.modelSnapshot);
-    const request = buildTaskChatRequest("verify", prompt, context.modelSnapshot, undefined, "verify:report", context.attemptReason,
-      canReplay ? continuation : undefined);
-    let chatResult = await this.deps.providerManager.chat(request, signal);
-    let activeRequest = request;
-    if (!chatResult.ok && canContinue && isInvalidResponseContinuationError(chatResult.error)) {
-      const sourcePackage = formatSourcePackage(continuation?.sources);
-      const fallbackPrompt = `${prompt}${sourcePackage ? `\n\n${sourcePackage}` : ""}`;
-      const fallbackRequest = buildTaskChatRequest(
-        "verify", fallbackPrompt, context.modelSnapshot, undefined, "verify:report", context.attemptReason,
-        undefined,
-      );
-      activeRequest = fallbackRequest;
-      chatResult = await this.deps.providerManager.chat(fallbackRequest, signal);
-    }
+    const sourcePackage = formatSourcePackage(continuation?.sources);
+    const verifyPrompt = sourcePackage ? insertContextBeforeTask(prompt, sourcePackage) : prompt;
+    const request = buildTaskChatRequest("verify", verifyPrompt, context.modelSnapshot, undefined, "verify:report", context.attemptReason);
+    const chatResult = await this.deps.providerManager.chat(request, signal);
+    const activeRequest = request;
     const abortError = getTaskAbortError<{ reportText: string; responseId?: string; sourcePackage?: SourcePackage }>(task, signal);
     if (abortError) return abortError;
     if (!chatResult.ok) return createTaskError(task, chatResult.error);
@@ -107,8 +95,9 @@ export class VerifyTaskExecutor {
         message: "Verify 报告内容为空",
       });
     }
+    const withCitations = insertPositionedCitationLinks(chatResult.value.content, chatResult.value.citations).trim();
     return ok({
-      reportText: insertPositionedCitationLinks(chatResult.value.content, chatResult.value.citations).trim(),
+      reportText: repairLatexText(withCitations).text,
       responseId: chatResult.value.responseId,
       promptUser: [...activeRequest.messages].reverse().find((message) => message.role === "user")?.content,
       systemPrompt: activeRequest.messages.find((message) => message.role === "system")?.content,

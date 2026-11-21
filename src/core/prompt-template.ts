@@ -2,6 +2,8 @@ export const BASE_COMPONENT_MAP = Object.freeze({
   "{{BASE_KNOWLEDGE_POLICY}}": "knowledge-policy",
   "{{BASE_OUTPUT_FORMAT}}": "output-format",
   "{{BASE_WRITE_POLICY}}": "write-policy",
+  "{{BASE_HOLISTIC_RULES}}": "holistic-rules",
+  "{{BASE_HIERARCHY_RULES}}": "hierarchy-rules",
 } as const);
 
 export function injectPromptBaseComponents(

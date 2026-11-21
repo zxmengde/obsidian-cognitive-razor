@@ -6,6 +6,7 @@ import type {
 } from "../types";
 import type { Validator } from "../data/validator";
 import { validateChatFinishReason } from "./provider-response-parsers";
+import { repairLatexInJsonValue } from "./latex-repair";
 
 export interface ResponseValidationRequest {
   taskId: string;
@@ -29,7 +30,7 @@ export class ResponsePipeline {
     request: ResponseValidationRequest,
   ): Promise<Result<T>> {
     const initial = await this.validator.validate(request.rawOutput, request.schema);
-    if (initial.valid) return ok(initial.data as T);
+    if (initial.valid) return ok(repairLatexInJsonValue(initial.data as T).value);
     return this.validationError<T>(request.taskId, initial);
   }
 

@@ -1,6 +1,6 @@
 import type { App } from "obsidian";
 import { err, ok, toErr } from "../types";
-import type { CRType, EmbedRequest, ILogger, PluginSettings, Result, ResolvedTaskConfig, VectorEntry } from "../types";
+import type { CRType, EmbedBatchRequest, EmbedRequest, ILogger, PluginSettings, Result, ResolvedTaskConfig, VectorEntry } from "../types";
 import type { SettingsStore } from "../data/settings-store";
 import type { CruidCache, CruidCacheEntry } from "./cruid-cache";
 import type { DuplicateManager } from "./duplicate-manager";
@@ -94,6 +94,14 @@ interface SemanticIndexRebuilderDeps {
 
 type ProgressListener = (progress: SemanticIndexRebuildProgress) => void;
 
+const EMBED_BATCH_SIZE = 16;
+const EMBED_SINGLE_CONCURRENCY = 4;
+const BATCH_UNSUPPORTED_ERROR_CODES = new Set([
+  "E205_PROVIDER_REQUEST_INVALID",
+  "E207_PROVIDER_RESPONSE_UNSUPPORTED",
+  "E211_MODEL_SCHEMA_VIOLATION",
+]);
+
 export class SemanticIndexRebuilder {
   private activeOperation: Promise<unknown> | undefined;
   private activeController: AbortController | undefined;
@@ -141,32 +149,49 @@ export class SemanticIndexRebuilder {
     let indexed = 0; let failed = 0;
     const config = resolveVectorIndexConfig(settings);
     const model = resolveTaskModelSnapshot(settings, "index");
-    for (const pending of missing) {
+    // 只为确实缺向量的笔记拼装文本和计算哈希；已有向量的笔记不需要。
+    const preparedMissing = missing.map((pending) => this.prepare(pending));
+    let batchSupported = typeof this.deps.providerManager.embedBatch === "function";
+    for (let offset = 0; offset < preparedMissing.length; offset += EMBED_BATCH_SIZE) {
       if (this.isStopped(signal)) return this.targetedStopped(signal);
-      // 只为确实缺向量的笔记拼装文本和计算哈希；已有向量的笔记不需要。
-      const candidate = this.prepare(pending);
       if (!this.currentConfigMatches(config)) {
         return err("E320_TASK_CONFLICT", "嵌入配置在补齐缺失向量期间发生变化，已中止");
       }
-      const embedded = await this.deps.providerManager.embed(this.buildEmbedRequest(model, config, candidate.input), signal);
+      const chunk = preparedMissing.slice(offset, offset + EMBED_BATCH_SIZE);
+      const batchOutcome = await this.embedChunk(chunk, model, config, signal, batchSupported);
+      batchSupported = batchOutcome.batchSupported;
       if (this.isStopped(signal)) return this.targetedStopped(signal);
-      if (!embedded.ok) { failed++; remaining.push(candidate); this.deps.logger.warn("SemanticIndexRebuilder", "缺失向量生成失败", { path: candidate.entry.path, errorCode: embedded.error.code }); continue; }
-      // 笔记已删除或身份已变：它不再是本库应向量化的笔记，不留在缺失列表里。
-      if (!this.isCurrentCandidate(candidate)) { failed++; continue; }
       if (!this.currentConfigMatches(config)) {
         return err("E320_TASK_CONFLICT", "嵌入配置在补齐缺失向量期间发生变化，已中止");
       }
-      const written = await this.deps.vectorIndex.upsert({ uid: candidate.entry.cruid, type: candidate.type, embedding: embedded.value.embedding, sourceHash: candidate.sourceHash });
-      if (!written.ok) { failed++; remaining.push(candidate); this.deps.logger.warn("SemanticIndexRebuilder", "缺失向量写入失败", { path: candidate.entry.path, errorCode: written.error.code }); continue; }
-      indexed++;
-      if (settings.enableDuplicateDetection) {
-        // The duplicate store is derived from the index, so a vector written
-        // here must refresh that node's pairs exactly like embedOne does.
-        try {
-          const refreshed = await this.deps.duplicateManager.refreshNode(candidate.entry.cruid, candidate.type, embedded.value.embedding);
-          if (!refreshed.ok) this.deps.logger.warn("SemanticIndexRebuilder", "缺失向量已写入，但重复关系刷新失败", { path: candidate.entry.path, errorCode: refreshed.error.code });
-        } catch (cause) {
-          this.deps.logger.warn("SemanticIndexRebuilder", "缺失向量已写入，但重复关系刷新异常", { path: candidate.entry.path, error: cause });
+      for (let i = 0; i < chunk.length; i += 1) {
+        const candidate = chunk[i];
+        const embedded = batchOutcome.results[i];
+        if (!embedded.ok) {
+          failed++;
+          remaining.push(candidate);
+          this.deps.logger.warn("SemanticIndexRebuilder", "缺失向量生成失败", { path: candidate.entry.path, errorCode: embedded.error.code });
+          continue;
+        }
+        // 笔记已删除或身份已变：它不再是本库应向量化的笔记，不留在缺失列表里。
+        if (!this.isCurrentCandidate(candidate)) { failed++; continue; }
+        const written = await this.deps.vectorIndex.upsert({ uid: candidate.entry.cruid, type: candidate.type, embedding: embedded.value, sourceHash: candidate.sourceHash });
+        if (!written.ok) {
+          failed++;
+          remaining.push(candidate);
+          this.deps.logger.warn("SemanticIndexRebuilder", "缺失向量写入失败", { path: candidate.entry.path, errorCode: written.error.code });
+          continue;
+        }
+        indexed++;
+        if (settings.enableDuplicateDetection) {
+          // The duplicate store is derived from the index, so a vector written
+          // here must refresh that node's pairs exactly like embedOne does.
+          try {
+            const refreshed = await this.deps.duplicateManager.refreshNode(candidate.entry.cruid, candidate.type, embedded.value);
+            if (!refreshed.ok) this.deps.logger.warn("SemanticIndexRebuilder", "缺失向量已写入，但重复关系刷新失败", { path: candidate.entry.path, errorCode: refreshed.error.code });
+          } catch (cause) {
+            this.deps.logger.warn("SemanticIndexRebuilder", "缺失向量已写入，但重复关系刷新异常", { path: candidate.entry.path, error: cause });
+          }
         }
       }
     }
@@ -369,41 +394,52 @@ export class SemanticIndexRebuilder {
         total: prepared.length,
         failed,
       });
-      for (let index = 0; index < prepared.length; index += 1) {
+      const toEmbed: PreparedCandidate[] = [];
+      let completed = 0;
+      for (const candidate of prepared) {
         if (this.isStopped(controller.signal)) return this.cancelled();
-        const candidate = prepared[index];
         const stored = reusable.get(candidate.entry.cruid);
         if (stored) {
           vectors.push({ uid: candidate.entry.cruid, type: candidate.type, embedding: stored, sourceHash: candidate.sourceHash });
           reused += 1;
-          this.emit(onProgress, { phase: "embedding", completed: index + 1, total: prepared.length, failed });
-          continue;
-        }
-        const embedResult = await this.deps.providerManager.embed(
-          this.buildEmbedRequest(modelSnapshot, vectorConfig, candidate.input),
-          controller.signal,
-        );
-        if (this.isStopped(controller.signal)) return this.cancelled();
-        if (embedResult.ok) {
-          vectors.push({
-            uid: candidate.entry.cruid,
-            type: candidate.type,
-            embedding: embedResult.value.embedding,
-            sourceHash: candidate.sourceHash,
-          });
+          completed += 1;
+          this.emit(onProgress, { phase: "embedding", completed, total: prepared.length, failed });
         } else {
-          failed += 1;
-          this.deps.logger.warn("SemanticIndexRebuilder", "笔记嵌入失败，已跳过", {
-            path: candidate.entry.path,
-            errorCode: embedResult.error.code,
+          toEmbed.push(candidate);
+        }
+      }
+      let batchSupported = typeof this.deps.providerManager.embedBatch === "function";
+      for (let offset = 0; offset < toEmbed.length; offset += EMBED_BATCH_SIZE) {
+        if (this.isStopped(controller.signal)) return this.cancelled();
+        const chunk = toEmbed.slice(offset, offset + EMBED_BATCH_SIZE);
+        const batchOutcome = await this.embedChunk(chunk, modelSnapshot, vectorConfig, controller.signal, batchSupported);
+        batchSupported = batchOutcome.batchSupported;
+        if (this.isStopped(controller.signal)) return this.cancelled();
+        for (let i = 0; i < chunk.length; i += 1) {
+          const candidate = chunk[i];
+          const embedResult = batchOutcome.results[i];
+          if (embedResult.ok) {
+            vectors.push({
+              uid: candidate.entry.cruid,
+              type: candidate.type,
+              embedding: embedResult.value,
+              sourceHash: candidate.sourceHash,
+            });
+          } else {
+            failed += 1;
+            this.deps.logger.warn("SemanticIndexRebuilder", "笔记嵌入失败，已跳过", {
+              path: candidate.entry.path,
+              errorCode: embedResult.error.code,
+            });
+          }
+          completed += 1;
+          this.emit(onProgress, {
+            phase: "embedding",
+            completed,
+            total: prepared.length,
+            failed,
           });
         }
-        this.emit(onProgress, {
-          phase: "embedding",
-          completed: index + 1,
-          total: prepared.length,
-          failed,
-        });
       }
 
       if (candidates.value.length > 0 && vectors.length === 0) {
@@ -599,6 +635,80 @@ export class SemanticIndexRebuilder {
       input,
       ...(model.embeddingDimension !== undefined ? { dimensions: model.embeddingDimension } : {}),
     };
+  }
+
+  private buildEmbedBatchRequest(
+    model: ResolvedTaskConfig,
+    config: VectorIndexConfig,
+    inputs: string[],
+  ): EmbedBatchRequest {
+    return {
+      providerId: model.providerId,
+      providerSnapshot: model.providerSnapshot,
+      model: config.model,
+      inputs,
+      ...(model.embeddingDimension !== undefined ? { dimensions: model.embeddingDimension } : {}),
+    };
+  }
+
+  /** 优先使用批量嵌入；中转不支持数组输入或单批失败时静默降级为受控并发单条嵌入。 */
+  private async embedChunk(
+    chunk: PreparedCandidate[],
+    model: ResolvedTaskConfig,
+    config: VectorIndexConfig,
+    signal: AbortSignal,
+    batchSupported: boolean,
+  ): Promise<{ results: Array<Result<number[]>>; batchSupported: boolean }> {
+    if (batchSupported && chunk.length > 1 && this.deps.providerManager.embedBatch) {
+      const batchResult = await this.deps.providerManager.embedBatch(
+        this.buildEmbedBatchRequest(model, config, chunk.map((candidate) => candidate.input)),
+        signal,
+      );
+      if (this.isStopped(signal)) {
+        return { results: chunk.map(() => err("E310_INVALID_STATE", "嵌入已取消")), batchSupported };
+      }
+      if (batchResult.ok && batchResult.value.embeddings.length === chunk.length) {
+        return {
+          results: batchResult.value.embeddings.map((embedding) => ok(embedding)),
+          batchSupported: true,
+        };
+      }
+      const nextBatchSupported = batchResult.ok
+        ? false
+        : !BATCH_UNSUPPORTED_ERROR_CODES.has(batchResult.error.code);
+      const results = await this.embedChunkIndividually(chunk, model, config, signal);
+      return { results, batchSupported: nextBatchSupported };
+    }
+    const results = await this.embedChunkIndividually(chunk, model, config, signal);
+    return { results, batchSupported };
+  }
+
+  private async embedChunkIndividually(
+    chunk: PreparedCandidate[],
+    model: ResolvedTaskConfig,
+    config: VectorIndexConfig,
+    signal: AbortSignal,
+  ): Promise<Array<Result<number[]>>> {
+    const results = new Array<Result<number[]>>(chunk.length);
+    let nextIndex = 0;
+    const workerCount = Math.min(EMBED_SINGLE_CONCURRENCY, chunk.length);
+    const workers = Array.from({ length: workerCount }, async () => {
+      while (nextIndex < chunk.length) {
+        if (this.isStopped(signal) || !this.currentConfigMatches(config)) return;
+        const current = nextIndex;
+        nextIndex += 1;
+        const response = await this.deps.providerManager.embed(
+          this.buildEmbedRequest(model, config, chunk[current].input),
+          signal,
+        );
+        results[current] = response.ok ? ok(response.value.embedding) : response;
+      }
+    });
+    await Promise.all(workers);
+    for (let i = 0; i < results.length; i += 1) {
+      results[i] ??= err("E310_INVALID_STATE", "嵌入已取消");
+    }
+    return results;
   }
 
   private currentConfigMatches(expected: VectorIndexConfig): boolean {

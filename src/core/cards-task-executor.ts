@@ -3,6 +3,7 @@ import type { ModelGateway } from "./model-gateway";
 import type { PromptManager } from "./prompt-manager";
 import { buildTaskChatRequest } from "./task-execution-support";
 import { validateChatFinishReason } from "./provider-response-parsers";
+import { repairLatexText, unwrapMarkdownCodeFence } from "./latex-repair";
 
 export class CardsTaskExecutor {
   constructor(private readonly deps: { providerManager: ModelGateway; promptManager: PromptManager }) {}
@@ -13,7 +14,9 @@ export class CardsTaskExecutor {
     if (signal.aborted) return err("E206_PROVIDER_REQUEST_UNCERTAIN", "卡片请求已中断，不追加结果");
     const finish = validateChatFinishReason(response.value.finishReason, { taskId: task.id });
     if (!finish.ok) return finish;
-    const markdown = response.value.content.trim();
+    // 静默剥离模型误套在外层的单一 ```markdown 围栏，并修复 LaTeX 公式定界符与转义。
+    const unwrapped = unwrapMarkdownCodeFence(response.value.content).markdown;
+    const markdown = repairLatexText(unwrapped).text;
     let isJson = false;
     try { const parsed: unknown = JSON.parse(markdown); isJson = parsed !== null && typeof parsed === "object"; } catch { /* Markdown is not JSON. */ }
     if (!markdown || isJson || /^(?:<!doctype|<html\b|```)/i.test(markdown)) return err("E211_MODEL_SCHEMA_VIOLATION", "卡片结果为空或明显不是可追加的 Markdown 正文");

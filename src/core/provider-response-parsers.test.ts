@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   mayHaveEmptyContent, validateChatFinishReason, parseOpenAIChatResponse,
   parseGeminiGenerateResponse, parseOpenAIResponsesResponse, parseOpenAIEmbedResponse,
+  parseOpenAIEmbedBatchResponse,
 } from "./provider-response-parsers";
 
 const unsupported = { ok: false, error: { code: "E207_PROVIDER_RESPONSE_UNSUPPORTED" } };
@@ -205,5 +206,18 @@ describe("Embedding parsing", () => {
   });
   it("omits unreported or invalid usage", () => {
     expect(parseOpenAIEmbedResponse({ data: [{ embedding: [1] }], usage: { total_tokens: -1 } })).toEqual({ ok: true, value: { embedding: [1] } });
+  });
+  it("parses batch embeddings and sorts by index", () => {
+    expect(parseOpenAIEmbedBatchResponse({
+      data: [
+        { index: 1, embedding: [0.3, 0.4] },
+        { index: 0, embedding: [0.1, 0.2] },
+      ],
+      usage: { total_tokens: 12 },
+    }, 2)).toEqual({ ok: true, value: { embeddings: [[0.1, 0.2], [0.3, 0.4]], tokensUsed: 12 } });
+  });
+  it("rejects batch embedding count mismatch or duplicate indices", () => {
+    expect(parseOpenAIEmbedBatchResponse({ data: [{ index: 0, embedding: [1] }] }, 2)).toMatchObject(unsupported);
+    expect(parseOpenAIEmbedBatchResponse({ data: [{ index: 0, embedding: [1] }, { index: 0, embedding: [2] }] }, 2)).toMatchObject(unsupported);
   });
 });
