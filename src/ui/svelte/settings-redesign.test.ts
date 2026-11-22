@@ -167,9 +167,11 @@ describe("approved settings information architecture", () => {
           expect(task.textContent).not.toContain("结构化输出");
         }
       }
-      const modalSource = readFileSync("src/ui/svelte/modals/ProviderModal.svelte", "utf8");
-      expect(modalSource).not.toContain("pm-structured-output");
-      expect(modalSource).not.toContain("formStructuredOutput");
+      for (const file of ["src/ui/settings/service-editor-modal.ts", "src/ui/settings/service-form.ts"]) {
+        const source = readFileSync(file, "utf8");
+        expect(source).not.toContain("pm-structured-output");
+        expect(source).not.toContain("structuredOutput");
+      }
       expect(h.save).not.toHaveBeenCalled();
       expect(h.probe).not.toHaveBeenCalled();
     } finally { await h.cleanup(); }
@@ -789,8 +791,12 @@ describe("approved settings information architecture", () => {
       findRow(h.tab.containerEl, "daily").querySelector<HTMLElement>(`[aria-label="${N("editService")}"]`)!.click();
       h.flush();
       const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
-      expect(dialog.querySelector("#pm-chat-model")).toBeTruthy();
-      expect(dialog.querySelector<HTMLDetailsElement>(".cr-provider-disclosure:last-of-type")?.open).toBe(false);
+      // 编辑时高级区收起；展开后才出现默认模型等字段。
+      expect(dialog.querySelector("#pm-advanced-toggle")?.getAttribute("aria-expanded")).toBe("false");
+      expect(dialog.querySelector("#pm-chat-model")).toBeNull();
+      dialog.querySelector<HTMLElement>("#pm-advanced-toggle")!.click();
+      expect(dialog.querySelector<HTMLInputElement>("#pm-chat-model")?.value).toBe("chat-main");
+      expect(dialog.querySelector<HTMLInputElement>("#pm-provider-id")?.disabled).toBe(true);
       findButton(dialog, i18n.t("common.cancel")).click();
       await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
       expect(h.save).not.toHaveBeenCalled();
@@ -872,7 +878,7 @@ describe("display preferences do not change task execution", () => {
     } finally { await h.cleanup(); }
   });
 
-  it("configures an Anthropic Messages provider in ProviderModal with protocol-first order and persists capabilities", async () => {
+  it("configures an Anthropic Messages provider in the service editor with protocol-first order and persists capabilities", async () => {
     const h = await harness();
     try {
       findButton(h.tab.containerEl, N("addService")).click(); h.flush();
@@ -880,9 +886,16 @@ describe("display preferences do not change task execution", () => {
       const fieldIds = Array.from(modal.querySelectorAll<HTMLElement>("#pm-provider-id, #pm-api-format, #pm-base-url, #pm-api-key")).map((el) => el.id);
       expect(fieldIds).toEqual(["pm-provider-id", "pm-api-format", "pm-base-url", "pm-api-key"]);
 
+      // 字段显隐变化会重绘对话框，每次都重新查询；文字框按 input 更新，下拉框按 change 更新。
       const setVal = (selector: string, value: string) => {
-        setField(modal.querySelector<HTMLInputElement | HTMLSelectElement>(selector)!, value);
+        const element = modal.querySelector<HTMLInputElement | HTMLSelectElement>(selector)!;
+        setField(element, value, element instanceof HTMLSelectElement ? "change" : "input");
         h.flush();
+      };
+      const switchOn = (selector: string) => {
+        const box = modal.querySelector<HTMLInputElement>(selector)!;
+        box.checked = true;
+        box.dispatchEvent(new Event("change", { bubbles: true }));
       };
       setVal("#pm-provider-id", "claude");
       setVal("#pm-api-format", "anthropic-messages");
@@ -892,13 +905,11 @@ describe("display preferences do not change task execution", () => {
       setVal("#pm-chat-model", "claude-sonnet-4-5");
       setVal("#pm-embedding-api-format", "disabled");
 
-      // 展开高级默认值，启用原生网络搜索、推理与提示词缓存。
-      Array.from(modal.querySelectorAll<HTMLDetailsElement>(".cr-provider-disclosure")).forEach((d) => { d.open = true; });
-      h.flush();
-      modal.querySelector<HTMLElement>('[role="switch"][aria-label="原生网络搜索"]')!.click();
-      modal.querySelector<HTMLElement>('[role="switch"][aria-label="推理强度"]')!.click();
-      modal.querySelector<HTMLElement>('[role="switch"][aria-label="提示词缓存优化"]')!.click();
-      h.flush();
+      // 添加服务时高级区已展开；启用原生网络搜索、推理与提示词缓存。
+      expect(modal.querySelector("#pm-advanced-toggle")?.getAttribute("aria-expanded")).toBe("true");
+      switchOn('#pm-web-search[aria-label="原生网络搜索"]');
+      switchOn('#pm-reasoning-supported[aria-label="推理强度"]');
+      switchOn('#pm-prompt-caching[aria-label="提示词缓存优化"]');
       setVal("#pm-thinking-budget", "2048");
       setVal("#pm-max-tokens", "8192");
 

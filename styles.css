@@ -109,6 +109,7 @@
     --cr-heading-workbench: var(--font-ui-large, 20px);
     --cr-bg-field: var(--background-modifier-form-field);
     --cr-bg-selected: var(--background-modifier-active-hover, var(--background-modifier-hover));
+    --cr-bg-modal: var(--modal-background);
 }
 .cr-scope:has(.cr-workbench-root) { background: var(--cr-bg-base); padding: 0; }
 .cr-scope .cr-workbench-root { color: var(--cr-text-normal); }
@@ -485,6 +486,22 @@
 .cr-setting-note .setting-item-name:empty { display: none; }
 .cr-task-overview .setting-item-name, .cr-task-parameter .setting-item-description { overflow-wrap: anywhere; }
 .cr-task-parameter .setting-item-control input[type="number"] { width: 8em; }
+
+/* 服务编辑框：宿主 Modal 整体滚动，按钮行固定在底部，长表单时仍可直接保存或取消。 */
+.cr-service-editor .setting-item-heading { padding-inline-start: 0; }
+.cr-service-editor__intro { margin-top: 0; }
+.cr-service-editor .cr-required { color: var(--cr-text-error); }
+.cr-service-editor__probe:empty { display: none; }
+.cr-service-editor__probe, .cr-service-editor__save-error { margin-top: var(--cr-space-3); }
+.cr-service-editor .modal-button-container {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    margin-top: var(--cr-space-4);
+    padding-block: var(--cr-space-3);
+    background: var(--cr-bg-modal);
+}
+.cr-service-editor .cr-service-editor__test { margin-inline-end: auto; }
 
 /* Svelte 子页面（保存位置）与服务编辑框共用的页内样式。 */
 .cr-setting-page { container-type: inline-size; min-width: 0; }

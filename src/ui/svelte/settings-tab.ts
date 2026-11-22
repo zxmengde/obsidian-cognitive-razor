@@ -10,6 +10,7 @@ import { MaintenanceController } from "../settings/maintenance-controller";
 import { confirmNative } from "../settings/native-confirm";
 import { probeDraft } from "../settings/service-probes";
 import type { ProviderProbeRequest } from "../../core/model-gateway";
+import { ServiceEditorModal } from "../settings/service-editor-modal";
 import { SvelteSettingPage } from "../settings/svelte-setting-page";
 import { TaskPageState } from "../settings/task-page-state";
 import { TaskProbeModal } from "../settings/task-probe-modal";
@@ -21,7 +22,7 @@ import {
   type ServiceProbeRecord,
   type SettingsDefinitionsHost,
 } from "../settings/settings-definitions";
-import ProviderModal from "./modals/ProviderModal.svelte";
+import ProviderProbeStatus from "./settings/ProviderProbeStatus.svelte";
 
 /** 原生控件读写的设置值；虚拟键在这里与存储单位互换。 */
 export function readControlValue(settings: PluginSettings, key: string): unknown {
@@ -226,31 +227,18 @@ export class CRSettingTab extends PluginSettingTab {
   // ---- 服务操作 ----
 
   private openServiceEditor(mode: "add" | "edit", id?: string): void {
-    const doc = this.containerEl.ownerDocument;
-    const target = doc.body.appendChild(doc.createElement("div"));
-    target.className = "cr-scope";
-    let destroy: (() => Promise<void>) | undefined;
-    const close = () => {
-      const pending = destroy;
-      destroy = undefined;
-      if (pending) void pending().catch((error: unknown) => this.reportError(error)).finally(() => target.remove());
-    };
     const settingsApplication = this.settingsApplication;
-    destroy = mountSvelteComponent(target, ProviderModal, {
+    new ServiceEditorModal(this.app, {
       mode,
-      providerId: id ?? "",
+      id: id ?? "",
       currentConfig: id ? settingsApplication.getSettings().providers[id] : undefined,
       i18n: this.plugin.getI18n(),
-      ontest: (request: ProviderProbeRequest, signal?: AbortSignal) => probeDraft(settingsApplication, request, signal),
-      onsave: async (nextId: string, config: ProviderConfig) => {
-        const result = mode === "add"
-          ? await settingsApplication.addProvider(nextId, config)
-          : await settingsApplication.updateProvider(nextId, config);
-        if (result.ok) close();
-        return result;
-      },
-      oncancel: close,
-    }, this.svelteContext()).destroy;
+      test: (request: ProviderProbeRequest, signal: AbortSignal) => probeDraft(settingsApplication, request, signal),
+      save: (nextId: string, config: ProviderConfig) => mode === "add"
+        ? settingsApplication.addProvider(nextId, config)
+        : settingsApplication.updateProvider(nextId, config),
+      mountProbe: (target, props) => this.host.mount(target, ProviderProbeStatus, props),
+    }).open();
   }
 
   /** 删除由原生列表的删除按钮提供，菜单只放其余操作。 */

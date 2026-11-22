@@ -36,7 +36,6 @@ export interface SettingsBundle {
   mountSvelteComponent: typeof import("../bridge/mount").mountSvelteComponent;
   settingsContextMap: typeof import("../bridge/context").settingsContextMap;
   flushSync: () => void;
-  ProviderModal: SvelteComponent;
   LocationsEditor: SvelteComponent;
   MaintenanceResults: SvelteComponent;
   /** 工作台的队列列表包装，用于验证显示偏好只影响展示。 */
@@ -60,7 +59,6 @@ export { mountSvelteComponent } from "./src/ui/bridge/mount";
 export { settingsContextMap } from "./src/ui/bridge/context";
 export * as intent from "./src/ui/settings-intent";
 export * as obs from "obsidian";
-export { default as ProviderModal } from "./src/ui/svelte/modals/ProviderModal.svelte";
 export { default as LocationsEditor } from "./src/ui/svelte/settings/LocationsEditor.svelte";
 export { default as MaintenanceResults } from "./src/ui/svelte/settings/MaintenanceResults.svelte";
 export { default as QueueHost } from "queue-host";

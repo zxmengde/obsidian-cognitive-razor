@@ -199,7 +199,7 @@ describe("current UI architecture", () => {
 
   it("keeps host view and provider modal errors on the shared safe UI projection", () => {
     const view = read("src/ui/svelte/workbench-view.ts");
-    const provider = read("src/ui/svelte/modals/ProviderModal.svelte");
+    const provider = read("src/ui/settings/service-editor-modal.ts");
     const projection = read("src/ui/error-feedback.ts");
 
     expect(projection).toContain("export function toSafeErrorFeedback");
@@ -264,15 +264,14 @@ describe("current UI architecture", () => {
     }
 
     const confirm = read("src/ui/components/ConfirmModal.svelte");
-    const password = read("src/ui/components/PasswordInput.svelte");
+    const serviceEditor = read("src/ui/settings/service-editor-modal.ts");
     const alert = read("src/ui/components/InlineAlert.svelte");
     const feedback = read("src/ui/feedback.ts");
 
     expect(confirm).toContain("confirmLabel: string");
     expect(confirm).toContain("cancelLabel: string");
     expect(confirm).not.toContain("confirmLabel =");
-    expect(password).toContain("showLabel: string");
-    expect(password).toContain("hideLabel: string");
+    expect(serviceEditor).toContain('"common.password.hide" : "common.password.show"');
     expect(alert).toContain("detailsToggleLabels");
     expect(feedback).not.toContain("fallback ??");
   });
@@ -346,13 +345,13 @@ describe("current UI architecture", () => {
     const probes = read("src/ui/settings/service-probes.ts");
     const definitions = read("src/ui/settings/settings-definitions.ts");
     const tab = read("src/ui/svelte/settings-tab.ts");
-    const modal = read("src/ui/svelte/modals/ProviderModal.svelte");
+    const modal = read("src/ui/settings/service-editor-modal.ts");
 
     expect(probes).toContain("settingsApplication.testProvider(request, signal)");
     expect(probes).toContain("toProviderProbeReadModel");
     expect(definitions).toContain("ProviderProbeStatus");
     expect(definitions).toContain('run("manual-retry")');
-    expect(modal).toContain("ProviderProbeStatus");
+    expect(tab).toContain("this.host.mount(target, ProviderProbeStatus, props)");
     expect(modal).toContain("manual-retry");
     expect(modal).not.toContain("chatError");
     for (const source of [probes, definitions, tab]) {
@@ -441,20 +440,21 @@ describe("current UI architecture", () => {
   });
 
   it("keeps embedding capability selection separate from chat protocol", () => {
-    const modal = read("src/ui/svelte/modals/ProviderModal.svelte");
+    const modal = read("src/ui/settings/service-editor-modal.ts");
+    const form = read("src/ui/settings/service-form.ts");
     const taskModel = read("src/ui/settings/task-definitions.ts");
 
-    expect(modal).toContain("embeddingApiFormat: formEmbeddingApiFormat");
+    expect(form).toContain("embeddingApiFormat: form.embeddingApiFormat");
     expect(modal).toContain("embeddingApiFormats.openaiEmbeddings");
     expect(modal).toContain("embeddingApiFormats.disabled");
-    expect(modal).not.toContain("formEmbeddingApiFormat = formApiFormat");
+    expect(modal + form).not.toContain("embeddingApiFormat = form.apiFormat");
     expect(taskModel).toContain('provider.embeddingApiFormat === "openai-embeddings"');
   });
 
   it("centralizes modal focus and keyboard lifecycle", () => {
     const shell = read("src/ui/components/ModalShell.svelte");
     const confirm = read("src/ui/components/ConfirmModal.svelte");
-    const provider = read("src/ui/svelte/modals/ProviderModal.svelte");
+    const provider = read("src/ui/settings/service-editor-modal.ts");
 
     expect(shell).toContain("dialogEl?.ownerDocument");
     expect(shell).toContain("ownerWindow.addEventListener('keydown', handleKeydown)");
@@ -463,28 +463,28 @@ describe("current UI architecture", () => {
     expect(shell).toContain("previousActiveElement.isConnected");
     expect(shell).toContain("aria-modal=\"true\"");
     expect(confirm).toContain("<ModalShell");
-    expect(provider).toContain("<ModalShell");
+    // 服务编辑框是宿主 Modal，焦点与键盘由宿主管理。
+    expect(provider).toContain("extends Modal");
     expect(confirm).not.toContain("getFocusableElements");
     expect(provider).not.toContain("getFocusableElements");
-    expect(provider).toContain("testAbortController?.abort('provider modal unmounted')");
+    expect(provider).toContain('this.testController?.abort("provider modal closed")');
   });
 
   it("locks provider editing while saving and invalidates stale connection tests", () => {
     const shell = read("src/ui/components/ModalShell.svelte");
-    const provider = read("src/ui/svelte/modals/ProviderModal.svelte");
+    const provider = read("src/ui/settings/service-editor-modal.ts");
 
     expect(shell).toContain("dismissible = true");
     expect(shell).toContain("if (dismissible) oncancel();");
-    expect(provider).toContain("dismissible={!saving}");
-    expect(provider).toContain("if (saving) return;");
+    // 保存中拒绝关闭：Esc、遮罩与取消都经过 close()。
+    expect(provider).toContain("if (this.saving) return;\n    super.close();");
     expect(provider).toContain("testedSignature");
     expect(provider).not.toContain("supportsNativeWebSearchLimit");
     expect(provider).toContain("provider configuration changed");
-    expect(provider).toContain("invalidateConnectionTest('provider configuration saved')");
-    expect(provider).toContain("testAbortController = undefined;");
-    expect(provider).toContain("testing = false;");
-    expect(provider).toContain("buildTestSignature() !== requestSignature");
-    expect(provider).toContain("disabled={saving}");
+    expect(provider).toContain('this.invalidateTest("provider configuration saved")');
+    expect(provider).toContain("this.testController = undefined;");
+    expect(provider).toContain("serviceFormSignature(this.form, this.options.currentConfig) !== signature");
+    expect(provider).toContain("const disabled = this.saving;");
   });
 
   it("separates everyday indexing settings from maintenance without a second search service", () => {
