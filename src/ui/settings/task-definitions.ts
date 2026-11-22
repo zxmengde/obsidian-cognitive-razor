@@ -11,6 +11,7 @@ import {
   type TaskParameterKey,
 } from "../task-parameter-summary";
 import type { SettingsDefinitionsHost } from "./settings-definitions";
+import { setBusy } from "./busy-button";
 import type { TaskProbeRecord } from "./task-page-state";
 import ProviderProbeStatus from "../svelte/settings/ProviderProbeStatus.svelte";
 
@@ -409,10 +410,10 @@ export function buildTaskPage(
       setting.descEl.appendChild(resultEl);
       const record = taskState.probe(taskType, probeSignature);
       const run = (attemptReason: "initial" | "manual-retry") => runTaskProbe(host, taskType, probeSignature, attemptReason);
-      setting.addButton((button) => button
-        .setButtonText(record?.controller ? i18n.t("settings.native.testing") : i18n.t("settings.native.taskProbeRun"))
-        .setDisabled(Boolean(summary.issue) || Boolean(record?.controller))
-        .onClick(() => run("initial")));
+      setting.addButton((button) => {
+        button.setDisabled(Boolean(summary.issue)).onClick(() => run("initial"));
+        setBusy(button, Boolean(record?.controller), i18n.t(record?.controller ? "settings.native.testing" : "settings.native.taskProbeRun"));
+      });
       if (!record?.result) return;
       return host.mount(resultEl, ProviderProbeStatus, {
         result: record.result, i18n, retrying: Boolean(record.controller), onretry: () => run("manual-retry"),

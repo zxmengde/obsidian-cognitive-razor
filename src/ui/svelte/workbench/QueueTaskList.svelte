@@ -135,16 +135,16 @@
     .cr-task-stage::after { content: ' ·'; }
     .cr-task-state--running { color: var(--cr-interactive-accent); }
     /* A failed row must be recognizable without reading the label text. */
-    .cr-task-state--failed { color: var(--cr-status-error); font-weight: 600; }
-    .cr-task-state--interrupted { color: var(--cr-status-warning); font-weight: 600; }
-    .cr-task-reason { grid-column: 1 / -1; margin: 0; color: var(--cr-status-error); font-size: var(--cr-font-xs); line-height: 1.6; overflow-wrap: anywhere; }
-    .cr-task-reason--uncertain { color: var(--cr-status-warning); }
+    .cr-task-state--failed { color: var(--cr-text-error); font-weight: 600; }
+    .cr-task-state--interrupted { color: var(--cr-text-warning); font-weight: 600; }
+    .cr-task-reason { grid-column: 1 / -1; margin: 0; color: var(--cr-text-error); font-size: var(--cr-font-xs); line-height: 1.6; overflow-wrap: anywhere; }
+    .cr-task-reason--uncertain { color: var(--cr-text-warning); }
     .cr-task-item > :global(.cr-btn-secondary) { grid-column: 1 / -1; justify-self: start; min-height: 26px; padding: 2px var(--cr-space-2); font-size: var(--cr-font-xs); }
     .cr-task-feedback { grid-column: 1 / -1; min-width: 0; font-size: var(--cr-font-xs); color: var(--cr-text-muted); }
     .cr-task-feedback summary { cursor: pointer; list-style: none; padding: 0; font-size: var(--cr-font-xs); }
     .cr-task-resolution { margin-top: 12px; padding: 12px; background: var(--cr-bg-secondary); border-radius: var(--cr-field-radius); display: flex; align-items: baseline; flex-wrap: wrap; gap: 14px 12px; }
     .cr-task-resolution--uncertain { background: var(--cr-overlay-warning-10); }
-    .cr-task-resolution > strong { width: 100%; font-size: var(--cr-font-sm); color: var(--cr-status-warning); }
+    .cr-task-resolution > strong { width: 100%; font-size: var(--cr-font-sm); color: var(--cr-text-warning); }
     .cr-task-resolution > p { width: 100%; }
     .cr-task-resolution p { margin: 0; line-height: 1.75; overflow-wrap: anywhere; }
     .cr-task-resolution :global(.cr-btn-ghost) { margin-left: auto; padding: 0; min-height: 28px; color: var(--cr-interactive-accent); font-size: var(--cr-font-xs); }

@@ -285,7 +285,7 @@
     .cr-queue-section { position: relative; min-width: 0; }
     .cr-queue-status-bar { display: flex; align-items: baseline; gap: var(--cr-space-3); margin-bottom: var(--cr-space-3); padding-right: 80px; }
     .cr-queue-status-bar :global(button) { padding: 0; font-size: var(--cr-font-xs); min-height: 0; }
-    .cr-queue-uncertain-notice { margin: 0 0 var(--cr-space-4); color: var(--cr-status-warning); font-size: var(--cr-font-sm); }
+    .cr-queue-uncertain-notice { margin: 0 0 var(--cr-space-4); color: var(--cr-text-warning); font-size: var(--cr-font-sm); }
     .cr-queue-history { margin-top: var(--cr-space-4); border-top: 1px solid var(--cr-border); }
     .cr-queue-history > summary { display: flex; justify-content: space-between; gap: var(--cr-space-3); padding-top: var(--cr-space-3); font-size: var(--cr-font-xs); color: var(--cr-text-muted); cursor: pointer; list-style: none; }
     .cr-queue-empty p { margin: 0; color: var(--cr-text-muted); font-size: var(--cr-font-sm); line-height: var(--cr-line-height-body); }

@@ -7,6 +7,7 @@ import { mountSvelteComponent } from "../bridge/mount";
 import { settingsContextMap } from "../bridge/context";
 import { onSettingsSection } from "../settings-intent";
 import { MaintenanceController } from "../settings/maintenance-controller";
+import { ControlLabeler } from "../settings/control-labels";
 import { confirmNative } from "../settings/native-confirm";
 import { probeDraft } from "../settings/service-probes";
 import type { ProviderProbeRequest } from "../../core/model-gateway";
@@ -53,6 +54,9 @@ export class CRSettingTab extends PluginSettingTab {
   private readonly maintenance: MaintenanceController;
   private readonly host: SettingsDefinitionsHost;
   private readonly serviceProbes = new Map<string, ServiceProbeRecord>();
+  /** 给宿主渲染的无名控件补可读名称；设置页打开期间运行。 */
+  private readonly labeler = new ControlLabeler();
+  private labeling = false;
   /** 任务页草稿与探针；关闭设置页时清空。 */
   private readonly taskState = new TaskPageState();
   private readonly runtimeListeners = new Set<() => void>();
@@ -109,7 +113,24 @@ export class CRSettingTab extends PluginSettingTab {
   }
 
   getControlValue(key: string): unknown {
+    // 不覆写 display()（宿主把它当旧式命令式设置页的回退）；宿主渲染控件时会读值，借此启动标注。
+    this.ensureLabeling();
     return readControlValue(this.settingsApplication.getSettings(), key);
+  }
+
+  private ensureLabeling(): void {
+    if (this.labeling) return;
+    this.labeling = true;
+    queueMicrotask(() => {
+      if (!this.labeling || !this.containerEl.isConnected) { this.labeling = false; return; }
+      // 声明式子页面在宿主的页面容器里，标注范围取整个设置内容区。
+      this.labeler.start(this.containerEl.closest<HTMLElement>(".vertical-tab-content-container") ?? this.containerEl);
+    });
+  }
+
+  private stopLabeling(): void {
+    this.labeling = false;
+    this.labeler.stop();
   }
 
   async setControlValue(key: string, value: unknown): Promise<void> {
@@ -121,6 +142,7 @@ export class CRSettingTab extends PluginSettingTab {
     // 与旧设置页卸载时一致：离开设置页即取消仍可取消的语义索引重建。
     this.settingsApplication.cancelSemanticIndexRebuild();
     this.taskState.clear();
+    this.stopLabeling();
     super.hide();
   }
 
@@ -128,6 +150,7 @@ export class CRSettingTab extends PluginSettingTab {
     for (const unsubscribe of this.unsubscribers.splice(0)) unsubscribe();
     this.runtimeListeners.clear();
     this.taskState.clear();
+    this.stopLabeling();
     this.maintenance.dispose();
   }
 

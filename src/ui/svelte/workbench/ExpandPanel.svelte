@@ -431,7 +431,7 @@
 
     .cr-expand-stat-creatable { color: var(--cr-status-success); }
     .cr-expand-stat-existing { color: var(--cr-text-muted); }
-    .cr-expand-stat-invalid { color: var(--cr-status-error); }
+    .cr-expand-stat-invalid { color: var(--cr-text-error); }
 
     .cr-expand-hint {
         font-size: var(--cr-font-sm);
@@ -493,7 +493,7 @@
 
     .cr-expand-badge--invalid {
         background: color-mix(in srgb, var(--cr-status-error) 15%, transparent);
-        color: var(--cr-status-error);
+        color: var(--cr-text-error);
     }
 
     .cr-expand-similarity {

@@ -4,6 +4,8 @@ import type { ProviderProbeRequest } from "../../core/model-gateway";
 import type { EmbeddingApiFormat, ProviderApiFormat, ProviderConfig, Result } from "../../types";
 import { toSafeErrorFeedback } from "../error-feedback";
 import type { ProviderProbeReadModel } from "../provider-probe-result";
+import { setBusy } from "./busy-button";
+import { ControlLabeler } from "./control-labels";
 import {
   buildServiceConfig,
   chatModelPlaceholder,
@@ -47,6 +49,7 @@ export class ServiceEditorModal extends Modal {
   private testResult: ProviderProbeReadModel | undefined;
   private probeEl: HTMLElement | undefined;
   private cleanupProbe: (() => void) | undefined;
+  private readonly labeler = new ControlLabeler();
 
   constructor(app: App, private readonly options: ServiceEditorOptions) {
     super(app);
@@ -67,10 +70,13 @@ export class ServiceEditorModal extends Modal {
     this.titleEl.id = titleId;
     this.titleEl.textContent = this.t(this.options.mode === "add" ? "modals.addProvider.title" : "modals.editProvider.title");
     this.render();
+    // 开关由宿主组件渲染，补 switch 角色与选中状态。
+    this.labeler.start(this.contentEl);
     this.contentEl.querySelector<HTMLElement>("input:not([disabled]), select:not([disabled])")?.focus();
   }
 
   onClose(): void {
+    this.labeler.stop();
     this.testController?.abort("provider modal closed");
     this.testController = undefined;
     this.cleanupProbe?.();
@@ -185,15 +191,16 @@ export class ServiceEditorModal extends Modal {
     const actions = doc.createElement("div");
     actions.className = "modal-button-container";
     root.appendChild(actions);
-    const test = new ButtonComponent(actions)
-      .setButtonText(this.testController ? this.options.i18n.t("settings.native.testing") : this.t("settings.provider.testConnection"))
-      .setDisabled(disabled || Boolean(this.testController))
-      .onClick(() => void this.runTest("initial"));
+    // 按钮带 id，重绘后焦点可以回到原按钮；进行中用 aria-disabled，按钮不失焦。
+    const test = new ButtonComponent(actions).setDisabled(disabled).onClick(() => void this.runTest("initial"));
+    setBusy(test, Boolean(this.testController), this.testController ? this.options.i18n.t("settings.native.testing") : this.t("settings.provider.testConnection"));
+    test.buttonEl.id = "pm-test";
     test.buttonEl.classList.add("cr-service-editor__test");
-    new ButtonComponent(actions).setButtonText(this.t("common.cancel")).setDisabled(disabled).onClick(() => this.close());
-    new ButtonComponent(actions)
-      .setButtonText(this.saving ? this.options.i18n.t("settings.native.working") : this.t("common.save"))
-      .setCta().setDisabled(disabled).onClick(() => void this.handleSave());
+    const cancel = new ButtonComponent(actions).setButtonText(this.t("common.cancel")).setDisabled(disabled).onClick(() => this.close());
+    cancel.buttonEl.id = "pm-cancel";
+    const save = new ButtonComponent(actions).setCta().onClick(() => void this.handleSave());
+    setBusy(save, this.saving, this.saving ? this.options.i18n.t("settings.native.working") : this.t("common.save"));
+    save.buttonEl.id = "pm-save";
 
     if (focusedId) doc.getElementById(focusedId)?.focus();
   }
@@ -439,7 +446,8 @@ export class ServiceEditorModal extends Modal {
     this.showTestResult();
     const testButton = this.contentEl.querySelector<HTMLButtonElement>(".cr-service-editor__test");
     if (testButton && !this.saving) {
-      testButton.disabled = false;
+      testButton.removeAttribute("aria-disabled");
+      testButton.removeAttribute("aria-busy");
       testButton.textContent = this.t("settings.provider.testConnection");
     }
   }

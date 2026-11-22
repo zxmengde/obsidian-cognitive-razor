@@ -70,12 +70,12 @@
 
     .cr-inline-alert--error {
         background: var(--cr-overlay-error-10);
-        color: var(--cr-status-error);
+        color: var(--cr-text-error);
     }
 
     .cr-inline-alert--warning {
         background: var(--cr-overlay-warning-15);
-        color: var(--cr-status-warning);
+        color: var(--cr-text-warning);
     }
 
     .cr-inline-alert--success {

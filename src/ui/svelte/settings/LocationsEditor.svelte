@@ -143,5 +143,5 @@
     .cr-locations__changed { color: var(--text-normal); }
     .cr-locations__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--cr-space-2); padding-top: var(--cr-space-4); }
     .cr-locations .setting-item-control input[type="text"] { min-width: 14em; }
-    .mod-warning { color: var(--cr-status-warning); }
+    .mod-warning { color: var(--cr-text-warning); }
 </style>

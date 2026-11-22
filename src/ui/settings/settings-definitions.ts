@@ -9,6 +9,7 @@ import { taskSettingsSummary } from "../settings-summaries";
 import { locationDraft } from "../settings-locations";
 import type { MaintenanceController } from "./maintenance-controller";
 import type { NativeConfirmOptions } from "./native-confirm";
+import { setBusy } from "./busy-button";
 import { probeService } from "./service-probes";
 import { buildTaskPage } from "./task-definitions";
 import type { TaskPageState } from "./task-page-state";
@@ -183,7 +184,7 @@ export function buildSettingDefinitions(host: SettingsDefinitionsHost): SettingD
           if (controller) return;
           const signature = serviceSignature(id, app.getSettings().providers[id]);
           controller = new AbortController();
-          testButton?.setDisabled(true).setButtonText(n("testing"));
+          if (testButton) setBusy(testButton, true, n("testing"));
           host.serviceProbes.delete(id);
           showProbe(undefined, () => undefined);
           try {
@@ -194,7 +195,7 @@ export function buildSettingDefinitions(host: SettingsDefinitionsHost): SettingD
             }
           } finally {
             controller = undefined;
-            testButton?.setDisabled(!app.getSettings().providers[id]?.enabled).setButtonText(n("testService"));
+            if (testButton) setBusy(testButton.setDisabled(!app.getSettings().providers[id]?.enabled), false, n("testService"));
           }
         };
         setting.addButton((button) => {

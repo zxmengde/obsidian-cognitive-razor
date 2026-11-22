@@ -107,7 +107,7 @@
     .cr-provider-probe-status__hint {
         margin: 0;
         padding: 0 var(--cr-space-3);
-        color: var(--cr-status-warning);
+        color: var(--cr-text-warning);
         font-size: var(--cr-font-sm);
     }
 

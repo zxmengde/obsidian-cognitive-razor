@@ -73,9 +73,13 @@ describe('connection test as a service row action', () => {
       // 连接测试直接在行上，不需要先打开「更多操作」菜单。
       expect(env.bundle.obs.shownMenus).toHaveLength(0);
 
+      testButton.focus();
       testButton.click();
       expect(testButton.textContent).toBe(i18n.t('settings.native.testing'));
-      expect(testButton.disabled).toBe(true);
+      // 进行中用 aria-disabled：按钮不失焦，重复点击被忽略。
+      expect(testButton.getAttribute('aria-disabled')).toBe('true');
+      expect(document.activeElement).toBe(testButton);
+      testButton.click();
       await vi.waitFor(() => expect(env.probe).toHaveBeenCalledOnce());
       expect((env.probe.mock.calls[0] as unknown as [unknown])[0]).toMatchObject({ providerId: 'daily' });
       await vi.waitFor(() => {
@@ -83,7 +87,9 @@ describe('connection test as a service row action', () => {
         expect(row.querySelector('.cr-service-probe .cr-provider-probe-status')).not.toBeNull();
       });
       expect(testButton.textContent).toBe(i18n.t('settings.native.testService'));
+      expect(testButton.getAttribute('aria-disabled')).toBeNull();
       expect(testButton.disabled).toBe(false);
+      expect(env.probe).toHaveBeenCalledOnce();
     });
   });
 

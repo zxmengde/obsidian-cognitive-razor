@@ -41,9 +41,12 @@
     --cr-text-normal: var(--text-normal);
     --cr-text-muted: var(--text-muted);
     --cr-text-faint: var(--text-faint);
-    --cr-text-accent: var(--interactive-accent);
+    /* 用作文字的状态色与强调色向正文色混合：浅色主题更深、深色主题更亮，
+       小字号在两种主题下都达到 WCAG AA 4.5:1。边框与背景仍用下方原状态色。 */
+    --cr-text-accent: color-mix(in srgb, var(--interactive-accent) 60%, var(--text-normal));
     --cr-text-on-accent: var(--text-on-accent);
-    --cr-text-error: var(--text-error);
+    --cr-text-error: color-mix(in srgb, var(--text-error) 75%, var(--text-normal));
+    --cr-text-warning: color-mix(in srgb, var(--color-orange) 55%, var(--text-normal));
     --cr-text-success: var(--text-success);
 
     /* 边框 */
@@ -481,11 +484,14 @@
 .cr-confirm-message { margin-bottom: var(--cr-space-4); line-height: var(--cr-line-height-body); white-space: pre-wrap; }
 
 /* 原生行内的状态文字：说明区按行写入，警告与错误用语义色，不另做容器。 */
-.cr-setting-warning { color: var(--cr-status-warning); }
+.cr-setting-warning { color: var(--cr-text-warning); }
 .cr-setting-error { color: var(--cr-text-error); }
 .cr-setting-note .setting-item-name:empty { display: none; }
 .cr-task-overview .setting-item-name, .cr-task-parameter .setting-item-description { overflow-wrap: anywhere; }
 .cr-task-parameter .setting-item-control input[type="number"] { width: 8em; }
+
+/* 进行中的按钮保持可聚焦（aria-disabled），外观与禁用一致。 */
+.cr-scope button[aria-busy="true"] { opacity: 0.6; cursor: progress; }
 
 /* 服务编辑框：宿主 Modal 整体滚动，按钮行固定在底部，长表单时仍可直接保存或取消。 */
 .cr-service-editor .setting-item-heading { padding-inline-start: 0; }
