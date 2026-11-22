@@ -10,8 +10,9 @@ import { locationDraft } from "../settings-locations";
 import type { MaintenanceController } from "./maintenance-controller";
 import type { NativeConfirmOptions } from "./native-confirm";
 import { probeService } from "./service-probes";
+import { buildTaskPage } from "./task-definitions";
+import type { TaskPageState } from "./task-page-state";
 import ProviderProbeStatus from "../svelte/settings/ProviderProbeStatus.svelte";
-import TaskDetails from "../svelte/settings/TaskDetails.svelte";
 import LocationsEditor from "../svelte/settings/LocationsEditor.svelte";
 import MaintenanceResults from "../svelte/settings/MaintenanceResults.svelte";
 
@@ -38,8 +39,11 @@ export interface SettingsDefinitionsHost {
   maintenance: MaintenanceController;
   /** 把 Svelte 组件挂到原生设置行内，返回同步清理函数。 */
   mount<T extends Record<string, unknown>>(target: HTMLElement, component: Component<T>, props: T): () => void;
-  /** 传入 keepAlive 键时，同一次设置会话内复用同一页面实例，保留未保存的页内草稿。 */
-  sveltePage<T extends Record<string, unknown>>(title: string, component: Component<T>, props: () => T, keepAliveKey?: string): SettingPage;
+  sveltePage<T extends Record<string, unknown>>(title: string, component: Component<T>, props: () => T): SettingPage;
+  /** 任务页草稿与探针；同一次设置会话内跨刷新与导航保留。 */
+  taskState: TaskPageState;
+  /** 只改了页内草稿、设置本身没变时，请求按最新状态重绘当前页。 */
+  refresh(): void;
   openServiceEditor(mode: "add" | "edit", id?: string): void;
   openTaskProbe(id: string): void;
   openServiceMenu(id: string, anchor: HTMLElement): void;
@@ -253,17 +257,6 @@ export function buildSettingDefinitions(host: SettingsDefinitionsHost): SettingD
 
   const taskStates = SETTINGS_TASKS.map((taskType) => ({ taskType, ...taskEntryState(settings, taskType, i18n) }));
   const customizedCount = taskStates.filter((task) => task.summary.source === "customized").length;
-  const taskPage = (taskType: TaskType, state: ReturnType<typeof taskEntryState>): SettingDefinitionPage => {
-    const title = t(`settings.redesign.tasks.${taskType}`);
-    return {
-      type: "page",
-      name: title,
-      desc: state.desc,
-      displayValue: state.value,
-      status: state.warning ? "warning" : null,
-      page: () => host.sveltePage(title, TaskDetails, () => ({ taskType }), `task:${taskType}`),
-    };
-  };
   const taskModels: SettingDefinitionPage = {
     type: "page",
     name: n("taskModels"),
@@ -271,7 +264,7 @@ export function buildSettingDefinitions(host: SettingsDefinitionsHost): SettingD
     displayValue: customizedCount === 0 ? n("taskModelsAllInherited") : i18n.format("settings.native.taskModelsCustomized", { count: customizedCount }),
     // 唯一的首屏提醒：有任务无法运行时标在这里。
     status: serviceIds.length > 0 && taskStates.some((task) => task.summary.issue) ? "warning" : null,
-    items: [{ type: "group", items: taskStates.map((task) => taskPage(task.taskType, task)) }],
+    items: [{ type: "group", items: taskStates.map((task) => buildTaskPage(host, task.taskType, task)) }],
   };
 
   // ---- 笔记与卡片 ----

@@ -11,6 +11,7 @@ import { confirmNative } from "../settings/native-confirm";
 import { probeDraft } from "../settings/service-probes";
 import type { ProviderProbeRequest } from "../../core/model-gateway";
 import { SvelteSettingPage } from "../settings/svelte-setting-page";
+import { TaskPageState } from "../settings/task-page-state";
 import { TaskProbeModal } from "../settings/task-probe-modal";
 import {
   buildSettingDefinitions,
@@ -51,8 +52,8 @@ export class CRSettingTab extends PluginSettingTab {
   private readonly maintenance: MaintenanceController;
   private readonly host: SettingsDefinitionsHost;
   private readonly serviceProbes = new Map<string, ServiceProbeRecord>();
-  /** 本次设置会话内保留的任务页；关闭设置页时卸载。 */
-  private readonly keptPages = new Map<string, SvelteSettingPage<Record<string, unknown>>>();
+  /** 任务页草稿与探针；关闭设置页时清空。 */
+  private readonly taskState = new TaskPageState();
   private readonly runtimeListeners = new Set<() => void>();
   private readonly unsubscribers: Array<() => void> = [];
   private structureKey: string;
@@ -118,19 +119,14 @@ export class CRSettingTab extends PluginSettingTab {
   hide(): void {
     // 与旧设置页卸载时一致：离开设置页即取消仍可取消的语义索引重建。
     this.settingsApplication.cancelSemanticIndexRebuild();
-    this.releaseKeptPages();
+    this.taskState.clear();
     super.hide();
-  }
-
-  private releaseKeptPages(): void {
-    for (const page of this.keptPages.values()) page.destroy();
-    this.keptPages.clear();
   }
 
   dispose(): void {
     for (const unsubscribe of this.unsubscribers.splice(0)) unsubscribe();
     this.runtimeListeners.clear();
-    this.releaseKeptPages();
+    this.taskState.clear();
     this.maintenance.dispose();
   }
 
@@ -155,24 +151,28 @@ export class CRSettingTab extends PluginSettingTab {
     });
   }
 
-  /** 整页重绘会替换 DOM；按「第几行的第几个控件」把焦点放回去，键盘用户不会丢位置。 */
+  /**
+   * 整页重绘会替换 DOM；按「第几行的第几个控件」把焦点放回去，键盘用户不会丢位置。
+   * 声明式子页面不在 containerEl 内，而在宿主的页面容器里，所以按焦点所在的容器定位。
+   */
   private updatePreservingFocus(): void {
     const doc = this.containerEl.ownerDocument;
     const active = doc.activeElement;
+    const scope = (active?.closest(".vertical-tab-content-container") as HTMLElement | null)
+      ?? (active && this.containerEl.contains(active) ? this.containerEl : null);
     let position: { row: number; control: number } | undefined;
-    if (active && this.containerEl.contains(active)) {
-      const rows = Array.from(this.containerEl.querySelectorAll(".setting-item"));
+    if (active && scope) {
       const row = active.closest(".setting-item");
       if (row) {
-        const controls = Array.from(row.querySelectorAll<HTMLElement>(FOCUSABLE));
-        position = { row: rows.indexOf(row), control: Math.max(0, controls.indexOf(active as HTMLElement)) };
+        const controls = focusableControls(row);
+        position = { row: visibleRows(scope).indexOf(row), control: Math.max(0, controls.indexOf(active as HTMLElement)) };
       }
     }
     this.update();
     for (const listener of this.runtimeListeners) listener();
-    if (!position || position.row < 0) return;
-    const row = this.containerEl.querySelectorAll(".setting-item")[position.row];
-    const controls = row ? Array.from(row.querySelectorAll<HTMLElement>(FOCUSABLE)) : [];
+    if (!scope || !position || position.row < 0) return;
+    const row = visibleRows(scope)[position.row];
+    const controls = row ? focusableControls(row) : [];
     (controls[position.control] ?? controls[0])?.focus();
   }
 
@@ -187,11 +187,8 @@ export class CRSettingTab extends PluginSettingTab {
         const { destroy } = mountSvelteComponent(target, component, props, this.svelteContext());
         return () => { void destroy().catch((error: unknown) => this.reportError(error)); };
       },
-      sveltePage: <T extends Record<string, unknown>>(title: string, component: Component<T>, props: () => T, keepAliveKey?: string): SettingPage => {
-        const cached = keepAliveKey ? this.keptPages.get(keepAliveKey) : undefined;
-        if (cached) return cached;
-        const page = new SvelteSettingPage(title, component, props, this.svelteContext(), {
-          keepAlive: keepAliveKey !== undefined,
+      sveltePage: <T extends Record<string, unknown>>(title: string, component: Component<T>, props: () => T): SettingPage =>
+        new SvelteSettingPage(title, component, props, this.svelteContext(), {
           onOpen: () => { this.openSveltePages++; },
           onClose: () => {
             this.openSveltePages = Math.max(0, this.openSveltePages - 1);
@@ -201,10 +198,9 @@ export class CRSettingTab extends PluginSettingTab {
             }
           },
           onError: (error) => this.reportError(error),
-        });
-        if (keepAliveKey) this.keptPages.set(keepAliveKey, page as unknown as SvelteSettingPage<Record<string, unknown>>);
-        return page;
-      },
+        }),
+      taskState: this.taskState,
+      refresh: () => this.scheduleUpdate(),
       openServiceEditor: (mode, id) => this.openServiceEditor(mode, id),
       openTaskProbe: (id) => new TaskProbeModal(this.app, id, this.settingsApplication, this.plugin.getI18n()).open(),
       openServiceMenu: (id, anchor) => this.openServiceMenu(id, anchor),
@@ -324,6 +320,18 @@ export class CRSettingTab extends PluginSettingTab {
       input.click();
     });
   }
+}
+
+/** 宿主隐藏的页面（导航栈中的上一级）仍在 DOM 中，按可见性过滤。 */
+function visibleRows(scope: HTMLElement): Element[] {
+  return Array.from(scope.querySelectorAll<HTMLElement>(".setting-item"))
+    .filter((row) => typeof row.checkVisibility !== "function" || row.checkVisibility());
+}
+
+/** 宿主给下拉框配了一个隐藏的测宽 select（tabindex=-1），不算可聚焦控件，否则序号会错位。 */
+function focusableControls(row: Element): HTMLElement[] {
+  return Array.from(row.querySelectorAll<HTMLElement>(FOCUSABLE))
+    .filter((element) => element.tabIndex >= 0 && element.getAttribute("aria-hidden") !== "true");
 }
 
 const FOCUSABLE = "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";

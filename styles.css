@@ -479,7 +479,14 @@
 .cr-danger-zone .setting-item-name { color: var(--cr-text-error); }
 .cr-confirm-message { margin-bottom: var(--cr-space-4); line-height: var(--cr-line-height-body); white-space: pre-wrap; }
 
-/* Svelte 子页面（任务模型、保存位置）与服务编辑框共用的页内样式。 */
+/* 原生行内的状态文字：说明区按行写入，警告与错误用语义色，不另做容器。 */
+.cr-setting-warning { color: var(--cr-status-warning); }
+.cr-setting-error { color: var(--cr-text-error); }
+.cr-setting-note .setting-item-name:empty { display: none; }
+.cr-task-overview .setting-item-name, .cr-task-parameter .setting-item-description { overflow-wrap: anywhere; }
+.cr-task-parameter .setting-item-control input[type="number"] { width: 8em; }
+
+/* Svelte 子页面（保存位置）与服务编辑框共用的页内样式。 */
 .cr-setting-page { container-type: inline-size; min-width: 0; }
 .cr-setting-page *, .cr-setting-page *::before, .cr-setting-page *::after { box-sizing: border-box; }
 .cr-setting-page .cr-settings-hint, .cr-task-probe-result .cr-settings-hint { color: var(--cr-text-muted); line-height: var(--cr-line-height-body); font-size: var(--cr-font-sm); margin: var(--cr-space-2) 0; overflow-wrap: anywhere; }
@@ -490,11 +497,6 @@
     .cr-setting-page .setting-item { flex-wrap: wrap; }
     .cr-setting-page .setting-item-control { width: 100%; justify-content: flex-start; }
     .cr-setting-page .setting-item-control input[type="text"] { width: 100%; min-width: 0; }
-}
-@container (max-width: 420px) {
-    .cr-setting-page .cr-task-model-card__parameter { grid-template-columns: minmax(0, 1fr) minmax(100px, 42%); gap: var(--cr-space-2); }
-    .cr-setting-page .cr-task-model-card__parameter-result { grid-column: 1 / -1; }
-    .cr-setting-page .cr-task-model-card__parameter-controls { grid-row: auto; }
 }
 
 /* Narrow panes: the doubled class outranks the scoped default padding in

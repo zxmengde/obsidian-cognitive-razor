@@ -363,12 +363,12 @@ export abstract class SettingPage {
     hide(): void {}
 }
 
-/** 打开中的设置子页：有 page 工厂时是 Svelte/自定义页面，否则是页内子项（itemsOf 为定义名）。 */
+/** 打开中的设置子页：有 page 工厂时是 Svelte/自定义页面，否则是页内子项（itemsOf 为从顶层起的页名路径）。 */
 export interface OpenedSettingsPage {
     title: string;
     containerEl: HTMLElement & ObsidianElement;
     page?: SettingPage;
-    itemsOf?: string;
+    itemsOf?: string[];
 }
 
 /** 按名称在定义树中找到子页定义（子项页在设置变化后据此重绘）。 */
@@ -380,6 +380,18 @@ export function findPageDefinition(items: SettingDefinitionItem[], name: string)
         if (found) return found;
     }
     return undefined;
+}
+
+/** 按页名路径逐级查找；不同任务下的同名子页（如「能力与参数」）靠路径区分。 */
+export function findPageByPath(items: SettingDefinitionItem[], path: string[]): SettingDefinitionPage | undefined {
+    let scope = items;
+    let found: SettingDefinitionPage | undefined;
+    for (const name of path) {
+        found = findPageDefinition(scope, name);
+        if (!found) return undefined;
+        scope = found.items ?? [];
+    }
+    return found;
 }
 
 /**
@@ -420,14 +432,19 @@ export abstract class SettingTab {
      * 否则把页内子项渲染到一个新容器中。
      */
     openPage(definition: SettingDefinitionPage): OpenedSettingsPage {
-        this.closePage();
+        // 从已打开的子项页进入下一级时沿用路径，与宿主的页面栈一致。
+        const parent = this.openedPage?.itemsOf;
+        const parentItems = parent ? findPageByPath(this.getSettingDefinitions(), parent)?.items ?? [] : [];
+        const nested = parent && findPageDefinition(parentItems, definition.name) ? [...parent, definition.name] : undefined;
+        if (nested) this.openedPage = undefined;
+        else this.closePage();
         const containerEl = augment(document.createElement("div"));
         if (definition.page) {
             const page = definition.page();
             page.display();
             this.openedPage = { title: definition.name, containerEl: page.containerEl, page };
         } else {
-            this.openedPage = { title: definition.name, containerEl, itemsOf: definition.name };
+            this.openedPage = { title: definition.name, containerEl, itemsOf: nested ?? [definition.name] };
             this.renderOpenedItems();
         }
         return this.openedPage!;
@@ -446,7 +463,7 @@ export abstract class SettingTab {
     private renderOpenedItems(): void {
         const opened = this.openedPage;
         if (!opened?.itemsOf) return;
-        const definition = findPageDefinition(this.getSettingDefinitions(), opened.itemsOf);
+        const definition = findPageByPath(this.getSettingDefinitions(), opened.itemsOf);
         opened.containerEl.replaceChildren();
         this.renderItems(opened.containerEl, definition?.items ?? []);
     }

@@ -31,12 +31,12 @@ export interface SettingsBundle {
   probeServiceWithTask: typeof import("../settings/service-probes").probeServiceWithTask;
   TaskProbeModal: typeof import("../settings/task-probe-modal").TaskProbeModal;
   SvelteSettingPage: typeof import("../settings/svelte-setting-page").SvelteSettingPage;
+  TaskPageState: typeof import("../settings/task-page-state").TaskPageState;
   intent: typeof import("../settings-intent");
   mountSvelteComponent: typeof import("../bridge/mount").mountSvelteComponent;
   settingsContextMap: typeof import("../bridge/context").settingsContextMap;
   flushSync: () => void;
   ProviderModal: SvelteComponent;
-  TaskDetails: SvelteComponent;
   LocationsEditor: SvelteComponent;
   MaintenanceResults: SvelteComponent;
   /** 工作台的队列列表包装，用于验证显示偏好只影响展示。 */
@@ -55,12 +55,12 @@ export { MaintenanceController } from "./src/ui/settings/maintenance-controller"
 export { probeService, probeServiceWithTask, probeDraft } from "./src/ui/settings/service-probes";
 export { TaskProbeModal } from "./src/ui/settings/task-probe-modal";
 export { SvelteSettingPage } from "./src/ui/settings/svelte-setting-page";
+export { TaskPageState } from "./src/ui/settings/task-page-state";
 export { mountSvelteComponent } from "./src/ui/bridge/mount";
 export { settingsContextMap } from "./src/ui/bridge/context";
 export * as intent from "./src/ui/settings-intent";
 export * as obs from "obsidian";
 export { default as ProviderModal } from "./src/ui/svelte/modals/ProviderModal.svelte";
-export { default as TaskDetails } from "./src/ui/svelte/settings/TaskDetails.svelte";
 export { default as LocationsEditor } from "./src/ui/svelte/settings/LocationsEditor.svelte";
 export { default as MaintenanceResults } from "./src/ui/svelte/settings/MaintenanceResults.svelte";
 export { default as QueueHost } from "queue-host";
@@ -237,6 +237,25 @@ export async function openSettingsPage(env: SettingsEnvironment, name: string): 
   const opened = hostTab(env).openedPage;
   if (!opened) throw new Error(`Settings page did not open: ${name}`);
   return opened.containerEl;
+}
+
+/** 在已打开的页面容器中点击某一行的入口，返回新打开的子页容器。 */
+export async function openNestedPage(env: SettingsEnvironment, container: HTMLElement, name: string): Promise<HTMLElement> {
+  findRow(container, name).querySelector<HTMLElement>('[role="button"]')!.click();
+  await settle(env.bundle);
+  const opened = hostTab(env).openedPage;
+  if (!opened) throw new Error(`Nested page did not open: ${name}`);
+  return opened.containerEl;
+}
+
+/**
+ * 打开「任务模型 › 某任务」页；with parameters 时再进入「能力与参数」。
+ * 返回的容器在设置变化后会被重绘替换其中的行，断言前要重新查询元素。
+ */
+export async function openTaskPage(env: SettingsEnvironment, taskName: string, parameters = false): Promise<HTMLElement> {
+  const models = await openSettingsPage(env, env.i18n.t("settings.native.taskModels"));
+  const task = await openNestedPage(env, models, taskName);
+  return parameters ? openNestedPage(env, task, env.i18n.t("settings.taskDetails.advanced")) : task;
 }
 
 /** 返回上一级（关闭当前子页）。 */

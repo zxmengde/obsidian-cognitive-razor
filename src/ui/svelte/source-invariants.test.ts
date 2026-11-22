@@ -375,7 +375,10 @@ describe("current UI architecture", () => {
       expect(index, token).toBeGreaterThan(-1);
       cursor = index;
     }
-    expect(definitions).toContain("host.sveltePage(title, TaskDetails, () => ({ taskType }), `task:${taskType}`)");
+    // 任务页是声明式子页面，行内容进入设置搜索；只有保存位置仍用 Svelte 子页面。
+    expect(definitions).toContain("buildTaskPage(host, task.taskType, task)");
+    expect(existsSync("src/ui/svelte/settings/TaskDetails.svelte")).toBe(false);
+    expect(existsSync("src/ui/svelte/settings/TaskModelCard.svelte")).toBe(false);
     expect(definitions).toContain('host.sveltePage(n("locations"), LocationsEditor, () => ({}))');
     for (const file of [
       "BackupTab", "MaintenanceTab", "ProviderCard", "ProvidersTab", "SettingItem",
@@ -431,8 +434,6 @@ describe("current UI architecture", () => {
       "src/ui/svelte/settings/LocationsEditor.svelte",
       "src/ui/svelte/settings/MaintenanceResults.svelte",
       "src/ui/svelte/settings/ProviderProbeStatus.svelte",
-      "src/ui/svelte/settings/TaskDetails.svelte",
-      "src/ui/svelte/settings/TaskModelCard.svelte",
     ];
     for (const file of files) {
       expect(read(file)).not.toMatch(/var\(--cr-[^)]*,/);
@@ -441,13 +442,13 @@ describe("current UI architecture", () => {
 
   it("keeps embedding capability selection separate from chat protocol", () => {
     const modal = read("src/ui/svelte/modals/ProviderModal.svelte");
-    const taskModel = read("src/ui/svelte/settings/TaskModelCard.svelte");
+    const taskModel = read("src/ui/settings/task-definitions.ts");
 
     expect(modal).toContain("embeddingApiFormat: formEmbeddingApiFormat");
     expect(modal).toContain("embeddingApiFormats.openaiEmbeddings");
     expect(modal).toContain("embeddingApiFormats.disabled");
     expect(modal).not.toContain("formEmbeddingApiFormat = formApiFormat");
-    expect(taskModel).toContain("provider.embeddingApiFormat === 'openai-embeddings'");
+    expect(taskModel).toContain('provider.embeddingApiFormat === "openai-embeddings"');
   });
 
   it("centralizes modal focus and keyboard lifecycle", () => {
@@ -514,7 +515,7 @@ describe("current UI architecture", () => {
   it("shows unavailable task assignments and uses user-scale provider controls", () => {
     const tab = read("src/ui/svelte/settings-tab.ts");
     const definitions = read("src/ui/settings/settings-definitions.ts");
-    const taskModel = read("src/ui/svelte/settings/TaskModelCard.svelte");
+    const taskModel = read("src/ui/settings/task-definitions.ts");
 
     expect(tab).toContain("settings.providerTimeoutMs / 1000");
     expect(tab).toContain("providerTimeoutMs: Number(value) * 1000");
@@ -523,17 +524,16 @@ describe("current UI architecture", () => {
     expect(definitions).toContain('key: "enableStreamingKeepalive"');
     expect(definitions).toContain("warning: Boolean(summary.issue) && !waitingDefault");
     expect(taskModel).toContain("providerUnavailable");
-    expect(taskModel).toContain("aria-label={parameterLabel(key)}");
-    expect(taskModel).toContain("aria-describedby={`${parameterId(key)}-desc");
+    expect(taskModel).toContain("configureInput(input, id, parameterLabel(key), Boolean(error), `${id}-desc`)");
+    expect(taskModel).toContain('input.inputEl.setAttribute("aria-describedby", describedBy)');
     expect(taskModel).toContain("positiveIntegerError");
     expect(taskModel).toContain("Number.isSafeInteger");
-    expect(taskModel).toContain("showLongTaskReasoningWarning");
     expect(taskModel).toContain("longTaskReasoningWarning");
-    expect(taskModel).toContain("maxTokens: 'max-tokens'");
+    expect(taskModel).toContain('maxTokens: "max-tokens"');
   });
 
   it("never persists a placeholder task parameter when 指定值 has no real value", () => {
-    const taskModel = read("src/ui/svelte/settings/TaskModelCard.svelte");
+    const taskModel = read("src/ui/settings/task-definitions.ts");
     const parameters = read("src/ui/task-model-parameters.ts");
 
     // 旧的兜底分支会把 maxTokens/embeddingDimension 写成 1：嵌入维度 1 会立刻
@@ -555,7 +555,7 @@ describe("current UI architecture", () => {
     expect(expand).toContain("submissionGeneration === loadGeneration");
     expect(expand).not.toContain("replaceSelection(getCreatableIndices(result.value))");
     expect(expand).toContain("String(selected.size)");
-    expect(read("src/ui/svelte/settings/TaskDetails.svelte")).toContain("settingsApplication.updateTaskModel(type, partial)");
+    expect(read("src/ui/settings/task-definitions.ts")).toContain("void app.updateTaskModel(taskType, partial)");
     expect(definitions).not.toContain("TaskModelCard");
     expect(tab).toContain("settingsApplication.updateProvider(nextId, config)");
     expect(tab + definitions).not.toContain("sanitizeTaskModelsForProvider");

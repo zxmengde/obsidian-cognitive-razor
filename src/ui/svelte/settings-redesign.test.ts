@@ -18,6 +18,7 @@ import {
   findRow,
   hostTab,
   openSettingsPage,
+  openTaskPage,
   settle,
   type SettingsBundle,
   type SettingsEnvironment,
@@ -73,8 +74,8 @@ async function harness(options: { settings?: PluginSettings; failFirstSave?: boo
   return {
     ...env,
     index,
-    /** 在设置页之外挂载 Svelte 组件（任务页、位置编辑、弹窗等），并与设置页共享上下文。 */
-    mount(component: SettingsBundle["TaskDetails"], props: Record<string, unknown>): HTMLElement {
+    /** 在设置页之外挂载 Svelte 组件（位置编辑、弹窗等），并与设置页共享上下文。 */
+    mount(component: SettingsBundle["LocationsEditor"], props: Record<string, unknown>): HTMLElement {
       const target = document.body.appendChild(document.createElement("div"));
       const { destroy } = env.bundle.mountSvelteComponent(target, component, props, env.context());
       mounted.push(async () => { await destroy(); target.remove(); });
@@ -85,6 +86,8 @@ async function harness(options: { settings?: PluginSettings; failFirstSave?: boo
     flush: () => env.bundle.flushSync(),
     /** 点击顶层行的入口，打开子页并返回其容器。 */
     openPage: (name: string) => openSettingsPage(env, name),
+    /** 打开「任务模型 › 任务」页；parameters 为真时再进入「能力与参数」。 */
+    openTask: (name: string, parameters = false) => openTaskPage(env, name, parameters),
     closePage: () => closeSettingsPage(env),
     cleanup: async () => {
       if (finished) return;
@@ -157,10 +160,12 @@ describe("approved settings information architecture", () => {
   it("has no provider output-mode choice or per-task output override", async () => {
     const h = await harness();
     try {
-      for (const taskType of ["define", "tag", "write", "verify"] as const) {
-        const task = h.mount(h.bundle.TaskDetails, { taskType });
-        expect(task.querySelector(`#tmc-${taskType}-structured`)).toBeNull();
-        expect(task.textContent).not.toContain("结构化输出");
+      for (const [index, taskType] of (["define", "tag", "write", "verify"] as const).entries()) {
+        for (const parameters of [false, true]) {
+          const task = await h.openTask(TASK_NAMES[index], parameters);
+          expect(task.querySelector(`#tmc-${taskType}-structured`)).toBeNull();
+          expect(task.textContent).not.toContain("结构化输出");
+        }
       }
       const modalSource = readFileSync("src/ui/svelte/modals/ProviderModal.svelte", "utf8");
       expect(modalSource).not.toContain("pm-structured-output");
@@ -174,15 +179,15 @@ describe("approved settings information architecture", () => {
     const h = await harness();
     const request = vi.spyOn(obsidian, "requestUrl").mockResolvedValue({ status: 200, text: "", json: { choices: [{ message: { content: "ok" }, finish_reason: "stop" }] } } as never);
     try {
-      const task = h.mount(h.bundle.TaskDetails, { taskType: "write" });
+      let task = await h.openTask("撰写");
+      // 设置变化会重绘页内的行，每次都重新查询控件。
       const change = async (selector: string, value: string) => {
         setField(task.querySelector<HTMLInputElement | HTMLSelectElement>(selector)!, value);
         await h.settle();
       };
       await change("#tmc-write-provider", "daily");
       await change("#tmc-write-model", "ui-selected-model");
-      task.querySelector<HTMLDetailsElement>(".cr-task-model-card__advanced")!.querySelector("summary")!.click();
-      h.flush();
+      task = await h.openTask("撰写", true);
       await change("#tmc-write-temp-mode", "set");
       await change("#tmc-write-temp", "0.25");
       await change("#tmc-write-max-tokens-mode", "set");
@@ -238,9 +243,10 @@ describe("approved settings information architecture", () => {
     try {
       await h.application.updateTaskModel("index", { providerId: "research", model: "actual-embed", parameters: { embeddingDimension: 256 } });
       await h.settle();
-      const task = h.mount(h.bundle.TaskDetails, { taskType: "index" });
-      const button = task.querySelector<HTMLButtonElement>(".cr-task-details__probe button")!;
-      button.click(); await h.settle();
+      const task = await h.openTask("语义索引");
+      const button = () => findButton(task, N("taskProbeRun"));
+      button().click();
+      await vi.waitFor(() => { h.flush(); expect(task.querySelector(".cr-provider-probe-status")).not.toBeNull(); });
       expect(h.probe).toHaveBeenCalledOnce();
       expect((h.probe.mock.calls[0] as unknown as [unknown])[0]).toMatchObject({ providerId: "research", taskType: "index", taskConfig: { providerId: "research", model: "actual-embed", embeddingDimension: 256 } });
       expect(task.querySelector(".cr-provider-probe-status__target")?.textContent?.replace(/\s+/g, " ")).toContain("research · actual-embed · 请求维度: 256");
@@ -250,7 +256,8 @@ describe("approved settings information architecture", () => {
       expect(task.querySelector(".cr-provider-probe-status")).toBeNull();
 
       h.probe.mockResolvedValueOnce({ ok: false, error: { code: "E211_MODEL_SCHEMA_VIOLATION", message: "Synthetic" } } as never);
-      button.click(); await h.settle();
+      button().click();
+      await vi.waitFor(() => { h.flush(); expect(task.querySelector(".cr-provider-probe-status")).not.toBeNull(); });
       expect(task.querySelector(".cr-provider-probe-status__target")?.textContent).toContain("changed-embed");
       expect(task.querySelector(".cr-provider-probe-status")?.textContent).toContain(i18n.t("settings.redesign.testOutcomes.failed"));
     } finally { await h.cleanup(); }
@@ -274,20 +281,19 @@ describe("approved settings information architecture", () => {
   it("makes model inheritance explicit and never persists an empty specified draft", async () => {
     const h = await harness();
     try {
-      const cards = h.mount(h.bundle.TaskDetails, { taskType: "cards" });
-      const mode = cards.querySelector<HTMLSelectElement>("#tmc-cards-model-mode")!;
-      expect(mode.value).toBe("inherit");
+      const cards = await h.openTask("记忆卡片");
+      const mode = () => cards.querySelector<HTMLSelectElement>("#tmc-cards-model-mode")!;
+      expect(mode().value).toBe("inherit");
       expect(cards.querySelector("#tmc-cards-model")).toBeNull();
 
-      setField(mode, "specified"); await h.settle();
+      setField(mode(), "specified"); await h.settle();
       expect(h.store.getSettings().taskModels.cards.model).toBe("chat-main");
 
-      const model = cards.querySelector<HTMLInputElement>("#tmc-cards-model")!;
-      setField(model, ""); await h.settle();
+      setField(cards.querySelector<HTMLInputElement>("#tmc-cards-model")!, ""); await h.settle();
       expect(h.store.getSettings().taskModels.cards.model).toBe("chat-main");
       expect(cards.querySelector('[role="alert"]')).toBeTruthy();
 
-      setField(mode, "inherit"); await h.settle();
+      setField(mode(), "inherit"); await h.settle();
       expect(h.store.getSettings().taskModels.cards.model).toBe("");
       expect(h.probe).not.toHaveBeenCalled();
     } finally { await h.cleanup(); }
@@ -394,6 +400,8 @@ describe("approved settings information architecture", () => {
         maintenance: new h.bundle.MaintenanceController(h.application, i18n),
         mount: () => () => undefined,
         sveltePage: () => { throw new Error("not opened"); },
+        taskState: new h.bundle.TaskPageState(),
+        refresh: () => undefined,
         openServiceEditor: () => undefined,
         openTaskProbe: () => undefined,
         openServiceMenu: () => undefined,
@@ -589,14 +597,15 @@ describe("approved settings information architecture", () => {
     } finally { await h.cleanup(); }
   });
 
-  it("opens a dedicated task page with its single card and writes nothing", async () => {
+  it("opens a dedicated task page with parameters one level deeper and writes nothing", async () => {
     const h = await harness();
     try {
-      const models = await h.openPage(N("taskModels"));
-      const taskPage = await openNested(h, models, "撰写");
-      expect(taskPage.querySelectorAll(".cr-task-model-card")).toHaveLength(1);
-      expect(taskPage.textContent).toContain(i18n.t("settings.taskDetails.taskOnly"));
-      expect(taskPage.querySelector<HTMLDetailsElement>(".cr-task-model-card details")!.open).toBe(false);
+      const taskPage = await h.openTask("撰写");
+      expect(rowNames(taskPage).slice(1)).toEqual([
+        i18n.t("settings.taskDetails.provider"), i18n.t("settings.taskDetails.model"),
+        i18n.t("settings.taskDetails.advanced"), i18n.t("settings.product.taskProbe"),
+      ]);
+      expect(taskPage.querySelector("[data-parameter]")).toBeNull();
       expect(h.save).not.toHaveBeenCalled();
       expect(h.probe).not.toHaveBeenCalled();
       expect(h.ensure).not.toHaveBeenCalled();
@@ -611,11 +620,10 @@ describe("approved settings information architecture", () => {
       const notesGroup = Array.from(h.tab.containerEl.querySelectorAll<HTMLElement>(".setting-group"))
         .find((group) => group.querySelector(".setting-item-heading")?.textContent === N("notes"))!;
       expect(rowNames(notesGroup)).toEqual([N("locations")]);
-      expect(notesGroup.querySelector(".cr-task-model-card")).toBeNull();
+      expect(notesGroup.querySelector(".cr-task-overview")).toBeNull();
 
-      const models = await h.openPage(N("taskModels"));
-      const cards = await openNested(h, models, "记忆卡片");
-      expect(cards.querySelectorAll(".cr-task-model-card")).toHaveLength(1);
+      const cards = await h.openTask("记忆卡片");
+      expect(cards.querySelectorAll(".cr-task-overview")).toHaveLength(1);
       expect(cards.textContent).toContain(i18n.t("settings.taskDetails.defaultProviderHint"));
       expect(cards.querySelector<HTMLSelectElement>("#tmc-cards-model-mode")?.value).toBe("inherit");
       expect(cards.querySelector("#tmc-cards-model")).toBeNull();
@@ -626,11 +634,9 @@ describe("approved settings information architecture", () => {
   it("rejects an invalid output limit in place without persisting it", async () => {
     const h = await harness();
     try {
-      const write = h.mount(h.bundle.TaskDetails, { taskType: "write" });
-      write.querySelector<HTMLDetailsElement>(".cr-task-model-card__advanced")!.querySelector("summary")!.click();
-      h.flush();
-      setField(write.querySelector<HTMLSelectElement>("#tmc-write-max-tokens-mode")!, "set"); h.flush();
-      setField(write.querySelector<HTMLInputElement>("#tmc-write-max-tokens")!, "0"); h.flush();
+      const write = await h.openTask("撰写", true);
+      setField(write.querySelector<HTMLSelectElement>("#tmc-write-max-tokens-mode")!, "set"); await h.settle();
+      setField(write.querySelector<HTMLInputElement>("#tmc-write-max-tokens")!, "0"); await h.settle();
       expect(write.querySelector('[role="alert"]')).toBeTruthy();
       expect(h.store.getSettings().taskModels.write.model).toBe("reasoning-model");
       expect(h.store.getSettings().taskModels.write.parameters?.maxTokens).toBeNull();
@@ -639,7 +645,7 @@ describe("approved settings information architecture", () => {
     } finally { await h.cleanup(); }
   });
 
-  // 任务页在同一次设置会话内复用页面实例，离开时暂存组件，未保存草稿在返回后仍在。
+  // 任务页草稿保存在设置会话内的任务页状态中，离开再返回仍在；关闭设置页后丢弃。
   it("keeps an uncommitted task draft when its page is left and reopened", async () => {
     const h = await harness();
     try {
@@ -653,6 +659,10 @@ describe("approved settings information architecture", () => {
       const reopened = await openNested(h, reopenedModels, "撰写");
       expect(reopened.querySelector<HTMLInputElement>("#tmc-write-model")?.value).toBe("uncommitted-model");
       expect(h.store.getSettings().taskModels.write.model).toBe("reasoning-model");
+      h.tab.hide();
+      h.tab.display();
+      const afterClose = await h.openTask("撰写");
+      expect(afterClose.querySelector<HTMLInputElement>("#tmc-write-model")?.value).toBe("reasoning-model");
     } finally { await h.cleanup(); }
   });
 
