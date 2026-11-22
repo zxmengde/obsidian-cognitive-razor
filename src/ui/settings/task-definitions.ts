@@ -72,7 +72,8 @@ export function buildTaskPage(
   const providers = settings.providers;
   const summary = taskSettingsSummary(settings, taskType);
   const resolved = summary.resolved;
-  const draft = taskState.draft(taskType);
+  // 草稿按需取：宿主可能沿用较早构建的定义树，期间关闭过设置页会换掉草稿对象。
+  const draftOf = () => taskState.draft(taskType);
   const title = t(`settings.redesign.tasks.${taskType}`);
   const isEmbeddingTask = taskType === "index";
   const activeProvider = providers[resolved.providerId];
@@ -132,23 +133,23 @@ export function buildTaskPage(
   };
 
   // ---- 模型 ----
-  const modelMode = draft.pendingModel || config.model.trim() ? "specified" : "inherit";
+  const modelMode = draftOf().pendingModel || config.model.trim() ? "specified" : "inherit";
   const handleModelMode = (value: string) => {
-    draft.modelDraft = undefined; draft.modelError = ""; draft.pendingModel = false;
+    draftOf().modelDraft = undefined; draftOf().modelError = ""; draftOf().pendingModel = false;
     if (value === "inherit") update({ model: "" });
     else if (!config.model.trim()) {
       if (inheritedModel?.trim()) update({ model: inheritedModel.trim() });
-      else { draft.pendingModel = true; draft.modelDraft = ""; }
+      else { draftOf().pendingModel = true; draftOf().modelDraft = ""; }
     }
     host.refresh();
   };
   const handleModelChange = (value: string) => {
-    draft.modelDraft = value;
+    draftOf().modelDraft = value;
     if (!value.trim()) {
-      draft.pendingModel = true;
-      draft.modelError = t("settings.product.modelRequired");
+      draftOf().pendingModel = true;
+      draftOf().modelError = t("settings.product.modelRequired");
     } else {
-      draft.modelError = ""; draft.pendingModel = false; draft.modelDraft = undefined;
+      draftOf().modelError = ""; draftOf().pendingModel = false; draftOf().modelDraft = undefined;
       update({ model: value.trim() });
     }
     host.refresh();
@@ -160,7 +161,7 @@ export function buildTaskPage(
     aliases: [title, t("settings.product.modelMode")],
     render: (setting) => {
       const lines: Line[] = [{ text: modelDesc }];
-      if (draft.modelError) lines.push({ text: draft.modelError, tone: "error", role: "alert", id: `tmc-${taskType}-model-error` });
+      if (draftOf().modelError) lines.push({ text: draftOf().modelError, tone: "error", role: "alert", id: `tmc-${taskType}-model-error` });
       setting.setName(text("model"));
       writeLines(setting.descEl, lines);
       setting.addDropdown((dropdown) => {
@@ -171,10 +172,10 @@ export function buildTaskPage(
       });
       if (modelMode === "specified") {
         setting.addText((input) => {
-          input.setValue(draft.modelDraft ?? config.model).setPlaceholder(inheritedModel || text("modelMissing"));
-          configureInput(input, `tmc-${taskType}-model`, text("model"), Boolean(draft.modelError), draft.modelError ? `tmc-${taskType}-model-error` : undefined);
+          input.setValue(draftOf().modelDraft ?? config.model).setPlaceholder(inheritedModel || text("modelMissing"));
+          configureInput(input, `tmc-${taskType}-model`, text("model"), Boolean(draftOf().modelError), draftOf().modelError ? `tmc-${taskType}-model-error` : undefined);
           // 输入中的文字也记入草稿（不重绘），离开页面再回来仍在。
-          input.inputEl.addEventListener("input", () => { draft.modelDraft = input.inputEl.value; });
+          input.inputEl.addEventListener("input", () => { draftOf().modelDraft = input.inputEl.value; });
           input.inputEl.addEventListener("change", () => handleModelChange(input.inputEl.value));
         });
       }
@@ -204,9 +205,9 @@ export function buildTaskPage(
     ? text(key) : t(`taskModels.fields.${PARAMETER_LABELS[key]}`);
   const parameterId = (key: TaskParameterKey) => `tmc-${taskType}-${PARAMETER_IDS[key]}`;
   const parameterMode = (key: TaskParameterKey): TaskParameterMode =>
-    draft.pendingSetKeys.includes(key) ? "set" : storedParameterMode(parameterInputs(key));
+    draftOf().pendingSetKeys.includes(key) ? "set" : storedParameterMode(parameterInputs(key));
   const parameterValue = (key: TaskParameterKey): string => {
-    const local = draft.draftValues[key];
+    const local = draftOf().draftValues[key];
     if (local !== undefined) return local;
     const inputs = parameterInputs(key);
     if (inputs.hasOverride && inputs.override === null) return "";
@@ -220,8 +221,8 @@ export function buildTaskPage(
     const write = resolveParameterWrite(mode as TaskParameterMode, parameterInputs(key));
     taskState.clearParameter(taskType, key);
     if (write.action === "pending") {
-      draft.pendingSetKeys = [...draft.pendingSetKeys, key];
-      draft.draftValues[key] = "";
+      draftOf().pendingSetKeys = [...draftOf().pendingSetKeys, key];
+      draftOf().draftValues[key] = "";
     } else {
       writeParameter(key, write.action === "delete" ? undefined : write.action === "omit" ? null : write.value);
     }
@@ -229,12 +230,12 @@ export function buildTaskPage(
   };
   const handleParameterChange = (key: TaskParameterKey, raw: string) => {
     const value = raw.trim();
-    draft.draftValues[key] = raw;
+    draftOf().draftValues[key] = raw;
     // 校验提示只存在草稿里，需要重绘才能显示。
     host.refresh();
     if (!value) {
-      draft.parameterErrors[key] = text("valueRequired");
-      draft.pendingSetKeys = [...new Set([...draft.pendingSetKeys, key])];
+      draftOf().parameterErrors[key] = text("valueRequired");
+      draftOf().pendingSetKeys = [...new Set([...draftOf().pendingSetKeys, key])];
       return;
     }
     if (key === "reasoning_effort" || key === "thinkingLevel") {
@@ -246,11 +247,11 @@ export function buildTaskPage(
     if (key === "temperature" || key === "topP") {
       const max = key === "temperature" ? 2 : 1;
       if (!Number.isFinite(parsed) || parsed < 0 || parsed > max) {
-        draft.parameterErrors[key] = text(key === "temperature" ? "temperatureError" : "topPError");
+        draftOf().parameterErrors[key] = text(key === "temperature" ? "temperatureError" : "topPError");
         return;
       }
     } else if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-      draft.parameterErrors[key] = t("taskModels.fields.positiveIntegerError");
+      draftOf().parameterErrors[key] = t("taskModels.fields.positiveIntegerError");
       return;
     }
     taskState.clearParameter(taskType, key);
@@ -274,8 +275,8 @@ export function buildTaskPage(
       lines.push({ text: text("unset") });
     }
     if (parameter.protocolIssue) lines.push({ text: text(`protocol.${parameter.protocolIssue}`), tone: "warning", role: "status" });
-    if (draft.pendingSetKeys.includes(key)) lines.push({ text: text("pendingValue") });
-    const error = draft.parameterErrors[key];
+    if (draftOf().pendingSetKeys.includes(key)) lines.push({ text: text("pendingValue") });
+    const error = draftOf().parameterErrors[key];
     if (error) lines.push({ text: error, tone: "error", role: "alert", id: `${parameterId(key)}-error` });
     return lines;
   };
@@ -298,7 +299,7 @@ export function buildTaskPage(
       });
       if (mode !== "set") return;
       setting.addText((input) => {
-        const error = draft.parameterErrors[key];
+        const error = draftOf().parameterErrors[key];
         if (key !== "reasoning_effort" && key !== "thinkingLevel") {
           const sampling = key === "temperature" || key === "topP";
           input.inputEl.type = "number";
@@ -308,7 +309,7 @@ export function buildTaskPage(
         }
         input.setValue(parameterValue(key)).setPlaceholder(text("enterValue"));
         configureInput(input, id, parameterLabel(key), Boolean(error), `${id}-desc`);
-        input.inputEl.addEventListener("input", () => { draft.draftValues[key] = input.inputEl.value; });
+        input.inputEl.addEventListener("input", () => { draftOf().draftValues[key] = input.inputEl.value; });
         input.inputEl.addEventListener("change", () => handleParameterChange(key, input.inputEl.value));
       });
     },

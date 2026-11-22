@@ -165,14 +165,16 @@ export class CRSettingTab extends PluginSettingTab {
     if (active && scope) {
       const row = active.closest(".setting-item");
       if (row) {
-        const controls = focusableControls(row);
-        position = { row: visibleRows(scope).indexOf(row), control: Math.max(0, controls.indexOf(active as HTMLElement)) };
+        // 焦点在行本身（宿主让整行可聚焦）时记为 -1，重绘后放回行上。
+        const control = active === row ? -1 : Math.max(0, focusableControls(row).indexOf(active as HTMLElement));
+        position = { row: visibleRows(scope).indexOf(row), control };
       }
     }
     this.update();
     for (const listener of this.runtimeListeners) listener();
     if (!scope || !position || position.row < 0) return;
-    const row = visibleRows(scope)[position.row];
+    const row = visibleRows(scope)[position.row] as HTMLElement | undefined;
+    if (row && position.control === -1) { row.focus(); return; }
     const controls = row ? focusableControls(row) : [];
     (controls[position.control] ?? controls[0])?.focus();
   }

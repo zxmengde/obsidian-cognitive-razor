@@ -215,6 +215,22 @@ describe("task model settings page", () => {
     } finally { await env.cleanup(); }
   });
 
+  it("keeps a pending draft made from rows built before the settings session was reset", async () => {
+    // 真实宿主会沿用较早构建的定义树；期间关闭过设置页（清空草稿）后，旧行仍须写到当前草稿。
+    const settings = cloneDefaults();
+    settings.providers.provider = { apiKey: "", enabled: true, apiFormat: "openai-chat-completions", embeddingApiFormat: "disabled", defaultChatModel: "model", defaultEmbedModel: "" };
+    settings.defaultProviderId = "provider";
+    const { env, update } = await environment(settings);
+    try {
+      const page = await openTaskPage(env, "撰写", true);
+      const staleMode = select(page, "#tmc-write-temp-mode");
+      env.tab.hide();
+      await change(env, staleMode, "set");
+      expect(page.querySelector<HTMLInputElement>("#tmc-write-temp")?.value).toBe("");
+      expect(update).not.toHaveBeenCalled();
+    } finally { await env.cleanup(); }
+  });
+
   it("resets a customised task and drops its pending drafts", async () => {
     const settings = cloneDefaults();
     settings.providers.provider = { apiKey: "", enabled: true, apiFormat: "openai-chat-completions", embeddingApiFormat: "disabled", defaultChatModel: "model", defaultEmbedModel: "" };
