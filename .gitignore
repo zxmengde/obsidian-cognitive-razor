@@ -19,23 +19,14 @@ main.js
 # obsidian
 data.json
 /data/
-.kiro/
-.agent/
+.agents/
 .claude/
 scripts/output/
 scripts/.schema-registry-compiled.mjs
-.spec-workflow/
 
-.serena/
 # Exclude macOS Finder (System Explorer) View States
 .DS_Store
 
 # Test coverage
 coverage/
 *.lcov
-
-# Prompt evaluation reports (promote reviewed summaries to prompt-evals/baselines/)
-/prompt-evals/reports/*.json
-
-# Jest cache
-.jest/

@@ -27,7 +27,7 @@ Cognitive Razor 是面向 Obsidian 桌面端的结构化知识插件，帮助使
 - [产品需求](docs/REQUIREMENTS.md)
 - [运行设计](docs/DESIGN.md)
 - [提示词与缓存](docs/PROMPTS.md)
-- [完整提示词检查稿](prompt-examples.md)
+- [完整提示词检查稿](docs/prompt-examples.md)
 - [开发环境](docs/CLOUD_DEVELOPMENT.md)
 - [Obsidian 验收](docs/OBSIDIAN_UI_TESTING.md)
 - [传输诊断](docs/TRANSPORT.md)

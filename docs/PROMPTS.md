@@ -26,6 +26,6 @@ Responses、Anthropic 与 Gemini 写作在同工作流内保持系统指令、�
 
 ## 离线检查
 
-[完整检查稿](../prompt-examples.md)保留汇总请求及其合成配置说明。
+[完整检查稿](prompt-examples.md)保留汇总请求及其合成配置说明。
 
 `scripts/generate-prompts.mjs` 经生产执行器及 ProviderManager 截获请求，命令为 `npm run prompts:generate -- --settings <合成配置文件> --output <输出目录>`。导出使用明确传入的配置，不读取日常库设置，不发送模型请求。检查原始请求、展开文本、Schema、工具、参数与哈希；真实模型质量和缓存命中另行验收。

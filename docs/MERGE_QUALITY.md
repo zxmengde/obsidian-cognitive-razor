@@ -37,7 +37,7 @@
 
 - [merge_quality_results.json](../evals/merge_quality_results.json)：每次草稿、模型与用量记录、逐项评阅及机械检查。
 - [merge_quality_streams.json.gz](../evals/merge_quality_streams.json.gz)：原始运行记录、请求正文和 SSE，含优化前失败结果；不含认证头。
-- [完整提示词检查稿](../prompt-examples.md)：默认通用规则与离线生产请求。
+- [完整提示词检查稿](prompt-examples.md)：默认通用规则与离线生产请求。
 
 临时密钥只经进程环境注入，不写入插件设置或成果。获费用授权后，可用已有入口复测：
 
